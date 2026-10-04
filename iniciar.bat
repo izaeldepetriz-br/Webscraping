@@ -1,5 +1,6 @@
 @echo off
-REM Windows: duplo clique. Cria o ambiente na 1a vez e abre o menu.
+REM Windows: duplo clique. Na 1a vez cria o ambiente, instala as bibliotecas e o navegador.
+chcp 65001 >nul
 cd /d "%~dp0"
 where python >nul 2>nul
 if errorlevel 1 (
@@ -11,11 +12,16 @@ if errorlevel 1 (
 if not exist .venv (
   echo Criando ambiente virtual...
   python -m venv .venv || (pause & exit /b 1)
-  call .venv\Scripts\activate.bat
+)
+call .venv\Scripts\activate.bat
+REM O marcador muda quando as dependencias mudam; assim quem ja tinha .venv atualiza sozinho.
+if not exist .venv\instalado-v2 (
+  echo Instalando bibliotecas - so na primeira vez...
   python -m pip install --upgrade pip
   pip install -r requirements.txt || (pause & exit /b 1)
-) else (
-  call .venv\Scripts\activate.bat
+  echo Baixando o navegador Chromium para o modo navegador, cerca de 150 MB...
+  python -m playwright install chromium || (pause & exit /b 1)
+  echo ok> .venv\instalado-v2
 )
 python iniciar.py
 if errorlevel 1 pause

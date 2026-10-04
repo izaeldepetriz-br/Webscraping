@@ -1,75 +1,107 @@
-# Extrator de links de vídeos públicos
+# videoscraper: extrair e baixar vídeos públicos
 
-Programa em Python que visita páginas web e coleta os **endereços** de vídeos públicos
-(não baixa os vídeos).
+Programa em Python que encontra links de vídeo em páginas web e, se você quiser, baixa os vídeos.
+Funciona em sites simples (só HTML) e também em sites que **montam a página com JavaScript**,
+que **exigem login** ou que mostram **verificações** que você resolve na janela do navegador.
 
-## Rodar no seu computador (passo a passo)
+## Rodar no seu computador
 
-1. **Instale o Python 3.9+** em <https://www.python.org/downloads/>.
-   No Windows, marque **"Add python.exe to PATH"** durante a instalação.
-2. **Traga os arquivos** (escolha um):
-   - Com Git: `git clone https://github.com/izaeldepetriz-br/Webscraping.git`
-   - Sem Git: no GitHub, abra o repositório → **Code → Download ZIP** e extraia.
-3. **Entre na pasta do projeto e inicie:**
-   - **Windows:** duplo clique em `iniciar.bat`
+1. Instale o **Python 3.9+** em <https://www.python.org/downloads/>.
+   No Windows, marque **"Add python.exe to PATH"** na instalação.
+2. Baixe este repositório: **Code → Download ZIP** e extraia (ou `git clone`).
+3. Na pasta do projeto:
+   - **Windows:** duplo clique em **`iniciar.bat`** (não no `iniciar.py`).
    - **Linux/Mac:** `./iniciar.sh`
 
-   Na primeira vez ele cria o ambiente virtual (`.venv`) e instala as dependências sozinho.
-   Depois abre um menu: cole a URL e escolha listar ou baixar.
+Na primeira vez ele cria o ambiente `.venv`, instala as bibliotecas e baixa o navegador
+Chromium (~150 MB). Isso só acontece uma vez. Depois abre o menu:
 
-Os vídeos baixados ficam na pasta `videos_baixados/` (dentro da pasta do projeto).
-
-## Instalação manual
-
-```bash
-cd webscraping
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+```
+1) Listar links de vídeo de uma página
+2) Baixar vídeos de uma página
+3) Ver o que seria baixado (sem baixar)
+4) Fazer login num site (abre o navegador; a sessão fica salva)
 ```
 
-## Uso
+O menu mostra o **comando equivalente** antes de rodar, para você aprender a usar direto no terminal.
+
+## Dois modos de acesso
+
+| | Modo simples (padrão) | Modo navegador (`--navegador`) |
+|---|---|---|
+| Como funciona | `requests` baixa só o HTML | Chrome de verdade (Playwright) abre a página |
+| Velocidade | Rápido, leve | Mais lento |
+| JavaScript | Não executa | Executa (vê listas montadas por JS) |
+| Login | Não | Sim, com a sua conta (comando `login`) |
+| Vídeos pedidos pelo player | Não vê | Vê (captura `.mp4`/`.m3u8` na rede) |
+| iframes | Só o endereço | Lê o conteúdo também |
+
+Comece pelo simples. Se aparecer "0 links", tente com `--navegador`.
+
+## Comandos (terminal)
+
+Com o ambiente ativado (`.venv\Scripts\activate` no Windows, `. .venv/bin/activate` no Linux/Mac):
 
 ```bash
-# Uma página, resultado na tela
-python extrair_links_videos.py https://exemplo.com/videos
+# Listar links (salva em .csv, .json ou .txt; o .csv abre no Excel com acentos)
+python -m videoscraper links https://site.com/videos -s links.csv
 
-# Seguindo links até 2 níveis, salvando em CSV (também aceita .json e .txt)
-python extrair_links_videos.py https://exemplo.com -p 2 -s links.csv
+# Página que carrega os vídeos com JavaScript
+python -m videoscraper links https://site.com/videos --navegador
+
+# Baixar por seletor CSS, seguindo 1 nível de links, no máximo 5 vídeos
+python -m videoscraper baixar https://site.com/videos --seletor "a.video-link" -p 1 -l 5 -d meus_videos
+
+# Site com login: 1) entre na sua conta uma vez  2) use --navegador normalmente
+python -m videoscraper login https://site.com/entrar
+python -m videoscraper baixar https://site.com/minha-area --navegador
+
+# Site com verificação ("não sou um robô", aviso de cookies): resolva você mesmo na janela
+python -m videoscraper links https://site.com/videos --pausar
 ```
 
-Opções: `-p` profundidade, `-m` máx. de páginas, `-e` espera entre requisições (s),
-`-s` arquivo de saída, `--qualquer-dominio`, `--ignorar-robots`.
+Opções úteis: `-e` espera entre pedidos (padrão 1.5 s), `--visivel` mostra a janela,
+`--so-listar` não baixa nada, `--qualquer-dominio` segue links para outros sites,
+`--chrome CAMINHO` usa um Chrome já instalado.
 
-## O que ele detecta
+## O que ele detecta e baixa
 
-`<video>`, `<source>`, `<iframe>` (YouTube, Vimeo, Dailymotion...), `<a href>` para
-`.mp4/.webm/.mkv/.m3u8...`, meta `og:video`, JSON-LD `VideoObject` e URLs de vídeo
-dentro de scripts.
-
-## Baixar os vídeos de uma listagem (`baixar_videos.py`)
-
-Versão evoluída do script de 6 etapas (requisição → parse → extração → download):
-
-```bash
-python baixar_videos.py https://exemplo.com/videos/acao                 # baixa tudo
-python baixar_videos.py URL --so-listar                                 # só mostra os links
-python baixar_videos.py URL -s "a.video-link" -p meus_videos -e 3 -l 5  # seletor, pasta, espera, limite
-```
-
-Melhorias em relação ao script original: download em blocos com progresso (não enche a
-memória), `raise_for_status` e `timeout`, links relativos resolvidos com `urljoin`,
-título sanitizado como nome de arquivo (sem `/`, `:` etc.), sem sobrescrever arquivos,
-arquivo `.part` apagado se o download falhar, e respeito ao `robots.txt`.
+- **Detecta:** `<video>`, `<source>`, `<iframe>` (YouTube, Vimeo...), `<a href>` para
+  `.mp4/.webm/.mkv/.mov/.m3u8/.mpd`, meta `og:video`, JSON-LD `VideoObject`, URLs em scripts
+  e (modo navegador) vídeos que o player pede pela rede.
+- **Baixa:** arquivos diretos (em blocos, com progresso, sem sobrescrever) e **streaming HLS/DASH**
+  (`.m3u8`/`.mpd`), que o ffmpeg junta num `.mp4`. O ffmpeg já vem no pacote `imageio-ffmpeg`.
+- **Não baixa:** players de outros sites (YouTube, Vimeo). Esses aparecem na lista mas são pulados.
 
 ## Limites e uso responsável
 
-- Respeita `robots.txt` e espera entre requisições por padrão.
-- Só vê o que está no HTML. Páginas que montam o conteúdo com JavaScript podem exigir
-  Selenium/Playwright (não incluído).
-- Use apenas em conteúdo público e respeitando os termos de uso do site.
+- Respeita o `robots.txt` e espera entre pedidos. `--ignorar-robots` só em sites seus.
+- **Não contorna** CAPTCHA, sistemas anti-robô, paywall nem **DRM** (Netflix, Globoplay, Prime...).
+  Quando aparece uma verificação, quem resolve é você, na janela (`--pausar`).
+  Se o site proíbe automação nos termos de uso, não use nele.
+- O login fica salvo em `.perfil_navegador/` (inclusive o arquivo `sessao_cookies.json`).
+  **Essa pasta dá acesso à sua conta: não compartilhe e não envie para o GitHub**
+  (já está no `.gitignore`). Para "sair", apague a pasta.
+- Baixe só conteúdo que você tem direito de baixar.
+
+## Estrutura do código
+
+```
+videoscraper/
+  extracao.py   lê HTML e acha links (não acessa a internet)
+  rede.py       requests: robots.txt, pausas, novas tentativas, cookies
+  navegador.py  Playwright: JavaScript, login, captura de rede, sessão salva
+  coleta.py     junta tudo: obtém páginas (requests OU navegador) e navega entre elas
+  download.py   salva arquivos (blocos/.part) e streaming (ffmpeg)
+  cli.py        comandos links / baixar / login
+  menu.py       menu interativo
+tests/          testes com servidor local (sem internet)
+```
 
 ## Testes
 
 ```bash
-pip install pytest && python -m pytest -q
+pip install pytest && python -m pytest -q tests
 ```
+
+Os testes do modo navegador são pulados automaticamente se o Chromium não estiver instalado.

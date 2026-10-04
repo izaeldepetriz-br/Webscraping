@@ -1,5 +1,6 @@
 .venv/
 videos_baixados/
+.perfil_navegador/
 __pycache__/
 .pytest_cache/
 *.part
