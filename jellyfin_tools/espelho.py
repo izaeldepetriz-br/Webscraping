@@ -35,7 +35,7 @@ from urllib.parse import unquote, urlparse
 import requests
 
 from .nomes import extrair_titulo_e_ano, marca_de_episodio
-from .organizador import _consultas, planejar
+from .organizador import PASTA_LOGS, _consultas, _gravar_log, planejar
 
 # etiquetas de lançamento que não fazem parte do nome ("Anjos da Noite 2003 (Dual Audio) PT-BR")
 _RE_ETIQUETAS = re.compile(r"[\[(]?\b(?:dvd(?:rip|iso)?|r\dbr|vhs|dual[ ._-]*audio|pt[ ._-]?br|dublado|dublagem"
@@ -55,6 +55,7 @@ class ItemEspelho:
     #                                  nao_identificado | criado | erro
     detalhe: str = ""
     fonte_nome: str = ""             # TMDB | catálogo | arquivo
+    raiz: Path | None = None         # a biblioteca (Filmes ou Séries) onde o .strm vai
     filme: object = None             # Filme do catálogo (título original ajuda a achar legenda)
     episodio: tuple | None = None    # (temporada, episódio), em séries
 
@@ -206,6 +207,7 @@ def planejar_espelho(links: list, pasta_filmes: str | Path | None, pasta_series:
         if not pasta:
             item.status, item.detalhe = "erro", f"escolha a pasta da biblioteca de {'Filmes' if item.tipo == 'filme' else 'Séries'}"
             continue
+        item.raiz = Path(pasta)
         mov = planejar(_video_virtual(item.link, item.tipo), Path(pasta), catalogo, incluir_tmdbid,
                        modo="filmes" if item.tipo == "filme" else "series", nomes_episodios=nomes_episodios)
         if not mov.destino:
@@ -236,18 +238,81 @@ def _arquivos_da_pasta(pasta: Path) -> list[Path]:
         return []
 
 
-def aplicar_espelho(itens: list[ItemEspelho]) -> list[ItemEspelho]:
-    """Cria os .strm planejados (status 'criar'). Nunca sobrescreve nada."""
+def _primeira_pasta_nova(destino: Path, raiz: Path | None) -> Path | None:
+    """A pasta mais alta que AINDA não existe (ex.: 'Filmes/Nosferatu (1922)'): o desfazer a remove."""
+    nova, pasta = None, destino.parent
+    while not pasta.exists() and pasta != raiz and pasta != pasta.parent:
+        nova, pasta = pasta, pasta.parent
+    return nova
+
+
+def aplicar_espelho(itens: list[ItemEspelho], gravar_log: bool = True) -> list[ItemEspelho]:
+    """Cria os .strm planejados (status 'criar'). Nunca sobrescreve nada. Grava um log em cada
+    biblioteca (.organizador): 'Desfazer última' apaga o que o espelho criou."""
+    registro: dict[Path, dict] = {}
     for item in itens:
         if item.status != "criar":
             continue
         try:
+            nova = _primeira_pasta_nova(item.destino, item.raiz)
             item.destino.parent.mkdir(parents=True, exist_ok=True)
             with open(item.destino, "x", encoding="utf-8") as f:     # "x": falha se já existir
                 f.write(item.link.url + "\n")
             item.status = "criado"
+            reg = registro.setdefault(item.raiz or item.destino.parent, {"strm_criados": [], "pastas_criadas": []})
+            reg["strm_criados"].append(str(item.destino))
+            if nova is not None:
+                reg["pastas_criadas"].append(str(nova))
         except FileExistsError:
             item.status = "ja_existe"
         except OSError as erro:
             item.status, item.detalhe = "erro", str(erro)
+    if gravar_log:
+        for raiz, reg in registro.items():
+            _gravar_log(raiz, [], extra=reg)
     return itens
+
+
+# ----------------------------------------------------------------- conferir os espelhos
+def ler_strm(arquivo: Path) -> str:
+    """O link guardado no .strm (a 1ª linha preenchida)."""
+    try:
+        for linha in arquivo.read_text(encoding="utf-8", errors="replace").splitlines():
+            if linha.strip():
+                return linha.strip()
+    except OSError:
+        pass
+    return ""
+
+
+def espelhos_da_biblioteca(*pastas) -> list[tuple[Path, Path]]:
+    """[(raiz da biblioteca, .strm)] de todas as bibliotecas (sem entrar em .organizador)."""
+    achados = []
+    for raiz in dict.fromkeys(Path(p) for p in pastas if p):
+        if raiz.is_dir():
+            achados += [(raiz, a) for a in sorted(raiz.rglob("*.strm")) if PASTA_LOGS not in a.parts]
+    return achados
+
+
+def conferir_espelhos(*pastas, ao_progresso=None, respeitar_robots: bool = True) -> list[tuple]:
+    """Confere o link de cada .strm: [(raiz, arquivo, url, Verificacao)]."""
+    espelhos = espelhos_da_biblioteca(*pastas)
+    links = {a: ler_strm(a) for _, a in espelhos}
+    verificacoes = verificar_links([u for u in links.values() if u], ao_progresso=ao_progresso,
+                                   respeitar_robots=respeitar_robots)
+    sem_link = Verificacao(False, "o .strm está vazio")
+    return [(raiz, a, links[a], verificacoes.get(links[a], sem_link)) for raiz, a in espelhos]
+
+
+def remover_espelhos(quebrados: list[tuple]) -> int:
+    """Apaga os .strm quebrados [(raiz, arquivo, url, ...)] e grava o log (o Desfazer os recria)."""
+    por_raiz: dict[Path, list] = {}
+    for raiz, arquivo, url, *_ in quebrados:
+        try:
+            arquivo.unlink()
+            por_raiz.setdefault(raiz, []).append({"arquivo": str(arquivo), "url": url})
+        except OSError:
+            continue
+    for raiz, removidos in por_raiz.items():
+        _gravar_log(raiz, [], extra={"strm_removidos": removidos})
+    return sum(len(r) for r in por_raiz.values())

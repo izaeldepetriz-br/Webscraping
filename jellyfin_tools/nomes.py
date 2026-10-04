@@ -184,6 +184,7 @@ class EpisodioExtraido(NamedTuple):
     temporada: int
     episodio: int
     ano: Optional[int]
+    absoluto: bool = False   # só o número do episódio ("Dragon Ball 153"): numeração contínua
 
 
 # Do mais confiável para o menos confiável. Cada um devolve (temporada, episódio).
@@ -228,7 +229,7 @@ def extrair_episodio(nome_arquivo: str) -> EpisodioExtraido | None:
         m = _PADRAO_SO_EPISODIO.search(base)
         if not m:
             return _episodio_absoluto(base)
-        temporada, episodio = 1, int(m.group(1))
+        return _montar_episodio(base[:m.start()], 1, int(m.group(1)), absoluto=True)
     return _montar_episodio(base[:m.start()], temporada, episodio)
 
 
@@ -251,7 +252,7 @@ def _episodio_absoluto(base: str) -> EpisodioExtraido | None:
     episodio = int(m.group("ep"))
     if episodio == 0 or 1900 <= episodio <= 2099:     # "Filme 2019" é ano, não episódio
         return None
-    return _montar_episodio(m.group("antes"), 1, episodio)
+    return _montar_episodio(m.group("antes"), 1, episodio, absoluto=True)
 
 
 def _separar_palavras_grudadas(texto: str) -> str:
@@ -261,7 +262,7 @@ def _separar_palavras_grudadas(texto: str) -> str:
     return re.sub(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", texto)
 
 
-def _montar_episodio(antes: str, temporada: int, episodio: int) -> EpisodioExtraido | None:
+def _montar_episodio(antes: str, temporada: int, episodio: int, absoluto: bool = False) -> EpisodioExtraido | None:
     if not antes.strip(" ._-[]()"):
         return None                       # "S01E01.mkv": sem o nome da série não dá para organizar
     antes = _separar_palavras_grudadas(antes)
@@ -270,7 +271,7 @@ def _montar_episodio(antes: str, temporada: int, episodio: int) -> EpisodioExtra
     nome = re.sub(r"\s*\b(?:temporada|season|temp)\s*$", "", nome, flags=re.I).strip()
     if not nome:
         return None
-    return EpisodioExtraido(nome, temporada, episodio, ano)
+    return EpisodioExtraido(nome, temporada, episodio, ano, absoluto)
 
 
 def nome_episodio_jellyfin(serie: str, temporada: int, episodio: int, titulo_episodio: str = "") -> str:
@@ -285,3 +286,32 @@ def nome_episodio_jellyfin(serie: str, temporada: int, episodio: int, titulo_epi
 def pasta_temporada(temporada: int) -> str:
     """Jellyfin: 'Season 01' (temporada 0 = especiais = 'Season 00')."""
     return f"Season {temporada:02d}"
+
+
+# ----------------------------------------------------------------- qualidade (para escolher entre cópias)
+_RESOLUCOES = ((r"2160p|4k|uhd", 2160, "2160p"), (r"1080[pi]", 1080, "1080p"), (r"720p", 720, "720p"),
+               (r"576p|480p|sd(?:tv)?", 480, "480p"))
+# (o nome chega com - . _ trocados por espaço: "WEB-DL" vira "web dl")
+_FONTES = ((r"remux", 6, "Remux"), (r"blu ?ray|bdrip|brrip|bdremux", 5, "BluRay"), (r"web ?dl", 4, "WEB-DL"),
+           (r"webrip|web", 3, "WEBRip"), (r"hdtv|tvrip", 2, "HDTV"), (r"dvd(?:rip|scr|iso)?|r\dbr", 1, "DVD"),
+           (r"hd ?cam|cam(?:rip)?|telesync|hd ?ts|ts", -5, "CAM"))
+
+
+@lru_cache(maxsize=65536)
+def qualidade(nome_arquivo: str) -> tuple[int, int, str]:
+    """'Matrix.1999.1080p.BluRay.x264.mkv' -> (1080, 5, '1080p BluRay'). Quanto maior, melhor.
+    Desconhecida -> (0, 0, '')."""
+    texto = " " + re.sub(r"[._\[\]()-]+", " ", Path(nome_arquivo).stem.lower()) + " "
+    resolucao, rotulos = 0, []
+    for padrao, valor, rotulo in _RESOLUCOES:
+        if re.search(rf"(?<![a-z0-9])(?:{padrao})(?![a-z0-9])", texto):
+            resolucao = valor
+            rotulos.append(rotulo)
+            break
+    fonte = 0
+    for padrao, valor, rotulo in _FONTES:
+        if re.search(rf"(?<![a-z0-9])(?:{padrao})(?![a-z0-9])", texto):
+            fonte = valor
+            rotulos.append(rotulo)
+            break
+    return resolucao, fonte, " ".join(rotulos)

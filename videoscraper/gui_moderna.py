@@ -105,6 +105,8 @@ class OpcoesJellyfin:
     filtros_ocultos: tuple = ()      # situações escondidas na tabela (só visual)
     nomes_episodios: bool = True     # séries: 'Dark S01E01 - Segredos.mkv' (nome do episódio pelo TMDB)
     chave_subdl: str = ""            # SubDL: fonte própria ou reserva do OpenSubtitles
+    vigiar: bool = False             # pasta vigiada ligada
+    vigiar_min: float = 5            # de quanto em quanto tempo conferir
 
 
 # Máximo dos campos "Máx. de páginas" e "Máx. de vídeos" (antes 2000 e 1000).
@@ -595,8 +597,9 @@ class JanelaModerna(ctk.CTk):
         self.bt_organizar = self._botao(barra, "Organizar", self.ao_organizar, largura=130)
         self.bt_legendas = self._botao(barra, "Completar biblioteca", self.ao_baixar_legendas, largura=190)
         self.bt_desfazer = self._botao(barra, "Desfazer última", self.ao_desfazer, largura=140)
+        self.bt_conferir_espelhos = self._botao(barra, "Conferir espelhos", self.ao_conferir_espelhos, largura=150)
         self.bt_parar_jf = self._botao(barra, "Parar", self.ao_parar, "perigo", largura=100)
-        for b in (self.bt_previa, self.bt_organizar, self.bt_legendas, self.bt_desfazer):
+        for b in (self.bt_previa, self.bt_organizar, self.bt_legendas, self.bt_desfazer, self.bt_conferir_espelhos):
             b.pack(side="left", padx=(0, 10))
         self.bt_parar_jf.pack(side="right")
 
@@ -661,6 +664,18 @@ class JanelaModerna(ctk.CTk):
                        self.var_jf_apagar_pasta)
         self._rotulo(lateral, "Imagens (poster, backdrop...) e legendas\nlocais vão junto com o filme.",
                      fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(2, 0), **p)
+
+        self._separador(lateral)
+        self._rotulo(lateral, "Automático", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
+        self.var_jf_vigiar = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Vigiar a pasta de origem e organizar\nsozinho o que terminar de baixar",
+                       self.var_jf_vigiar, comando=self.ao_alternar_vigia)
+        self.campo_vigia_min = self._numero(lateral, "Conferir a cada (min):", 5, 1, 240, 1)
+        self.lb_estado_vigia = ctk.CTkLabel(lateral, text="Desligada. Usa as pastas e opções desta aba; o que ainda "
+                                            "está baixando (.part, .!qB) fica para a próxima.",
+                                            font=self.f_rotulo, text_color=Tema.TEXTO_FRACO, anchor="w",
+                                            justify="left", wraplength=250)
+        self.lb_estado_vigia.pack(fill="x", padx=18, pady=(0, 4))
 
         self._separador(lateral)
         self._rotulo(lateral, "Legendas", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
@@ -935,6 +950,7 @@ class JanelaModerna(ctk.CTk):
             discord_webhook=self.var_jf_discord.get().strip(), telegram_token=self.var_jf_telegram_token.get().strip(),
             telegram_chat_id=self.var_jf_telegram_chat.get().strip(),
             apagar_pasta_origem=self.var_jf_apagar_pasta.get(), nomes_episodios=self.var_jf_nomes_ep.get(),
+            vigiar=self.var_jf_vigiar.get(), vigiar_min=self.campo_vigia_min.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
     def idiomas_jf(self) -> str:
@@ -968,6 +984,7 @@ class JanelaModerna(ctk.CTk):
                   "exigir_catalogo": self.var_jf_exigir, "legendas": self.var_jf_legendas,
                   "limpar_lixo": self.var_jf_lixo, "imagens_tmdb": self.var_jf_imagens,
                   "apagar_pasta_origem": self.var_jf_apagar_pasta, "nomes_episodios": self.var_jf_nomes_ep,
+                  "vigiar": self.var_jf_vigiar,
                   "gerar_nfo": self.var_jf_nfo, "atualizar_jellyfin": self.var_jf_atualizar,
                   "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar}
         for chave, var in textos.items():
@@ -978,6 +995,8 @@ class JanelaModerna(ctk.CTk):
                 var.set(bool(dados[chave]))
         if dados.get("idioma"):
             self.definir_idiomas_jf(dados["idioma"])
+        if dados.get("vigiar_min"):
+            self.campo_vigia_min.set(float(dados["vigiar_min"]))
         if "filtros_ocultos" in dados:
             for chave, var in self.vars_filtro_jf.items():
                 var.set(chave not in dados["filtros_ocultos"])
@@ -1055,6 +1074,9 @@ class JanelaModerna(ctk.CTk):
                 self.aplicar_filtro_jf()               # reaparece na posição certa (raro)
         if self._visivel_jf(iid):
             self.tabela_jf.see(iid)
+
+    def definir_estado_vigia(self, texto: str, ligada: bool) -> None:
+        self.lb_estado_vigia.configure(text=texto, text_color=Tema.SUCESSO if ligada else Tema.TEXTO_FRACO)
 
     def definir_estado_legendas(self, texto: str, ok: bool | None) -> None:
         """Linha abaixo de 'Testar chaves das legendas' (uma linha por fonte)."""
@@ -1225,7 +1247,8 @@ class JanelaModerna(ctk.CTk):
         estado = "disabled" if ocupado else "normal"
         for b in (self.bt_buscar, self.bt_baixar_sel, self.bt_baixar_todos, self.bt_login,
                   self.bt_previa, self.bt_legendas, self.bt_desfazer, self.bt_testar_jellyfin,
-                  self.bt_testar_avisos, self.bt_testar_tmdb, self.bt_espelhar, self.bt_testar_legendas):
+                  self.bt_testar_avisos, self.bt_testar_tmdb, self.bt_espelhar, self.bt_testar_legendas,
+                  self.bt_conferir_espelhos):
             b.configure(state=estado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
         for parar in (self.bt_parar, self.bt_parar_jf):
@@ -1350,6 +1373,12 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_testar_legendas(self) -> None:
+        pass
+
+    def ao_conferir_espelhos(self) -> None:
+        pass
+
+    def ao_alternar_vigia(self) -> None:
         pass
 
     def ao_testar_jellyfin(self) -> None:

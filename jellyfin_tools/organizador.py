@@ -30,7 +30,7 @@ from pathlib import Path
 from .catalogo import Catalogo, ErroCatalogo, Filme
 from .extras import (ARTES, LIMITE_TRAILER_MB, _arquivos, eh_propaganda_pequena, eh_trailer, imagem_do_video, limpar_cache,
                      lixo_da_pasta, marcar_repetidos, planejar_extras, tipo_de_arte)
-from .nomes import (eh_video, extrair_episodio, extrair_titulo_e_ano, formatar_titulo, marca_de_episodio,
+from .nomes import (eh_video, eh_video_da_biblioteca, extrair_episodio, qualidade, extrair_titulo_e_ano, formatar_titulo, marca_de_episodio,
                     nome_episodio_jellyfin, nome_jellyfin, normalizar, pasta_temporada)
 
 PASTA_LOGS = ".organizador"
@@ -135,7 +135,10 @@ def _finalizar(video: Path, pasta: Path, nome_arquivo: str, detalhe: str, filme,
     extras = planejar_extras(video, nome_arquivo, pasta, raiz, "series" if episodio else "filmes", limite_mb)
     mov = Movimento(video, destino, "simulado", detalhe, filme, extras.mover, episodio)
     if destino.exists() and not _mesmo_arquivo(destino, video):
-        mov.status, mov.detalhe = "conflito", "já existe um arquivo com esse nome no destino"
+        mov.status, mov.detalhe = "conflito", (f"já existe na biblioteca ({_tamanho_legivel(destino)}); "
+                                               f"este tem {_tamanho_legivel(video)}"
+                                               + (f", {qualidade(video.name)[2]}" if qualidade(video.name)[2] else "")
+                                               + ". Nada é sobrescrito: compare e apague o pior")
     return mov
 
 
@@ -188,17 +191,38 @@ def _planejar_episodio(video: Path, pasta_series: Path, catalogo: Catalogo | Non
     else:
         nome, ano = formatar_titulo(ep.serie), ep.ano
         detalhe = detalhe or "série não confirmada no catálogo: confira o nome"
+    temporada, episodio = _temporada_e_episodio(catalogo, ep, serie)
+    if (temporada, episodio) != (ep.temporada, ep.episodio):
+        detalhe = "; ".join(t for t in (detalhe, f"numeração contínua {ep.episodio} = "
+                                                f"temporada {temporada}, episódio {episodio} (TMDB)") if t)
     pasta_serie = pasta_series / nome_jellyfin(nome, ano, serie.tmdb_id if serie else None, incluir_tmdbid)
-    pasta = pasta_serie / pasta_temporada(ep.temporada)
+    pasta = pasta_serie / pasta_temporada(temporada)
     titulo_ep = ""
     if nomes_episodios and serie is not None and catalogo is not None:
-        titulo_ep = getattr(catalogo, "nome_episodio", lambda *a: None)(serie, ep.temporada, ep.episodio) or ""
+        titulo_ep = getattr(catalogo, "nome_episodio", lambda *a: None)(serie, temporada, episodio) or ""
     if not titulo_ep:                    # já tem nome ('Dark S01E01 - Segredos'): não tira, mesmo sem TMDB
-        so_numero = nome_episodio_jellyfin(nome, ep.temporada, ep.episodio)
+        so_numero = nome_episodio_jellyfin(nome, temporada, episodio)
         if video.stem.lower().startswith(so_numero.lower() + " - "):
             titulo_ep = video.stem[len(so_numero) + 3:]
-    return _finalizar(video, pasta, nome_episodio_jellyfin(nome, ep.temporada, ep.episodio, titulo_ep), detalhe, serie,
-                      (ep.temporada, ep.episodio), raiz, limite_mb)
+    return _finalizar(video, pasta, nome_episodio_jellyfin(nome, temporada, episodio, titulo_ep), detalhe, serie,
+                      (temporada, episodio), raiz, limite_mb)
+
+
+def _temporada_e_episodio(catalogo, ep, serie) -> tuple[int, int]:
+    """Anime com numeração contínua ('Dragon Ball 153'): se o TMDB divide a série em temporadas,
+    153 vira (temporada, episódio) pela quantidade de episódios de cada uma. Sem o TMDB, ou se o
+    número passa do que ele conhece, fica como veio (temporada 1)."""
+    if not ep.absoluto or serie is None or catalogo is None:
+        return ep.temporada, ep.episodio
+    lista = getattr(catalogo, "temporadas", lambda s: None)(serie)
+    restante = ep.episodio
+    for numero, quantidade in lista or []:
+        if quantidade <= 0:
+            continue
+        if restante <= quantidade:
+            return numero, restante
+        restante -= quantidade
+    return ep.temporada, ep.episodio
 
 
 def _consultas(videos: list[Path], modo: str) -> list[tuple[str, int | None, str]]:
@@ -227,7 +251,7 @@ def _temporadas(videos: list[Path], catalogo: Catalogo) -> list[tuple[Filme, int
         if ep:
             serie, _ = _achar_serie(catalogo, ep, v)                          # já está no cache
             if serie:
-                pedidos.append((serie, ep.temporada))
+                pedidos.append((serie, _temporada_e_episodio(catalogo, ep, serie)[0]))
     return list(dict.fromkeys(pedidos))
 
 
@@ -313,7 +337,7 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
                     limite_trailer_mb: float = LIMITE_TRAILER_MB,
                     ao_planejar=None, ao_progresso=None,
                     apagar_pasta_origem: bool = False, ao_analisar=None,
-                    nomes_episodios: bool = False) -> list[Movimento]:
+                    nomes_episodios: bool = False, filtro=None) -> list[Movimento]:
     """Organiza todos os vídeos de `origem` na biblioteca `pasta_filmes` (no modo "series",
     a pasta de séries do Jellyfin). Devolve o que fez (ou faria).
     limpar_lixo: ao aplicar, apaga .url/.txt de propaganda e trailers pequenos (< limite_trailer_mb).
@@ -323,7 +347,9 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
     seguro (ver _planejar_pastas_a_apagar). Irreversível: a pré-visualização mostra quais.
     ao_analisar(fracao, texto): andamento da ANÁLISE (consultas ao TMDB + planejamento), 0.0 a 1.0.
     nomes_episodios: no modo séries, acrescenta o nome do episódio (TMDB) depois do número;
-    episódios já organizados só com o número também são renomeados."""
+    episódios já organizados só com o número também são renomeados.
+    filtro(video) -> bool: só os vídeos aprovados entram (ex.: vigia.filtro_prontos(), só o que
+    terminou de baixar); os outros ficam onde estão, sem aparecer no resultado."""
     if modo not in MODOS:
         raise ValueError(f"modo deve ser um de {MODOS}")
     limpar_cache()                       # os arquivos podem ter mudado desde a última execução
@@ -341,7 +367,7 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
     # Pastas de torrent que uma organização ANTERIOR já esvaziou (só sobrou propaganda/imagens):
     sobras = _planejar_sobras(origem, pasta_filmes, videos, limite_trailer_mb) if apagar_pasta_origem else []
     trailers |= {v for s in sobras for v in s.apagar or []}
-    analisar = [v for v in videos if v not in trailers]
+    analisar = [v for v in videos if v not in trailers and (filtro is None or filtro(v))]
     avisar_analise = ao_analisar or (lambda *a: None)
     # Com o TMDB, as consultas pela internet são quase todo o tempo da análise: são feitas antes,
     # em paralelo, e ocupam 90% da barra. Sem TMDB, a análise é só local (rápida).
@@ -647,29 +673,86 @@ def _planejar_lixo(movimentos: list[Movimento], origem: Path, modo: str, limite_
         mov.apagar = [a for a in lixo_da_pasta(pasta, origem, modo, limite_mb) if a not in vao_junto]
 
 
+def _nota_de_qualidade(mov: Movimento) -> tuple:
+    """Para escolher entre cópias: resolução, depois origem (BluRay > WEB > DVD > CAM), depois tamanho."""
+    resolucao, fonte, _ = qualidade(mov.origem.name)
+    try:
+        tamanho = mov.origem.stat().st_size
+    except OSError:
+        tamanho = 0
+    return resolucao, fonte, tamanho
+
+
+def _rotulo(mov: Movimento) -> str:
+    return qualidade(mov.origem.name)[2] or _tamanho_legivel(mov.origem)
+
+
+def _tamanho_legivel(arquivo: Path) -> str:
+    try:
+        tamanho = arquivo.stat().st_size
+    except OSError:
+        return "tamanho desconhecido"
+    return f"{tamanho / 1024 ** 3:.1f} GB" if tamanho >= 1024 ** 3 else f"{tamanho / 1024 ** 2:.0f} MB"
+
+
 def _marcar_destinos_repetidos(movimentos: list[Movimento]) -> None:
-    """Dois arquivos que virariam o mesmo nome (ex.: 2 cópias do Matrix): só o 1º vai."""
-    vistos = set()
+    """Duas cópias que virariam o mesmo nome (ex.: Matrix 720p e Matrix 1080p): vai a de MELHOR
+    qualidade; as outras ficam como 'conflito', dizendo qual foi no lugar delas."""
+    grupos: dict[str, list[Movimento]] = {}
     for mov in movimentos:
-        if mov.status != "simulado":
+        if mov.status == "simulado":
+            grupos.setdefault(str(mov.destino).lower(), []).append(mov)
+    for copias in grupos.values():
+        if len(copias) < 2:
             continue
-        chave = str(mov.destino).lower()
-        if chave in vistos:
-            mov.status, mov.detalhe = "conflito", "outro arquivo já vai para esse mesmo nome"
-        vistos.add(chave)
+        melhor = max(copias, key=_nota_de_qualidade)                 # empate: a primeira da lista
+        for mov in copias:
+            if mov is not melhor:
+                mov.status = "conflito"
+                mov.detalhe = (f"cópia repetida ({_rotulo(mov)}); vai a melhor ({_rotulo(melhor)}): "
+                               f"{melhor.origem.name}")
 
 
 def _gravar_log(pasta_filmes: Path, feitos: list[tuple[Path, Path]], apagados: list[Path] = (),
-                pastas_apagadas: list[Path] = ()) -> Path:
+                pastas_apagadas: list[Path] = (), extra: dict | None = None) -> Path:
+    """extra: chaves do espelho (.strm): strm_criados, pastas_criadas, strm_removidos."""
     pasta = pasta_filmes / PASTA_LOGS
     pasta.mkdir(parents=True, exist_ok=True)
     log = pasta / f"log-{datetime.now():%Y%m%d-%H%M%S-%f}.json"
     log.write_text(json.dumps({"raiz": str(pasta_filmes),
                                "itens": [{"de": str(a), "para": str(b)} for a, b in feitos],
                                "apagados": [str(a) for a in apagados],
-                               "pastas_apagadas": [str(p) for p in pastas_apagadas]},
+                               "pastas_apagadas": [str(p) for p in pastas_apagadas], **(extra or {})},
                               ensure_ascii=False, indent=2), encoding="utf-8")
     return log
+
+
+EXTRAS_DO_STRM = {".srt", ".ass", ".ssa", ".vtt", ".sub", ".nfo", ".jpg", ".jpeg", ".png", ".webp"}
+
+
+def _desfazer_espelho(dados: dict, mensagens: list[str]) -> None:
+    """Espelho (.strm): apaga os criados (e a legenda/miniatura/.nfo de mesmo nome), as pastas que o
+    espelho criou (se não tiverem vídeo dentro) e recria os .strm que o "Conferir espelhos" removeu."""
+    for arquivo in map(Path, reversed(dados.get("strm_criados", []))):
+        if arquivo.exists():
+            arquivo.unlink()
+            mensagens.append(f"espelho removido: {arquivo.name}")
+        if arquivo.parent.is_dir():
+            for extra in arquivo.parent.iterdir():
+                if (extra.is_file() and extra.suffix.lower() in EXTRAS_DO_STRM
+                        and extra.name.startswith((arquivo.stem + ".", arquivo.stem + "-"))):
+                    extra.unlink()
+    for pasta in map(Path, dados.get("pastas_criadas", [])):
+        if pasta.is_dir() and not any(eh_video_da_biblioteca(a) for a in pasta.rglob("*") if a.is_file()):
+            shutil.rmtree(pasta, ignore_errors=True)
+            mensagens.append(f"pasta do espelho removida: {pasta.name}")
+    for item in dados.get("strm_removidos", []):
+        arquivo = Path(item["arquivo"])
+        if arquivo.exists():
+            continue
+        arquivo.parent.mkdir(parents=True, exist_ok=True)
+        arquivo.write_text(item["url"] + "\n", encoding="utf-8")
+        mensagens.append(f"voltou: {arquivo}")
 
 
 def ultimo_log(pasta_filmes: str | Path) -> Path | None:
@@ -701,6 +784,7 @@ def desfazer(log: str | Path) -> list[str]:
             _remover_pastas_vazias(para.parent, raiz, itens, mensagens)
         except OSError as erro:
             mensagens.append(f"erro em {para}: {erro}")
+    _desfazer_espelho(dados, mensagens)
     if dados.get("pastas_apagadas"):
         mensagens.append(f"{len(dados['pastas_apagadas'])} pasta(s) de origem foram apagadas: o que sobrou "
                          "nelas (amostras, prints...) não volta; os filmes voltaram para pastas recriadas")

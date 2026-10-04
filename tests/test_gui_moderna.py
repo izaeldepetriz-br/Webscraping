@@ -945,3 +945,57 @@ def test_botao_testar_chaves_das_legendas(app, api_falsa, monkeypatch):
     app._mostrar_campos_jf()
     app.update()
     assert not app.bt_testar_legendas.winfo_ismapped()                    # o site demo não tem chave
+
+
+def test_conferir_espelhos_e_desfazer_pela_janela(app, tmp_path, api_falsa, monkeypatch):
+    from jellyfin_tools import espelho
+    api_falsa.rotas["/ok.mp4"] = lambda q: (206, b"x", {"Content-Type": "video/mp4", "Accept-Ranges": "bytes"})
+    api_falsa.rotas["/sumiu.mp4"] = lambda q: (404, b"", {})
+    filmes = tmp_path / "Filmes"
+    for nome, url in (("Bom (2000)", "/ok.mp4"), ("Quebrado (2001)", "/sumiu.mp4")):
+        (filmes / nome).mkdir(parents=True)
+        (filmes / nome / f"{nome}.strm").write_text(api_falsa.base + url + "\n", encoding="utf-8")
+    original = espelho.verificar_links
+    monkeypatch.setattr(espelho, "verificar_links", lambda urls, **k: original(urls, **{**k, "respeitar_robots": False}))
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_destino.set(str(filmes))
+    perguntas = []
+    app.perguntar = lambda t, m: (perguntas.append(t), True)[1]
+    app.bt_conferir_espelhos.invoke()
+    esperar(app)
+    esperar(app)                                                         # a remoção oferecida no fim
+    assert [l[1].split()[-1] for l in _linhas_jf(app)] == ["funcionando", "quebrado"]
+    assert "Espelhos quebrados" in perguntas
+    assert not (filmes / "Quebrado (2001)" / "Quebrado (2001).strm").exists()
+    assert (filmes / "Bom (2000)" / "Bom (2000).strm").exists()
+    app.bt_desfazer.invoke()                                              # volta o removido
+    esperar(app)
+    assert (filmes / "Quebrado (2001)" / "Quebrado (2001).strm").exists()
+
+
+def test_vigia_organiza_sozinho_o_que_terminou(app, tmp_path):
+    origem, filmes = tmp_path / "Downloads", tmp_path / "Filmes"
+    origem.mkdir()
+    for nome, idade in (("Matrix.1999.mkv", 3600), ("Cidade.de.Deus.2002.mkv", 5)):
+        (origem / nome).write_bytes(b"v")
+        os.utime(origem / nome, (time.time() - idade, time.time() - idade))
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_origem.set(str(origem))
+    app.var_jf_destino.set(str(filmes))
+    app.var_jf_legendas.set(False)
+    caixas_antes = len(app.caixas)
+    app.var_jf_vigiar.set(True)
+    app.ao_alternar_vigia()
+    assert app._vigia_agendada and app.lb_estado_vigia.cget("text").startswith("Ligada: próxima conferência")
+    fim = time.time() + 30
+    while not (filmes / "Matrix (1999)" / "Matrix (1999).mkv").exists() and time.time() < fim:
+        app.update()
+        time.sleep(0.05)
+    esperar(app)
+    assert (filmes / "Matrix (1999)" / "Matrix (1999).mkv").exists()
+    assert (origem / "Cidade.de.Deus.2002.mkv").exists()                  # ainda baixando: fica
+    assert len(app.caixas) == caixas_antes                               # automático: nenhuma caixa
+    assert "Organizando (pasta vigiada)" in app._menus_registro[1].cget("values")[0]
+    app.var_jf_vigiar.set(False)
+    app.ao_alternar_vigia()
+    assert app._vigia_agendada is None and app.lb_estado_vigia.cget("text") == "Desligada."

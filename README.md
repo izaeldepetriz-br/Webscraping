@@ -4,6 +4,16 @@ Programa em Python que encontra links de vídeo em páginas web e, se você quis
 Funciona em sites simples (só HTML) e também em sites que **montam a página com JavaScript**,
 que **exigem login** ou que mostram **verificações** que você resolve na janela do navegador.
 
+## Programa pronto para Windows (.exe, sem instalar o Python)
+
+- **Baixar pronto:** no GitHub, aba **Actions** → "Gerar o .exe (Windows)" → a execução mais recente
+  → **Artifacts** → `videoscraper-windows`. Descompacte e abra `videoscraper\videoscraper.exe`.
+  (Ao criar uma tag `v1.0`, o `.zip` também aparece em **Releases**.)
+- **Gerar no seu PC:** dê duplo clique em `gerar_exe.bat` (precisa do Python só para gerar).
+  O programa fica em `dist\videoscraper\` — para levar para outro computador, copie a pasta inteira.
+- O modo navegador baixa o Chromium sozinho na primeira vez (~150 MB), também no `.exe`.
+- Autoteste do pacote: `videoscraper.exe --verificar` (o robô do GitHub roda isso a cada versão).
+
 ## Rodar no seu computador
 
 1. Instale o **Python 3.9+** em <https://www.python.org/downloads/>.
@@ -137,6 +147,25 @@ Outras opções da aba Jellyfin:
   como "é episódio de série (S05E19): use o modo Séries" (e não é consultado no TMDB como filme).
   Se a maioria da prévia for episódio, a janela pergunta se deve trocar para **Séries** e
   pré-visualizar de novo. ("Star.Wars.Episode.4.1977" continua sendo filme.)
+- **Cópias de qualidade diferente:** duas cópias do mesmo filme/episódio (ex.: 720p e 1080p) → vai a
+  **melhor**: resolução (2160p > 1080p > 720p), depois a origem (Remux > BluRay > WEB-DL > WEBRip >
+  HDTV > DVD; CAM/TS por último) e, no empate, o arquivo maior. As outras ficam como "conflito"
+  dizendo qual foi no lugar. Se o filme já está na biblioteca, nada é sobrescrito: a linha mostra o
+  tamanho das duas para você decidir.
+- **Anime com numeração contínua** (`Dragon Ball 153`): com o TMDB, o número vira a temporada e o
+  episódio certos (ex.: S04E70), pela quantidade de episódios de cada temporada no TMDB (um pedido
+  por série). Sem o TMDB, ou se o número passa do que ele conhece, fica na temporada 1.
+- **Pasta vigiada** (seção "Automático"): a cada N minutos confere a pasta de origem e organiza
+  **sozinho, sem perguntar,** o que terminou de baixar (arquivo parado há 2 min e sem `.part`,
+  `.!qB`, `.crdownload` na pasta), com as mesmas opções da aba (legendas, lixo, scan, avisos no
+  Discord/Telegram). Fica ligada entre uma vez e outra que abrir o programa. No qBittorrent, marque
+  "Acrescentar a extensão .!qB a arquivos incompletos". No script: `--vigiar`
+  (`VIGIAR_A_CADA_MIN`, `PRONTO_APOS_MIN`).
+- **Conferir espelhos:** confere o link de cada `.strm` das bibliotecas (o site ainda tem o vídeo?),
+  mostra "funcionando"/"quebrado" na tabela e oferece remover os quebrados.
+- **Desfazer o espelho:** "Desfazer última" também vale para o espelho: apaga os `.strm` criados (com a
+  legenda/miniatura de mesmo nome e as pastas que o espelho criou, se não tiverem vídeo) e recoloca
+  os `.strm` que o "Conferir espelhos" removeu.
 - **Porcentagem na pré-visualização:** o rodapé mostra "Pré-visualizando... 45% · Consultando o
   TMDB: 75 de 166" e a barra acompanha.
 

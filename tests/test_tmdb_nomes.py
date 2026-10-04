@@ -209,3 +209,28 @@ def test_episodios_ja_organizados_sao_renomeados_e_titulo_nao_some(api_falsa, tm
     local = CatalogoLocal.padrao()
     outra = organizar_pasta(series, series, CatalogoEmCadeia(fora, local), modo="series", nomes_episodios=True)
     assert {m.status for m in outra} == {"organizado"}
+
+
+# ------------------------------------------------------------------ anime: numeração contínua -> temporadas do TMDB
+def test_dragon_ball_153_vira_temporada_e_episodio_do_tmdb(api_falsa, tmp_path):
+    api_falsa.rotas["/3/search/tv"] = lambda q: (200, {"results": [
+        {"id": 12971, "name": "Dragon Ball", "original_name": "ドラゴンボール", "first_air_date": "1986-02-26"}]})
+    api_falsa.rotas["/3/tv/12971"] = lambda q: (200, {"seasons": [
+        {"season_number": 0, "episode_count": 5},                          # especiais: não contam
+        {"season_number": 1, "episode_count": 28}, {"season_number": 2, "episode_count": 40},
+        {"season_number": 3, "episode_count": 15}, {"season_number": 4, "episode_count": 70}]})          # 28+40+15+70 = 153
+    origem = tmp_path / "Dragon Ball"
+    origem.mkdir()
+    for n in (1, 28, 29, 153):
+        (origem / f"Dragon Ball {n:03d} - 1280x960.mkv").write_bytes(b"v")
+    (origem / "Dragon Ball 999 - 1280x960.mkv").write_bytes(b"v")          # além do que o TMDB conhece
+    (origem / "Dragon.Ball.S02E05.mkv").write_bytes(b"v")                   # já tem temporada: não mexe
+    movs = organizar_pasta(origem, tmp_path / "Series", _tmdb(api_falsa), modo="series")
+    novos = {m.origem.name: m.destino.name for m in movs}
+    assert novos == {"Dragon Ball 001 - 1280x960.mkv": "Dragon Ball S01E01.mkv",
+                     "Dragon Ball 028 - 1280x960.mkv": "Dragon Ball S01E28.mkv",
+                     "Dragon Ball 029 - 1280x960.mkv": "Dragon Ball S02E01.mkv",
+                     "Dragon Ball 153 - 1280x960.mkv": "Dragon Ball S04E70.mkv",
+                     "Dragon Ball 999 - 1280x960.mkv": "Dragon Ball S01E999.mkv",
+                     "Dragon.Ball.S02E05.mkv": "Dragon Ball S02E05.mkv"}
+    assert len(_pedidos(api_falsa, "/3/tv/12971")) == 1                    # 1 pedido por série

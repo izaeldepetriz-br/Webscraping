@@ -16,6 +16,7 @@ FASE 2 (novas melhorias):
 Uso:
   python organizar_jellyfin.py                         # SIMULAÇÃO: mostra o que faria
   python organizar_jellyfin.py --aplicar               # faz de verdade
+  python organizar_jellyfin.py --vigiar               # fica de olho: organiza o que terminar de baixar
   python organizar_jellyfin.py --completar-biblioteca  # só baixa o que falta (pôster, .nfo, legenda)
                                                        # nos filmes que JÁ estão organizados
 """
@@ -25,6 +26,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 # =============================================================================================
@@ -64,6 +66,10 @@ TELEGRAM_CHAT_ID = ""
 NOTIFICAR_CADA_FILME_ATE = 10                     # acima disso, manda um resumo só (evita spam)
 
 ARQUIVO_LOG = "jellyfin_organizer.log"
+
+# Pasta vigiada (--vigiar): confere a PASTA_ENTRADA de tempos em tempos e organiza o que terminou de baixar
+VIGIAR_A_CADA_MIN = 5                             # de quanto em quanto tempo conferir
+PRONTO_APOS_MIN = 2                               # arquivo parado há esse tempo = download terminado
 TRABALHOS_SIMULTANEOS = 4                         # filmes processados ao mesmo tempo (TMDB/legendas)
 # =============================================================================================
 
@@ -75,6 +81,7 @@ from jellyfin_tools.pos_processamento import (ConfigPos, itens_da_biblioteca, it
                                               pos_processar)
 from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao  # noqa: E402
 from jellyfin_tools.site_demo import iniciar_site_demo  # noqa: E402
+from jellyfin_tools.vigia import filtro_prontos  # noqa: E402
 
 NIVEL_POR_STATUS = {"movido": "info", "simulado": "info", "organizado": "info", "ignorado": "info",
                     "conflito": "warning", "nao_identificado": "warning", "erro": "error"}
@@ -147,7 +154,7 @@ def pos_processar_lote(itens, log, notificar: bool = True) -> list:
 
 
 # ----------------------------------------------------------------------------- fluxo principal
-def organizar(aplicar: bool, log) -> int:
+def organizar(aplicar: bool, log, filtro=None) -> int:
     entrada, filmes = Path(cfg("PASTA_ENTRADA")).expanduser(), Path(cfg("PASTA_FILMES")).expanduser()
     if not entrada.is_dir():
         log.critical("PASTA_ENTRADA não existe: %s", entrada)
@@ -158,7 +165,7 @@ def organizar(aplicar: bool, log) -> int:
         movimentos = organizar_pasta(entrada, filmes, montar_catalogo(), aplicar=aplicar, modo=cfg("MODO"),
                                      limpar_lixo=cfg("APAGAR_LIXO"), limite_trailer_mb=cfg("LIMITE_TRAILER_MB"),
                                      apagar_pasta_origem=cfg("APAGAR_PASTA_ORIGEM"),
-                                     nomes_episodios=cfg("NOMES_EPISODIOS"))
+                                     nomes_episodios=cfg("NOMES_EPISODIOS"), filtro=filtro)
     except Exception as erro:
         log.critical("Falha ao organizar a pasta: %s", erro, exc_info=True)
         return 1
@@ -178,6 +185,29 @@ def organizar(aplicar: bool, log) -> int:
     erros = sum(m.status == "erro" for m in movimentos)
     log.info("=== Fim: %d movido(s), %d com erro, %d processado(s) ===", len(movidos), erros, len(novos))
     return 1 if erros else 0
+
+
+def vigiar(log, ciclos: int | None = None, dormir=time.sleep) -> int:
+    """Confere a PASTA_ENTRADA a cada VIGIAR_A_CADA_MIN e organiza (de verdade) só o que terminou
+    de baixar. Ctrl+C para parar. `ciclos`: quantas voltas (None = para sempre; usado nos testes)."""
+    entrada, filmes = Path(cfg("PASTA_ENTRADA")).expanduser(), Path(cfg("PASTA_FILMES")).expanduser()
+    log.info("=== Vigiando %s a cada %s min (Ctrl+C para parar) ===", entrada, cfg("VIGIAR_A_CADA_MIN"))
+    volta = 0
+    while ciclos is None or volta < ciclos:
+        volta += 1
+        filtro = filtro_prontos(cfg("PRONTO_APOS_MIN") * 60)
+        try:                                        # simulação rápida: tem algo novo e pronto?
+            previa = organizar_pasta(entrada, filmes, CatalogoLocal.padrao(), modo=cfg("MODO"), filtro=filtro)
+            novos = [m for m in previa if m.status == "simulado"]
+        except Exception as erro:
+            log.error("Vigia: não consegui olhar a pasta: %s", erro)
+            novos = []
+        if novos:
+            log.info("Vigia: %d arquivo(s) terminaram de baixar; organizando", len(novos))
+            organizar(True, log, filtro=filtro_prontos(cfg("PRONTO_APOS_MIN") * 60))
+        if ciclos is None or volta < ciclos:
+            dormir(cfg("VIGIAR_A_CADA_MIN") * 60)
+    return 0
 
 
 def completar_biblioteca(log) -> int:
@@ -201,6 +231,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--aplicar", action="store_true", help="mover de verdade (sem isso, só simula)")
     ap.add_argument("--completar-biblioteca", action="store_true",
                     help="não move nada: completa legenda/pôster/.nfo dos filmes já organizados")
+    ap.add_argument("--vigiar", action="store_true",
+                    help="fica conferindo a PASTA_ENTRADA e organiza sozinho o que terminar de baixar")
     ap.add_argument("--entrada", help="sobrescreve PASTA_ENTRADA")
     ap.add_argument("--filmes", help="sobrescreve PASTA_FILMES")
     args = ap.parse_args(argv)
@@ -210,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["PASTA_FILMES"] = args.filmes
 
     log = configurar_log(cfg("ARQUIVO_LOG"))
-    acao = "Completar biblioteca" if args.completar_biblioteca else (
+    acao = "Completar biblioteca" if args.completar_biblioteca else "Vigiar" if args.vigiar else (
         "Organizar" if args.aplicar or cfg("APLICAR") else "Simulacao")
     handler, arquivo_acao = None, None
     try:                                            # além do log geral, um arquivo só desta execução
@@ -222,6 +254,8 @@ def main(argv: list[str] | None = None) -> int:
             log.info("Log desta execução: %s", arquivo_acao)
         if args.completar_biblioteca:
             return completar_biblioteca(log)
+        if args.vigiar:
+            return vigiar(log)
         return organizar(args.aplicar or cfg("APLICAR"), log)
     except KeyboardInterrupt:
         log.warning("Interrompido pelo usuário")

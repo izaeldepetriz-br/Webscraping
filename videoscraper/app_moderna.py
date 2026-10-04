@@ -19,6 +19,7 @@ import threading
 import traceback
 import webbrowser
 from dataclasses import asdict
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -30,13 +31,14 @@ from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, Confi
 from jellyfin_tools.legendas import normalizar_idiomas
 from jellyfin_tools.metadados import ClienteTMDB
 from jellyfin_tools.notificacoes import Notificador
-from jellyfin_tools.espelho import (aplicar_espelho, classificar, licenca_aberta, nome_do_link, planejar_espelho,
-                                    verificar_links)
+from jellyfin_tools.espelho import (aplicar_espelho, classificar, conferir_espelhos, licenca_aberta, nome_do_link,
+                                    planejar_espelho, remover_espelhos, verificar_links)
 from jellyfin_tools.organizador import DETALHE_EPISODIO, problema_no_caminho, sugestao_de_caminho, ultimo_log
 from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, itens_de_series, pos_processar
 from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, testar_conexao
 from jellyfin_tools.site_demo import iniciar_site_demo
+from jellyfin_tools.vigia import filtro_prontos
 
 from . import config
 from .cli import salvar
@@ -105,6 +107,9 @@ class AppModerna(JanelaModerna):
         self._previa = None                     # "assinatura" das opções da última pré-visualização
         self._tmdb_ativo = False                # o TMDB estava marcado na última análise?
         self._sugestao_series = None            # prévia em Filmes com episódios: (episódios, total)
+        self._remocao_pendente = None           # "Conferir espelhos": .strm quebrados a oferecer remoção
+        self._vigia_agendada = None             # pasta vigiada: id do próximo after()
+        self._vigia_conferindo = False
         self._movimentos_previa: list = []      # o que a última pré-visualização mostrou
         self._carregar_config()
         self._stdout, self._stderr = sys.stdout, sys.stderr
@@ -384,6 +389,15 @@ class AppModerna(JanelaModerna):
                 self.atualizar_situacao(str(i), texto, cor)
         elif tipo == "sugerir_series":
             self._sugestao_series = dado
+        elif tipo == "vigia_resultado":
+            self._vigia_organizar(*dado)
+        elif tipo == "sugerir_remocao":
+            self._remocao_pendente = dado
+        elif tipo == "jf_espelhos":                    # resultado do "Conferir espelhos"
+            self.limpar_tabela_jf()
+            for i, (nome, ok, texto) in enumerate(dado):
+                self.adicionar_linha_jf(str(i), i + 1, "funcionando" if ok else "quebrado", "ok" if ok else "erro",
+                                        nome, texto, categoria="organizado" if ok else "erro")
         elif tipo == "fim":
             self.trabalhando = False
             encerrar_log_da_acao(self._log_acao)       # o arquivo desta ação está completo
@@ -394,6 +408,9 @@ class AppModerna(JanelaModerna):
             if self._sugestao_series:                  # só agora: a janela já está livre para outra prévia
                 sugestao, self._sugestao_series = self._sugestao_series, None
                 self.after(50, lambda: self._oferecer_series(*sugestao))
+            if self._remocao_pendente:
+                quebrados, self._remocao_pendente = self._remocao_pendente, None
+                self.after(50, lambda: self._oferecer_remocao(quebrados))
 
 
     # ================================================================== auxiliares
@@ -561,6 +578,114 @@ class AppModerna(JanelaModerna):
 
     OPCOES_ESPELHO = ("Só domínio público / CC", "Todos os identificados")
 
+    # ================================================================== pasta vigiada
+    def ao_alternar_vigia(self) -> None:
+        """Liga/desliga a vigia: a cada N minutos confere a pasta de origem e organiza (sem perguntar)
+        só o que terminou de baixar. A janela fica livre entre uma conferência e outra."""
+        if self._vigia_agendada:
+            self.after_cancel(self._vigia_agendada)
+            self._vigia_agendada = None
+        if not self.var_jf_vigiar.get():
+            self.definir_estado_vigia("Desligada.", False)
+            self._log.info("Vigia desligada")
+            return
+        self._log.info("Vigia ligada: conferindo %s a cada %s min", self.var_jf_origem.get(),
+                       int(self.campo_vigia_min.get()))
+        self._ciclo_vigia()
+
+    def _agendar_vigia(self) -> None:
+        minutos = self.campo_vigia_min.get()
+        self._vigia_agendada = self.after(int(minutos * 60_000), self._ciclo_vigia)
+        proxima = datetime.now() + timedelta(minutes=minutos)
+        self.definir_estado_vigia(f"Ligada: próxima conferência às {proxima:%H:%M}.", True)
+
+    def _ciclo_vigia(self) -> None:
+        self._agendar_vigia()                        # a próxima já fica marcada, aconteça o que acontecer
+        if self.trabalhando or self._vigia_conferindo:
+            return                                   # outra tarefa rodando: confere na próxima
+        o = self.obter_opcoes_jellyfin()
+        problema = (not o.origem or not Path(o.origem).is_dir() or not o.destino
+                    or problema_no_caminho(o.origem) or problema_no_caminho(o.destino))
+        if problema:
+            self._log.warning("Vigia: confira as pastas de origem e da biblioteca na aba Jellyfin")
+            return
+        self._vigia_conferindo = True
+
+        def conferir():                              # na thread: a janela não trava
+            try:
+                previa = organizar_pasta(o.origem, o.destino, CatalogoLocal.padrao(), modo=o.modo,
+                                         filtro=filtro_prontos())
+                novos = sum(m.status == "simulado" for m in previa)
+            except Exception as erro:
+                self._log.error("Vigia: não consegui olhar a pasta: %s", erro)
+                novos = 0
+            self.fila.put(("vigia_resultado", (novos, o)))
+
+        threading.Thread(target=conferir, daemon=True).start()
+
+    def _vigia_organizar(self, novos: int, o) -> None:
+        self._vigia_conferindo = False
+        if not novos or self.trabalhando:
+            return
+        if o.legendas and self._problema_legendas(o):
+            o.legendas = False                       # sem caixa de mensagem: segue sem legendas
+            self._log.warning("Vigia: legendas desligadas nesta rodada (%s)", self._problema_legendas(o))
+        self._log.info("Vigia: %d arquivo(s) terminaram de baixar; organizando", novos)
+        self._tmdb_ativo = o.tmdb
+        self._previa = None
+        self.liberar_organizar(False)
+        self._rodar("Organizando (pasta vigiada)...", self._tarefa_organizar(o, filtro=filtro_prontos(),
+                                                                             automatico=True))
+
+    def ao_conferir_espelhos(self) -> None:
+        """Confere o link de cada .strm das bibliotecas de Filmes e Séries (o site ainda tem o vídeo?)."""
+        self._destinos[self._modo_atual] = self.var_jf_destino.get()
+        pastas = [p for p in dict.fromkeys((self._destinos.get("Filmes"), self._destinos.get("Séries")))
+                  if p and Path(p).is_dir()]
+        if not pastas:
+            self.mostrar_mensagem("Conferir espelhos", "Escolha a biblioteca de Filmes e/ou de Séries.", "aviso")
+            return
+        self._previa = None
+        self.liberar_organizar(False)
+
+        def tarefa():
+            resultado = conferir_espelhos(*pastas, ao_progresso=lambda f, t: self._avisar_analise(
+                f / t, f"Conferindo espelhos: {f} de {t}"))
+            if not resultado:
+                self.fila.put(("msg", ("Conferir espelhos", "Nenhum .strm nas bibliotecas:\n" + "\n".join(pastas),
+                                       "info")))
+                return
+            linhas = []
+            for raiz, arquivo, url, v in resultado:
+                texto = v.problema or v.aviso or (f"funcionando ({v.tempo:.1f} s)" if v.tempo is not None
+                                                  else "funcionando")
+                (self._log.info if v.ok else self._log.warning)("[%s] %s -> %s (%s)", "ok" if v.ok else "quebrado",
+                                                                 arquivo, url, texto)
+                linhas.append(("/".join(arquivo.relative_to(raiz).parts), v.ok, texto))
+            self.fila.put(("jf_espelhos", linhas))
+            quebrados = [r for r in resultado if not r[3].ok]
+            self.fila.put(("status_fim", f"Espelhos: {len(resultado) - len(quebrados)} funcionando, "
+                                         f"{len(quebrados)} quebrado(s)."))
+            if quebrados:
+                self.fila.put(("sugerir_remocao", quebrados))      # pergunta depois do "fim"
+
+        self._rodar("Conferindo espelhos...", tarefa)
+
+    def _oferecer_remocao(self, quebrados: list) -> None:
+        if not self.perguntar("Espelhos quebrados",
+                              f"{len(quebrados)} .strm não funcionam mais (veja a tabela).\n\n"
+                              "Remover da biblioteca? O Jellyfin deixa de mostrar esses itens no próximo scan.\n"
+                              "Se mudar de ideia, 'Desfazer última' os coloca de volta."):
+            return
+
+        def tarefa():
+            removidos = remover_espelhos(quebrados)
+            self._log.info("%d espelho(s) quebrado(s) removido(s)", removidos)
+            self.fila.put(("status_fim", f"{removidos} espelho(s) quebrado(s) removido(s)."))
+            self.fila.put(("msg", ("Espelhos quebrados", f"{removidos} .strm removido(s).", "sucesso")))
+
+        self._rodar("Removendo espelhos quebrados...", tarefa)
+
     def _oferecer_series(self, episodios: int, total: int) -> None:
         """Prévia no modo Filmes com (quase) só episódios: oferece trocar para Séries e refazer."""
         destino_atual = self.var_jf_destino.get()
@@ -612,6 +737,11 @@ class AppModerna(JanelaModerna):
         self.liberar_organizar(False)
         self._tmdb_ativo = o.tmdb
 
+        self._rodar("Organizando...", self._tarefa_organizar(o))
+
+    def _tarefa_organizar(self, o, filtro=None, automatico: bool = False):
+        """O trabalho do Organizar, sem perguntas (roda na thread). Usado pelo botão e pela pasta
+        vigiada (filtro = só o que terminou de baixar; automatico = sem caixa de mensagem no fim)."""
         def tarefa():
             self._log.info("Organizando: %s -> %s", o.origem, o.destino)
             etapas = 2                       # 1: mover   2: legendas/metadados/avisos/scan
@@ -644,7 +774,7 @@ class AppModerna(JanelaModerna):
                                          incluir_tmdbid=o.incluir_tmdbid, exigir_catalogo=o.exigir_catalogo,
                                          modo=o.modo, limpar_lixo=o.limpar_lixo,
                                          apagar_pasta_origem=o.apagar_pasta_origem,
-                                         nomes_episodios=o.nomes_episodios,
+                                         nomes_episodios=o.nomes_episodios, filtro=filtro,
                                          ao_planejar=ao_planejar, ao_progresso=ao_progresso,
                                          ao_analisar=self._avisar_analise)
             movidos = [(i, m) for i, m in enumerate(movimentos) if m.status == "movido"]
@@ -664,6 +794,8 @@ class AppModerna(JanelaModerna):
             self.fila.put(("jf_total", (1.0, f"Concluído: {len(movidos)} movido(s), {legendas} legenda(s), "
                                              f"{metadados} com pôster/.nfo, {erros} erro(s)")))
             self.fila.put(("status_fim", f"Organizado: {len(movidos)} movido(s), {legendas} legenda(s)."))
+            if automatico:                       # pasta vigiada: ninguém para clicar em OK
+                return
             self.fila.put(("msg", ("Organização concluída",
                                    f"Movidos: {len(movidos)}\nLegendas baixadas: {legendas}\n"
                                    f"Pôster/backdrop/.nfo: {metadados}\nCom erro: {erros}\n"
@@ -672,7 +804,7 @@ class AppModerna(JanelaModerna):
                                    "Para voltar atrás, use 'Desfazer última'.\nDetalhes em 'Abrir log'.",
                                    "erro" if erros else "sucesso")))
 
-        self._rodar("Organizando...", tarefa)
+        return tarefa
 
     def ao_baixar_legendas(self) -> None:
         o = self._validar_jellyfin(precisa_origem=False)
@@ -899,9 +1031,12 @@ class AppModerna(JanelaModerna):
             for m in mensagens:
                 self._log.info("%s", m)
             voltaram = sum(m.startswith("voltou") for m in mensagens)
+            espelhos = sum(m.startswith("espelho removido") for m in mensagens)
+            texto = f"{voltaram} arquivo(s) voltaram para onde estavam." + (
+                f"\n{espelhos} espelho(s) .strm criados foram apagados." if espelhos else "")
             self.fila.put(("jf_limpar", None))
-            self.fila.put(("status_fim", f"Desfeito: {voltaram} arquivo(s) voltaram."))
-            self.fila.put(("msg", ("Desfeito", f"{voltaram} arquivo(s) voltaram para a pasta de origem.", "sucesso")))
+            self.fila.put(("status_fim", f"Desfeito: {voltaram} voltaram, {espelhos} espelho(s) apagado(s)."))
+            self.fila.put(("msg", ("Desfeito", texto, "sucesso")))
 
         self._rodar("Desfazendo...", tarefa)
 
@@ -1047,6 +1182,8 @@ class AppModerna(JanelaModerna):
             dados.setdefault(chave, os.environ.get(variavel, ""))
         dados.setdefault("origem", PASTA_PADRAO)
         self.definir_opcoes_jellyfin(dados)
+        if self.var_jf_vigiar.get():                 # ficou ligada da última vez: volta a vigiar
+            self.after(3000, self.ao_alternar_vigia)
 
     def _salvar_config(self) -> None:
         o = self.obter_opcoes_jellyfin()
@@ -1074,6 +1211,8 @@ class AppModerna(JanelaModerna):
             return
         self._salvar_config()
         self.evento_parar.set()
+        if self._vigia_agendada:
+            self.after_cancel(self._vigia_agendada)
         encerrar_log_da_acao(self._log_acao)
         self._log_acao = None
         sys.stdout, sys.stderr = self._stdout, self._stderr

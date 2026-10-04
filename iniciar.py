@@ -2,6 +2,7 @@
 """Ponto de entrada. Abre a JANELA moderna (Dark Mode).
    Janela clássica (cinza):  python iniciar.py --classica
    Menu de texto antigo:     python iniciar.py --texto
+   Autoteste do pacote:      python iniciar.py --verificar
 """
 
 import sys
@@ -50,7 +51,27 @@ def _menu_texto() -> int:
     return codigo
 
 
+def _verificar() -> int:
+    """Autoteste do pacote (usado ao gerar o .exe): tudo que o programa precisa veio junto?"""
+    import os
+    from jellyfin_tools import CatalogoLocal, organizar_pasta  # noqa: F401
+    from jellyfin_tools.espelho import verificar_links  # noqa: F401
+    from videoscraper import app_moderna  # noqa: F401
+    from videoscraper.navegador import comando_instalar_chromium
+    import customtkinter  # noqa: F401
+    import imageio_ffmpeg
+    catalogo = CatalogoLocal.padrao()
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    comando, _ = comando_instalar_chromium()
+    faltando = [c for c in comando[:2] if getattr(sys, "frozen", False) and not os.path.exists(c)]
+    print(f"ok: {len(catalogo.filmes)} títulos no catálogo, ffmpeg em {ffmpeg}, "
+          f"instalador do navegador {'OK' if not faltando else 'FALTANDO: ' + str(faltando)}")
+    return 1 if faltando else 0
+
+
 if __name__ == "__main__":
+    if "--verificar" in sys.argv:
+        raise SystemExit(_verificar())
     if "--texto" in sys.argv:
         raise SystemExit(_menu_texto())
     try:

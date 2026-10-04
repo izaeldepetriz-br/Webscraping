@@ -68,6 +68,10 @@ class Catalogo:
     def pre_buscar_episodios(self, pedidos, ao_progresso=None) -> None:
         """Adianta nome_episodio() de várias temporadas: pedidos [(serie, temporada)]."""
 
+    def temporadas(self, serie: Filme) -> list[tuple[int, int]] | None:
+        """[(número da temporada, quantidade de episódios)] sem os especiais, ou None se não souber."""
+        return None
+
 
 def _pontuar(filme: Filme, titulo: str, ano: int | None) -> float:
     nota = max(similaridade(titulo, n) for n in filme.nomes())
@@ -310,6 +314,28 @@ class CatalogoTMDB(Catalogo):
             return None
         return self._episodios_da_temporada(serie.tmdb_id, temporada).get(episodio)
 
+    def temporadas(self, serie: Filme) -> list[tuple[int, int]] | None:
+        """GET /tv/{id}: quantos episódios cada temporada tem (UM pedido por série, guardado)."""
+        if not serie or not serie.tmdb_id:
+            return None
+        chave = (self.base_url, self.chave, "temporadas", serie.tmdb_id)
+        with self._trava_cache:
+            if chave in self._cache:
+                return self._cache[chave]
+        if self._erro_grave:
+            return None
+        try:
+            r = self._get(f"/tv/{serie.tmdb_id}", {"language": self.idioma})
+            lista = sorted((int(t["season_number"]), int(t.get("episode_count") or 0))
+                           for t in (r.json().get("seasons") or []) if int(t.get("season_number") or 0) > 0) \
+                if r.ok else None
+        except (ErroCatalogo, ValueError, TypeError, KeyError):
+            return None
+        if r.ok or r.status_code == 404:
+            with self._trava_cache:
+                self._cache[chave] = lista
+        return lista
+
     def pre_buscar_episodios(self, pedidos, ao_progresso=None) -> None:
         temporadas = list(dict.fromkeys((serie.tmdb_id, temporada) for serie, temporada in pedidos
                                         if serie and serie.tmdb_id))
@@ -372,6 +398,12 @@ class CatalogoEmCadeia(Catalogo):
     def pre_buscar_episodios(self, pedidos, ao_progresso=None) -> None:
         for catalogo in self.catalogos:
             catalogo.pre_buscar_episodios(pedidos, ao_progresso)
+
+    def temporadas(self, serie: Filme) -> list[tuple[int, int]] | None:
+        for catalogo in self.catalogos:
+            if lista := catalogo.temporadas(serie):
+                return lista
+        return None
 
     def pre_buscar(self, consultas, ao_progresso=None) -> None:
         """Cada catálogo só adianta o que os anteriores não acharam (o local é instantâneo)."""

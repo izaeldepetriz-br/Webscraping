@@ -40,6 +40,24 @@ def aguardar_no_terminal(mensagem: str) -> None:
     input()
 
 
+def comando_instalar_chromium() -> tuple[list[str], dict | None]:
+    """O comando que baixa o Chromium do Playwright. No programa empacotado (.exe), sys.executable é
+    o PRÓPRIO programa ('python -m playwright' abriria outra janela): usa o instalador do Playwright
+    (node + cli.js, que vêm dentro do .exe)."""
+    if getattr(sys, "frozen", False):
+        from playwright._impl._driver import compute_driver_executable, get_driver_env
+        driver = compute_driver_executable()
+        partes = list(driver) if isinstance(driver, (tuple, list)) else [driver]
+        return [*map(str, partes), "install", "chromium"], get_driver_env()
+    return [sys.executable, "-m", "playwright", "install", "chromium"], None
+
+
+def instalar_chromium() -> None:
+    comando, ambiente = comando_instalar_chromium()
+    subprocess.run(comando, check=True, env=ambiente,
+                   **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}))
+
+
 class Navegador:
     """Uso:
         with Navegador(visivel=True) as nav:
@@ -87,8 +105,7 @@ class Navegador:
                 raise
             # Primeira vez: o Chromium do Playwright ainda não foi baixado. Baixa e tenta de novo.
             print("⏬ Baixando o navegador Chromium (só na primeira vez, ~150 MB)...", file=sys.stderr)
-            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True,
-                           **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}))
+            instalar_chromium()
             self.contexto = self._lancar()
 
     def _lancar(self):

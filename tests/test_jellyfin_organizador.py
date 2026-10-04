@@ -87,8 +87,8 @@ def test_conflitos_amostras_e_nao_identificados(tmp_path):
     _criar(origem, ["Cidade.de.Deus.2002.mkv"])
     status = {m.origem.name: (m.status, m.destino) for m in
               organizar_pasta(origem, filmes, CatalogoLocal.padrao(), aplicar=True)}
-    assert status["Matrix.1999.mkv"][0] == "movido"
-    assert status["The.Matrix.1999.720p.mkv"][0] == "conflito"       # mesmo filme, mesmo destino
+    assert status["The.Matrix.1999.720p.mkv"][0] == "movido"         # mesmo filme: vai a de qualidade conhecida
+    assert status["Matrix.1999.mkv"][0] == "conflito"
     assert status["Matrix.1999.sample.mkv"][0] == "ignorado"
     assert status["video_sem_ano.mp4"][0] == "nao_identificado"
     assert status["Cidade.de.Deus.2002.mkv"][0] == "conflito"        # já existia na biblioteca
@@ -258,3 +258,43 @@ def test_sugestao_e_trava_antes_de_mexer(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="biblioteca inválida.*no meio"):
         organizar_pasta(origem, CAMINHO_COLADO, CatalogoLocal.padrao(), aplicar=True)
     assert (origem / "Matrix.1999.mkv").exists()                 # nada foi mexido
+
+
+# ------------------------------------------------------------------ cópias de qualidade diferente
+def test_qualidade_pelo_nome():
+    from jellyfin_tools.nomes import qualidade
+    assert qualidade("Matrix.1999.1080p.BluRay.x264.mkv") == (1080, 5, "1080p BluRay")
+    assert qualidade("Matrix.1999.720p.WEB-DL.mkv") == (720, 4, "720p WEB-DL")
+    assert qualidade("Matrix 1999 2160p UHD Remux.mkv")[:2] == (2160, 6)
+    assert qualidade("Matrix.1999.HDCAM.mkv")[1] == -5                       # gravado no cinema: o pior
+    assert qualidade("Matrix (1999).mkv") == (0, 0, "")
+
+
+def test_entre_copias_vai_a_de_melhor_qualidade(tmp_path):
+    origem = tmp_path / "Downloads"
+    origem.mkdir()
+    for nome, tamanho in (("Matrix.1999.720p.WEB-DL.mkv", 3), ("Matrix.1999.1080p.BluRay.x264.mkv", 2),
+                          ("Matrix.1999.HDCAM.mkv", 5)):
+        with open(origem / nome, "wb") as f:
+            f.truncate(tamanho * 1024 * 1024)
+    movs = {m.origem.name: m for m in organizar_pasta(origem, tmp_path / "F", CatalogoLocal.padrao())}
+    assert movs["Matrix.1999.1080p.BluRay.x264.mkv"].status == "simulado"   # não a 1ª da lista nem a maior
+    perdedora = movs["Matrix.1999.720p.WEB-DL.mkv"]
+    assert perdedora.status == "conflito"
+    assert perdedora.detalhe == ("cópia repetida (720p WEB-DL); vai a melhor (1080p BluRay): "
+                                 "Matrix.1999.1080p.BluRay.x264.mkv")
+    assert movs["Matrix.1999.HDCAM.mkv"].status == "conflito"
+
+
+def test_copia_que_ja_esta_na_biblioteca_mostra_os_tamanhos(tmp_path):
+    origem, filmes = tmp_path / "Downloads", tmp_path / "Filmes"
+    origem.mkdir()
+    (filmes / "Matrix (1999)").mkdir(parents=True)
+    with open(filmes / "Matrix (1999)" / "Matrix (1999).mkv", "wb") as f:
+        f.truncate(2 * 1024 ** 3)
+    with open(origem / "Matrix.1999.2160p.UHD.Remux.mkv", "wb") as f:
+        f.truncate(5 * 1024 ** 3)
+    [m] = organizar_pasta(origem, filmes, CatalogoLocal.padrao())
+    assert m.status == "conflito"
+    assert m.detalhe == ("já existe na biblioteca (2.0 GB); este tem 5.0 GB, 2160p Remux. "
+                         "Nada é sobrescrito: compare e apague o pior")

@@ -139,3 +139,39 @@ def test_link_que_nao_serve_nao_vira_strm(tmp_path):
     assert [(i.status, i.detalhe) for i in itens] == [
         ("link_ruim", "é uma página, não o arquivo do vídeo"),
         ("criado", "não confirmado no catálogo: confira o nome; resposta lenta (4.2 s)")]
+
+
+# ------------------------------------------------------------------ desfazer e conferir espelhos
+def test_desfazer_espelho_apaga_o_que_criou(tmp_path):
+    from jellyfin_tools import desfazer
+    from jellyfin_tools.organizador import ultimo_log
+    serie = tmp_path / "Series" / "Dark (2017)" / "Season 01"
+    serie.mkdir(parents=True)
+    (serie / "Dark S01E01.mkv").write_bytes(b"v")                       # já existia: não pode sumir
+    links = [_link("Nosferatu (1922)", "n.mp4"), _link("Dark", "Dark.S01E02.mkv")]
+    aplicar_espelho(planejar_espelho(links, tmp_path / "Filmes", tmp_path / "Series", CatalogoLocal.padrao()))
+    (serie / "Dark S01E02.pt-BR.srt").write_text("legenda", encoding="utf-8")   # baixada depois
+    (tmp_path / "Filmes" / "Nosferatu (1922)" / "poster.jpg").write_bytes(b"jpg")
+    desfazer(ultimo_log(tmp_path / "Filmes"))
+    desfazer(ultimo_log(tmp_path / "Series"))
+    assert not (tmp_path / "Filmes" / "Nosferatu (1922)").exists()      # pasta criada pelo espelho: some
+    assert sorted(p.name for p in serie.iterdir()) == ["Dark S01E01.mkv"]   # o resto da série fica
+
+
+def test_conferir_e_remover_espelhos_quebrados(tmp_path, api_falsa):
+    from jellyfin_tools import desfazer
+    from jellyfin_tools.espelho import conferir_espelhos, remover_espelhos
+    from jellyfin_tools.organizador import ultimo_log
+    api_falsa.rotas["/ok.mp4"] = lambda q: (206, b"x", {"Content-Type": "video/mp4", "Accept-Ranges": "bytes"})
+    api_falsa.rotas["/sumiu.mp4"] = lambda q: (404, b"", {})
+    filmes = tmp_path / "Filmes"
+    for nome, url in (("Bom (2000)", "/ok.mp4"), ("Quebrado (2001)", "/sumiu.mp4")):
+        (filmes / nome).mkdir(parents=True)
+        (filmes / nome / f"{nome}.strm").write_text(api_falsa.base + url + "\n", encoding="utf-8")
+    resultado = conferir_espelhos(filmes, tmp_path / "Series", respeitar_robots=False)
+    assert [(a.name, v.ok) for _, a, _, v in resultado] == [("Bom (2000).strm", True), ("Quebrado (2001).strm", False)]
+    quebrados = [r for r in resultado if not r[3].ok]
+    assert remover_espelhos(quebrados) == 1
+    assert not (filmes / "Quebrado (2001)" / "Quebrado (2001).strm").exists()
+    desfazer(ultimo_log(filmes))                                         # arrependeu: volta
+    assert (filmes / "Quebrado (2001)" / "Quebrado (2001).strm").read_text(encoding="utf-8").strip().endswith("/sumiu.mp4")

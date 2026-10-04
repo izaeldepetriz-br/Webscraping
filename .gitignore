@@ -7,3 +7,7 @@ __pycache__/
 demo_jellyfin/
 demo_torrent/
 jellyfin_organizer.log*
+
+# PyInstaller (gerar_exe.bat)
+build/
+dist/

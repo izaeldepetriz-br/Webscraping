@@ -21,7 +21,15 @@ from videoscraper.rede import ClienteHTTP
     ("S01E01.mkv", None),                      # sem nome da série
 ])
 def test_extrair_episodio(nome, esperado):
-    assert extrair_episodio(nome) == esperado
+    ep = extrair_episodio(nome)
+    assert (tuple(ep[:4]) if ep else None) == esperado
+
+
+@pytest.mark.parametrize("nome, absoluto", [
+    ("Breaking.Bad.2008.S02E05.720p.mkv", False), ("The Office 3x07.avi", False),
+    ("dark_episodio_03_dublado.mp4", True), ("Dragon Ball 153 - 1280x960.mkv", True), ("HunterXHunter 01.mp4", True)])
+def test_marca_numeracao_continua(nome, absoluto):
+    assert extrair_episodio(nome).absoluto is absoluto
 
 
 def test_catalogo_separa_filmes_de_series():
