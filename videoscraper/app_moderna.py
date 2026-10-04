@@ -30,7 +30,8 @@ from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, Confi
 from jellyfin_tools.legendas import normalizar_idiomas
 from jellyfin_tools.metadados import ClienteTMDB
 from jellyfin_tools.notificacoes import Notificador
-from jellyfin_tools.espelho import nome_do_link, aplicar_espelho, classificar, licenca_aberta, planejar_espelho
+from jellyfin_tools.espelho import (aplicar_espelho, classificar, licenca_aberta, nome_do_link, planejar_espelho,
+                                    verificar_links)
 from jellyfin_tools.organizador import DETALHE_EPISODIO, problema_no_caminho, sugestao_de_caminho, ultimo_log
 from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, itens_de_series, pos_processar
 from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao
@@ -57,6 +58,7 @@ TIPOS_CONTEUDO = {"filme": "Filme", "serie": "Série", "outro": "—"}
 SITUACAO_ESPELHO = {"criado": ("espelhado", "ok"), "ja_existe": ("já espelhado", "ok"),
                     "tem_video": ("já na biblioteca", "ok"), "ignorado": ("sem ano/episódio", "pulado"),
                     "sem_licenca": ("sem licença aberta", "pulado"), "nao_identificado": ("não identificado", "pulado"),
+                    "link_ruim": ("link não serve", "erro"),
                     "erro": ("erro", "erro")}
 
 # Chaves e tokens: só vão para o config.json se o usuário marcar "Lembrar as chaves".
@@ -507,8 +509,19 @@ class AppModerna(JanelaModerna):
         self._salvar_config()
 
         def tarefa():
+            # 1) cada link serve para .strm? (direto, permanente, público) - vários ao mesmo tempo
+            candidatos = [l.url for l, t in zip(links, tipos) if t != "outro"
+                          and (not so_abertos or licenca_aberta(getattr(l, "licenca", "")))]
+            self._log.info("Conferindo %d link(s) (direto, permanente, público?)", len(candidatos))
+            verificacoes = verificar_links(candidatos, ao_progresso=lambda f, t: self._avisar_analise(
+                f / t, f"Conferindo links: {f} de {t}"))
+            tempos = [v.tempo for v in verificacoes.values() if v.ok and v.tempo is not None]
+            if tempos:
+                self._log.info("Tempo de resposta dos servidores: médio %.1f s, mais lento %.1f s",
+                               sum(tempos) / len(tempos), max(tempos))
+            # 2) nomes e 3) .strm
             itens = planejar_espelho(links, pasta_filmes, pasta_series, self._catalogo(o), so_abertos,
-                                     o.incluir_tmdbid, o.nomes_episodios)
+                                     o.incluir_tmdbid, o.nomes_episodios, verificacoes)
             aplicar_espelho(itens)
             for item in itens:
                 destino = f" -> {item.destino}" if item.destino else ""
@@ -534,6 +547,10 @@ class AppModerna(JanelaModerna):
                                    f"Já existiam: {contagem['ja_existe'] + contagem['tem_video']}\n"
                                    f"Sem ano/episódio: {contagem['ignorado']}\n"
                                    f"Sem licença aberta (pulados): {contagem['sem_licenca']}\n"
+                                   f"Link que não serve para .strm (página, temporário, login, fora do ar): "
+                                   f"{contagem['link_ruim']}\n"
+                                   + (f"Resposta dos servidores: média {sum(tempos) / len(tempos):.1f} s\n"
+                                      if tempos else "") +
                                    f"Não identificados: {contagem['nao_identificado']}\nCom erro: {contagem['erro']}\n"
                                    f"Legendas baixadas: {baixadas}\n\nDetalhes em 'Abrir log' (aba Jellyfin).",
                                    "erro" if contagem["erro"] else "sucesso")))

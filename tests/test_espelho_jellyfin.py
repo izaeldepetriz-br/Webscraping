@@ -80,3 +80,62 @@ def test_salvar_lista_csv_com_licenca_e_ano(tmp_path):
     with open(destino, encoding="utf-8-sig", newline="") as f:
         [linha] = list(csv.DictReader(f))
     assert (linha["licenca"], linha["ano"]) == ("Domínio público", "1922")
+
+
+# ------------------------------------------------------------------ o link serve para .strm? (outros sites)
+def _site_de_videos(api):
+    video = {"Content-Type": "video/mp4", "Accept-Ranges": "bytes"}
+    api.rotas["/ok.mp4"] = lambda q: (206, b"x", video)
+    api.rotas["/sem_avanco.mp4"] = lambda q: (200, b"x", {"Content-Type": "video/mp4"})
+    api.rotas["/pagina"] = lambda q: (200, b"<html></html>", {"Content-Type": "text/html; charset=utf-8"})
+    api.rotas["/privado.mp4"] = lambda q: (403, b"", {})
+    api.rotas["/sumiu.mp4"] = lambda q: (404, b"", {})
+    api.rotas["/bloqueado/filme.mp4"] = lambda q: (206, b"x", video)
+    api.rotas["/robots.txt"] = lambda q: (200, b"User-agent: *\nDisallow: /bloqueado\n", {"Content-Type": "text/plain"})
+
+
+def test_verificar_links_de_outros_sites(api_falsa):
+    from jellyfin_tools.espelho import verificar_links
+    _site_de_videos(api_falsa)
+    b = api_falsa.base
+    r = verificar_links([b + "/ok.mp4", b + "/sem_avanco.mp4", b + "/pagina", b + "/privado.mp4", b + "/sumiu.mp4",
+                         b + "/bloqueado/filme.mp4", b + "/ok.mp4?Expires=1700000000&Signature=abc",
+                         "http://127.0.0.1:9/fora.mp4"])
+    resumo = {url.replace(b, ""): (v.ok, v.problema or v.aviso) for url, v in r.items()}
+    assert resumo == {
+        "/ok.mp4": (True, ""),
+        "/sem_avanco.mp4": (True, "o servidor não deixa avançar o vídeo"),
+        "/pagina": (False, "é uma página, não o arquivo do vídeo"),
+        "/privado.mp4": (False, "exige login ou permissão (o Jellyfin não tem o seu acesso)"),
+        "/sumiu.mp4": (False, "arquivo não encontrado (removido?)"),
+        "/bloqueado/filme.mp4": (False, "o robots.txt do site não permite"),
+        "/ok.mp4?Expires=1700000000&Signature=abc": (False, "link temporário (expira; o .strm pararia de funcionar)"),
+        "http://127.0.0.1:9/fora.mp4": (False, "servidor fora do ar ou sem conexão")}
+    assert r[b + "/ok.mp4"].tempo is not None
+    pedido = next(p for p in api_falsa.pedidos if p["caminho"] == "/ok.mp4")
+    assert pedido["headers"]["Range"] == "bytes=0-0"                     # pede só 1 byte, não o filme
+
+
+def test_verificar_links_em_paralelo(api_falsa):
+    import time
+    from jellyfin_tools.espelho import verificar_links
+
+    def devagar(q):
+        time.sleep(0.3)
+        return 206, b"x", {"Content-Type": "video/mp4", "Accept-Ranges": "bytes"}
+    api_falsa.rotas["/lento.mp4"] = devagar
+    urls = [f"{api_falsa.base}/lento.mp4?n={n}" for n in range(8)]
+    inicio = time.perf_counter()
+    r = verificar_links(urls, respeitar_robots=False)
+    assert all(v.ok for v in r.values()) and time.perf_counter() - inicio < 8 * 0.3 / 2   # não um por vez
+
+
+def test_link_que_nao_serve_nao_vira_strm(tmp_path):
+    from jellyfin_tools.espelho import Verificacao
+    links = [_link("Nosferatu (1922)", "n.mp4"), _link("Metropolis (1927)", "m.mp4")]
+    verificacoes = {links[0].url: Verificacao(False, "é uma página, não o arquivo do vídeo"),
+                    links[1].url: Verificacao(True, aviso="resposta lenta (4.2 s)")}
+    itens = aplicar_espelho(planejar_espelho(links, tmp_path / "F", tmp_path / "S", verificacoes=verificacoes))
+    assert [(i.status, i.detalhe) for i in itens] == [
+        ("link_ruim", "é uma página, não o arquivo do vídeo"),
+        ("criado", "não confirmado no catálogo: confira o nome; resposta lenta (4.2 s)")]

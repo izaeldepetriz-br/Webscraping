@@ -167,6 +167,17 @@ O botão **Espelhar no Jellyfin (.strm)...** (nos selecionados; sem seleção, e
 3. depois, o mesmo pós-processamento do Organizar: **legendas** (com o mesmo nome do `.strm`, nos
    idiomas e fontes escolhidos, inclusive OpenSubtitles + SubDL), pôster/backdrop/`.nfo` e o scan.
 
+**Outros sites** (não só o archive.org): o espelho aceita qualquer link da aba Vídeos, mas antes
+**confere cada um** (8 ao mesmo tempo, pedindo só o 1º byte do arquivo). Um `.strm` só serve se o link for:
+- **direto**: o arquivo do vídeo, não a página (página → pulado);
+- **permanente**: links "assinados" (`?Expires=`, `token=`, `Signature=`...) expiram em horas (→ pulado);
+- **público**: se o site pede login (HTTP 401/403), o Jellyfin não tem o seu acesso (→ pulado);
+- e o `robots.txt` do site precisa permitir.
+Também avisa (mas cria) quando o servidor não deixa avançar o vídeo ou demora mais de 3 s, e
+mostra o tempo médio de resposta. **Estabilidade:** com `.strm`, o vídeo vem do servidor do site a
+cada play: a fluidez depende dele e da sua internet, e se o site tirar o arquivo do ar, o item para
+de tocar. Para o que você quer guardar de vez, baixar continua sendo o mais estável.
+
 Nada é sobrescrito: um link que já tem `.strm`, ou um filme que já está baixado na biblioteca, é
 pulado. **Completar biblioteca** também enxerga os `.strm` (para baixar legendas que faltaram).
 Muitos itens enviados por usuários (ex.: "DVDISO", "Dual Audio") não têm autorização do dono dos

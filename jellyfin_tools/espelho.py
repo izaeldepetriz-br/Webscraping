@@ -12,6 +12,11 @@ Cada link é classificado em:
     "filme"  -> tem ano (no título, no nome do arquivo ou nos metadados do item)
     "outro"  -> nem um nem outro: fica de fora (não dá para nomear com segurança)
 
+Outros sites (não só o archive.org): o .strm só funciona bem se o link for DIRETO (o arquivo, não
+a página), PERMANENTE (links "assinados" expiram em horas) e PÚBLICO (o Jellyfin não tem o seu
+login). verificar_links() confere isso antes, em paralelo, e mede quanto o servidor demora a responder.
+Ao tocar, o vídeo vem do servidor do site a cada vez: a fluidez depende dele e da sua internet.
+
 Direitos autorais: espelhar só faz sentido com o que pode ser distribuído. Por isso a licença do
 item (quando o site informa, como no archive.org) acompanha cada link, e há a opção de espelhar
 só o que é domínio público ou licença aberta (Creative Commons).
@@ -20,9 +25,14 @@ só o que é domínio público ou licença aberta (Creative Commons).
 from __future__ import annotations
 
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlparse
+
+import requests
 
 from .nomes import extrair_titulo_e_ano, marca_de_episodio
 from .organizador import _consultas, planejar
@@ -41,7 +51,8 @@ class ItemEspelho:
     link: object                     # LinkVideo (url, titulo, licenca, ano)
     tipo: str                        # filme | serie | outro
     destino: Path | None = None      # o .strm que será criado
-    status: str = ""                 # criar | ja_existe | tem_video | ignorado | sem_licenca | nao_identificado | criado | erro
+    status: str = ""                 # criar | ja_existe | tem_video | ignorado | sem_licenca | link_ruim |
+    #                                  nao_identificado | criado | erro
     detalhe: str = ""
     fonte_nome: str = ""             # TMDB | catálogo | arquivo
     filme: object = None             # Filme do catálogo (título original ajuda a achar legenda)
@@ -51,6 +62,86 @@ class ItemEspelho:
         """Para o pós-processamento (legendas, pôster, .nfo): o .strm faz o papel do vídeo."""
         from .pos_processamento import ItemBiblioteca
         return ItemBiblioteca(self.destino, self.filme, self.episodio), self.destino.stem
+
+
+# ----------------------------------------------------------------- o link serve para .strm?
+# Parâmetros de link "assinado": expira e o .strm pararia de funcionar
+_RE_TEMPORARIO = re.compile(r"[?&](?:expires?|exp|token|signature|sig|x-amz-signature|x-amz-expires|"
+                            r"policy|key-pair-id|hdnts|hdnea)=", re.IGNORECASE)
+LENTO_SEGUNDOS = 3.0
+
+
+@dataclass
+class Verificacao:
+    ok: bool
+    problema: str = ""               # por que NÃO serve para .strm
+    aviso: str = ""                  # serve, mas com ressalva (sem avanço, resposta lenta)
+    tempo: float | None = None       # segundos até o servidor responder
+
+
+def verificar_link(url: str, sessao: requests.Session | None = None, timeout: float = 10,
+                   permitido=None) -> Verificacao:
+    """Pede só o 1º byte do arquivo (Range: bytes=0-0) e confere: é vídeo? é público? deixa avançar?"""
+    if _RE_TEMPORARIO.search(url):
+        return Verificacao(False, "link temporário (expira; o .strm pararia de funcionar)")
+    if permitido is not None and not permitido(url):
+        return Verificacao(False, "o robots.txt do site não permite")
+    sessao = sessao or requests.Session()
+    inicio = time.monotonic()
+    try:
+        with sessao.get(url, headers={"Range": "bytes=0-0", "User-Agent": "videoscraper (espelho Jellyfin)"},
+                        stream=True, timeout=timeout, allow_redirects=True) as r:
+            tempo = time.monotonic() - inicio
+            status, cabecalhos = r.status_code, r.headers
+    except requests.RequestException as erro:
+        motivo = "não respondeu a tempo" if isinstance(erro, requests.Timeout) else "fora do ar ou sem conexão"
+        return Verificacao(False, f"servidor {motivo}")
+    if status in (401, 403):
+        return Verificacao(False, "exige login ou permissão (o Jellyfin não tem o seu acesso)", tempo=tempo)
+    if status in (404, 410):
+        return Verificacao(False, "arquivo não encontrado (removido?)", tempo=tempo)
+    if status >= 400:
+        return Verificacao(False, f"o site respondeu HTTP {status}", tempo=tempo)
+    tipo = cabecalhos.get("Content-Type", "").lower()
+    if tipo.startswith(("text/html", "application/xhtml")):
+        return Verificacao(False, "é uma página, não o arquivo do vídeo", tempo=tempo)
+    avisos = []
+    if status != 206 and "bytes" not in cabecalhos.get("Accept-Ranges", "").lower():
+        avisos.append("o servidor não deixa avançar o vídeo")
+    if tempo > LENTO_SEGUNDOS:
+        avisos.append(f"resposta lenta ({tempo:.1f} s)")
+    return Verificacao(True, aviso="; ".join(avisos), tempo=tempo)
+
+
+def verificar_links(urls: list[str], trabalhadores: int = 8, ao_progresso=None,
+                    respeitar_robots: bool = True) -> dict[str, Verificacao]:
+    """Confere vários links AO MESMO TEMPO (a espera é quase toda da rede). ao_progresso(feitos, total)."""
+    unicos = list(dict.fromkeys(urls))
+    if not unicos:
+        return {}
+    local = threading.local()
+    trava_robots = threading.Lock()
+    robots = None
+    if respeitar_robots:
+        from videoscraper.rede import ClienteHTTP
+        robots = ClienteHTTP(espera=0)
+
+    def permitido(url: str) -> bool:
+        with trava_robots:                                    # 1 robots.txt por site, guardado
+            return robots.permitido(url)
+
+    def um(url: str) -> Verificacao:
+        if not hasattr(local, "sessao"):
+            local.sessao = requests.Session()
+        return verificar_link(url, local.sessao, permitido=permitido if robots else None)
+
+    resultado = {}
+    with ThreadPoolExecutor(max_workers=min(trabalhadores, len(unicos))) as executor:
+        for feitos, (url, verificacao) in enumerate(zip(unicos, executor.map(um, unicos)), 1):
+            resultado[url] = verificacao
+            if ao_progresso:
+                ao_progresso(feitos, len(unicos))
+    return resultado
 
 
 def licenca_aberta(licenca: str) -> bool:
@@ -90,8 +181,8 @@ def _video_virtual(link, tipo: str) -> Path:
 
 def planejar_espelho(links: list, pasta_filmes: str | Path | None, pasta_series: str | Path | None,
                      catalogo=None, so_licenca_aberta: bool = False, incluir_tmdbid: bool = False,
-                     nomes_episodios: bool = False) -> list[ItemEspelho]:
-    """Decide o .strm de cada link (não cria nada)."""
+                     nomes_episodios: bool = False, verificacoes: dict | None = None) -> list[ItemEspelho]:
+    """Decide o .strm de cada link (não cria nada). `verificacoes`: o resultado de verificar_links()."""
     itens = [ItemEspelho(link, classificar(link)) for link in links]
     if catalogo is not None:                                  # TMDB: todas as buscas de uma vez
         for tipo, modo in (("filme", "filmes"), ("serie", "series")):
@@ -106,6 +197,10 @@ def planejar_espelho(links: list, pasta_filmes: str | Path | None, pasta_series:
         if so_licenca_aberta and not licenca_aberta(getattr(item.link, "licenca", "")):
             item.status = "sem_licenca"
             item.detalhe = f"licença: {getattr(item.link, 'licenca', '') or 'não informada'}"
+            continue
+        verificacao = (verificacoes or {}).get(item.link.url)
+        if verificacao is not None and not verificacao.ok:
+            item.status, item.detalhe = "link_ruim", verificacao.problema
             continue
         pasta = pasta_filmes if item.tipo == "filme" else pasta_series
         if not pasta:
@@ -128,6 +223,8 @@ def planejar_espelho(links: list, pasta_filmes: str | Path | None, pasta_series:
             item.status, item.detalhe = "tem_video", "a biblioteca já tem esse vídeo (baixado)"
         else:
             item.status = "criar"
+            if verificacao is not None and verificacao.aviso:
+                item.detalhe = "; ".join(t for t in (item.detalhe, verificacao.aviso) if t)
         destinos_vistos.add(str(item.destino).lower())
     return itens
 

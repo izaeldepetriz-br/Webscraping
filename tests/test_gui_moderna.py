@@ -881,8 +881,11 @@ def test_subdl_na_janela_como_fonte_e_como_reserva(app):
     assert "chave_subdl" in app_moderna.SEGREDOS                         # só é salva se pedir
 
 
-def test_espelhar_links_no_jellyfin_pela_janela(app, tmp_path):
+def test_espelhar_links_no_jellyfin_pela_janela(app, tmp_path, monkeypatch):
+    from jellyfin_tools.espelho import Verificacao
     from videoscraper.extracao import LinkVideo
+    monkeypatch.setattr(app_moderna, "verificar_links",                 # sem internet nos testes
+                        lambda urls, **k: {u: Verificacao(True, tempo=0.2) for u in urls})
     base = "https://archive.org/download/x/"
     links = [LinkVideo(base + "nosferatu.mp4", "o", "archive.org", "Nosferatu (1922)", "Domínio público"),
              LinkVideo(base + "anjos.mkv", "o", "archive.org", "Anjos Da Noite 2003 (Dual Audio) PT-BR"),
