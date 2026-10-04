@@ -12,16 +12,13 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import os
 import sys
 from dataclasses import asdict
 from urllib.parse import urlparse
 
-from .coleta import FonteNavegador, FonteRequests, rastrear
-from .download import NaoBaixavel, baixar_video
 from .extracao import LinkVideo
-from .navegador import PERFIL_PADRAO, Navegador, PlaywrightAusente
-from .rede import ClienteHTTP
+from .navegador import PERFIL_PADRAO, PlaywrightAusente
+from .servico import MENSAGEM_ROBOTS, Trabalho, fazer_login
 
 
 def _opcoes_comuns() -> argparse.ArgumentParser:
@@ -84,31 +81,23 @@ def salvar(links: list[LinkVideo], caminho: str) -> None:
             f.write("".join(l.url + "\n" for l in links))
 
 
-def _criar_fonte(args, cliente):
-    if not args.navegador and not args.visivel and not args.pausar:
-        return FonteRequests(cliente)
-    nav = Navegador(perfil=args.perfil, visivel=args.visivel, pausar=args.pausar,
-                    executavel=args.chrome)
-    return FonteNavegador(cliente, nav)
-
-
 def _cmd_login(args) -> int:
-    with Navegador(perfil=args.perfil, visivel=True, executavel=args.chrome) as nav:
-        nav.login_manual(args.url)
+    fazer_login(args.url, perfil=args.perfil, chrome=args.chrome)
     print("Agora use --navegador nos comandos 'links' e 'baixar' para aproveitar o login.")
     return 0
 
 
 def _cmd_buscar(args) -> int:
-    cliente = ClienteHTTP(espera=args.espera, respeitar_robots=not args.ignorar_robots)
-    fonte = _criar_fonte(args, cliente)
-    try:
-        print("📥 Acessando" + (" com navegador..." if isinstance(fonte, FonteNavegador) else "..."),
-              file=sys.stderr)
-        links = rastrear(fonte, args.url, args.profundidade, args.max_paginas,
+    with Trabalho(espera=args.espera, ignorar_robots=args.ignorar_robots, navegador=args.navegador,
+                  visivel=args.visivel, pausar=args.pausar, perfil=args.perfil,
+                  chrome=args.chrome) as t:
+        print("📥 Acessando" + (" com navegador..." if t.usa_navegador else "..."), file=sys.stderr)
+        links = t.buscar(args.url, args.profundidade, args.max_paginas,
                          not args.qualquer_dominio, args.seletor)
         print(f"\n📋 {len(links)} link(s) de vídeo encontrado(s).", file=sys.stderr)
-        if not links and isinstance(fonte, FonteRequests):
+        if t.bloqueadas and not links:
+            print("\n" + MENSAGEM_ROBOTS, file=sys.stderr)
+        elif not links and not t.usa_navegador:
             print("   Dica: se a página monta a lista com JavaScript ou exige login, "
                   "tente de novo com --navegador.", file=sys.stderr)
 
@@ -123,33 +112,11 @@ def _cmd_buscar(args) -> int:
 
         if args.limite:
             links = links[:args.limite]
-        fonte.sincronizar_cookies()           # downloads usam a mesma sessão (login) do navegador
-        return _baixar_todos(cliente, links, args)
-    finally:
-        fonte.fechar()
-
-
-def _baixar_todos(cliente, links, args) -> int:
-    if not args.so_listar:
-        os.makedirs(args.pasta, exist_ok=True)
-    ok = pulados = falhas = 0
-    for i, link in enumerate(links, 1):
-        print(f"\n[{i}/{len(links)}] {link.titulo or link.url}\n   {link.url}  [{link.tipo}]")
         if args.so_listar:
-            continue
-        try:
-            destino = baixar_video(cliente, link, args.pasta, i)
-            print(f"✅ Salvo em {destino}")
-            ok += 1
-        except NaoBaixavel as motivo:
-            print(f"⏭  Pulado: {motivo}")
-            pulados += 1
-        except Exception as erro:            # um vídeo com erro não derruba os outros
-            print(f"❌ Erro: {erro}")
-            falhas += 1
-    if not args.so_listar:
-        print(f"\n🎉 Pronto! {ok} baixado(s), {pulados} pulado(s), {falhas} falha(s).")
-    return 2 if falhas else 0
+            for i, l in enumerate(links, 1):
+                print(f"\n[{i}/{len(links)}] {l.titulo or l.url}\n   {l.url}  [{l.tipo}]")
+            return 0
+        return 2 if t.baixar(links, args.pasta).falhas else 0
 
 
 def main(argv: list[str] | None = None) -> int:

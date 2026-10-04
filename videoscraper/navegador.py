@@ -32,6 +32,13 @@ class PlaywrightAusente(RuntimeError):
     pass
 
 
+def aguardar_no_terminal(mensagem: str) -> None:
+    """Jeito padrão de esperar o usuário: mostra a mensagem e espera Enter no terminal.
+    A interface gráfica troca isso por uma caixa de diálogo com botão OK."""
+    print(f"\n{mensagem}\n   (pressione Enter aqui quando terminar)")
+    input()
+
+
 class Navegador:
     """Uso:
         with Navegador(visivel=True) as nav:
@@ -40,7 +47,8 @@ class Navegador:
 
     def __init__(self, perfil: str = PERFIL_PADRAO, visivel: bool = False,
                  pausar: bool = False, espera_extra: float = 2.0, rolagens: int = 8,
-                 timeout: float = 45, executavel: str | None = None):
+                 timeout: float = 45, executavel: str | None = None,
+                 aguardar_usuario=aguardar_no_terminal):
         self.perfil = perfil
         self.visivel = visivel or pausar          # pausar só faz sentido com a janela aberta
         self.pausar = pausar
@@ -49,6 +57,7 @@ class Navegador:
         self.timeout_ms = int(timeout * 1000)
         # Caminho do Chrome/Chromium (opcional). Sem isso, usa o que o Playwright instalou.
         self.executavel = executavel or os.environ.get("VIDEOSCRAPER_CHROME") or None
+        self.aguardar_usuario = aguardar_usuario
         self._pw = None
         self.contexto = None
 
@@ -77,7 +86,8 @@ class Navegador:
                 raise
             # Primeira vez: o Chromium do Playwright ainda não foi baixado. Baixa e tenta de novo.
             print("⏬ Baixando o navegador Chromium (só na primeira vez, ~150 MB)...", file=sys.stderr)
-            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True,
+                           **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}))
             self.contexto = self._lancar()
 
     def _lancar(self):
@@ -137,9 +147,9 @@ class Navegador:
             self._esperar_rede(pagina)
 
             if self.pausar:
-                print("\n⏸  Janela aberta. Resolva o que aparecer (login, aviso de cookies,\n"
-                      "   'não sou um robô', clicar em play...) e depois pressione Enter aqui.")
-                input()
+                self.aguardar_usuario(
+                    "Janela do navegador aberta. Resolva o que aparecer (login, aviso de cookies,\n"
+                    "'não sou um robô', clicar em play...) e depois continue.")
                 self._esperar_rede(pagina)
 
             self._rolar(pagina)                    # carrega itens 'lazy' (que aparecem ao rolar)
@@ -166,9 +176,8 @@ class Navegador:
         """Abre o site para VOCÊ entrar com sua conta. A sessão fica salva no perfil."""
         pagina = self.contexto.new_page()
         pagina.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
-        print("\n🔑 Faça login na janela do navegador que abriu.\n"
-              "   Quando terminar (já logado), volte aqui e pressione Enter.")
-        input()
+        self.aguardar_usuario("Faça login na janela do navegador que abriu.\n"
+                              "Quando terminar (já logado), continue.")
         pagina.close()
         print(f"✅ Sessão salva em: {self.perfil}")
 

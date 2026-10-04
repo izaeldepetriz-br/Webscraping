@@ -13,6 +13,9 @@ import requests
 from .extracao import LinkVideo, eh_embed_de_video, eh_streaming, parece_video
 from .rede import ClienteHTTP
 
+# No Windows, evita abrir uma tela preta extra ao chamar o ffmpeg.
+SEM_JANELA = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
 EXTENSOES_ARQUIVO = (".mp4", ".webm", ".mkv", ".mov", ".m4v", ".avi", ".ogv")
 
 
@@ -105,7 +108,7 @@ def baixar_streaming(sessao: requests.Session, url: str, destino: str,
                "-c", "copy", "-bsf:a", "aac_adtstoasc", "-f", "mp4", parcial]
     print("   🎞  streaming: juntando os pedaços com ffmpeg (pode demorar)...")
     try:
-        resultado = subprocess.run(comando, capture_output=True, text=True)
+        resultado = subprocess.run(comando, capture_output=True, text=True, **SEM_JANELA)
         if resultado.returncode != 0:
             raise RuntimeError("ffmpeg falhou: " + (resultado.stderr.strip()[-400:] or "sem detalhes"))
         os.replace(parcial, destino)

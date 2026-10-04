@@ -14,16 +14,29 @@ que **exigem login** ou que mostram **verificações** que você resolve na jane
    - **Linux/Mac:** `./iniciar.sh`
 
 Na primeira vez ele cria o ambiente `.venv`, instala as bibliotecas e baixa o navegador
-Chromium (~150 MB). Isso só acontece uma vez. Depois abre o menu:
+Chromium (~150 MB). Isso só acontece uma vez. Depois abre **a janela do programa**:
 
-```
-1) Listar links de vídeo de uma página
-2) Baixar vídeos de uma página
-3) Ver o que seria baixado (sem baixar)
-4) Fazer login num site (abre o navegador; a sessão fica salva)
-```
+1. Cole o endereço da página e clique em **Buscar vídeos**.
+2. Os vídeos aparecem na tabela. Duplo clique abre o link; **Copiar link** e
+   **Salvar lista** (CSV/JSON/TXT) também estão lá.
+3. Selecione (Ctrl+clique para vários) e clique em **Baixar selecionados**, ou **Baixar todos**.
 
-O menu mostra o **comando equivalente** antes de rodar, para você aprender a usar direto no terminal.
+Opções da janela:
+
+- **Usar navegador**: para sites que montam a lista com JavaScript ou exigem login.
+- **Mostrar a janela do navegador** / **Pausar para eu resolver verificações**: abre o Chrome
+  para você ver/resolver (aviso de cookies, "não sou um robô"). O programa espera seu OK.
+- **Fazer login no site**: abre o site para você entrar com a sua conta; a sessão fica salva.
+- **Parar**: interrompe depois do item atual.
+
+Prefere o menu de texto antigo? `python iniciar.py --texto`.
+
+### Por que o YouTube (e similares) não funciona?
+
+O arquivo `robots.txt` do YouTube **proíbe robôs** nas páginas de busca, e os termos de uso
+proíbem baixar vídeos sem o botão oficial de download. O programa respeita isso e mostra o aviso
+"Acesso não permitido". Para **pesquisar** vídeos do YouTube por programa, o caminho permitido é a
+**API oficial (YouTube Data API)**, que precisa de uma chave gratuita do Google.
 
 ## Dois modos de acesso
 
@@ -93,8 +106,10 @@ videoscraper/
   navegador.py  Playwright: JavaScript, login, captura de rede, sessão salva
   coleta.py     junta tudo: obtém páginas (requests OU navegador) e navega entre elas
   download.py   salva arquivos (blocos/.part) e streaming (ffmpeg)
+  servico.py    camada comum (buscar/baixar) usada pela janela e pelo terminal
+  gui.py        janela com botões (Tkinter)
   cli.py        comandos links / baixar / login
-  menu.py       menu interativo
+  menu.py       menu de texto (python iniciar.py --texto)
 tests/          testes com servidor local (sem internet)
 ```
 
@@ -104,4 +119,5 @@ tests/          testes com servidor local (sem internet)
 pip install pytest && python -m pytest -q tests
 ```
 
-Os testes do modo navegador são pulados automaticamente se o Chromium não estiver instalado.
+Os testes do modo navegador são pulados se o Chromium não estiver instalado, e os da janela
+se não houver tela (no Linux sem monitor: `xvfb-run python -m pytest -q tests`).

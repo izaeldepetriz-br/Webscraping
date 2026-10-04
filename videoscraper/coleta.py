@@ -25,10 +25,12 @@ class FonteRequests:
 
     def __init__(self, cliente: ClienteHTTP):
         self.cliente = cliente
+        self.bloqueadas: list[str] = []          # páginas que o robots.txt proibiu
 
     def obter(self, url: str) -> Pagina | None:
         if not self.cliente.permitido(url):
             print(f"  ⛔ robots.txt não permite: {url}", file=sys.stderr)
+            self.bloqueadas.append(url)
             return None
         resultado = self.cliente.obter_html(url)
         return Pagina(url=resultado[1], html=resultado[0]) if resultado else None
@@ -46,11 +48,13 @@ class FonteNavegador:
     def __init__(self, cliente: ClienteHTTP, navegador):
         self.cliente = cliente
         self.navegador = navegador
+        self.bloqueadas: list[str] = []
         self.navegador.abrir()
 
     def obter(self, url: str) -> Pagina | None:
         if not self.cliente.permitido(url):
             print(f"  ⛔ robots.txt não permite: {url}", file=sys.stderr)
+            self.bloqueadas.append(url)
             return None
         self.cliente.pausar()
         try:
@@ -86,14 +90,19 @@ def links_da_pagina(pagina: Pagina, seletor: str | None = None) -> list[LinkVide
 
 
 def rastrear(fonte, url_inicial: str, profundidade: int = 0, max_paginas: int = 50,
-             mesmo_dominio: bool = True, seletor: str | None = None) -> list[LinkVideo]:
-    """Busca em largura: a página inicial, depois as páginas que ela linka, e assim por diante."""
+             mesmo_dominio: bool = True, seletor: str | None = None,
+             parar=None) -> list[LinkVideo]:
+    """Busca em largura: a página inicial, depois as páginas que ela linka, e assim por diante.
+    `parar` (opcional) é uma função que devolve True quando o usuário pediu para interromper."""
     dominio = urlparse(url_inicial).netloc
     fila = deque([(url_inicial, 0)])
     visitadas: set[str] = set()
     resultados: dict[str, LinkVideo] = {}
 
     while fila and len(visitadas) < max_paginas:
+        if parar and parar():
+            print("⏹  Busca interrompida.", file=sys.stderr)
+            break
         url, nivel = fila.popleft()
         if url in visitadas:
             continue

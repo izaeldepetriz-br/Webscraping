@@ -1,5 +1,6 @@
 @echo off
 REM Windows: duplo clique. Na 1a vez cria o ambiente, instala as bibliotecas e o navegador.
+REM Depois abre a janela do programa.
 chcp 65001 >nul
 cd /d "%~dp0"
 where python >nul 2>nul
@@ -23,5 +24,5 @@ if not exist .venv\instalado-v2 (
   python -m playwright install chromium || (pause & exit /b 1)
   echo ok> .venv\instalado-v2
 )
-python iniciar.py
-if errorlevel 1 pause
+REM pythonw = abre so a janela, sem a tela preta. Menu de texto: python iniciar.py --texto
+start "" pythonw iniciar.py
