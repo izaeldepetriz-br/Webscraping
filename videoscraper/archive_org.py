@@ -20,7 +20,7 @@ from .rede import ClienteHTTP
 
 HOSTS = ("archive.org", "www.archive.org")
 EXTENSOES = (".mp4", ".mkv", ".avi", ".mov", ".m4v", ".mpeg", ".mpg", ".ogv", ".webm")
-POR_PAGINA = 100
+POR_PAGINA = 500                 # itens por consulta (menos pedidos em buscas grandes)
 
 
 def reconhece(url: str) -> bool:

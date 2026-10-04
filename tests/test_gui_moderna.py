@@ -742,3 +742,16 @@ def test_sobras_de_antes_aparecem_e_sao_apagadas_pela_janela(app, tmp_path):
     linha = next(l for l in _linhas_jf(app) if l[2] == sobra.name)
     assert linha[1].endswith("pasta apagada")
     assert "Pastas de torrent apagadas: 1" in app.caixas[-1][2]
+
+
+def test_maximos_dos_campos_aceitam_valores_grandes():
+    j = JanelaModerna()
+    try:
+        j.campo_limite.var.set("50000")
+        j.campo_maxp.var.set("80000")
+        o = j.obter_opcoes()
+        assert (o.limite, o.max_paginas) == (50000, 80000)        # antes travava em 1000 e 2000
+        j.campo_limite.var.set("999999")
+        assert j.campo_limite.get() == 100_000                    # novo máximo
+    finally:
+        j.destroy()

@@ -105,6 +105,10 @@ class OpcoesJellyfin:
     nomes_episodios: bool = True     # séries: 'Dark S01E01 - Segredos.mkv' (nome do episódio pelo TMDB)
 
 
+# Máximo dos campos "Máx. de páginas" e "Máx. de vídeos" (antes 2000 e 1000).
+MAXIMO_ITENS = 100_000
+
+
 # =============================================================================== componentes
 class CampoNumerico(ctk.CTkFrame):
     """Seletor numérico moderno ( -  [ valor ]  + ). O CustomTkinter não tem Spinbox."""
@@ -420,8 +424,8 @@ class JanelaModerna(ctk.CTk):
         self._entrada(lateral, self.var_filtro, "ex.: /details/").pack(fill="x", pady=(4, 10), **p)
 
         self.campo_prof = self._numero(lateral, "Seguir links (níveis):", 0, 0, 5, 1)
-        self.campo_maxp = self._numero(lateral, "Máx. de páginas:", 30, 1, 2000, 10)
-        self.campo_limite = self._numero(lateral, "Máx. de vídeos (0 = todos):", 0, 0, 1000, 1)
+        self.campo_maxp = self._numero(lateral, "Máx. de páginas:", 30, 1, MAXIMO_ITENS, 10)
+        self.campo_limite = self._numero(lateral, "Máx. de vídeos (0 = todos):", 0, 0, MAXIMO_ITENS, 1)
         self.campo_espera = self._numero(lateral, "Espera entre pedidos (s):", 1.5, 0.5, 10, 0.5, True)
 
         self._separador(lateral)
@@ -434,7 +438,7 @@ class JanelaModerna(ctk.CTk):
     def _numero(self, master, texto, valor, minimo, maximo, passo, decimal=False):
         linha = ctk.CTkFrame(master, fg_color="transparent")
         linha.pack(fill="x", padx=18, pady=(0, 6))
-        campo = CampoNumerico(linha, valor, minimo, maximo, passo, decimal, largura=112)
+        campo = CampoNumerico(linha, valor, minimo, maximo, passo, decimal, largura=128)   # cabe "100000"
         campo.pack(side="right")
         self._rotulo(linha, texto).pack(side="left", fill="x", expand=True)
         return campo

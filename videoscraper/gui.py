@@ -142,8 +142,8 @@ class App:
         self.var_limite = tk.IntVar(value=0)
         self.var_espera = tk.DoubleVar(value=1.5)
         self._spin(caixa, 1, 2, "Seguir links (níveis):", self.var_prof, 0, 5, 1)
-        self._spin(caixa, 1, 4, "Máx. de páginas:", self.var_maxp, 1, 300, 1)
-        self._spin(caixa, 2, 0, "Máx. de vídeos (0 = todos):", self.var_limite, 0, 1000, 1)
+        self._spin(caixa, 1, 4, "Máx. de páginas:", self.var_maxp, 1, 100_000, 10)
+        self._spin(caixa, 2, 0, "Máx. de vídeos (0 = todos):", self.var_limite, 0, 100_000, 1)
         self._spin(caixa, 2, 2, "Espera entre pedidos (s):", self.var_espera, 0.5, 10, 0.5)
 
         ttk.Label(caixa, text="Salvar vídeos em:").grid(row=3, column=0, sticky="w", pady=(8, 0))

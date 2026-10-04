@@ -48,6 +48,8 @@ def _archive_falso(api, n_itens=250):
 def test_colecao_inteira_pela_api(api_falsa, monkeypatch):
     _archive_falso(api_falsa, 250)
     monkeypatch.setattr(archive_org, "HOSTS", archive_org.HOSTS + (api_falsa.base.split("//")[1],))
+    assert archive_org.POR_PAGINA == 500                        # lote padrão (buscas grandes, menos pedidos)
+    monkeypatch.setattr(archive_org, "POR_PAGINA", 100)        # lote menor aqui, para testar várias páginas
     url = api_falsa.base + "/details/Comedy_Films"
     assert archive_org.reconhece(url)
 
