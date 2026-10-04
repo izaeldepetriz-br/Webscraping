@@ -755,3 +755,27 @@ def test_maximos_dos_campos_aceitam_valores_grandes():
         assert j.campo_limite.get() == 100_000                    # novo máximo
     finally:
         j.destroy()
+
+
+def test_caminho_colado_e_avisado_antes_da_previa(app, tmp_path, monkeypatch):
+    from jellyfin_tools import organizador
+    monkeypatch.setattr(organizador, "WINDOWS", True)                    # regras de nome do Windows
+    origem, _ = _preparar(app, tmp_path, ["Matrix.1999.mkv"])
+    colado = r"E:\Series_OE:\Series_Organizadas\Series"
+    app.var_jf_destino.set(colado)
+    perguntas = []
+    app.perguntar = lambda t, m: (perguntas.append(m), False)[1]          # "Cancelar"
+    app.bt_previa.invoke()
+    esperar(app)
+    assert "no meio" in perguntas[-1] and r"E:\Series_Organizadas\Series" in perguntas[-1]
+    assert app.var_jf_destino.get() == colado and not _linhas_jf(app)     # nada rodou
+
+    app.var_jf_destino.set(r"E:\Filmes?")                                 # sem sugestão: só avisa
+    app.bt_previa.invoke()
+    assert app.caixas[-1][0] == "aviso" and "não aceita" in app.caixas[-1][2]
+
+    app.var_jf_destino.set(colado)
+    app.perguntar = lambda t, m: True                                     # "Continuar": corrige o campo
+    app.ao_validar = app._validar_jellyfin(precisa_origem=True)
+    assert app.var_jf_destino.get() == r"E:\Series_Organizadas\Series"
+    assert app.ao_validar is not None and app.ao_validar.destino == r"E:\Series_Organizadas\Series"

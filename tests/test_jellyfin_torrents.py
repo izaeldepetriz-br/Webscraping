@@ -338,3 +338,13 @@ def test_episodio_curto_continua_nao_sendo_apagado(tmp_path):
                            limite_trailer_mb=LIMITE)
     assert not any(m.apagar for m in movs)
     assert sorted(m.status for m in movs) == ["nao_identificado", "simulado", "simulado"]
+
+
+def test_atalhos_de_grupos_e_redes_sociais_sao_lixo(tmp_path):
+    """Caso real: 'GRUPO FACEBOOK.url', 'GRUPO TELEGRAM.url', 'STARCKFILMES.COM.url' junto dos episódios."""
+    raiz = tmp_path / "Uma Família Perfeita S01 2025"
+    for nome in ("GRUPO FACEBOOK.url", "GRUPO TELEGRAM.url", "STARCKFILMES.COM.url"):
+        _arquivo(raiz / nome)
+        assert eh_lixo(raiz / nome, raiz)                          # mesmo na pasta raiz da origem
+    _arquivo(raiz / "minhas_notas.txt")
+    assert not eh_lixo(raiz / "minhas_notas.txt", raiz)            # nota pessoal continua a salvo

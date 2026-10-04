@@ -230,3 +230,31 @@ def test_organizar_avisa_plano_e_andamento(tmp_path):
     for i in movidos:
         fr = [f for j, f in avisos if j == i]
         assert fr[0] == 0.0 and fr[-1] == 1.0
+
+
+# ------------------------------------------------------------------ caminho inválido (caso real)
+CAMINHO_COLADO = r"E:\Series_OE:\Series_Organizadas\Series\Uma Família Perfeita S01 2025"
+
+
+@pytest.mark.parametrize("caminho, ok", [
+    (CAMINHO_COLADO, False),                                   # um endereço colado dentro de outro
+    (r"E:\Filmes?", False), (r"E:\A|B", False),
+    (r"E:\Series_Organizadas\Series", True), ("E:/Filmes", True), (r"\\DEPETRIZ\e\Series", True),
+    (r"\\?\C:\Filmes\Matrix (1999)", True), (r"C:\x\Filme (2000) [tmdbid-603]", True)])
+def test_problema_no_caminho_regras_do_windows(caminho, ok):
+    from jellyfin_tools.organizador import problema_no_caminho
+    assert (problema_no_caminho(caminho, windows=True) is None) == ok
+    assert problema_no_caminho(caminho, windows=False) is None   # Linux/Mac: ':' e '?' são permitidos
+
+
+def test_sugestao_e_trava_antes_de_mexer(tmp_path, monkeypatch):
+    from jellyfin_tools import organizador
+    assert organizador.sugestao_de_caminho(CAMINHO_COLADO) == r"E:\Series_Organizadas\Series\Uma Família Perfeita S01 2025"
+    assert organizador.sugestao_de_caminho(r"E:\Filmes") is None
+    origem = tmp_path / "o"
+    origem.mkdir()
+    (origem / "Matrix.1999.mkv").write_bytes(b"v")
+    monkeypatch.setattr(organizador, "WINDOWS", True)
+    with pytest.raises(ValueError, match="biblioteca inválida.*no meio"):
+        organizar_pasta(origem, CAMINHO_COLADO, CatalogoLocal.padrao(), aplicar=True)
+    assert (origem / "Matrix.1999.mkv").exists()                 # nada foi mexido

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 from dataclasses import dataclass
@@ -34,6 +35,34 @@ from .nomes import (eh_video, extrair_episodio, extrair_titulo_e_ano, formatar_t
 
 PASTA_LOGS = ".organizador"
 MODOS = ("filmes", "series")
+WINDOWS = os.name == "nt"                  # as regras de nome de pasta abaixo são as do Windows
+_RE_UNIDADE = re.compile(r"[A-Za-z]:[\\/]")
+_PROIBIDOS_WINDOWS = set('<>"|?*')
+
+
+def problema_no_caminho(texto: str, windows: bool | None = None) -> str | None:
+    """Confere se o caminho é válido no Windows ANTES de mexer em qualquer arquivo.
+    Ex.: 'E:\\Series_OE:\\Series_Organizadas' (um endereço colado dentro de outro) -> explica o erro.
+    Devolve None se estiver tudo certo."""
+    if not (WINDOWS if windows is None else windows):
+        return None
+    texto = str(texto).strip()
+    if texto[:4] in ("\\\\?\\", "//?/"):          # prefixo de caminho longo do Windows: é válido
+        texto = texto[4:]
+    resto = texto[2:] if re.match(r"[A-Za-z]:", texto) else texto      # tira o 'E:' do começo
+    if ":" in resto:
+        return (f"o caminho tem \"{resto[max(resto.index(':') - 1, 0):][:2]}\" no meio, o que o Windows não aceita:\n"
+                f"{texto}\nParece que um endereço foi colado dentro de outro.")
+    proibidos = sorted(_PROIBIDOS_WINDOWS & set(resto))
+    if proibidos:
+        return f"o caminho tem caracteres que o Windows não aceita ({' '.join(proibidos)}):\n{texto}"
+    return None
+
+
+def sugestao_de_caminho(texto: str) -> str | None:
+    """'E:\\Series_OE:\\Series_Organizadas\\Series' -> 'E:\\Series_Organizadas\\Series' (a partir do último 'E:\\')."""
+    inicios = [m.start() for m in _RE_UNIDADE.finditer(str(texto))]
+    return str(texto)[inicios[-1]:] if len(inicios) > 1 else None
 
 
 @dataclass
@@ -268,6 +297,9 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
     if modo not in MODOS:
         raise ValueError(f"modo deve ser um de {MODOS}")
     limpar_cache()                       # os arquivos podem ter mudado desde a última execução
+    for nome, caminho in (("origem", origem), ("biblioteca", pasta_filmes)):
+        if problema := problema_no_caminho(str(caminho)):
+            raise ValueError(f"pasta da {nome} inválida: {problema}")   # antes de mexer em qualquer arquivo
     origem, pasta_filmes = Path(origem).expanduser(), Path(pasta_filmes).expanduser()
     if not origem.is_dir():
         raise NotADirectoryError(f"pasta de origem não existe: {origem}")

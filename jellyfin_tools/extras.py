@@ -45,7 +45,9 @@ IDIOMAS = (("en", {"en", "eng", "english", "ingles"}),
            ("pt-BR", {"pt", "br", "ptbr", "por", "pob", "portugues", "portuguese", "brazilian"}))
 PALAVRAS_FORCADA = {"forced", "forcada", "forcadas", "forcado", "forcados"}
 PALAVRAS_PROPAGANDA = {"leia", "leiame", "readme", "visite", "acesse", "www", "trailer", "teaser", "promo",
-                       "propaganda", "sample", "torrent", "torrents", "download", "baixe", "site"}
+                       "propaganda", "sample", "torrent", "torrents", "download", "baixe", "site",
+                       "grupo", "canal", "facebook", "telegram", "whatsapp", "instagram", "discord",
+                       "twitter", "tiktok", "youtube"}
 SIMILARIDADE_EXTRA = 0.8
 
 

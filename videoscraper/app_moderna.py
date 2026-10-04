@@ -31,7 +31,7 @@ from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, Confi
 from jellyfin_tools.legendas import episodios_da_biblioteca, normalizar_idiomas
 from jellyfin_tools.metadados import ClienteTMDB
 from jellyfin_tools.notificacoes import Notificador
-from jellyfin_tools.organizador import ultimo_log
+from jellyfin_tools.organizador import problema_no_caminho, sugestao_de_caminho, ultimo_log
 from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, pos_processar
 from jellyfin_tools.registro import configurar_log
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, testar_conexao
@@ -759,6 +759,21 @@ class AppModerna(JanelaModerna):
     def _validar_jellyfin(self, precisa_origem: bool = True):
         o = self.obter_opcoes_jellyfin()
         tipo = "Séries" if o.modo == "series" else "Filmes"
+        campos = (("Pasta de origem", o.origem, self.var_jf_origem),
+                  ("Biblioteca", o.destino, self.var_jf_destino))
+        for titulo, caminho, var in campos[0 if precisa_origem else 1:]:
+            problema = caminho and problema_no_caminho(caminho)
+            if not problema:
+                continue
+            sugestao = sugestao_de_caminho(caminho)
+            if sugestao and self.perguntar(titulo, f"{problema[0].upper()}{problema[1:]}\n\n"
+                                                   f"Usar este caminho?\n{sugestao}"):
+                var.set(sugestao)
+                return self._validar_jellyfin(precisa_origem)
+            if not sugestao:
+                self.mostrar_mensagem(titulo, f"{problema[0].upper()}{problema[1:]}\n\n"
+                                      "Apague o campo e escolha a pasta pelo botão \"Escolher...\".", "aviso")
+            return None
         if precisa_origem and (not o.origem or not Path(o.origem).expanduser().is_dir()):
             self.mostrar_mensagem("Pasta de origem", "Escolha a pasta com os arquivos para organizar "
                                   "(ela precisa existir).", "aviso")

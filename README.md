@@ -97,6 +97,10 @@ Outras opções da aba Jellyfin:
   (o andamento continua no rodapé). Clique de novo em "Reduzir lista" para voltar.
 - **Nome do episódio sem tradução:** se o TMDB não tem o nome em português ("Episódio 25"), usa o
   nome original em inglês; sem nenhum dos dois, fica só o número.
+- **Caminho conferido antes de tudo:** um endereço colado dentro de outro
+  (`E:\Series_OE:\Series_Organizadas\...`) ou caracteres que o Windows não aceita (`< > " | ? *`)
+  são avisados antes da prévia, com a correção sugerida (a partir do último `E:\`). O motor também
+  recusa o caminho antes de mexer em qualquer arquivo (antes, cada arquivo dava "WinError 123").
 - **Porcentagem na pré-visualização:** o rodapé mostra "Pré-visualizando... 45% · Consultando o
   TMDB: 75 de 166" e a barra acompanha.
 
