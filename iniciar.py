@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
 """Menu interativo: para quem não quer decorar opções de linha de comando."""
 
-import baixar_videos
-import extrair_links_videos
+import sys
+
+# Se faltar alguma biblioteca, avisa em português e segura a janela aberta
+# (sem isso, no Windows, a janela fecha antes de dar tempo de ler o erro).
+try:
+    import baixar_videos
+    import extrair_links_videos
+except ModuleNotFoundError as erro:
+    print(f"❌ Falta instalar a biblioteca: {erro.name}")
+    print("   Feche esta janela e dê duplo clique em 'iniciar.bat' (ele instala tudo sozinho),")
+    print(f"   ou rode no terminal:  {sys.executable} -m pip install -r requirements.txt")
+    input("\nPressione Enter para fechar...")
+    raise SystemExit(1)
 
 
 def perguntar(texto, padrao=""):

@@ -18,3 +18,4 @@ if not exist .venv (
   call .venv\Scripts\activate.bat
 )
 python iniciar.py
+if errorlevel 1 pause
