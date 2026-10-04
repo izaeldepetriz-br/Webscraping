@@ -123,3 +123,57 @@ def servidor(tmp_path_factory):
     srv.tem_hls = tem_hls
     yield srv
     srv.shutdown()
+
+
+@pytest.fixture
+def api_falsa():
+    """API JSON falsa: defina api_falsa.rotas['/caminho'] = lambda query: (status, dict_ou_bytes).
+    Cada pedido fica registrado em api_falsa.pedidos (caminho, query, headers, corpo)."""
+    import json as _json
+    from urllib.parse import parse_qs, urlparse
+
+    rotas, pedidos = {}, []
+
+    class H(BaseHTTPRequestHandler):
+        def _responder(self, corpo_pedido=b""):
+            url = urlparse(self.path)
+            query = parse_qs(url.query)
+            pedidos.append({"metodo": self.command, "caminho": url.path, "query": query,
+                            "headers": dict(self.headers), "corpo": corpo_pedido})
+            rota = rotas.get(url.path)
+            status, corpo = rota(query) if rota else (404, {"erro": "rota inexistente"})
+            if isinstance(corpo, (dict, list)):
+                dados, tipo = _json.dumps(corpo).encode(), "application/json"
+            else:
+                dados, tipo = corpo, "application/octet-stream"
+            self.send_response(status)
+            self.send_header("Content-Type", tipo)
+            self.send_header("Content-Length", str(len(dados)))
+            self.end_headers()
+            self.wfile.write(dados)
+
+        def do_GET(self):
+            self._responder()
+
+        def do_POST(self):
+            tamanho = int(self.headers.get("Content-Length", 0))
+            self._responder(self.rfile.read(tamanho))
+
+        def log_message(self, *a):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    srv.base = f"http://127.0.0.1:{srv.server_port}"
+    srv.rotas, srv.pedidos = rotas, pedidos
+    yield srv
+    srv.shutdown()
+
+
+@pytest.fixture
+def site_legendas():
+    from jellyfin_tools.site_demo import iniciar_site_demo
+    srv, base = iniciar_site_demo()
+    srv.base = base
+    yield srv
+    srv.shutdown()

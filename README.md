@@ -110,8 +110,75 @@ videoscraper/
   gui.py        janela com botões (Tkinter)
   cli.py        comandos links / baixar / login
   menu.py       menu de texto (python iniciar.py --texto)
-tests/          testes com servidor local (sem internet)
+jellyfin_tools/
+  nomes.py       lê nomes bagunçados e monta "Nome (Ano)"
+  catalogo.py    confirma título/ano (JSON local ou API do TMDB)
+  organizador.py move/renomeia no padrão do Jellyfin, com simulação e desfazer
+  legendas.py    busca/baixa legendas (site HTML ou API do OpenSubtitles)
+  site_demo.py   site de legendas simulado, para demonstração e testes
+exemplo_jellyfin.py  como integrar no seu arquivo principal
+tests/          testes com servidores locais (sem internet)
 ```
+
+## Jellyfin: organizar filmes e baixar legendas (`jellyfin_tools`)
+
+Pacote separado para a biblioteca do Jellyfin.
+
+**Parte 1, organizador:** lê nomes bagunçados, confirma título e ano num catálogo e move para o
+padrão do Jellyfin.
+
+| Arquivo bagunçado | Vira |
+|---|---|
+| `Matrix.1999.1080p.BluRay.x264-VERSAO.mp4` | `Filmes/Matrix (1999)/Matrix (1999).mp4` |
+| `interestellar_filme_completo_dublado_2014.mkv` | `Filmes/Interstellar (2014)/Interstellar (2014).mkv` |
+| `O.Poderoso.Chefao.1972.Bluray.mkv` | `Filmes/O Poderoso Chefão (1972)/O Poderoso Chefão (1972).mkv` |
+
+**Parte 2, legendas:** busca a legenda pt-BR e salva ao lado do vídeo com o mesmo nome:
+`Matrix (1999).pt-BR.srt` (sempre em UTF-8; aceita `.srt`, `.zip` e codificação antiga do Windows).
+
+### Experimente (sem mexer nos seus arquivos)
+
+```bash
+python -m jellyfin_tools demo
+```
+
+Cria a pasta `demo_jellyfin/` com os 3 arquivos fictícios, organiza, baixa as legendas de um
+**site de legendas simulado** (local) e mostra a árvore de pastas antes e depois.
+
+### Usar nos seus arquivos
+
+```bash
+# 1) Simulação: mostra o que faria, não move nada
+python -m jellyfin_tools organizar "C:/Users/Voce/Downloads" "D:/Jellyfin/Filmes"
+# 2) De verdade
+python -m jellyfin_tools organizar "C:/Users/Voce/Downloads" "D:/Jellyfin/Filmes" --aplicar
+# 3) Arrependeu? Desfaz a última organização
+python -m jellyfin_tools desfazer "D:/Jellyfin/Filmes"
+# Legendas que faltam na biblioteca (API oficial do OpenSubtitles)
+python -m jellyfin_tools legendas "D:/Jellyfin/Filmes" --opensubtitles
+```
+
+No seu próprio código, veja `exemplo_jellyfin.py`. As funções principais são `organizar_pasta`,
+`desfazer`, `baixar_legenda` e `baixar_legendas_biblioteca`.
+
+### De onde vêm os nomes e as legendas
+
+- **Catálogo local** (`jellyfin_tools/catalogo_filmes.json`): funciona offline; acrescente seus filmes.
+- **TMDB** (`--tmdb`, variável `TMDB_API_KEY`): API oficial e gratuita, a mesma base que o Jellyfin usa.
+- **Legendas, API do OpenSubtitles** (`--opensubtitles`, variável `OPENSUBTITLES_API_KEY`):
+  gratuita, com limite de downloads por dia.
+- **Legendas, site HTML** (`--site-legendas "https://site/busca?q={consulta}"`): raspagem com
+  BeautifulSoup e seletores configuráveis (`ConfigSite`). Respeita o `robots.txt`.
+
+O programa usa as APIs oficiais em vez de raspar os sites do IMDb, TMDB e OpenSubtitles, porque
+os termos de uso deles proíbem raspagem.
+
+### Segurança dos seus arquivos
+
+- Sem `--aplicar`, nada é movido.
+- Nunca sobrescreve: se o destino já existe, o arquivo fica onde está (`conflito`).
+- Legendas e `.nfo` com o mesmo nome do vídeo vão junto.
+- Todo movimento fica num log em `Filmes/.organizador/`, que o `desfazer` usa.
 
 ## Testes
 

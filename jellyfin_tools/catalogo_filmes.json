@@ -1,0 +1,13 @@
+[
+  {"titulo": "Matrix", "ano": 1999, "titulo_original": "The Matrix", "tmdb_id": 603},
+  {"titulo": "Interstellar", "ano": 2014, "titulo_original": "Interstellar", "tmdb_id": 157336,
+   "alternativos": ["Interestelar"]},
+  {"titulo": "O Poderoso Chefão", "ano": 1972, "titulo_original": "The Godfather", "tmdb_id": 238},
+  {"titulo": "O Poderoso Chefão: Parte II", "ano": 1974, "titulo_original": "The Godfather Part II", "tmdb_id": 240},
+  {"titulo": "Cidade de Deus", "ano": 2002, "titulo_original": "Cidade de Deus", "tmdb_id": 598},
+  {"titulo": "Tropa de Elite", "ano": 2007, "titulo_original": "Tropa de Elite", "tmdb_id": 7347},
+  {"titulo": "A Origem", "ano": 2010, "titulo_original": "Inception", "tmdb_id": 27205},
+  {"titulo": "Blade Runner 2049", "ano": 2017, "titulo_original": "Blade Runner 2049", "tmdb_id": 335984},
+  {"titulo": "1917", "ano": 2019, "titulo_original": "1917", "tmdb_id": 530915},
+  {"titulo": "Duna: Parte Dois", "ano": 2024, "titulo_original": "Dune: Part Two", "tmdb_id": 693134}
+]
