@@ -213,7 +213,12 @@ Outras opções da aba Jellyfin:
   só o número no começo (`13 - To'hajiilee.mp4` em `Breaking Bad 5 Temporada Parte 2` → Breaking Bad S05E13;
   `61 Ninguém Pega Esse Coelho!.avi` em `As Aventuras De Jackie Chan` → episódio 61, que o TMDB põe na
   temporada certa) e nome + número + saga (`HunterXHunter 66_York Shin.mp4`, aceito quando há outros
-  números da mesma série na pasta; o ano 1999 vem da pasta `1999 - Hunter x Hunter`). Um `BLUDV.mp4` pequeno ao lado de arquivos
+  números da mesma série na pasta; o ano 1999 vem da pasta `1999 - Hunter x Hunter`).
+  **Nome do episódio depois do número:** o que vier no arquivo fica (`13 - To'hajiilee` → `Breaking Bad S05E13 -
+  To'hajiilee`, `61 Ninguém Pega Esse Coelho!` → `... S01E61 - Ninguém Pega Esse Coelho!`); com o TMDB e
+  "Séries: nome do episódio depois do número" marcados, o nome do TMDB vem primeiro (é assim que
+  `O Mentalista HDTV 01-21`, que não traz o nome, ganha o dele). No formato de saga do Hunter x Hunter, fica o
+  nome da saga (`Hunter X Hunter S01E66 - York Shin`). Um `BLUDV.mp4` pequeno ao lado de arquivos
   `...WWW.BLUDV.COM...` fica como "ignorado: propaganda do site".
 - **Totais nos filtros:** cada caixa de "Mostrar" diz quantos arquivos tem ("Não identificado (540)"), e
   "Mostrar todos" marca todas de novo. Os resultados de "Conferir espelhos", "Relatório" e "Completar

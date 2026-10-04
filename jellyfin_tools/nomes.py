@@ -190,6 +190,8 @@ class EpisodioExtraido(NamedTuple):
     episodio: int
     ano: Optional[int]
     absoluto: bool = False   # só o número do episódio ("Dragon Ball 153"): numeração contínua
+    titulo: str = ""         # nome do episódio que veio no arquivo ("13 - To'hajiilee" -> "To'hajiilee")
+    saga: bool = False       # o "titulo" é o nome da saga ("HunterXHunter 66_York Shin" -> "York Shin")
 
 
 # Do mais confiável para o menos confiável. Cada um devolve (temporada, episódio).
@@ -241,6 +243,7 @@ def extrair_episodio(nome_arquivo: str) -> EpisodioExtraido | None:
         m = padrao.search(base)
         if m:
             temporada, episodio = int(m.group(1)), int(m.group(2))
+            titulo = titulo_depois_do_traco(base[m.end():])     # "Supernatural S012E20 - Galhos e Fios"
             break
     else:
         m = _PADRAO_SO_EPISODIO.search(base)
@@ -254,7 +257,30 @@ def extrair_episodio(nome_arquivo: str) -> EpisodioExtraido | None:
         if (m := _PADRAO_PARENTESES.search(base)) and not 1900 <= int(m.group(1)) <= 2099 and int(m.group(1)):
             return _montar_episodio(_cortar_qualidade(base[:m.start()]), 1, int(m.group(1)), absoluto=True)
         return None
-    return _montar_episodio(base[:m.start()], temporada, episodio)
+    return _montar_episodio(base[:m.start()], temporada, episodio, titulo=titulo)
+
+
+# Palavras que, no FIM do nome do episódio, são da cópia e não do título ("... Tasha Banes Dublado")
+_FIM_SEM_TITULO = PALAVRAS_RUIDO | ETIQUETAS_TECNICAS | {"hd", "sd", "fhd", "uhd", "hq"}
+
+
+def titulo_do_episodio(texto: str) -> str:
+    """O que sobra depois do número: "To'hajiilee", "Saída 9B - HD 720p" -> "Saída 9B",
+    "York_Shin" -> "York Shin". Sem as etiquetas da cópia (720p, Dublado...) e sem site."""
+    texto = _cortar_qualidade(" " + _RE_SITE.sub(" ", texto))
+    texto = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", texto).replace("_", " ")
+    palavras = texto.strip(" .-").split()
+    while palavras and (normalizar(palavras[-1]).replace(" ", "") in _FIM_SEM_TITULO or palavras[-1] in "-."):
+        palavras.pop()
+    titulo = " ".join(palavras).strip(" .-")
+    if re.fullmatch(r"(?:epis[oó]dio|episode|ep|cap[ií]tulo|parte)\s*\d+", titulo, re.IGNORECASE):
+        return ""                                          # "Episodio 1" não é nome de episódio
+    return titulo if re.search(r"[^\W\d_]{2,}", titulo) else ""
+
+
+def titulo_depois_do_traco(resto: str) -> str:
+    """Só com " - " logo depois do número (S01E02 - Nome): 'Dark.S01E02.720p' não tem título."""
+    return titulo_do_episodio(resto[m.end():]) if (m := re.match(r"\s*-\s+", resto)) else ""
 
 
 # Pastas que não são nome de série (para não chamar a série de "Desenhos" ou "Season 01").
@@ -282,20 +308,20 @@ def serie_da_pasta(nome_pasta: str) -> tuple[str, int | None] | None:
     return nome, ano
 
 
-def numeros_sem_serie(nome_arquivo: str) -> tuple[int, int, bool] | None:
+def numeros_sem_serie(nome_arquivo: str) -> tuple[int, int, bool, str] | None:
     """Temporada e episódio de um arquivo SEM o nome da série: 'Temp 01 - Epi 04 - Socos Mortais.mkv'
     -> (1, 4, False); '04-01 Saída 9B - HD 720p.mkv' -> (4, 1, False); 'Episodio 05.mkv' -> (1, 5, True).
     O nome da série vem da pasta (organizador.episodio_do_video)."""
     base = _RE_SITE.sub(" ", Path(nome_arquivo).stem)
     for padrao in _PADROES_EPISODIO:
         if m := padrao.search(base):
-            return int(m.group(1)), int(m.group(2)), False
+            return int(m.group(1)), int(m.group(2)), False, titulo_depois_do_traco(base[m.end():])
     if m := _PADRAO_INICIO.match(base):
-        return int(m.group(1)), int(m.group(2)), False
+        return int(m.group(1)), int(m.group(2)), False, titulo_do_episodio(base[m.end():])
     if m := _PADRAO_SO_EPISODIO.match(base.strip(" ._-")):
-        return 1, int(m.group(1)), True
+        return 1, int(m.group(1)), True, ""
     if (m := _PADRAO_NUMERO_INICIO.match(base)) and int(m.group(1)) > 0:
-        return 1, int(m.group(1)), True
+        return 1, int(m.group(1)), True, titulo_do_episodio(base[m.end():])
     return None
 
 
@@ -309,7 +335,8 @@ def episodio_no_meio(nome_arquivo: str) -> EpisodioExtraido | None:
     episodio = int(m.group("ep"))
     if episodio == 0 or 1900 <= episodio <= 2099:
         return None
-    return _montar_episodio(m.group("antes"), 1, episodio, absoluto=True)
+    return _montar_episodio(m.group("antes"), 1, episodio, absoluto=True,
+                            titulo=titulo_do_episodio(m.group("resto")), saga=True)
 
 
 _RE_NUMERO_TEMPORADA = re.compile(
@@ -358,7 +385,8 @@ def _separar_palavras_grudadas(texto: str) -> str:
     return re.sub(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", texto)
 
 
-def _montar_episodio(antes: str, temporada: int, episodio: int, absoluto: bool = False) -> EpisodioExtraido | None:
+def _montar_episodio(antes: str, temporada: int, episodio: int, absoluto: bool = False, titulo: str = "",
+                     saga: bool = False) -> EpisodioExtraido | None:
     if not antes.strip(" ._-[]()"):
         return None                       # "S01E01.mkv": sem o nome da série não dá para organizar
     antes = _separar_palavras_grudadas(antes)
@@ -367,7 +395,7 @@ def _montar_episodio(antes: str, temporada: int, episodio: int, absoluto: bool =
     nome = re.sub(r"\s*\b(?:temporada|season|temp)\s*$", "", nome, flags=re.I).strip()
     if not nome:
         return None
-    return EpisodioExtraido(nome, temporada, episodio, ano, absoluto)
+    return EpisodioExtraido(nome, temporada, episodio, ano, absoluto, titulo, saga)
 
 
 def nome_episodio_jellyfin(serie: str, temporada: int, episodio: int, titulo_episodio: str = "") -> str:

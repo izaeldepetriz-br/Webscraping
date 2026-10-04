@@ -153,12 +153,12 @@ def episodio_do_video(video: Path, raiz: Path | None = None) -> EpisodioExtraido
         return ep                                          # 'HunterXHunter 66_York Shin' (com 67, 68... ao lado)
     if not (numeros := numeros_sem_serie(video.name)):
         return None
-    temporada, episodio, absoluto = numeros
+    temporada, episodio, absoluto, titulo = numeros
     if absoluto and (da_pasta := temporada_da_pasta(video.parent.name)):
         temporada, absoluto = da_pasta, False              # 'Breaking Bad 5 Temporada/13 - To'hajiilee'
     for pasta in (video.parent, video.parent.parent):
         if achado := serie_da_pasta(pasta.name):
-            return EpisodioExtraido(achado[0], temporada, episodio, achado[1], absoluto)
+            return EpisodioExtraido(achado[0], temporada, episodio, achado[1], absoluto, titulo)
         if raiz is not None and pasta.resolve() == Path(raiz).resolve():
             break
     return None
@@ -247,9 +247,10 @@ def _planejar_episodio(video: Path, pasta_series: Path, catalogo: Catalogo | Non
                                                 f"temporada {temporada}, episódio {episodio} (TMDB)") if t)
     pasta_serie = pasta_series / nome_jellyfin(nome, ano, serie.tmdb_id if serie else None, incluir_tmdbid)
     pasta = pasta_serie / pasta_temporada(temporada)
-    titulo_ep = ""
-    if nomes_episodios and serie is not None and catalogo is not None:
+    titulo_ep = ep.titulo if ep.saga else ""          # 'HunterXHunter 66_York Shin': fica o nome da saga
+    if not titulo_ep and nomes_episodios and serie is not None and catalogo is not None:
         titulo_ep = getattr(catalogo, "nome_episodio", lambda *a: None)(serie, temporada, episodio) or ""
+    titulo_ep = titulo_ep or ep.titulo                 # o nome que veio no arquivo ('13 - To'hajiilee')
     if not titulo_ep:                    # já tem nome ('Dark S01E01 - Segredos'): não tira, mesmo sem TMDB
         so_numero = nome_episodio_jellyfin(nome, temporada, episodio)
         if video.stem.lower().startswith(so_numero.lower() + " - "):

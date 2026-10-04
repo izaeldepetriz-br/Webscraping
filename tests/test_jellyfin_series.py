@@ -304,11 +304,11 @@ def test_padroes_reais_pica_pau_apenas_um_show_supernatural(tmp_path):
         "Desenhos/Apenas um Show/Apenas um show s03e1-19/Regular.Show.03.15-by-Rogerio_ruts.avi":
             "Regular Show/Season 03/Regular Show S03E15.avi",
         "Desenhos/Apenas um Show/Apenas um Show - 1a Temporada/Temp 01 - Epi 04 - Socos Mortais.mkv":
-            "Apenas Um Show/Season 01/Apenas Um Show S01E04.mkv",
+            "Apenas Um Show/Season 01/Apenas Um Show S01E04 - Socos Mortais.mkv",
         "Desenhos/Apenas um Show/Temporada 4/04-01 Saida 9B - HD 720p.mkv":
-            "Apenas Um Show/Season 04/Apenas Um Show S04E01.mkv",
+            "Apenas Um Show/Season 04/Apenas Um Show S04E01 - Saida 9B.mkv",
         "Supernatural/Supernatural S012E20 - Galhos e Fios e Tasha Banes Dublado.mkv":
-            "Supernatural/Season 12/Supernatural S12E20.mkv",
+            "Supernatural/Season 12/Supernatural S12E20 - Galhos e Fios e Tasha Banes.mkv",
     }
     for relativo in arquivos:
         (raiz / relativo).parent.mkdir(parents=True, exist_ok=True)
@@ -331,13 +331,13 @@ def test_padroes_reais_mentalista_breaking_bad_jackie_chan_hunter_x_hunter(tmp_p
         "Series/O Mentalista/The Mentalist - O Mentalista HD S01/O Mentalista HDTV 01-21.mkv":
             "O Mentalista/Season 01/O Mentalista S01E21.mkv",
         "Series/Breaking Bad/Breaking Bad 5 Temporada Parte 2 - Final/13 - To'hajiilee.mp4":
-            "Breaking Bad (2008)/Season 05/Breaking Bad S05E13.mp4",
+            "Breaking Bad (2008)/Season 05/Breaking Bad S05E13 - To'hajiilee.mp4",
         "Series/Breaking Bad/Breaking Bad 5 Temporada Parte 2 - Final/9 - Blood Money.mp4":
-            "Breaking Bad (2008)/Season 05/Breaking Bad S05E09.mp4",
+            "Breaking Bad (2008)/Season 05/Breaking Bad S05E09 - Blood Money.mp4",
         "Desenhos/As Aventuras De Jackie Chan/61 Ninguém Pega Esse Coelho!.avi":
-            "As Aventuras De Jackie Chan/Season 01/As Aventuras De Jackie Chan S01E61.avi",
-        f"{saga}/HunterXHunter 66_York Shin.mp4": "Hunter X Hunter (1999)/Season 01/Hunter X Hunter S01E66.mp4",
-        f"{saga}/HunterXHunter 67_York Shin.mp4": "Hunter X Hunter (1999)/Season 01/Hunter X Hunter S01E67.mp4",
+            "As Aventuras De Jackie Chan/Season 01/As Aventuras De Jackie Chan S01E61 - Ninguém Pega Esse Coelho!.avi",
+        f"{saga}/HunterXHunter 66_York Shin.mp4": "Hunter X Hunter (1999)/Season 01/Hunter X Hunter S01E66 - York Shin.mp4",
+        f"{saga}/HunterXHunter 67_York Shin.mp4": "Hunter X Hunter (1999)/Season 01/Hunter X Hunter S01E67 - York Shin.mp4",
     }
     for relativo in arquivos:
         (raiz / relativo).parent.mkdir(parents=True, exist_ok=True)
@@ -351,3 +351,34 @@ def test_padroes_reais_mentalista_breaking_bad_jackie_chan_hunter_x_hunter(tmp_p
         assert m.destino is not None, (relativo, m.detalhe)
         assert m.destino.relative_to(raiz).as_posix().lower() == esperado.lower(), (relativo, m.destino)
     assert movs["Naruto 12_Exame Chunin.mp4"].status == "nao_identificado"
+
+
+def test_nome_do_episodio_saga_tmdb_e_arquivo(tmp_path):
+    """Prioridade do nome depois do número: saga (Hunter x Hunter) > TMDB > o que veio no arquivo.
+    O Mentalista ('HDTV 01-21', sem nome no arquivo) só ganha nome pelo TMDB."""
+    from jellyfin_tools.catalogo import Catalogo, Filme
+
+    class TMDBFalso(Catalogo):
+        def buscar(self, titulo, ano, tipo="filme"):
+            return Filme(titulo, ano or 2008, tmdb_id=1, tipo="serie")
+
+        def nome_episodio(self, serie, temporada, episodio):
+            return {("O Mentalista", 1, 21): "Ruivo Por Inteiro",
+                    ("Breaking Bad", 5, 13): "To'hajiilee (TMDB)",
+                    ("Hunter X Hunter", 1, 66): "Nome do TMDB"}.get((serie.titulo, temporada, episodio))
+
+    raiz = tmp_path / "Series_Organizadas"
+    saga = raiz / "Animes/1999 - Hunter x Hunter/63-75 York Shin"
+    arquivos = [raiz / "Series/O Mentalista/The Mentalist - O Mentalista HD S01/O Mentalista HDTV 01-21.mkv",
+                raiz / "Series/Breaking Bad/Breaking Bad 5 Temporada Parte 2/13 - To'hajiilee.mp4",
+                raiz / "Series/Breaking Bad/Breaking Bad 5 Temporada Parte 2/14 - Ozymandias.mp4",
+                saga / "HunterXHunter 66_York Shin.mp4", saga / "HunterXHunter 67_York Shin.mp4"]
+    for arquivo in arquivos:
+        arquivo.parent.mkdir(parents=True, exist_ok=True)
+        arquivo.write_bytes(b"v")
+    movs = {m.origem.name: m.destino.name for m in
+            organizar_pasta(raiz, raiz, TMDBFalso(), modo="series", nomes_episodios=True)}
+    assert movs["O Mentalista HDTV 01-21.mkv"] == "O Mentalista S01E21 - Ruivo Por Inteiro.mkv"
+    assert movs["13 - To'hajiilee.mp4"] == "Breaking Bad S05E13 - To'hajiilee (TMDB).mp4"   # TMDB primeiro
+    assert movs["14 - Ozymandias.mp4"] == "Breaking Bad S05E14 - Ozymandias.mp4"          # TMDB não sabe: o do arquivo
+    assert movs["HunterXHunter 66_York Shin.mp4"] == "Hunter X Hunter S01E66 - York Shin.mp4"  # saga fica
