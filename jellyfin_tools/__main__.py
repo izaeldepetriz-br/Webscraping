@@ -6,7 +6,9 @@
   python -m jellyfin_tools organizar ORIGEM PASTA_FILMES [--aplicar] [--legendas-demo | --site-legendas URL | --opensubtitles]
       Sem --aplicar só mostra o que faria (nada é movido).
 
-  python -m jellyfin_tools legendas PASTA_FILMES [--legendas-demo | --site-legendas URL | --opensubtitles]
+      Com --series: organiza episódios em Séries/Nome (Ano)/Season 01/Nome S01E01.ext
+
+  python -m jellyfin_tools legendas PASTA_FILMES [--series] [--legendas-demo | --site-legendas URL | --opensubtitles]
   python -m jellyfin_tools desfazer PASTA_FILMES        (desfaz a última organização)
 
 Chaves de API (opcionais) por variável de ambiente: TMDB_API_KEY, OPENSUBTITLES_API_KEY.
@@ -22,7 +24,8 @@ from pathlib import Path
 
 from .catalogo import CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, ErroCatalogo
 from .legendas import (ConfigSite, ErroLegenda, ProvedorOpenSubtitles, ProvedorSiteHTML,
-                       baixar_legenda, baixar_legendas_biblioteca)
+                       baixar_legenda, baixar_legenda_episodio, baixar_legendas_biblioteca,
+                       baixar_legendas_series)
 from .organizador import desfazer, organizar_pasta, ultimo_log
 from .site_demo import iniciar_site_demo
 
@@ -80,7 +83,8 @@ def _organizar(args) -> int:
     try:
         movimentos = organizar_pasta(args.origem, args.pasta_filmes, _criar_catalogo(args),
                                      aplicar=args.aplicar, recursivo=not args.sem_subpastas,
-                                     incluir_tmdbid=args.tmdbid, exigir_catalogo=args.exigir_catalogo)
+                                     incluir_tmdbid=args.tmdbid, exigir_catalogo=args.exigir_catalogo,
+                                     modo="series" if args.series else "filmes")
         for m in movimentos:
             print(m)
         if not args.aplicar:
@@ -90,8 +94,12 @@ def _organizar(args) -> int:
         for m in movimentos:
             if m.status == "movido" and provedores:
                 originais = [m.filme.titulo_original] if m.filme and m.filme.titulo_original else []
-                print(baixar_legenda(m.destino.parent, provedores, idioma=args.idioma,
-                                     sobrescrever=args.sobrescrever, titulos_alternativos=originais))
+                if m.episodio:
+                    print(baixar_legenda_episodio(m.destino, provedores, idioma=args.idioma,
+                                                  sobrescrever=args.sobrescrever, titulos_alternativos=originais))
+                else:
+                    print(baixar_legenda(m.destino.parent, provedores, idioma=args.idioma,
+                                         sobrescrever=args.sobrescrever, titulos_alternativos=originais))
         return 1 if any(m.status == "erro" for m in movimentos) else 0
     finally:
         for s in desligar:
@@ -105,8 +113,9 @@ def _legendas(args) -> int:
         if not provedores:
             print("Escolha uma fonte: --legendas-demo, --site-legendas URL ou --opensubtitles")
             return 1
-        resultados = baixar_legendas_biblioteca(args.pasta_filmes, provedores, args.idioma,
-                                                args.sobrescrever, catalogo=CatalogoLocal.padrao())
+        funcao = baixar_legendas_series if args.series else baixar_legendas_biblioteca
+        resultados = funcao(args.pasta_filmes, provedores, args.idioma, args.sobrescrever,
+                            catalogo=CatalogoLocal.padrao())
         return 1 if any(r.status == "erro" for r in resultados) else 0
     finally:
         for s in desligar:
@@ -174,10 +183,13 @@ def main(argv: list[str] | None = None) -> int:
     o.add_argument("--tmdbid", action="store_true", help="incluir [tmdbid-XXX] no nome da pasta")
     o.add_argument("--exigir-catalogo", action="store_true", help="só mover filmes confirmados no catálogo")
     o.add_argument("--sem-subpastas", action="store_true", help="não procurar dentro de subpastas")
+    o.add_argument("--series", action="store_true",
+                   help="organizar episódios de séries (PASTA_FILMES = pasta de séries do Jellyfin)")
     _opcoes_legendas(o)
 
     le = sub.add_parser("legendas", help="baixar legendas que faltam na biblioteca")
     le.add_argument("pasta_filmes")
+    le.add_argument("--series", action="store_true", help="a pasta é a biblioteca de séries")
     _opcoes_legendas(le)
 
     de = sub.add_parser("desfazer", help="desfazer a última organização")

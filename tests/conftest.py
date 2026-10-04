@@ -53,6 +53,28 @@ fetch('/api/lista.json').then(r => r.json()).then(d => {
 
 LISTA_JSON = '{"videos":[{"titulo":"Aula JS","url":"/m/js.mp4"}],"stream":"/hls/master.m3u8"}'
 
+# Busca feita com Web Components: os resultados ficam DENTRO de shadow DOMs (como no archive.org).
+BUSCA_SHADOW = """<html><body><app-busca></app-busca>
+<script>
+customElements.define('cartao-item', class extends HTMLElement {
+  connectedCallback() {
+    this.attachShadow({mode: 'open'}).innerHTML =
+      `<a href="/item/${this.getAttribute('id-item')}">${this.getAttribute('titulo')}</a>`;
+  }
+});
+customElements.define('app-busca', class extends HTMLElement {
+  connectedCallback() {
+    this.attachShadow({mode: 'open'}).innerHTML =
+      '<cartao-item id-item="1" titulo="Filme Livre"></cartao-item>' +
+      '<cartao-item id-item="2" titulo="Documentario Livre"></cartao-item>';
+  }
+});
+</script></body></html>"""
+
+# Página de um item: o vídeo vem na meta og:video (como nas páginas /details/ do archive.org).
+def ITEM(n):
+    return f'<html><head><meta property="og:video" content="/m/item{n}.mp4"></head><body>item</body></html>'
+
 AREA_LOGADA = '<html><body><a class="video-link" href="/privado/v.mp4">Exclusivo</a></body></html>'
 
 
@@ -92,6 +114,10 @@ def servidor(tmp_path_factory):
                 r = (200, "text/html; charset=utf-8", COM_JS.encode())
             elif caminho == "/api/lista.json":
                 r = (200, "application/json", LISTA_JSON.encode())
+            elif caminho == "/busca-shadow":
+                r = (200, "text/html; charset=utf-8", BUSCA_SHADOW.encode())
+            elif caminho.startswith("/item/"):
+                r = (200, "text/html", ITEM(caminho.rsplit("/", 1)[1]).encode())
             elif caminho == "/login-cookie":
                 r = (200, "text/html", b"<html><body>logado!</body></html>")
                 extra.append(("Set-Cookie", "sessao=ok; Path=/"))

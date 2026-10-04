@@ -1,6 +1,7 @@
-"""Move e renomeia vídeos para o padrão de filmes do Jellyfin:
+"""Move e renomeia vídeos para o padrão do Jellyfin:
 
-    <pasta_filmes>/Nome do Filme (Ano)/Nome do Filme (Ano).ext
+    Filmes:  <pasta_filmes>/Nome do Filme (Ano)/Nome do Filme (Ano).ext
+    Séries:  <pasta_series>/Nome da Série (Ano)/Season 01/Nome da Série S01E02.ext
 
 Segurança:
   - Por padrão só SIMULA (aplicar=False): mostra o que faria, sem mexer em nada.
@@ -17,10 +18,11 @@ from datetime import datetime
 from pathlib import Path
 
 from .catalogo import Catalogo, ErroCatalogo, Filme
-from .nomes import (EXTENSOES_ACOMPANHANTES, eh_video, extrair_titulo_e_ano, formatar_titulo,
-                    nome_jellyfin, normalizar)
+from .nomes import (EXTENSOES_ACOMPANHANTES, eh_video, extrair_episodio, extrair_titulo_e_ano,
+                    formatar_titulo, nome_episodio_jellyfin, nome_jellyfin, normalizar, pasta_temporada)
 
 PASTA_LOGS = ".organizador"
+MODOS = ("filmes", "series")
 
 
 @dataclass
@@ -31,12 +33,20 @@ class Movimento:
     detalhe: str = ""
     filme: Filme | None = None
     acompanhantes: list[tuple[Path, Path]] | None = None   # legendas/nfo que vão junto
+    episodio: tuple[int, int] | None = None                # (temporada, episódio), só em séries
 
     def __str__(self) -> str:
-        # Mostra só "Pasta do Filme/arquivo.ext", que é o que interessa.
-        destino = f" -> {self.destino.parent.name}/{self.destino.name}" if self.destino else ""
+        destino = f" -> {self.destino_curto}" if self.destino else ""
         detalhe = f" ({self.detalhe})" if self.detalhe else ""
         return f"[{self.status}] {self.origem.name}{destino}{detalhe}"
+
+    @property
+    def destino_curto(self) -> str:
+        """Filmes: 'Matrix (1999)/Matrix (1999).mkv'.  Séries: 'Dark (2017)/Season 01/Dark S01E01.mkv'."""
+        if not self.destino:
+            return ""
+        partes = self.destino.parts[-3:] if self.episodio else self.destino.parts[-2:]
+        return "/".join(partes)
 
 
 def _acompanhantes(video: Path, novo_nome: str, pasta_destino: Path) -> list[tuple[Path, Path]]:
@@ -50,19 +60,35 @@ def _acompanhantes(video: Path, novo_nome: str, pasta_destino: Path) -> list[tup
     return pares
 
 
+def _consultar(catalogo: Catalogo | None, titulo: str, ano: int | None, tipo: str):
+    """Devolve (Filme ou None, detalhe do erro)."""
+    if catalogo is None:
+        return None, ""
+    try:
+        return catalogo.buscar(titulo, ano, tipo), ""
+    except ErroCatalogo as erro:
+        return None, f"catálogo indisponível: {erro}"
+
+
+def _finalizar(video: Path, pasta: Path, nome_arquivo: str, detalhe: str, filme, episodio=None) -> Movimento:
+    destino = pasta / f"{nome_arquivo}{video.suffix.lower()}"
+    mov = Movimento(video, destino, "simulado", detalhe, filme, _acompanhantes(video, nome_arquivo, pasta),
+                    episodio)
+    if destino.exists() and destino.resolve() != video.resolve():
+        mov.status, mov.detalhe = "conflito", "já existe um arquivo com esse nome no destino"
+    return mov
+
+
 def planejar(video: Path, pasta_filmes: Path, catalogo: Catalogo | None = None,
-             incluir_tmdbid: bool = False, exigir_catalogo: bool = False) -> Movimento:
+             incluir_tmdbid: bool = False, exigir_catalogo: bool = False, modo: str = "filmes") -> Movimento:
     """Decide PARA ONDE o vídeo vai, sem mover nada."""
     if "sample" in normalizar(video.stem).split():
         return Movimento(video, None, "ignorado", "arquivo de amostra (sample)")
+    if modo == "series":
+        return _planejar_episodio(video, pasta_filmes, catalogo, incluir_tmdbid, exigir_catalogo)
 
     extraido = extrair_titulo_e_ano(video.name)
-    filme, detalhe = None, ""
-    if catalogo is not None:
-        try:
-            filme = catalogo.buscar(extraido.titulo, extraido.ano)
-        except ErroCatalogo as erro:
-            detalhe = f"catálogo indisponível: {erro}"
+    filme, detalhe = _consultar(catalogo, extraido.titulo, extraido.ano, "filme")
     if filme:
         titulo, ano = filme.titulo, filme.ano
     elif exigir_catalogo:
@@ -76,12 +102,27 @@ def planejar(video: Path, pasta_filmes: Path, catalogo: Catalogo | None = None,
                          detalhe or "não achei o ano no nome; renomeie à mão ou use o TMDB")
 
     nome = nome_jellyfin(titulo, ano, filme.tmdb_id if filme else None, incluir_tmdbid)
-    pasta = pasta_filmes / nome
-    destino = pasta / f"{nome}{video.suffix.lower()}"
-    mov = Movimento(video, destino, "simulado", detalhe, filme, _acompanhantes(video, nome, pasta))
-    if destino.exists() and destino.resolve() != video.resolve():
-        mov.status, mov.detalhe = "conflito", "já existe um arquivo com esse nome no destino"
-    return mov
+    return _finalizar(video, pasta_filmes / nome, nome, detalhe, filme)
+
+
+def _planejar_episodio(video: Path, pasta_series: Path, catalogo: Catalogo | None,
+                       incluir_tmdbid: bool, exigir_catalogo: bool) -> Movimento:
+    ep = extrair_episodio(video.name)
+    if not ep:
+        return Movimento(video, None, "nao_identificado",
+                         "não achei temporada/episódio no nome (ex.: S01E02, 1x02, Episodio 3)")
+    serie, detalhe = _consultar(catalogo, ep.serie, ep.ano, "serie")
+    if serie:
+        nome, ano = serie.titulo, serie.ano
+    elif exigir_catalogo:
+        return Movimento(video, None, "nao_identificado", detalhe or f"série '{ep.serie}' não está no catálogo")
+    else:
+        nome, ano = formatar_titulo(ep.serie), ep.ano
+        detalhe = detalhe or "série não confirmada no catálogo: confira o nome"
+    pasta_serie = pasta_series / nome_jellyfin(nome, ano, serie.tmdb_id if serie else None, incluir_tmdbid)
+    pasta = pasta_serie / pasta_temporada(ep.temporada)
+    return _finalizar(video, pasta, nome_episodio_jellyfin(nome, ep.temporada, ep.episodio), detalhe, serie,
+                      (ep.temporada, ep.episodio))
 
 
 def _listar_videos(origem: Path, pasta_filmes: Path, recursivo: bool) -> list[Path]:
@@ -100,13 +141,16 @@ def _listar_videos(origem: Path, pasta_filmes: Path, recursivo: bool) -> list[Pa
 
 def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Catalogo | None = None,
                     aplicar: bool = False, recursivo: bool = True, incluir_tmdbid: bool = False,
-                    exigir_catalogo: bool = False) -> list[Movimento]:
-    """Organiza todos os vídeos de `origem` em `pasta_filmes`. Devolve o que fez (ou faria)."""
+                    exigir_catalogo: bool = False, modo: str = "filmes") -> list[Movimento]:
+    """Organiza todos os vídeos de `origem` na biblioteca `pasta_filmes` (no modo "series",
+    a pasta de séries do Jellyfin). Devolve o que fez (ou faria)."""
+    if modo not in MODOS:
+        raise ValueError(f"modo deve ser um de {MODOS}")
     origem, pasta_filmes = Path(origem).expanduser(), Path(pasta_filmes).expanduser()
     if not origem.is_dir():
         raise NotADirectoryError(f"pasta de origem não existe: {origem}")
 
-    movimentos = [planejar(v, pasta_filmes, catalogo, incluir_tmdbid, exigir_catalogo)
+    movimentos = [planejar(v, pasta_filmes, catalogo, incluir_tmdbid, exigir_catalogo, modo)
                   for v in _listar_videos(origem, pasta_filmes, recursivo)]
     _marcar_destinos_repetidos(movimentos)
     if not aplicar:
@@ -149,7 +193,8 @@ def _gravar_log(pasta_filmes: Path, feitos: list[tuple[Path, Path]]) -> Path:
     pasta = pasta_filmes / PASTA_LOGS
     pasta.mkdir(parents=True, exist_ok=True)
     log = pasta / f"log-{datetime.now():%Y%m%d-%H%M%S-%f}.json"
-    log.write_text(json.dumps([{"de": str(a), "para": str(b)} for a, b in feitos],
+    log.write_text(json.dumps({"raiz": str(pasta_filmes),
+                               "itens": [{"de": str(a), "para": str(b)} for a, b in feitos]},
                               ensure_ascii=False, indent=2), encoding="utf-8")
     return log
 
@@ -162,7 +207,10 @@ def ultimo_log(pasta_filmes: str | Path) -> Path | None:
 def desfazer(log: str | Path) -> list[str]:
     """Devolve os arquivos de um log para onde estavam. Remove pastas que ficaram vazias."""
     log = Path(log)
-    itens = json.loads(log.read_text(encoding="utf-8"))
+    dados = json.loads(log.read_text(encoding="utf-8"))
+    if isinstance(dados, list):                     # formato antigo (só a lista)
+        dados = {"raiz": str(log.parent.parent), "itens": dados}
+    raiz, itens = Path(dados["raiz"]).resolve(), dados["itens"]
     mensagens = []
     for item in reversed(itens):
         de, para = Path(item["de"]), Path(item["para"])
@@ -176,13 +224,21 @@ def desfazer(log: str | Path) -> list[str]:
             de.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(para), str(de))
             mensagens.append(f"voltou: {de}")
-            if para.parent.exists():
-                if not any(para.parent.iterdir()):
-                    para.parent.rmdir()
-                elif not any(Path(i["para"]).parent == para.parent and Path(i["para"]).exists() for i in itens):
-                    mensagens.append(f"pasta mantida (tem arquivos que o organizador não moveu, "
-                                     f"ex.: legenda baixada): {para.parent}")
+            _remover_pastas_vazias(para.parent, raiz, itens, mensagens)
         except OSError as erro:
             mensagens.append(f"erro em {para}: {erro}")
     log.rename(log.with_suffix(".desfeito.json"))
     return mensagens
+
+
+def _remover_pastas_vazias(pasta: Path, raiz: Path, itens: list, mensagens: list) -> None:
+    """Sobe a partir de `pasta` apagando pastas vazias, mas NUNCA a própria biblioteca (raiz)."""
+    while pasta.exists() and pasta.resolve() != raiz and raiz in pasta.resolve().parents:
+        if any(pasta.iterdir()):
+            ainda_vai_mexer = any(Path(i["para"]).exists() and pasta in Path(i["para"]).parents for i in itens)
+            if not ainda_vai_mexer and not any(p.is_dir() for p in pasta.iterdir()):
+                mensagens.append(f"pasta mantida (tem arquivos que o organizador não moveu, "
+                                 f"ex.: legenda baixada): {pasta}")
+            return
+        pasta.rmdir()
+        pasta = pasta.parent

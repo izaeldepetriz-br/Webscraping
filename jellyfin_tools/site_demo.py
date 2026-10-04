@@ -36,6 +36,10 @@ LEGENDAS = [
     (5, "Interstellar (2014) 1080p BluRay", 2014, "pt-BR", 2200, "zip"),
     (6, "O Poderoso Chefão (1972) Remastered", 1972, "pt-BR", 1800, "cp1252"),
     (7, "O Poderoso Chefão Parte II (1974)", 1974, "pt-BR", 900, "srt"),
+    (8, "Dark S01E01 WEBRip", 2017, "pt-BR", 700, "srt"),
+    (9, "Dark S01E02 WEBRip", 2017, "pt-BR", 650, "srt"),
+    (10, "Dark S01E02 1080p", 2017, "en", 3000, "srt"),
+    (11, "Breaking Bad S02E05 720p", 2008, "pt-BR", 1200, "zip"),
 ]
 
 

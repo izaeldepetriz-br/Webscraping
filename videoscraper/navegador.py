@@ -9,6 +9,7 @@ se o site bloquear automação, a decisão de continuar é sua, na janela, como 
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import subprocess
@@ -164,7 +165,7 @@ class Navegador:
                     frames.append((frame.url, frame.content()))
                 except Exception:
                     pass                           # iframe que fechou ou recusou leitura
-            return pagina.content(), pagina.url, frames, midias
+            return pagina.content() + self._conteudo_das_shadow_doms(pagina), pagina.url, frames, midias
         finally:
             pagina.close()
 
@@ -182,6 +183,43 @@ class Navegador:
         print(f"✅ Sessão salva em: {self.perfil}")
 
     # --- detalhes ---------------------------------------------------------------
+    # Sites feitos com Web Components (ex.: a busca do archive.org) guardam o conteúdo em
+    # "shadow DOMs", partes isoladas da página que o pagina.content() NÃO inclui.
+    # Este JavaScript entra em cada shadow DOM (inclusive umas dentro das outras) e coleta
+    # links e vídeos. Os endereços já vêm completos (a.href resolve links relativos).
+    _JS_SHADOW = """() => {
+        const links = [], midias = [];
+        const visitar = (raiz, dentroDeShadow) => {
+            for (const el of raiz.querySelectorAll('*')) {
+                if (el.shadowRoot) visitar(el.shadowRoot, true);
+            }
+            if (!dentroDeShadow) return;      // o DOM normal já vem no pagina.content()
+            for (const a of raiz.querySelectorAll('a[href]'))
+                links.push([a.href, (a.textContent || '').trim().slice(0, 200)]);
+            for (const v of raiz.querySelectorAll('video[src], source[src], iframe[src]'))
+                midias.push([v.tagName.toLowerCase(), v.src]);
+        };
+        visitar(document, false);
+        return {links, midias};
+    }"""
+
+    def _conteudo_das_shadow_doms(self, pagina) -> str:
+        """Devolve o que estava nas shadow DOMs como HTML simples, para o extrator ler normalmente."""
+        try:
+            achado = pagina.evaluate(self._JS_SHADOW)
+        except Exception:
+            return ""
+        if not achado["links"] and not achado["midias"]:
+            return ""
+        partes = ['\n<div data-videoscraper="shadow-dom">']
+        for href, texto in achado["links"]:
+            partes.append(f'<a href="{html.escape(href, quote=True)}">{html.escape(texto)}</a>')
+        for tag, src in achado["midias"]:
+            fechamento = "</iframe>" if tag == "iframe" else ""
+            partes.append(f'<{tag} src="{html.escape(src, quote=True)}">{fechamento}')
+        partes.append("</div>")
+        return "".join(partes)
+
     def _esperar_rede(self, pagina) -> None:
         try:
             pagina.wait_for_load_state("networkidle", timeout=15000)

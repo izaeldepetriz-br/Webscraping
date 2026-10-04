@@ -8,5 +8,10 @@
   {"titulo": "A Origem", "ano": 2010, "titulo_original": "Inception", "tmdb_id": 27205},
   {"titulo": "Blade Runner 2049", "ano": 2017, "titulo_original": "Blade Runner 2049", "tmdb_id": 335984},
   {"titulo": "1917", "ano": 2019, "titulo_original": "1917", "tmdb_id": 530915},
-  {"titulo": "Duna: Parte Dois", "ano": 2024, "titulo_original": "Dune: Part Two", "tmdb_id": 693134}
+  {"titulo": "Duna: Parte Dois", "ano": 2024, "titulo_original": "Dune: Part Two", "tmdb_id": 693134},
+  {"tipo": "serie", "titulo": "Breaking Bad", "ano": 2008, "titulo_original": "Breaking Bad", "tmdb_id": 1396},
+  {"tipo": "serie", "titulo": "Dark", "ano": 2017, "titulo_original": "Dark", "tmdb_id": 70523},
+  {"tipo": "serie", "titulo": "The Office", "ano": 2005, "titulo_original": "The Office", "tmdb_id": 2316},
+  {"tipo": "serie", "titulo": "Cidade dos Homens", "ano": 2002, "titulo_original": "Cidade dos Homens"},
+  {"tipo": "serie", "titulo": "The Expanse", "ano": 2015, "titulo_original": "The Expanse", "tmdb_id": 63639}
 ]

@@ -58,3 +58,19 @@ def test_sessao_de_login_fica_salva_e_vale_para_o_download(servidor, tmp_path):
                        "--seletor", "a.video-link", "-d", str(pasta), "-e", "0"])
     assert codigo == 0
     assert (pasta / "Exclusivo.mp4").read_bytes().startswith(b"\x00\x00\x00\x18ftyp")
+
+
+def test_busca_com_shadow_dom_e_profundidade(servidor, tmp_path):
+    """Como a busca do archive.org: resultados em shadow DOM, vídeo só na página de cada item."""
+    from videoscraper.coleta import FonteRequests
+    simples = FonteRequests(ClienteHTTP(espera=0))
+    assert rastrear(simples, servidor.base + "/busca-shadow", profundidade=1) == []   # HTML cru: nada
+
+    fonte = FonteNavegador(ClienteHTTP(espera=0), Navegador(perfil=str(tmp_path / "p"), espera_extra=0.3))
+    try:
+        so_busca = rastrear(fonte, servidor.base + "/busca-shadow", profundidade=0)
+        com_itens = rastrear(fonte, servidor.base + "/busca-shadow", profundidade=1)
+    finally:
+        fonte.fechar()
+    assert so_busca == []                                   # nível 0: a busca em si não tem vídeo
+    assert sorted(l.url for l in com_itens) == [servidor.base + "/m/item1.mp4", servidor.base + "/m/item2.mp4"]

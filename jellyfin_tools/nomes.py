@@ -82,17 +82,23 @@ def extrair_titulo_e_ano(nome_arquivo: str) -> NomeExtraido:
             ano, antes = valor, texto[:posicao]
             break
 
+    return NomeExtraido(_limpar_palavras(antes, cortar_na_etiqueta=ano is None), ano)
+
+
+def _limpar_palavras(texto: str, cortar_na_etiqueta: bool) -> str:
+    """Tira etiquetas técnicas (1080p, x264...) e palavras-ruído (dublado, completo...).
+    cortar_na_etiqueta=True: tudo depois da 1ª etiqueta técnica é lixo de release."""
     palavras = []
-    for palavra in antes.split():
+    for palavra in _RE_SEPARADORES.sub(" ", texto).split():
         chave = normalizar(palavra).replace(" ", "")
         if chave in ETIQUETAS_TECNICAS:
-            if ano is None:
-                break          # sem ano: o que vem depois da 1ª etiqueta técnica é lixo de release
+            if cortar_na_etiqueta:
+                break
             continue
         if chave in PALAVRAS_RUIDO and palavras:    # a 1ª palavra fica ("Filme de Terror")
             continue
         palavras.append(palavra)
-    return NomeExtraido(" ".join(palavras), ano)
+    return " ".join(palavras)
 
 
 def formatar_titulo(titulo: str) -> str:
@@ -134,3 +140,61 @@ def ler_nome_jellyfin(nome: str) -> NomeExtraido | None:
     """'Matrix (1999)' ou 'Matrix (1999) [tmdbid-603]' -> NomeExtraido('Matrix', 1999)."""
     m = _RE_PASTA_JELLYFIN.match(nome.strip())
     return NomeExtraido(m["titulo"], int(m["ano"])) if m else None
+
+
+# ============================================================================ séries
+class EpisodioExtraido(NamedTuple):
+    serie: str               # nome "limpo" (ainda sem correção do catálogo)
+    temporada: int
+    episodio: int
+    ano: Optional[int]
+
+
+# Do mais confiável para o menos confiável. Cada um devolve (temporada, episódio).
+_PADROES_EPISODIO = [
+    re.compile(r"(?<![a-z0-9])s(\d{1,2})[ ._-]*e(\d{1,3})(?!\d)", re.I),                  # S01E02, s1.e2
+    re.compile(r"(?<![a-z0-9])(\d{1,2})x(\d{1,3})(?!\d)", re.I),                          # 1x02
+    re.compile(r"(?:temporada|season|temp)[ ._-]*(\d{1,2})[ ._-]*(?:-[ ._-]*)?"
+               r"(?:epis[oó]dio|episode|ep|e)[ ._-]*(\d{1,3})(?!\d)", re.I),               # Temporada 2 Episodio 4
+]
+# Só o número do episódio (temporada 1): "episodio 03", "Ep 3", "E03"
+_PADRAO_SO_EPISODIO = re.compile(r"(?<![a-z0-9])(?:epis[oó]dio|episode|ep|e)[ ._-]*(\d{1,3})(?!\d)", re.I)
+
+
+def extrair_episodio(nome_arquivo: str) -> EpisodioExtraido | None:
+    """'Breaking.Bad.2008.S02E05.720p.mkv' -> EpisodioExtraido('Breaking Bad', 2, 5, 2008)
+       'dark_episodio_03_dublado.mp4'     -> EpisodioExtraido('dark', 1, 3, None)
+       'Matrix.1999.mkv'                  -> None (não é episódio)
+    """
+    caminho = Path(nome_arquivo)
+    base = caminho.stem if caminho.suffix.lower() in EXTENSOES_VIDEO | EXTENSOES_ACOMPANHANTES \
+        else caminho.name
+    for padrao in _PADROES_EPISODIO:
+        m = padrao.search(base)
+        if m:
+            temporada, episodio = int(m.group(1)), int(m.group(2))
+            break
+    else:
+        m = _PADRAO_SO_EPISODIO.search(base)
+        if not m:
+            return None
+        temporada, episodio = 1, int(m.group(1))
+    antes = base[:m.start()]
+    if not antes.strip(" ._-[]()"):
+        return None                       # "S01E01.mkv": sem o nome da série não dá para organizar
+    extraido = extrair_titulo_e_ano(antes + ".mkv")          # "Breaking.Bad.2008." -> ano 2008
+    nome, ano = (extraido.titulo, extraido.ano) if extraido.ano else (_limpar_palavras(antes, True), None)
+    nome = re.sub(r"\s*\b(?:temporada|season|temp)\s*$", "", nome, flags=re.I).strip()
+    if not nome:
+        return None
+    return EpisodioExtraido(nome, temporada, episodio, ano)
+
+
+def nome_episodio_jellyfin(serie: str, temporada: int, episodio: int) -> str:
+    """'Breaking Bad', 2, 5 -> 'Breaking Bad S02E05' (padrão de episódios do Jellyfin)."""
+    return f"{limpar_para_arquivo(serie)} S{temporada:02d}E{episodio:02d}"
+
+
+def pasta_temporada(temporada: int) -> str:
+    """Jellyfin: 'Season 01' (temporada 0 = especiais = 'Season 00')."""
+    return f"Season {temporada:02d}"
