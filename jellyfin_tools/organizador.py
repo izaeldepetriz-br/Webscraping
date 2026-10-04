@@ -454,6 +454,30 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
     return movimentos
 
 
+# ----------------------------------------------------------------- pasta com filmes E séries
+def eh_episodio_de_serie(video: Path) -> bool:
+    """Para separar sozinho: 'S01E02'/'1x02' é série; só o número ('HunterXHunter 01') também,
+    desde que não tenha ano de filme ('Rocky.II.1979' continua filme)."""
+    if marca_de_episodio(video.name):
+        return True
+    return extrair_episodio(video.name) is not None and extrair_titulo_e_ano(video.name).ano is None
+
+
+def organizar_misto(origem: str | Path, pasta_filmes: str | Path | None, pasta_series: str | Path | None,
+                    catalogo: Catalogo | None = None, filtro=None, **opcoes) -> list[Movimento]:
+    """Uma pasta de downloads com filmes E séries (ou cada pasta do uTorrent): os episódios vão para
+    a biblioteca de Séries (modo séries) e o resto para a de Filmes. Sem uma das bibliotecas, aquele
+    tipo fica onde está. `opcoes`: as mesmas de organizar_pasta (aplicar, limpar_lixo...)."""
+    def so(series: bool):
+        return lambda v: (filtro is None or filtro(v)) and eh_episodio_de_serie(v) == series
+    movimentos = []
+    if pasta_series:                                  # séries primeiro: a pasta do torrent esvazia antes
+        movimentos += organizar_pasta(origem, pasta_series, catalogo, modo="series", filtro=so(True), **opcoes)
+    if pasta_filmes:
+        movimentos += organizar_pasta(origem, pasta_filmes, catalogo, modo="filmes", filtro=so(False), **opcoes)
+    return movimentos
+
+
 # ----------------------------------------------------------------- apagar a pasta do torrent
 def _pasta_do_torrent(video: Path, origem: Path) -> Path | None:
     """A subpasta de 1º nível da origem onde o vídeo está (None se ele está solto na origem)."""

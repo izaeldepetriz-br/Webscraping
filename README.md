@@ -155,6 +155,12 @@ Outras opções da aba Jellyfin:
 - **Anime com numeração contínua** (`Dragon Ball 153`): com o TMDB, o número vira a temporada e o
   episódio certos (ex.: S04E70), pela quantidade de episódios de cada temporada no TMDB (um pedido
   por série). Sem o TMDB, ou se o número passa do que ele conhece, fica na temporada 1.
+- **Várias pastas vigiadas (ex.: as do uTorrent), filmes e séries separados sozinhos:** na seção
+  "Automático", liste as pastas de download (uma por linha, ou "Adicionar pasta..."). Em cada uma,
+  episódios (S01E02, 1x02, ou só o número sem ano de filme, como em anime) vão para a biblioteca de
+  **Séries** e o resto para a de **Filmes** (as duas escolhidas na aba, trocando Filmes/Séries no
+  topo). Serve para pastas separadas e também para uma pasta misturada. Lista vazia = a pasta de
+  origem. No script: `VIGIAR_PASTAS = [r"D:\Torrent\Filmes", r"D:\Torrent\Series"]` e `PASTA_SERIES`.
 - **Pasta vigiada** (seção "Automático"): a cada N minutos confere a pasta de origem e organiza
   **sozinho, sem perguntar,** o que terminou de baixar (arquivo parado há 2 min e sem `.part`,
   `.!qB`, `.crdownload` na pasta), com as mesmas opções da aba (legendas, lixo, scan, avisos no
@@ -197,6 +203,10 @@ O botão **Espelhar no Jellyfin (.strm)...** (nos selecionados; sem seleção, e
    do link**, sem ocupar espaço;
 3. depois, o mesmo pós-processamento do Organizar: **legendas** (com o mesmo nome do `.strm`, nos
    idiomas e fontes escolhidos, inclusive OpenSubtitles + SubDL), pôster/backdrop/`.nfo` e o scan.
+
+**Consulta ao Jellyfin:** com o endereço e a chave do servidor preenchidos, o espelho pergunta ao
+Jellyfin o que ele já tem (filmes, séries e episódios) e pula o que já está lá — pelo id do TMDB ou
+pelo nome + ano / série + temporada + episódio, mesmo que a pasta tenha outro nome.
 
 **Outros sites** (não só o archive.org): o espelho aceita qualquer link da aba Vídeos, mas antes
 **confere cada um** (8 ao mesmo tempo, pedindo só o 1º byte do arquivo). Um `.strm` só serve se o link for:

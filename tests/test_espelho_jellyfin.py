@@ -175,3 +175,52 @@ def test_conferir_e_remover_espelhos_quebrados(tmp_path, api_falsa):
     assert not (filmes / "Quebrado (2001)" / "Quebrado (2001).strm").exists()
     desfazer(ultimo_log(filmes))                                         # arrependeu: volta
     assert (filmes / "Quebrado (2001)" / "Quebrado (2001).strm").read_text(encoding="utf-8").strip().endswith("/sumiu.mp4")
+
+
+# ------------------------------------------------------------------ o que o Jellyfin já tem
+def _jellyfin_falso(api, exigir_usuario=False):
+    filmes = [{"Name": "Nosferatu", "ProductionYear": 1922, "ProviderIds": {"Tmdb": "653"}},
+              {"Name": "Anjos da Noite", "ProductionYear": 2003, "ProviderIds": {}}]
+    series = [{"Id": "s1", "Name": "Dark", "ProviderIds": {"Tmdb": "70523"}}]
+    episodios = [{"SeriesId": "s1", "SeriesName": "Dark", "ParentIndexNumber": 1, "IndexNumber": 2}]
+    por_tipo = {"Movie": filmes, "Series": series, "Episode": episodios}
+
+    def itens(q):
+        if q.get("api_key"):
+            return 401, {}
+        return 200, {"Items": por_tipo[q["IncludeItemTypes"][0]]}
+    if exigir_usuario:                                                   # Jellyfin antigo
+        api.rotas["/Items"] = lambda q: (400, {})
+        api.rotas["/Users"] = lambda q: (200, [{"Id": "u1", "Name": "admin"}])
+        api.rotas["/Users/u1/Items"] = itens
+    else:
+        api.rotas["/Items"] = itens
+
+
+def test_indice_do_jellyfin_e_espelho_sem_duplicar(tmp_path, api_falsa):
+    from jellyfin_tools.servidor_jellyfin import indice_da_biblioteca
+    _jellyfin_falso(api_falsa)
+    indice = indice_da_biblioteca(api_falsa.base, "chave")
+    assert indice.tem_filme(["Nosferatu"], 1922) and indice.tem_filme(["outro nome"], None, tmdb_id=653)
+    assert indice.tem_episodio(["Dark"], 1, 2) and not indice.tem_episodio(["Dark"], 1, 3)
+    pedido = next(p for p in api_falsa.pedidos if p["caminho"] == "/Items")
+    assert pedido["headers"]["X-Emby-Token"] == "chave"
+    links = [_link("Nosferatu (1922)", "n.mp4"), _link("Anjos Da Noite 2003 (Dual Audio)", "a.mkv"),
+             _link("Dark", "Dark.S01E02.mkv"), _link("Dark", "Dark.S01E03.mkv"), _link("Metropolis (1927)", "m.mp4")]
+    itens = planejar_espelho(links, tmp_path / "F", tmp_path / "S", CatalogoLocal.padrao(), indice_jellyfin=indice)
+    assert [i.status for i in itens] == ["no_jellyfin", "no_jellyfin", "no_jellyfin", "criar", "criar"]
+
+
+def test_indice_do_jellyfin_antigo_com_usuario(api_falsa):
+    from jellyfin_tools.servidor_jellyfin import indice_da_biblioteca
+    _jellyfin_falso(api_falsa, exigir_usuario=True)
+    indice = indice_da_biblioteca(api_falsa.base, "chave")
+    assert indice.total == 3 and indice.tem_filme(["Nosferatu"], 1922)
+
+
+def test_indice_do_jellyfin_chave_errada(api_falsa):
+    import pytest
+    from jellyfin_tools.servidor_jellyfin import ErroJellyfin, indice_da_biblioteca
+    api_falsa.rotas["/Items"] = lambda q: (401, {})
+    with pytest.raises(ErroJellyfin, match="recusou"):
+        indice_da_biblioteca(api_falsa.base, "errada")

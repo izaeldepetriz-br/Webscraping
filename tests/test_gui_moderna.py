@@ -999,3 +999,57 @@ def test_vigia_organiza_sozinho_o_que_terminou(app, tmp_path):
     app.var_jf_vigiar.set(False)
     app.ao_alternar_vigia()
     assert app._vigia_agendada is None and app.lb_estado_vigia.cget("text") == "Desligada."
+
+
+def test_vigia_com_pastas_do_utorrent_separa_filmes_e_series(app, tmp_path):
+    torrent = tmp_path / "uTorrent"
+    for nome in ("Filmes/Matrix.1999.mkv", "Series/Dark.S01E02.mkv"):
+        (torrent / nome).parent.mkdir(parents=True, exist_ok=True)
+        (torrent / nome).write_bytes(b"v")
+        os.utime(torrent / nome, (time.time() - 3600, time.time() - 3600))
+    app.mostrar_aba("Jellyfin")
+    app._destinos.update({"Filmes": str(tmp_path / "Jellyfin" / "Filmes"), "Séries": str(tmp_path / "Jellyfin" / "Series")})
+    app.var_jf_destino.set(str(tmp_path / "Jellyfin" / "Filmes"))
+    app.var_jf_origem.set(str(tmp_path / "outra"))                       # sem uso: há pastas vigiadas
+    app.definir_pastas_vigiadas([str(torrent / "Filmes"), str(torrent / "Series")])
+    assert app.obter_opcoes_jellyfin().pastas_vigiadas == (str(torrent / "Filmes"), str(torrent / "Series"))
+    app.var_jf_legendas.set(False)
+    app.var_jf_vigiar.set(True)
+    app.ao_alternar_vigia()
+    esperado = [tmp_path / "Jellyfin/Filmes/Matrix (1999)/Matrix (1999).mkv",
+                tmp_path / "Jellyfin/Series/Dark (2017)/Season 01/Dark S01E02.mkv"]
+    fim = time.time() + 30
+    while not all(p.exists() for p in esperado) and time.time() < fim:
+        app.update()
+        time.sleep(0.05)
+    esperar(app)
+    assert all(p.exists() for p in esperado)
+    assert "1 filme(s) e 1 episódio(s)" in app.var_status.get()
+    app.var_jf_vigiar.set(False)
+    app.ao_alternar_vigia()
+    app._salvar_config()                                                  # as pastas ficam lembradas
+    from videoscraper import config
+    assert config.carregar()["jellyfin"]["pastas_vigiadas"] == [str(torrent / "Filmes"), str(torrent / "Series")]
+
+
+def test_espelho_pula_o_que_ja_esta_no_jellyfin(app, tmp_path, api_falsa, monkeypatch):
+    from jellyfin_tools.espelho import Verificacao
+    from test_espelho_jellyfin import _jellyfin_falso
+    from videoscraper.extracao import LinkVideo
+    _jellyfin_falso(api_falsa)
+    monkeypatch.setattr(app_moderna, "verificar_links", lambda urls, **k: {u: Verificacao(True) for u in urls})
+    base = "https://archive.org/download/x/"
+    app._mostrar_links([LinkVideo(base + "n.mp4", "o", "archive.org", "Nosferatu (1922)", "Domínio público"),
+                        LinkVideo(base + "m.mp4", "o", "archive.org", "Metropolis (1927)", "Domínio público")])
+    app._destinos.update({"Filmes": str(tmp_path / "Filmes"), "Séries": str(tmp_path / "Series")})
+    app.var_jf_destino.set(str(tmp_path / "Filmes"))
+    app.var_jf_url.set(api_falsa.base)
+    app.var_jf_chave_jellyfin.set("chave")
+    app.var_jf_atualizar.set(False)
+    app.var_jf_legendas.set(False)
+    app.escolher = lambda t, m, opcoes: opcoes[0]
+    app.ao_espelhar_jellyfin()
+    esperar(app)
+    assert [p.name for p in tmp_path.rglob("*.strm")] == ["Metropolis (1927).strm"]
+    assert app.tabela.item("0", "values")[1].endswith("já no Jellyfin")
+    assert "Já estavam no Jellyfin (pulados): 1" in app.caixas[-1][2]

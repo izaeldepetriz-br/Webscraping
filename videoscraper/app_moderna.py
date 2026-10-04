@@ -33,10 +33,11 @@ from jellyfin_tools.metadados import ClienteTMDB
 from jellyfin_tools.notificacoes import Notificador
 from jellyfin_tools.espelho import (aplicar_espelho, classificar, conferir_espelhos, licenca_aberta, nome_do_link,
                                     planejar_espelho, remover_espelhos, verificar_links)
-from jellyfin_tools.organizador import DETALHE_EPISODIO, problema_no_caminho, sugestao_de_caminho, ultimo_log
+from jellyfin_tools.organizador import (DETALHE_EPISODIO, organizar_misto, problema_no_caminho, sugestao_de_caminho,
+                                       ultimo_log)
 from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, itens_de_series, pos_processar
 from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao
-from jellyfin_tools.servidor_jellyfin import ErroJellyfin, testar_conexao
+from jellyfin_tools.servidor_jellyfin import ErroJellyfin, indice_da_biblioteca, testar_conexao
 from jellyfin_tools.site_demo import iniciar_site_demo
 from jellyfin_tools.vigia import filtro_prontos
 
@@ -58,7 +59,7 @@ OK_LEGENDA = ("baixada", "ja_existe")
 TIPOS_CONTEUDO = {"filme": "Filme", "serie": "Série", "outro": "—"}
 # Espelho no Jellyfin: status do item -> (texto na coluna Situação, cor)
 SITUACAO_ESPELHO = {"criado": ("espelhado", "ok"), "ja_existe": ("já espelhado", "ok"),
-                    "tem_video": ("já na biblioteca", "ok"), "ignorado": ("sem ano/episódio", "pulado"),
+                    "tem_video": ("já na biblioteca", "ok"), "no_jellyfin": ("já no Jellyfin", "ok"), "ignorado": ("sem ano/episódio", "pulado"),
                     "sem_licenca": ("sem licença aberta", "pulado"), "nao_identificado": ("não identificado", "pulado"),
                     "link_ruim": ("link não serve", "erro"),
                     "erro": ("erro", "erro")}
@@ -538,9 +539,16 @@ class AppModerna(JanelaModerna):
             if tempos:
                 self._log.info("Tempo de resposta dos servidores: médio %.1f s, mais lento %.1f s",
                                sum(tempos) / len(tempos), max(tempos))
-            # 2) nomes e 3) .strm
+            # 2) o que o Jellyfin JÁ tem (se o endereço e a chave estiverem preenchidos): não duplica
+            indice = None
+            if o.jellyfin_url and o.jellyfin_api_key:
+                try:
+                    indice = indice_da_biblioteca(o.jellyfin_url, o.jellyfin_api_key)
+                except ErroJellyfin as erro:
+                    self._log.warning("Não consegui consultar o Jellyfin (%s); sigo sem essa conferência", erro)
+            # 3) nomes e 4) .strm
             itens = planejar_espelho(links, pasta_filmes, pasta_series, self._catalogo(o), so_abertos,
-                                     o.incluir_tmdbid, o.nomes_episodios, verificacoes)
+                                     o.incluir_tmdbid, o.nomes_episodios, verificacoes, indice)
             aplicar_espelho(itens)
             for item in itens:
                 destino = f" -> {item.destino}" if item.destino else ""
@@ -564,6 +572,7 @@ class AppModerna(JanelaModerna):
                                    f"Criados: {len(criados)} ({sum(i.tipo == 'filme' for i in criados)} filme(s), "
                                    f"{sum(i.tipo == 'serie' for i in criados)} episódio(s))\n"
                                    f"Já existiam: {contagem['ja_existe'] + contagem['tem_video']}\n"
+                                   f"Já estavam no Jellyfin (pulados): {contagem['no_jellyfin']}\n"
                                    f"Sem ano/episódio: {contagem['ignorado']}\n"
                                    f"Sem licença aberta (pulados): {contagem['sem_licenca']}\n"
                                    f"Link que não serve para .strm (página, temporário, login, fora do ar): "
@@ -599,26 +608,33 @@ class AppModerna(JanelaModerna):
         proxima = datetime.now() + timedelta(minutes=minutos)
         self.definir_estado_vigia(f"Ligada: próxima conferência às {proxima:%H:%M}.", True)
 
+    def _alvos_da_vigia(self, o):
+        """(pastas vigiadas, biblioteca de Filmes, biblioteca de Séries). Sem lista, vigia a pasta de origem."""
+        self._destinos[self._modo_atual] = self.var_jf_destino.get()
+        pastas = [p for p in (o.pastas_vigiadas or (o.origem,))
+                  if p and Path(p).is_dir() and not problema_no_caminho(p)]
+        filmes, series = (self._destinos.get(t) or None for t in ("Filmes", "Séries"))
+        return pastas, filmes, series
+
     def _ciclo_vigia(self) -> None:
         self._agendar_vigia()                        # a próxima já fica marcada, aconteça o que acontecer
         if self.trabalhando or self._vigia_conferindo:
             return                                   # outra tarefa rodando: confere na próxima
         o = self.obter_opcoes_jellyfin()
-        problema = (not o.origem or not Path(o.origem).is_dir() or not o.destino
-                    or problema_no_caminho(o.origem) or problema_no_caminho(o.destino))
-        if problema:
-            self._log.warning("Vigia: confira as pastas de origem e da biblioteca na aba Jellyfin")
+        pastas, filmes, series = self._alvos_da_vigia(o)
+        if not pastas or not (filmes or series):
+            self._log.warning("Vigia: escolha as pastas vigiadas (ou a de origem) e as bibliotecas de Filmes/Séries")
             return
         self._vigia_conferindo = True
 
         def conferir():                              # na thread: a janela não trava
-            try:
-                previa = organizar_pasta(o.origem, o.destino, CatalogoLocal.padrao(), modo=o.modo,
-                                         filtro=filtro_prontos())
-                novos = sum(m.status == "simulado" for m in previa)
-            except Exception as erro:
-                self._log.error("Vigia: não consegui olhar a pasta: %s", erro)
-                novos = 0
+            novos = 0
+            for pasta in pastas:
+                try:
+                    previa = organizar_misto(pasta, filmes, series, CatalogoLocal.padrao(), filtro=filtro_prontos())
+                    novos += sum(m.status == "simulado" for m in previa)
+                except Exception as erro:
+                    self._log.error("Vigia: não consegui olhar %s: %s", pasta, erro)
             self.fila.put(("vigia_resultado", (novos, o)))
 
         threading.Thread(target=conferir, daemon=True).start()
@@ -630,12 +646,33 @@ class AppModerna(JanelaModerna):
         if o.legendas and self._problema_legendas(o):
             o.legendas = False                       # sem caixa de mensagem: segue sem legendas
             self._log.warning("Vigia: legendas desligadas nesta rodada (%s)", self._problema_legendas(o))
-        self._log.info("Vigia: %d arquivo(s) terminaram de baixar; organizando", novos)
+        pastas, filmes, series = self._alvos_da_vigia(o)
+        self._log.info("Vigia: %d arquivo(s) terminaram de baixar; organizando (filmes -> %s, séries -> %s)",
+                       novos, filmes or "—", series or "—")
         self._tmdb_ativo = o.tmdb
         self._previa = None
         self.liberar_organizar(False)
-        self._rodar("Organizando (pasta vigiada)...", self._tarefa_organizar(o, filtro=filtro_prontos(),
-                                                                             automatico=True))
+
+        def tarefa():
+            todos = []
+            for pasta in pastas:
+                todos += organizar_misto(pasta, filmes, series, self._catalogo(o), filtro=filtro_prontos(),
+                                         aplicar=True, incluir_tmdbid=o.incluir_tmdbid,
+                                         exigir_catalogo=o.exigir_catalogo, limpar_lixo=o.limpar_lixo,
+                                         apagar_pasta_origem=o.apagar_pasta_origem, nomes_episodios=o.nomes_episodios)
+            for m in todos:
+                nivel = {"erro": self._log.error, "movido": self._log.info}.get(m.status, self._log.warning)
+                nivel("%s", m)
+            self.fila.put(("jf_movimentos", todos))
+            movidos = [(i, m) for i, m in enumerate(todos) if m.status == "movido"]
+            if movidos:                              # legendas, pôster, .nfo, avisos e scan (como no Organizar)
+                self._pos_processar(o, [(m, m.destino.stem) for _, m in movidos], [i for i, _ in movidos],
+                                    "Vigia", legendas=o.legendas, notificar=True)
+            filmes_movidos = sum(1 for _, m in movidos if not m.episodio)
+            self.fila.put(("status_fim", f"Vigia: {filmes_movidos} filme(s) e {len(movidos) - filmes_movidos} "
+                                         "episódio(s) organizados."))
+
+        self._rodar("Organizando (pasta vigiada)...", tarefa)
 
     def ao_conferir_espelhos(self) -> None:
         """Confere o link de cada .strm das bibliotecas de Filmes e Séries (o site ainda tem o vídeo?)."""

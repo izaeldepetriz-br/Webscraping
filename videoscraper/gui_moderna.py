@@ -107,6 +107,7 @@ class OpcoesJellyfin:
     chave_subdl: str = ""            # SubDL: fonte própria ou reserva do OpenSubtitles
     vigiar: bool = False             # pasta vigiada ligada
     vigiar_min: float = 5            # de quanto em quanto tempo conferir
+    pastas_vigiadas: tuple = ()      # pastas de download (ex.: as do uTorrent); vazio = a pasta de origem
 
 
 # Máximo dos campos "Máx. de páginas" e "Máx. de vídeos" (antes 2000 e 1000).
@@ -671,6 +672,14 @@ class JanelaModerna(ctk.CTk):
         self._checkbox(lateral, "Vigiar a pasta de origem e organizar\nsozinho o que terminar de baixar",
                        self.var_jf_vigiar, comando=self.ao_alternar_vigia)
         self.campo_vigia_min = self._numero(lateral, "Conferir a cada (min):", 5, 1, 240, 1)
+        self._rotulo(lateral, "Pastas vigiadas, uma por linha (ex.: as do\nuTorrent). Filmes e séries são separados\n"
+                              "sozinhos. Vazio = a pasta de origem acima.").pack(anchor="w", pady=(4, 2), **p)
+        self.txt_pastas_vigiadas = ctk.CTkTextbox(lateral, height=64, font=self.f_rotulo, fg_color=Tema.CAMPO,
+                                                  border_width=1, border_color=Tema.CAMPO_BORDA, text_color=Tema.TEXTO,
+                                                  corner_radius=Tema.RAIO_CONTROLE, wrap="none")
+        self.txt_pastas_vigiadas.pack(fill="x", **p)
+        self._botao(lateral, "Adicionar pasta...", self._adicionar_pasta_vigiada, "fantasma").pack(
+            anchor="w", pady=(2, 4), **p)
         self.lb_estado_vigia = ctk.CTkLabel(lateral, text="Desligada. Usa as pastas e opções desta aba; o que ainda "
                                             "está baixando (.part, .!qB) fica para a próxima.",
                                             font=self.f_rotulo, text_color=Tema.TEXTO_FRACO, anchor="w",
@@ -951,6 +960,7 @@ class JanelaModerna(ctk.CTk):
             telegram_chat_id=self.var_jf_telegram_chat.get().strip(),
             apagar_pasta_origem=self.var_jf_apagar_pasta.get(), nomes_episodios=self.var_jf_nomes_ep.get(),
             vigiar=self.var_jf_vigiar.get(), vigiar_min=self.campo_vigia_min.get(),
+            pastas_vigiadas=tuple(self.pastas_vigiadas()),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
     def idiomas_jf(self) -> str:
@@ -997,6 +1007,8 @@ class JanelaModerna(ctk.CTk):
             self.definir_idiomas_jf(dados["idioma"])
         if dados.get("vigiar_min"):
             self.campo_vigia_min.set(float(dados["vigiar_min"]))
+        if dados.get("pastas_vigiadas"):
+            self.definir_pastas_vigiadas(list(dados["pastas_vigiadas"]))
         if "filtros_ocultos" in dados:
             for chave, var in self.vars_filtro_jf.items():
                 var.set(chave not in dados["filtros_ocultos"])
@@ -1074,6 +1086,20 @@ class JanelaModerna(ctk.CTk):
                 self.aplicar_filtro_jf()               # reaparece na posição certa (raro)
         if self._visivel_jf(iid):
             self.tabela_jf.see(iid)
+
+    def pastas_vigiadas(self) -> list[str]:
+        return [linha.strip() for linha in self.txt_pastas_vigiadas.get("1.0", "end").splitlines() if linha.strip()]
+
+    def definir_pastas_vigiadas(self, pastas) -> None:
+        if isinstance(pastas, str):
+            pastas = pastas.splitlines()
+        self.txt_pastas_vigiadas.delete("1.0", "end")
+        self.txt_pastas_vigiadas.insert("1.0", "\n".join(p for p in pastas if p.strip()))
+
+    def _adicionar_pasta_vigiada(self) -> None:
+        pasta = filedialog.askdirectory()
+        if pasta and pasta not in self.pastas_vigiadas():
+            self.definir_pastas_vigiadas(self.pastas_vigiadas() + [pasta])
 
     def definir_estado_vigia(self, texto: str, ligada: bool) -> None:
         self.lb_estado_vigia.configure(text=texto, text_color=Tema.SUCESSO if ligada else Tema.TEXTO_FRACO)

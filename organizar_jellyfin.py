@@ -36,6 +36,7 @@ from pathlib import Path
 # =============================================================================================
 PASTA_ENTRADA = r"C:\Users\Voce\Downloads"        # onde estão os arquivos bagunçados
 PASTA_FILMES = r"E:\Filmes_Organizados"           # biblioteca de Filmes do Jellyfin (pode ser a mesma)
+PASTA_SERIES = r""                                # biblioteca de Séries do Jellyfin (usada pelo --vigiar)
 MODO = "filmes"                                   # "filmes" ou "series"
 APLICAR = False                                   # False = só simula (mude para True ou use --aplicar)
 APAGAR_LIXO = True                                # .url, .txt de propaganda e trailers pequenos
@@ -67,7 +68,11 @@ NOTIFICAR_CADA_FILME_ATE = 10                     # acima disso, manda um resumo
 
 ARQUIVO_LOG = "jellyfin_organizer.log"
 
-# Pasta vigiada (--vigiar): confere a PASTA_ENTRADA de tempos em tempos e organiza o que terminou de baixar
+# Pasta vigiada (--vigiar): confere as pastas de download de tempos em tempos e organiza o que terminou de
+# baixar. Filmes vão para PASTA_FILMES e episódios para PASTA_SERIES, SOZINHOS (pelo nome do arquivo).
+# Ex. com o uTorrent baixando em pastas separadas: [r"D:\Torrent\Filmes", r"D:\Torrent\Series"]
+# (por variável de ambiente: as pastas separadas por ponto e vírgula). Vazio = só a PASTA_ENTRADA.
+VIGIAR_PASTAS: list[str] = []
 VIGIAR_A_CADA_MIN = 5                             # de quanto em quanto tempo conferir
 PRONTO_APOS_MIN = 2                               # arquivo parado há esse tempo = download terminado
 TRABALHOS_SIMULTANEOS = 4                         # filmes processados ao mesmo tempo (TMDB/legendas)
@@ -75,6 +80,7 @@ TRABALHOS_SIMULTANEOS = 4                         # filmes processados ao mesmo 
 
 from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, ConfigSite,  # noqa: E402
                             ProvedorOpenSubtitles, ProvedorSiteHTML, ProvedorSubDL, organizar_pasta)
+from jellyfin_tools.organizador import organizar_misto  # noqa: E402
 from jellyfin_tools.metadados import ClienteTMDB  # noqa: E402
 from jellyfin_tools.notificacoes import Notificador  # noqa: E402
 from jellyfin_tools.pos_processamento import (ConfigPos, itens_da_biblioteca, itens_de_series,  # noqa: E402
@@ -97,6 +103,8 @@ def cfg(nome: str):
         return valor.strip().lower() in ("1", "true", "sim", "yes")
     if isinstance(padrao, (int, float)) and not isinstance(padrao, bool):
         return type(padrao)(valor)
+    if isinstance(padrao, list):                    # "D:\Filmes;D:\Series"
+        return [parte.strip() for parte in valor.split(";") if parte.strip()]
     return valor
 
 
@@ -188,23 +196,42 @@ def organizar(aplicar: bool, log, filtro=None) -> int:
 
 
 def vigiar(log, ciclos: int | None = None, dormir=time.sleep) -> int:
-    """Confere a PASTA_ENTRADA a cada VIGIAR_A_CADA_MIN e organiza (de verdade) só o que terminou
-    de baixar. Ctrl+C para parar. `ciclos`: quantas voltas (None = para sempre; usado nos testes)."""
-    entrada, filmes = Path(cfg("PASTA_ENTRADA")).expanduser(), Path(cfg("PASTA_FILMES")).expanduser()
-    log.info("=== Vigiando %s a cada %s min (Ctrl+C para parar) ===", entrada, cfg("VIGIAR_A_CADA_MIN"))
+    """Confere as VIGIAR_PASTAS (ou a PASTA_ENTRADA) a cada VIGIAR_A_CADA_MIN e organiza, de verdade,
+    só o que terminou de baixar: filmes para PASTA_FILMES, episódios para PASTA_SERIES.
+    Ctrl+C para parar. `ciclos`: quantas voltas (None = para sempre; usado nos testes)."""
+    pastas = [Path(p).expanduser() for p in (cfg("VIGIAR_PASTAS") or [cfg("PASTA_ENTRADA")])]
+    filmes = Path(cfg("PASTA_FILMES")).expanduser() if cfg("PASTA_FILMES") else None
+    series = Path(cfg("PASTA_SERIES")).expanduser() if cfg("PASTA_SERIES") else None
+    log.info("=== Vigiando %s a cada %s min | filmes -> %s | séries -> %s (Ctrl+C para parar) ===",
+             ", ".join(map(str, pastas)), cfg("VIGIAR_A_CADA_MIN"), filmes or "(não definida)",
+             series or "(PASTA_SERIES vazia: episódios ficam onde estão)")
     volta = 0
     while ciclos is None or volta < ciclos:
         volta += 1
-        filtro = filtro_prontos(cfg("PRONTO_APOS_MIN") * 60)
-        try:                                        # simulação rápida: tem algo novo e pronto?
-            previa = organizar_pasta(entrada, filmes, CatalogoLocal.padrao(), modo=cfg("MODO"), filtro=filtro)
-            novos = [m for m in previa if m.status == "simulado"]
-        except Exception as erro:
-            log.error("Vigia: não consegui olhar a pasta: %s", erro)
-            novos = []
-        if novos:
-            log.info("Vigia: %d arquivo(s) terminaram de baixar; organizando", len(novos))
-            organizar(True, log, filtro=filtro_prontos(cfg("PRONTO_APOS_MIN") * 60))
+        for pasta in pastas:
+            if not pasta.is_dir():
+                log.warning("Vigia: a pasta não existe: %s", pasta)
+                continue
+            espera = cfg("PRONTO_APOS_MIN") * 60
+            try:                                    # simulação rápida: tem algo novo e pronto?
+                previa = organizar_misto(pasta, filmes, series, CatalogoLocal.padrao(), filtro=filtro_prontos(espera))
+                novos = [m for m in previa if m.status == "simulado"]
+                if not novos:
+                    continue
+                log.info("Vigia: %d arquivo(s) terminaram de baixar em %s; organizando", len(novos), pasta)
+                movimentos = organizar_misto(pasta, filmes, series, montar_catalogo(), filtro=filtro_prontos(espera),
+                                             aplicar=True, limpar_lixo=cfg("APAGAR_LIXO"),
+                                             limite_trailer_mb=cfg("LIMITE_TRAILER_MB"),
+                                             apagar_pasta_origem=cfg("APAGAR_PASTA_ORIGEM"),
+                                             nomes_episodios=cfg("NOMES_EPISODIOS"))
+            except Exception as erro:
+                log.error("Vigia: falha em %s: %s", pasta, erro, exc_info=True)
+                continue
+            for m in movimentos:
+                getattr(log, NIVEL_POR_STATUS.get(m.status, "info"))("%s", m)
+            movidos = [m for m in movimentos if m.status == "movido"]
+            if movidos:
+                pos_processar_lote([(m, m.destino.stem) for m in movidos], log)
         if ciclos is None or volta < ciclos:
             dormir(cfg("VIGIAR_A_CADA_MIN") * 60)
     return 0

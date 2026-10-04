@@ -51,7 +51,7 @@ class ItemEspelho:
     link: object                     # LinkVideo (url, titulo, licenca, ano)
     tipo: str                        # filme | serie | outro
     destino: Path | None = None      # o .strm que será criado
-    status: str = ""                 # criar | ja_existe | tem_video | ignorado | sem_licenca | link_ruim |
+    status: str = ""                 # criar | ja_existe | tem_video | no_jellyfin | ignorado | sem_licenca | link_ruim |
     #                                  nao_identificado | criado | erro
     detalhe: str = ""
     fonte_nome: str = ""             # TMDB | catálogo | arquivo
@@ -182,8 +182,10 @@ def _video_virtual(link, tipo: str) -> Path:
 
 def planejar_espelho(links: list, pasta_filmes: str | Path | None, pasta_series: str | Path | None,
                      catalogo=None, so_licenca_aberta: bool = False, incluir_tmdbid: bool = False,
-                     nomes_episodios: bool = False, verificacoes: dict | None = None) -> list[ItemEspelho]:
-    """Decide o .strm de cada link (não cria nada). `verificacoes`: o resultado de verificar_links()."""
+                     nomes_episodios: bool = False, verificacoes: dict | None = None,
+                     indice_jellyfin=None) -> list[ItemEspelho]:
+    """Decide o .strm de cada link (não cria nada). `verificacoes`: o resultado de verificar_links().
+    `indice_jellyfin`: o que o servidor já tem (servidor_jellyfin.indice_da_biblioteca): não duplica."""
     itens = [ItemEspelho(link, classificar(link)) for link in links]
     if catalogo is not None:                                  # TMDB: todas as buscas de uma vez
         for tipo, modo in (("filme", "filmes"), ("serie", "series")):
@@ -216,7 +218,9 @@ def planejar_espelho(links: list, pasta_filmes: str | Path | None, pasta_series:
         item.destino = mov.destino.with_suffix(EXTENSAO)
         item.fonte_nome, item.filme, item.episodio = mov.fonte_nome, mov.filme, mov.episodio
         item.detalhe = mov.detalhe
-        if str(item.destino).lower() in destinos_vistos:
+        if indice_jellyfin is not None and _ja_no_jellyfin(indice_jellyfin, item, mov):
+            item.status, item.detalhe = "no_jellyfin", "já está no Jellyfin (mesmo filme/episódio)"
+        elif str(item.destino).lower() in destinos_vistos:
             item.status, item.detalhe = "ja_existe", "outro link da lista já vai para esse nome"
         elif item.destino.exists():
             item.status = "ja_existe"
@@ -229,6 +233,20 @@ def planejar_espelho(links: list, pasta_filmes: str | Path | None, pasta_series:
                 item.detalhe = "; ".join(t for t in (item.detalhe, verificacao.aviso) if t)
         destinos_vistos.add(str(item.destino).lower())
     return itens
+
+
+def _ja_no_jellyfin(indice, item: ItemEspelho, mov) -> bool:
+    filme = mov.filme
+    nomes = [n for n in ((filme.titulo, filme.titulo_original) if filme else ()) if n]
+    if item.tipo == "serie" and mov.episodio:
+        pasta_serie = mov.destino.parent.parent.name                     # "Dark (2017)"
+        nomes.append(re.sub(r"\s*\(\d{4}\).*$", "", pasta_serie))
+        return indice.tem_episodio(nomes, *mov.episodio, tmdb_id=filme.tmdb_id if filme else None)
+    lido = re.match(r"(.+?) \((\d{4})\)", mov.destino.parent.name)       # "Nosferatu (1922)"
+    if lido:
+        nomes.append(lido.group(1))
+    ano = filme.ano if filme else (int(lido.group(2)) if lido else None)
+    return indice.tem_filme(nomes, ano, tmdb_id=filme.tmdb_id if filme else None)
 
 
 def _arquivos_da_pasta(pasta: Path) -> list[Path]:
