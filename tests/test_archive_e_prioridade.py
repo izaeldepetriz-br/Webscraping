@@ -32,7 +32,9 @@ def _archive_falso(api, n_itens=250):
         return 200, {"response": {"numFound": n_itens, "start": inicio, "docs": docs}}
 
     def metadata_item(i):
-        return lambda q: (200, {"metadata": {"mediatype": "movies", "title": f"Filme {i}"}, "files": [
+        licenca = "https://creativecommons.org/publicdomain/mark/1.0/" if i == 0 else ""
+        return lambda q: (200, {"metadata": {"mediatype": "movies", "title": f"Filme {i}", "year": "1922",
+                                             "licenseurl": licenca}, "files": [
             {"name": f"filme{i}.mkv", "source": "original", "size": "900000000"},
             {"name": f"filme{i}.mp4", "source": "derivative", "size": "300000000"},
             {"name": f"filme{i}.thumbs/1.jpg", "source": "derivative"}]})
@@ -58,6 +60,7 @@ def test_colecao_inteira_pela_api(api_falsa, monkeypatch):
     assert len(links) == 250                                    # todos, não só os da tela
     assert links[0].url == api_falsa.base + "/download/filme0/filme0.mkv"   # o original
     assert links[0].titulo == "Filme 0" and links[0].tipo == "archive.org"
+    assert (links[0].licenca, links[0].ano, links[1].licenca) == ("Domínio público", 1922, "")
     paginas = [p["query"]["page"] for p in api_falsa.pedidos if p["caminho"] == "/advancedsearch.php"]
     assert paginas == [["1"], ["2"], ["3"]]                     # 100 + 100 + 50
 

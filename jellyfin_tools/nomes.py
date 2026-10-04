@@ -90,6 +90,12 @@ def eh_video(caminho: Path) -> bool:
     return caminho.suffix.lower() in EXTENSOES_VIDEO
 
 
+def eh_video_da_biblioteca(caminho: Path) -> bool:
+    """Vídeo OU .strm (link espelhado: o Jellyfin toca do link). Usado ao completar a biblioteca;
+    o organizador não move .strm (são minúsculos e seriam confundidos com propaganda)."""
+    return eh_video(caminho) or caminho.suffix.lower() == ".strm"
+
+
 @lru_cache(maxsize=65536)
 def extrair_titulo_e_ano(nome_arquivo: str) -> NomeExtraido:
     """'Matrix.1999.1080p.BluRay.x264-VERSAO.mp4' -> NomeExtraido('Matrix', 1999)

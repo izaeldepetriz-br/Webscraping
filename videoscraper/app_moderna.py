@@ -30,6 +30,7 @@ from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, Confi
 from jellyfin_tools.legendas import normalizar_idiomas
 from jellyfin_tools.metadados import ClienteTMDB
 from jellyfin_tools.notificacoes import Notificador
+from jellyfin_tools.espelho import nome_do_link, aplicar_espelho, classificar, licenca_aberta, planejar_espelho
 from jellyfin_tools.organizador import DETALHE_EPISODIO, problema_no_caminho, sugestao_de_caminho, ultimo_log
 from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, itens_de_series, pos_processar
 from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao
@@ -51,6 +52,12 @@ CATEGORIA = {"simulado": "mover", "movido": "movido", "organizado": "organizado"
              "nao_identificado": "nao_identificado", "ignorado": "ignorado", "erro": "erro",
              "limpeza": "mover", "pasta_apagada": "movido"}
 OK_LEGENDA = ("baixada", "ja_existe")
+TIPOS_CONTEUDO = {"filme": "Filme", "serie": "Série", "outro": "—"}
+# Espelho no Jellyfin: status do item -> (texto na coluna Situação, cor)
+SITUACAO_ESPELHO = {"criado": ("espelhado", "ok"), "ja_existe": ("já espelhado", "ok"),
+                    "tem_video": ("já na biblioteca", "ok"), "ignorado": ("sem ano/episódio", "pulado"),
+                    "sem_licenca": ("sem licença aberta", "pulado"), "nao_identificado": ("não identificado", "pulado"),
+                    "erro": ("erro", "erro")}
 
 # Chaves e tokens: só vão para o config.json se o usuário marcar "Lembrar as chaves".
 SEGREDOS = ("chave_tmdb", "chave_opensubtitles", "chave_subdl", "jellyfin_api_key", "discord_webhook",
@@ -368,6 +375,9 @@ class AppModerna(JanelaModerna):
             self.definir_estado_tmdb(*dado)
         elif tipo == "status_fim":
             self._texto_fim = dado
+        elif tipo == "espelho":                        # aba Vídeos: situação de cada link espelhado
+            for i, (texto, cor) in dado:
+                self.atualizar_situacao(str(i), texto, cor)
         elif tipo == "sugerir_series":
             self._sugestao_series = dado
         elif tipo == "fim":
@@ -399,7 +409,8 @@ class AppModerna(JanelaModerna):
         self.limpar_tabela()
         for i, l in enumerate(self.links):
             titulo = l.titulo or unquote(os.path.basename(urlparse(l.url).path)) or l.url
-            self.adicionar_video(str(i), i + 1, "", titulo, ORIGENS.get(l.tipo, l.tipo), l.url)
+            self.adicionar_video(str(i), i + 1, "", titulo, ORIGENS.get(l.tipo, l.tipo), l.url,
+                                 TIPOS_CONTEUDO[classificar(l)], getattr(l, "licenca", "") or "—")
 
     def _marcar_item(self, url: str, status: str) -> None:
         for i, l in enumerate(self.links):
@@ -453,6 +464,83 @@ class AppModerna(JanelaModerna):
                 self.fila.put(("sugerir_series", (episodios, len(movimentos))))   # pergunta depois do "fim"
 
         self._rodar("Pré-visualizando...", tarefa)
+
+    # ================================================================== espelhar no Jellyfin (.strm)
+    def ao_espelhar_jellyfin(self) -> None:
+        """Links da aba Vídeos -> .strm nas bibliotecas de Filmes e Séries da aba Jellyfin
+        (+ legendas, pôster, .nfo e scan, como no Organizar). Selecionados; sem seleção, todos."""
+        indices = [int(i) for i in self.tabela.selection()] or list(range(len(self.links)))
+        if not indices:
+            self.mostrar_mensagem("Espelhar no Jellyfin", "Busque os vídeos primeiro.", "aviso")
+            return
+        links = [self.links[i] for i in indices]
+        o = self.obter_opcoes_jellyfin()
+        self._destinos[self._modo_atual] = self.var_jf_destino.get()
+        pasta_filmes, pasta_series = self._destinos.get("Filmes", ""), self._destinos.get("Séries", "")
+        tipos = [classificar(l) for l in links]
+        filmes, series = tipos.count("filme"), tipos.count("serie")
+        faltam = [n for n, (qtd, pasta) in (("Filmes", (filmes, pasta_filmes)), ("Séries", (series, pasta_series)))
+                  if qtd and not pasta]
+        if faltam:
+            self.mostrar_mensagem("Espelhar no Jellyfin", f"Escolha a biblioteca de {' e de '.join(faltam)} na aba "
+                                  "Jellyfin (troque Filmes/Séries no topo dela) e tente de novo.", "aviso")
+            return
+        if not filmes + series:
+            self.mostrar_mensagem("Espelhar no Jellyfin", "Nenhum link tem ano (filme) ou temporada/episódio "
+                                  "(série) no título: não dá para nomear com segurança.", "aviso")
+            return
+        abertos = sum(licenca_aberta(getattr(l, "licenca", "")) for l, t in zip(links, tipos) if t != "outro")
+        legendas = f"legendas ({o.idioma}) pela fonte \"{o.fonte_legenda}\"" if o.legendas else "sem legendas"
+        escolha = self.escolher(
+            "Espelhar no Jellyfin",
+            f"{len(links)} link(s){' selecionado(s)' if self.tabela.selection() else ''}: {filmes} filme(s), "
+            f"{series} episódio(s), {len(links) - filmes - series} sem ano/episódio (ficam de fora).\n\n"
+            f"Filmes: {pasta_filmes or '—'}\nSéries: {pasta_series or '—'}\n\n"
+            "Cada um vira um arquivo .strm com o link: o Jellyfin toca direto do site, sem baixar. Depois: "
+            f"{legendas}, pôster/.nfo e scan do Jellyfin.\n\n"
+            f"Licença: {abertos} com domínio público ou Creative Commons. Os demais podem ser cópias sem "
+            "autorização do dono dos direitos; espelhe só o que você pode assistir legalmente.",
+            self.OPCOES_ESPELHO)
+        if escolha is None:
+            return
+        so_abertos = escolha == self.OPCOES_ESPELHO[0]
+        self._salvar_config()
+
+        def tarefa():
+            itens = planejar_espelho(links, pasta_filmes, pasta_series, self._catalogo(o), so_abertos,
+                                     o.incluir_tmdbid, o.nomes_episodios)
+            aplicar_espelho(itens)
+            for item in itens:
+                destino = f" -> {item.destino}" if item.destino else ""
+                nivel = self._log.error if item.status == "erro" else self._log.info
+                nivel("[%s] %s%s%s", item.status, nome_do_link(item.link), destino,
+                      f" ({item.detalhe})" if item.detalhe else "")
+            self.fila.put(("espelho", [(i, SITUACAO_ESPELHO.get(item.status, (item.status, None)))
+                                       for i, item in zip(indices, itens)]))
+            criados = [item for item in itens if item.status == "criado"]
+            resultados = []
+            if criados:
+                self._log.info("Legendas, pôster/.nfo e scan para %d item(ns) espelhado(s)", len(criados))
+                resultados = self._pos_processar(o, [item.como_item_da_biblioteca() for item in criados],
+                                                 [f"espelho-{k}" for k in range(len(criados))], "Espelho",
+                                                 legendas=o.legendas, notificar=True)
+            baixadas = sum(1 for r in resultados for le in (r.legendas or {"": r.legenda}).values()
+                           if le and le.status == "baixada")
+            contagem = {s: sum(item.status == s for item in itens) for s in SITUACAO_ESPELHO}
+            self.fila.put(("status_fim", f"Espelho: {len(criados)} .strm criado(s), {baixadas} legenda(s)."))
+            self.fila.put(("msg", ("Espelho no Jellyfin",
+                                   f"Criados: {len(criados)} ({sum(i.tipo == 'filme' for i in criados)} filme(s), "
+                                   f"{sum(i.tipo == 'serie' for i in criados)} episódio(s))\n"
+                                   f"Já existiam: {contagem['ja_existe'] + contagem['tem_video']}\n"
+                                   f"Sem ano/episódio: {contagem['ignorado']}\n"
+                                   f"Sem licença aberta (pulados): {contagem['sem_licenca']}\n"
+                                   f"Não identificados: {contagem['nao_identificado']}\nCom erro: {contagem['erro']}\n"
+                                   f"Legendas baixadas: {baixadas}\n\nDetalhes em 'Abrir log' (aba Jellyfin).",
+                                   "erro" if contagem["erro"] else "sucesso")))
+
+        self._rodar("Espelhando no Jellyfin...", tarefa)
+
+    OPCOES_ESPELHO = ("Só domínio público / CC", "Todos os identificados")
 
     def _oferecer_series(self, episodios: int, total: int) -> None:
         """Prévia no modo Filmes com (quase) só episódios: oferece trocar para Séries e refazer."""

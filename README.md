@@ -153,6 +153,25 @@ primeira falha (antes esperava o tempo limite em cada filme).
 - `videoscraper/app_moderna.py`: `AppModerna` **herda** a janela e preenche os placeholders com o
   motor (busca e download em thread, comunicação pela fila).
 
+### Espelhar no Jellyfin (.strm), sem baixar
+
+Na aba **Vídeos**, a tabela mostra o **Tipo** de cada link (Filme, Série ou "—") e a **Licença**
+informada pelo site (no archive.org: "Domínio público", "CC BY 4.0"...; "—" = não informada).
+O botão **Espelhar no Jellyfin (.strm)...** (nos selecionados; sem seleção, em todos):
+
+1. separa filmes (título com ano) de episódios (S01E02, 1x02...); o que não tem nenhum dos dois fica de fora;
+2. cria um arquivo `.strm` com o link, com o mesmo nome que o organizador daria (catálogo/TMDB):
+   `Filmes/Nome (Ano)/Nome (Ano).strm` e `Séries/Nome (Ano)/Season 01/Nome S01E02.strm`, nas
+   bibliotecas escolhidas na aba Jellyfin. O Jellyfin trata o `.strm` como o vídeo e **toca direto
+   do link**, sem ocupar espaço;
+3. depois, o mesmo pós-processamento do Organizar: **legendas** (com o mesmo nome do `.strm`, nos
+   idiomas e fontes escolhidos, inclusive OpenSubtitles + SubDL), pôster/backdrop/`.nfo` e o scan.
+
+Nada é sobrescrito: um link que já tem `.strm`, ou um filme que já está baixado na biblioteca, é
+pulado. **Completar biblioteca** também enxerga os `.strm` (para baixar legendas que faltaram).
+Muitos itens enviados por usuários (ex.: "DVDISO", "Dual Audio") não têm autorização do dono dos
+direitos: a primeira opção do botão espelha **só domínio público / Creative Commons**.
+
 ### Por que o YouTube (e similares) não funciona?
 
 O arquivo `robots.txt` do YouTube **proíbe robôs** nas páginas de busca, e os termos de uso

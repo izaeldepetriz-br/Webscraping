@@ -221,7 +221,10 @@ class DialogoModerno(ctk.CTkToplevel):
 # =============================================================================== janela
 class JanelaModerna(ctk.CTk):
     COLUNAS = (("n", "#", 48, False), ("status", "Situação", 110, False), ("titulo", "Título", 240, True),
-               ("tipo", "Origem", 140, False), ("url", "Link", 420, True))
+               ("tipo", "Origem", 130, False), ("url", "Link", 300, True),
+               ("conteudo", "Tipo", 70, False), ("licenca", "Licença", 120, False))
+    # Ordem na TELA: Tipo e Licença ao lado do título (os valores continuam na ordem acima)
+    ORDEM_TELA = ("n", "status", "titulo", "conteudo", "licenca", "tipo", "url")
     # Linha tingida de leve + símbolo na coluna Situação (o Treeview não colore uma célula só).
     FUNDO_SITUACAO = {"ok": "#132519", "erro": "#2a1519", "pulado": "#2a2212"}
     SIMBOLO_SITUACAO = {"ok": "\u2713", "erro": "\u2715", "pulado": "\u21b7"}    # ✓ ✕ ↷
@@ -505,6 +508,7 @@ class JanelaModerna(ctk.CTk):
             corpo, "Vídeos encontrados", self.COLUNAS,
             "Nenhum vídeo ainda. Cole um endereço e clique em Buscar vídeos.")
         self.lb_contador, self.lb_vazio = self._extras_tabela[str(self.tabela)]
+        self.tabela.configure(displaycolumns=self.ORDEM_TELA)
         self.tabela.bind("<Double-1>", lambda e: self.ao_abrir_link())
         self.bt_abrir_link = self._botao(acoes, "Abrir link", self.ao_abrir_link, "fantasma")
         self.bt_copiar_link = self._botao(acoes, "Copiar link", self.ao_copiar_link, "fantasma")
@@ -512,6 +516,9 @@ class JanelaModerna(ctk.CTk):
         self.bt_abrir_pasta = self._botao(acoes, "Abrir pasta dos vídeos", self.ao_abrir_pasta, "fantasma")
         for b in (self.bt_abrir_link, self.bt_copiar_link, self.bt_salvar_lista, self.bt_abrir_pasta):
             b.pack(side="left", padx=(0, 6))
+        # .strm: o Jellyfin toca direto do link, sem baixar (filmes e séries separados, com legendas)
+        self.bt_espelhar = self._botao(acoes, "Espelhar no Jellyfin (.strm)...", self.ao_espelhar_jellyfin)
+        self.bt_espelhar.pack(side="right")
 
     def _estilizar_tabela(self) -> None:
         """A tabela é um ttk.Treeview (o CustomTkinter não tem tabela) pintado no tema escuro."""
@@ -1096,9 +1103,12 @@ class JanelaModerna(ctk.CTk):
         self.tabela.delete(*self.tabela.get_children())
         self._atualizar_contador(self.tabela)
 
-    def adicionar_video(self, iid: str, numero: int, situacao: str, titulo: str, origem: str, link: str) -> None:
+    def adicionar_video(self, iid: str, numero: int, situacao: str, titulo: str, origem: str, link: str,
+                        conteudo: str = "", licenca: str = "") -> None:
+        """conteudo: 'Filme', 'Série' ou '—'; licenca: a informada pelo site (archive.org)."""
         listra = "par" if len(self.tabela.get_children()) % 2 == 0 else "impar"
-        self.tabela.insert("", "end", iid=iid, values=(numero, situacao, titulo, origem, link), tags=(listra,))
+        self.tabela.insert("", "end", iid=iid, values=(numero, situacao, titulo, origem, link, conteudo, licenca),
+                           tags=(listra,))
         self._atualizar_contador(self.tabela)
 
     def atualizar_situacao(self, iid: str, texto: str, tipo: str) -> None:
@@ -1202,7 +1212,7 @@ class JanelaModerna(ctk.CTk):
         estado = "disabled" if ocupado else "normal"
         for b in (self.bt_buscar, self.bt_baixar_sel, self.bt_baixar_todos, self.bt_login,
                   self.bt_previa, self.bt_legendas, self.bt_desfazer, self.bt_testar_jellyfin,
-                  self.bt_testar_avisos, self.bt_testar_tmdb):
+                  self.bt_testar_avisos, self.bt_testar_tmdb, self.bt_espelhar):
             b.configure(state=estado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
         for parar in (self.bt_parar, self.bt_parar_jf):
@@ -1321,6 +1331,9 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_testar_tmdb(self) -> None:
+        pass
+
+    def ao_espelhar_jellyfin(self) -> None:
         pass
 
     def ao_testar_jellyfin(self) -> None:

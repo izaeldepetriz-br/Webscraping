@@ -25,7 +25,7 @@ from pathlib import Path
 from .legendas import (ResultadoLegenda, baixar_legenda, baixar_legenda_episodio, episodios_da_biblioteca,
                        normalizar_idiomas, pastas_de_filmes)
 from .metadados import ClienteTMDB, ResultadoMetadados, enriquecer_filme
-from .nomes import eh_video, extrair_episodio, ler_nome_jellyfin
+from .nomes import eh_video_da_biblioteca, extrair_episodio, ler_nome_jellyfin
 from .notificacoes import Notificador
 from .registro import obter_logger
 from .servidor_jellyfin import ErroJellyfin, atualizar_biblioteca
@@ -78,7 +78,7 @@ def itens_da_biblioteca(pasta_filmes: Path, log=None) -> list[tuple[ItemBibliote
         if not ler_nome_jellyfin(pasta.name):
             log.warning("Pasta fora do padrão 'Nome (Ano)', pulada: %s", pasta.name)
             continue
-        videos = sorted(v for v in pasta.iterdir() if v.is_file() and eh_video(v))
+        videos = sorted(v for v in pasta.iterdir() if v.is_file() and eh_video_da_biblioteca(v))
         video = next((v for v in videos if v.stem == pasta.name), videos[0])   # o de mesmo nome da pasta
         itens.append((ItemBiblioteca(video), pasta.name))
     return itens

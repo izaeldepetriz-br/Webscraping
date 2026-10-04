@@ -1,0 +1,82 @@
+"""Espelhar links no Jellyfin com .strm: classificação, nomes, licença e legendas."""
+import csv
+
+from jellyfin_tools import CatalogoLocal, ConfigSite, ProvedorSiteHTML
+from jellyfin_tools.espelho import aplicar_espelho, classificar, licenca_aberta, planejar_espelho
+from videoscraper.archive_org import licenca_legivel
+from videoscraper.cli import salvar
+from videoscraper.extracao import LinkVideo
+from videoscraper.rede import ClienteHTTP
+
+BASE = "https://archive.org/download/item/"
+
+
+def _link(titulo, arquivo="video.mp4", licenca="", ano=None):
+    return LinkVideo(BASE + arquivo, "https://archive.org/details/item", "archive.org", titulo, licenca, ano)
+
+
+def test_classificar_filme_serie_e_outro():
+    assert classificar(_link("Anjos Da Noite 2003 (Underworld) (Dual Audio) PT-BR")) == "filme"
+    assert classificar(_link("Minha Mae E Uma Peca DVD", ano=2013)) == "filme"          # ano dos metadados
+    assert classificar(_link("Dark", "Dark.S01E02.mkv")) == "serie"                     # marca no arquivo
+    assert classificar(_link("Initial D - Completo - Legendado")) == "outro"
+    assert classificar(_link("Star Wars Episode 4 1977")) == "filme"                    # não é série
+
+
+def test_planejar_e_criar_strm_com_nomes_do_jellyfin(tmp_path):
+    links = [_link("Anjos Da Noite 2003 (Underworld) (Dual Audio) PT-BR", "anjos.mkv"),
+             _link("A Viagem de Chihiro (R4BR DVDISO)", "chihiro.mp4", ano=2001),
+             _link("Dark episódio", "Dark.S01E02.WEBRip.mkv"),
+             _link("Initial D - Completo - Legendado"),
+             _link("Matrix 1999 copia", "outra.mp4")]                                  # mesmo destino do 1º Matrix?
+    links.insert(0, _link("Matrix (1999)", "matrix.mkv"))
+    itens = planejar_espelho(links, tmp_path / "Filmes", tmp_path / "Series", CatalogoLocal.padrao())
+    assert [(i.tipo, i.status) for i in itens] == [("filme", "criar"), ("filme", "criar"), ("filme", "criar"),
+                                                   ("serie", "criar"), ("outro", "ignorado"),
+                                                   ("filme", "ja_existe")]             # duas cópias do Matrix
+    aplicar_espelho(itens)
+    criados = sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*.strm"))
+    assert criados == ["Filmes/A Viagem de Chihiro (2001)/A Viagem de Chihiro (2001).strm",
+                       "Filmes/Anjos Da Noite (2003)/Anjos Da Noite (2003).strm",
+                       "Filmes/Matrix (1999)/Matrix (1999).strm",
+                       "Series/Dark (2017)/Season 01/Dark S01E02.strm"]
+    assert (tmp_path / "Filmes/Matrix (1999)/Matrix (1999).strm").read_text(encoding="utf-8") == BASE + "matrix.mkv\n"
+    # de novo: nada é sobrescrito
+    de_novo = planejar_espelho(links[:1], tmp_path / "Filmes", tmp_path / "Series")
+    assert de_novo[0].status == "ja_existe"
+
+
+def test_video_baixado_na_biblioteca_nao_ganha_strm(tmp_path):
+    pasta = tmp_path / "Filmes" / "Matrix (1999)"
+    pasta.mkdir(parents=True)
+    (pasta / "Matrix (1999).mkv").write_bytes(b"v")
+    [item] = planejar_espelho([_link("Matrix (1999)")], tmp_path / "Filmes", tmp_path / "Series")
+    assert item.status == "tem_video"
+
+
+def test_so_licenca_aberta(tmp_path):
+    assert licenca_legivel("http://creativecommons.org/licenses/by-sa/4.0/") == "CC BY-SA 4.0"
+    assert licenca_legivel("https://creativecommons.org/publicdomain/mark/1.0/") == "Domínio público"
+    assert licenca_aberta("CC BY 4.0") and licenca_aberta("Domínio público") and not licenca_aberta("")
+    links = [_link("Nosferatu 1922", licenca="Domínio público"), _link("Anjos Da Noite 2003")]
+    itens = planejar_espelho(links, tmp_path / "F", tmp_path / "S", so_licenca_aberta=True)
+    assert [i.status for i in itens] == ["criar", "sem_licenca"]
+
+
+def test_legendas_e_completar_biblioteca_com_strm(tmp_path, site_legendas):
+    """O .strm faz o papel do vídeo: a legenda ganha o mesmo nome e o Completar enxerga o .strm."""
+    from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, pos_processar
+    provedor = ProvedorSiteHTML(ConfigSite(site_legendas.base + "/busca?q={consulta}"), ClienteHTTP(espera=0))
+    itens = aplicar_espelho(planejar_espelho([_link("Matrix (1999)")], tmp_path, tmp_path / "S"))
+    [r] = pos_processar([itens[0].como_item_da_biblioteca()], ConfigPos(provedores=[provedor]))
+    assert r.legenda.status == "baixada"
+    assert (tmp_path / "Matrix (1999)" / "Matrix (1999).pt-BR.srt").is_file()
+    assert [nome for _, nome in itens_da_biblioteca(tmp_path)] == ["Matrix (1999)"]
+
+
+def test_salvar_lista_csv_com_licenca_e_ano(tmp_path):
+    destino = tmp_path / "lista.csv"
+    salvar([_link("Nosferatu", licenca="Domínio público", ano=1922)], str(destino))
+    with open(destino, encoding="utf-8-sig", newline="") as f:
+        [linha] = list(csv.DictReader(f))
+    assert (linha["licenca"], linha["ano"]) == ("Domínio público", "1922")

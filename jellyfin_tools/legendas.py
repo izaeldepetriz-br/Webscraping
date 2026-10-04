@@ -24,7 +24,7 @@ from bs4 import BeautifulSoup
 
 from videoscraper.rede import ClienteHTTP
 
-from .nomes import eh_video, extrair_episodio, extrair_titulo_e_ano, ler_nome_jellyfin, similaridade
+from .nomes import eh_video_da_biblioteca, extrair_episodio, extrair_titulo_e_ano, ler_nome_jellyfin, similaridade
 
 IDIOMA_PADRAO = "pt-BR"
 
@@ -115,7 +115,7 @@ def extrair_srt(conteudo: bytes) -> str:
 
 def caminho_da_legenda(pasta_filme: Path, idioma: str = IDIOMA_PADRAO) -> Path:
     """Mesmo nome do vídeo da pasta + '.pt-BR.srt' (se não houver vídeo, usa o nome da pasta)."""
-    videos = sorted(p for p in pasta_filme.iterdir() if p.is_file() and eh_video(p))
+    videos = sorted(p for p in pasta_filme.iterdir() if p.is_file() and eh_video_da_biblioteca(p))
     base = videos[0].stem if videos else pasta_filme.name
     return pasta_filme / f"{base}.{idioma}.srt"
 
@@ -472,13 +472,14 @@ def _titulo_original(catalogo, pasta: Path, tipo: str = "filme") -> list[str]:
 def pastas_de_filmes(pasta_filmes: str | Path) -> list[Path]:
     """Pastas de filme da biblioteca que têm vídeo dentro."""
     return [p for p in sorted(Path(pasta_filmes).iterdir())
-            if p.is_dir() and not p.name.startswith(".") and any(eh_video(a) for a in p.iterdir() if a.is_file())]
+            if p.is_dir() and not p.name.startswith(".")
+            and any(eh_video_da_biblioteca(a) for a in p.iterdir() if a.is_file())]
 
 
 def episodios_da_biblioteca(pasta_series: str | Path) -> list[Path]:
     """Todos os vídeos de episódio: Séries/<Série>/<Season NN>/<vídeo>."""
     return sorted(v for v in Path(pasta_series).glob("*/*/*")
-                  if v.is_file() and eh_video(v) and not v.parts[-3].startswith("."))
+                  if v.is_file() and eh_video_da_biblioteca(v) and not v.parts[-3].startswith("."))
 
 
 def baixar_legendas_biblioteca(pasta_filmes: str | Path, provedores: list, idioma: str = IDIOMA_PADRAO,

@@ -41,6 +41,8 @@ class LinkVideo:
     origem: str
     tipo: str      # video_tag, source_tag, iframe, link, meta, json_ld, script, rede, seletor
     titulo: str = ""
+    licenca: str = ""          # archive.org: "Domínio público", "CC BY 4.0"... (vazio = não informada)
+    ano: int | None = None     # archive.org: ano do item (ajuda a separar filme de série)
 
 
 def parece_video(url: str) -> bool:

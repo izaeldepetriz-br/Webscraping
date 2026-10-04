@@ -12,6 +12,7 @@ Confira a licença de cada item (muitas coleções são de domínio público; ne
 
 from __future__ import annotations
 
+import re
 import sys
 from urllib.parse import parse_qs, quote, urlparse
 
@@ -81,13 +82,35 @@ def _consulta(cliente: ClienteHTTP, url: str) -> tuple[str | None, dict | None]:
     return None, meta                                # é um item só
 
 
+def licenca_legivel(url_licenca) -> str:
+    """'http://creativecommons.org/licenses/by-sa/4.0/' -> 'CC BY-SA 4.0';
+    '.../publicdomain/mark/1.0/' -> 'Domínio público'; vazio -> '' (o item não informa a licença)."""
+    texto = str(url_licenca or "").strip().lower()
+    if not texto:
+        return ""
+    if "publicdomain" in texto:
+        return "Domínio público"
+    if m := re.search(r"creativecommons\.org/licenses/([a-z-]+)/([\d.]+)", texto):
+        return f"CC {m.group(1).upper()} {m.group(2)}"
+    return "outra licença"
+
+
+def _ano(metadata: dict) -> int | None:
+    for chave in ("year", "date"):
+        if m := re.match(r"\s*(1[89]\d\d|20\d\d)", str(metadata.get(chave) or "")):
+            return int(m.group(1))
+    return None
+
+
 def _link_do_item(base: str, identificador: str, meta: dict, titulo: str = "") -> LinkVideo | None:
     arquivo = melhor_arquivo(meta.get("files") or [])
     if not arquivo:
         return None
-    titulo = titulo or str((meta.get("metadata") or {}).get("title") or identificador)
+    metadata = meta.get("metadata") or {}
+    titulo = titulo or str(metadata.get("title") or identificador)
     return LinkVideo(url=f"{base}/download/{quote(identificador)}/{quote(arquivo['name'])}",
-                     origem=f"{base}/details/{identificador}", tipo="archive.org", titulo=titulo)
+                     origem=f"{base}/details/{identificador}", tipo="archive.org", titulo=titulo,
+                     licenca=licenca_legivel(metadata.get("licenseurl")), ano=_ano(metadata))
 
 
 def buscar(cliente: ClienteHTTP, url: str, limite: int = 100, parar=None,

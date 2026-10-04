@@ -75,7 +75,7 @@ def salvar(links: list[LinkVideo], caminho: str) -> None:
             json.dump([asdict(l) for l in links], f, ensure_ascii=False, indent=2)
     elif caminho.lower().endswith(".csv"):
         with open(caminho, "w", encoding="utf-8-sig", newline="") as f:   # -sig: Excel lê acentos
-            w = csv.DictWriter(f, fieldnames=["url", "origem", "tipo", "titulo"])
+            w = csv.DictWriter(f, fieldnames=["url", "origem", "tipo", "titulo", "licenca", "ano"])
             w.writeheader()
             w.writerows(asdict(l) for l in links)
     else:

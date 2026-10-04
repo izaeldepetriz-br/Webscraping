@@ -879,3 +879,38 @@ def test_subdl_na_janela_como_fonte_e_como_reserva(app):
     app.var_jf_chave_subdl.set("")
     assert "SubDL" in app._problema_legendas(app.obter_opcoes_jellyfin())
     assert "chave_subdl" in app_moderna.SEGREDOS                         # só é salva se pedir
+
+
+def test_espelhar_links_no_jellyfin_pela_janela(app, tmp_path):
+    from videoscraper.extracao import LinkVideo
+    base = "https://archive.org/download/x/"
+    links = [LinkVideo(base + "nosferatu.mp4", "o", "archive.org", "Nosferatu (1922)", "Domínio público"),
+             LinkVideo(base + "anjos.mkv", "o", "archive.org", "Anjos Da Noite 2003 (Dual Audio) PT-BR"),
+             LinkVideo(base + "Dark.S01E02.mkv", "o", "archive.org", "Dark episódio 2"),
+             LinkVideo(base + "x.mp4", "o", "archive.org", "Initial D - Completo")]
+    app._mostrar_links(links)
+    tipos = [app.tabela.item(i, "values")[5:] for i in app.tabela.get_children()]
+    assert tipos == [("Filme", "Domínio público"), ("Filme", "—"), ("Série", "—"), ("—", "—")]
+
+    app.ao_espelhar_jellyfin()                                       # sem bibliotecas: avisa
+    assert app.caixas[-1][0] == "aviso" and "Filmes e de Séries" in app.caixas[-1][2]
+    app._destinos.update({"Filmes": str(tmp_path / "Filmes"), "Séries": str(tmp_path / "Series")})
+    app.var_jf_destino.set(str(tmp_path / "Filmes"))
+    app.var_jf_legendas.set(False)
+    perguntas = []
+    app.escolher = lambda t, m, opcoes: (perguntas.append(m), opcoes[0])[1]   # "Só domínio público / CC"
+    app.ao_espelhar_jellyfin()
+    esperar(app)
+    assert "2 filme(s), 1 episódio(s), 1 sem ano/episódio" in perguntas[-1]
+    assert sorted(p.name for p in tmp_path.rglob("*.strm")) == ["Nosferatu (1922).strm"]
+    situacoes = [app.tabela.item(i, "values")[1] for i in app.tabela.get_children()]
+    assert situacoes[0].endswith("espelhado") and situacoes[1].endswith("sem licença aberta")
+    assert app.caixas[-1][1] == "Espelho no Jellyfin" and "Criados: 1 (1 filme(s), 0 episódio(s))" in app.caixas[-1][2]
+
+    app.escolher = lambda t, m, opcoes: opcoes[1]                    # "Todos os identificados"
+    app.ao_espelhar_jellyfin()
+    esperar(app)
+    assert sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*.strm")) == [
+        "Filmes/Anjos Da Noite (2003)/Anjos Da Noite (2003).strm", "Filmes/Nosferatu (1922)/Nosferatu (1922).strm",
+        "Series/Dark (2017)/Season 01/Dark S01E02.strm"]
+    assert app.tabela.item("0", "values")[1].endswith("já espelhado")
