@@ -14,7 +14,8 @@ que **exigem login** ou que mostram **verificações** que você resolve na jane
    - **Linux/Mac:** `./iniciar.sh`
 
 Na primeira vez ele cria o ambiente `.venv`, instala as bibliotecas e baixa o navegador
-Chromium (~150 MB). Isso só acontece uma vez. Depois abre **a janela do programa**:
+Chromium (~150 MB). Isso só acontece uma vez. Depois abre **a janela do programa**, em
+Dark Mode (CustomTkinter):
 
 1. Cole o endereço da página e clique em **Buscar vídeos**.
 2. Os vídeos aparecem na tabela. Duplo clique abre o link; **Copiar link** e
@@ -29,7 +30,16 @@ Opções da janela:
 - **Fazer login no site**: abre o site para você entrar com a sua conta; a sessão fica salva.
 - **Parar**: interrompe depois do item atual.
 
-Prefere o menu de texto antigo? `python iniciar.py --texto`.
+Outras interfaces: `python iniciar.py --classica` (janela cinza antiga) ou
+`python iniciar.py --texto` (menu no terminal).
+
+### Como a janela moderna é organizada (para quem quer mexer)
+
+- `videoscraper/gui_moderna.py`: **só a aparência** (`JanelaModerna`). Cores e fontes ficam na
+  classe `Tema`. Os cliques chamam métodos *placeholder* (`ao_buscar`, `ao_baixar_todos`...) que
+  ali só têm `pass`. Para ver só o visual: `python -m videoscraper.gui_moderna`.
+- `videoscraper/app_moderna.py`: `AppModerna` **herda** a janela e preenche os placeholders com o
+  motor (busca e download em thread, comunicação pela fila).
 
 ### Por que o YouTube (e similares) não funciona?
 
@@ -107,7 +117,9 @@ videoscraper/
   coleta.py     junta tudo: obtém páginas (requests OU navegador) e navega entre elas
   download.py   salva arquivos (blocos/.part) e streaming (ffmpeg)
   servico.py    camada comum (buscar/baixar) usada pela janela e pelo terminal
-  gui.py        janela com botões (Tkinter)
+  gui_moderna.py janela moderna, só a aparência (CustomTkinter, Dark Mode)
+  app_moderna.py liga o motor à janela moderna (preenche os placeholders)
+  gui.py        janela clássica (Tkinter cinza)
   cli.py        comandos links / baixar / login
   menu.py       menu de texto (python iniciar.py --texto)
 jellyfin_tools/

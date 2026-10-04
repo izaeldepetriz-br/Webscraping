@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Ponto de entrada. Abre a JANELA com botões.
-   Menu de texto antigo:  python iniciar.py --texto
+"""Ponto de entrada. Abre a JANELA moderna (Dark Mode).
+   Janela clássica (cinza):  python iniciar.py --classica
+   Menu de texto antigo:     python iniciar.py --texto
 """
 
 import sys
@@ -58,4 +59,11 @@ if __name__ == "__main__":
         _avisar("Este Python não tem a biblioteca de janelas (Tkinter).\n"
                 "Reinstale o Python marcando 'tcl/tk and IDLE'. Abrindo o menu de texto...")
         raise SystemExit(_menu_texto() if sys.stdout else 1)
+    if "--classica" not in sys.argv:
+        try:                                  # interface moderna (Dark Mode, CustomTkinter)
+            from videoscraper import app_moderna
+        except ImportError:                   # customtkinter não instalado: usa a clássica
+            pass
+        else:
+            raise SystemExit(app_moderna.main())
     raise SystemExit(gui.main())

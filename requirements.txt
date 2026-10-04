@@ -3,3 +3,4 @@ beautifulsoup4>=4.12
 lxml>=5.0
 playwright>=1.45
 imageio-ffmpeg>=0.5
+customtkinter>=5.2
