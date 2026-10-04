@@ -61,6 +61,36 @@ mostra o `jellyfin_organizer.log` (fica em `~/.videoscraper/`).
 Velocidade: os filmes são processados **4 ao mesmo tempo** (a internet é o gargalo); as legendas
 continuam uma por vez, para não ser bloqueado pelos sites de legenda.
 
+Outras opções da aba Jellyfin:
+
+- **Mostrar:** (acima da tabela) escolha quais situações aparecem, ex.: desmarque "Já organizado"
+  para ver só o que vai mudar. É só visual: o contador mostra "X de Y" e o **Organizar** avisa se
+  algum "vai mover" está escondido.
+- **Legendas em vários idiomas:** marque Português, Inglês, Espanhol e/ou escreva outros em
+  "Outros idiomas" (ex.: `fr, it`). Um arquivo por idioma: `Nome (Ano).pt-BR.srt`, `Nome (Ano).en.srt`.
+- **Apagar a pasta do torrent depois de transferir:** apaga a pasta inteira (amostras, prints,
+  `.nfo` de release...) depois que o filme saiu dela. Por segurança, só se não sobrar nenhum outro
+  vídeo nela e nunca a própria pasta de origem. A pré-visualização mostra quais pastas serão apagadas.
+- **Testar conexão com o TMDB:** confere a chave (v3 ou token v4) e a internet. Abaixo do botão
+  aparece "✓ TMDB conectado" ou o motivo do erro.
+- **Coluna "Nome via":** de onde veio o nome novo de cada arquivo. Com o TMDB marcado: `TMDB ✓`
+  (o TMDB identificou) ou `TMDB ✕ (catálogo)` / `TMDB ✕ (arquivo)` (não identificou; o nome veio do
+  catálogo local ou do próprio arquivo, confira). Sem o TMDB: `catálogo` ou `arquivo`. O rodapé
+  resume: "TMDB identificou 150 de 166". Se o TMDB não responder, um aviso explica o motivo.
+- **Séries: nome do episódio depois do número:** com o TMDB, `Dark S01E01.mkv` vira
+  `Dark S01E01 - Segredos.mkv` (o número continua; as legendas acompanham o novo nome). Episódios já
+  organizados só com o número também são renomeados. Se o TMDB ainda não tem o nome traduzido
+  ("Episódio 3"), fica só o número; um nome que o arquivo já tinha nunca é apagado.
+- **Porcentagem na pré-visualização:** o rodapé mostra "Pré-visualizando... 45% · Consultando o
+  TMDB: 75 de 166" e a barra acompanha.
+
+Velocidade do TMDB: as consultas são feitas **6 ao mesmo tempo** antes de planejar, e as respostas
+ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 s por consulta:
+34 s uma de cada vez → **6 s** em paralelo; pré-visualizar de novo ou Organizar logo depois:
+**0,3 s** (nenhuma consulta repetida). Nomes de episódios: **um pedido por temporada**, não um por
+episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
+primeira falha (antes esperava o tempo limite em cada filme).
+
 ### Como a janela moderna é organizada (para quem quer mexer)
 
 - `videoscraper/gui_moderna.py`: **só a aparência** (`JanelaModerna`). Cores e fontes ficam na
@@ -188,6 +218,7 @@ Um arquivo só, com **as configurações no topo**, que faz tudo em sequência:
 | Limpeza | Apaga `.url`, `.txt` de propaganda e trailers < 100 MB (com as travas de segurança) |
 | Legenda faltante | OpenSubtitles (API) e/ou um site de busca (`SITE_LEGENDAS_URL`) |
 | **Scan do Jellyfin** | `POST /Library/Refresh` uma vez no fim do lote (`JELLYFIN_URL`, `JELLYFIN_API_KEY`) |
+| **Nomes pelo TMDB** | O TMDB vem primeiro (o catálogo local fica de reserva); séries ganham o nome do episódio (`NOMES_EPISODIOS`) |
 | **Pôster e backdrop pt-BR** | Pela API do TMDB, só se o torrent não trouxe imagens |
 | **Arquivo .nfo** | `Nome (Ano).nfo` com título, ano, sinopse em português, duração, gêneros e IDs |
 | **Log e avisos** | `jellyfin_organizer.log` + Discord (webhook) e/ou Telegram (bot) |
@@ -288,6 +319,7 @@ No seu próprio código, veja `exemplo_jellyfin.py`. As funções principais sã
 
 - **Catálogo local** (`jellyfin_tools/catalogo_filmes.json`): funciona offline; acrescente seus filmes.
 - **TMDB** (`--tmdb`, variável `TMDB_API_KEY`): API oficial e gratuita, a mesma base que o Jellyfin usa.
+  Com o TMDB ligado, ele é consultado **primeiro** e o catálogo local fica de reserva (sem internet).
 - **Legendas, API do OpenSubtitles** (`--opensubtitles`, variável `OPENSUBTITLES_API_KEY`):
   gratuita, com limite de downloads por dia.
 - **Legendas, site HTML** (`--site-legendas "https://site/busca?q={consulta}"`): raspagem com

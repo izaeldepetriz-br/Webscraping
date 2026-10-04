@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -44,6 +45,7 @@ class Movimento:
     acompanhantes: list[tuple[Path, Path]] | None = None   # legendas/nfo que vão junto
     episodio: tuple[int, int] | None = None                # (temporada, episódio), só em séries
     apagar: list[Path] | None = None                       # lixo da pasta de origem (.url, .txt, trailers)
+    pasta_apagar: Path | None = None                       # pasta do torrent a apagar inteira no fim
 
     def __str__(self) -> str:
         destino = f" -> {self.destino_curto}" if self.destino else ""
@@ -62,7 +64,17 @@ class Movimento:
         texto = ("+" + ", ".join(juntos)) if juntos else ""
         if self.apagar:
             texto += ("; " if texto else "") + f"apagar {len(self.apagar)}"
+        if self.pasta_apagar:
+            texto += ("; " if texto else "") + "apagar a pasta"
         return texto
+
+    @property
+    def fonte_nome(self) -> str:
+        """De onde veio o nome novo: 'TMDB', 'catálogo' (lista local), 'arquivo' (o nome do próprio
+        arquivo, sem confirmação) ou '' (não vai ter nome novo)."""
+        if self.filme is not None:
+            return self.filme.fonte
+        return "arquivo" if self.destino else ""
 
     @property
     def destino_curto(self) -> str:
@@ -97,13 +109,17 @@ def _finalizar(video: Path, pasta: Path, nome_arquivo: str, detalhe: str, filme,
 
 def planejar(video: Path, pasta_filmes: Path, catalogo: Catalogo | None = None,
              incluir_tmdbid: bool = False, exigir_catalogo: bool = False, modo: str = "filmes",
-             raiz: Path | None = None, limite_mb: float = LIMITE_TRAILER_MB) -> Movimento:
+             raiz: Path | None = None, limite_mb: float = LIMITE_TRAILER_MB,
+             nomes_episodios: bool = False) -> Movimento:
     """Decide PARA ONDE o vídeo vai (e o que vai junto), sem mover nada.
-    `raiz` é a pasta de origem da varredura (para saber se o vídeo está numa pasta só dele)."""
+    `raiz` é a pasta de origem da varredura (para saber se o vídeo está numa pasta só dele).
+    nomes_episodios: séries ganham o nome do episódio, se o catálogo souber (TMDB):
+    'Dark S01E01 - Segredos.mkv'. Sem o nome, fica só o número ('Dark S01E01.mkv')."""
     if "sample" in normalizar(video.stem).split():
         return Movimento(video, None, "ignorado", "arquivo de amostra (sample)")
     if modo == "series":
-        return _planejar_episodio(video, pasta_filmes, catalogo, incluir_tmdbid, exigir_catalogo, raiz, limite_mb)
+        return _planejar_episodio(video, pasta_filmes, catalogo, incluir_tmdbid, exigir_catalogo, raiz, limite_mb,
+                                  nomes_episodios)
 
     extraido = extrair_titulo_e_ano(video.name)
     filme, detalhe = _consultar(catalogo, extraido.titulo, extraido.ano, "filme")
@@ -125,7 +141,7 @@ def planejar(video: Path, pasta_filmes: Path, catalogo: Catalogo | None = None,
 
 def _planejar_episodio(video: Path, pasta_series: Path, catalogo: Catalogo | None,
                        incluir_tmdbid: bool, exigir_catalogo: bool, raiz: Path | None = None,
-                       limite_mb: float = LIMITE_TRAILER_MB) -> Movimento:
+                       limite_mb: float = LIMITE_TRAILER_MB, nomes_episodios: bool = False) -> Movimento:
     ep = extrair_episodio(video.name)
     if not ep:
         return Movimento(video, None, "nao_identificado",
@@ -140,8 +156,43 @@ def _planejar_episodio(video: Path, pasta_series: Path, catalogo: Catalogo | Non
         detalhe = detalhe or "série não confirmada no catálogo: confira o nome"
     pasta_serie = pasta_series / nome_jellyfin(nome, ano, serie.tmdb_id if serie else None, incluir_tmdbid)
     pasta = pasta_serie / pasta_temporada(ep.temporada)
-    return _finalizar(video, pasta, nome_episodio_jellyfin(nome, ep.temporada, ep.episodio), detalhe, serie,
+    titulo_ep = ""
+    if nomes_episodios and serie is not None and catalogo is not None:
+        titulo_ep = getattr(catalogo, "nome_episodio", lambda *a: None)(serie, ep.temporada, ep.episodio) or ""
+    if not titulo_ep:                    # já tem nome ('Dark S01E01 - Segredos'): não tira, mesmo sem TMDB
+        so_numero = nome_episodio_jellyfin(nome, ep.temporada, ep.episodio)
+        if video.stem.lower().startswith(so_numero.lower() + " - "):
+            titulo_ep = video.stem[len(so_numero) + 3:]
+    return _finalizar(video, pasta, nome_episodio_jellyfin(nome, ep.temporada, ep.episodio, titulo_ep), detalhe, serie,
                       (ep.temporada, ep.episodio), raiz, limite_mb)
+
+
+def _consultas(videos: list[Path], modo: str) -> list[tuple[str, int | None, str]]:
+    """As mesmas buscas que o planejar() vai fazer, para o catálogo adiantar de uma vez."""
+    consultas = []
+    for v in videos:
+        if "sample" in normalizar(v.stem).split():
+            continue
+        if modo == "series":
+            ep = extrair_episodio(v.name)
+            if ep:
+                consultas.append((ep.serie, ep.ano, "serie"))
+        else:
+            extraido = extrair_titulo_e_ano(v.name)
+            consultas.append((extraido.titulo, extraido.ano, "filme"))
+    return consultas
+
+
+def _temporadas(videos: list[Path], catalogo: Catalogo) -> list[tuple[Filme, int]]:
+    """(série, temporada) de cada episódio, para buscar os nomes de uma temporada inteira de uma vez."""
+    pedidos = []
+    for v in videos:
+        ep = extrair_episodio(v.name)
+        if ep:
+            serie, _ = _consultar(catalogo, ep.serie, ep.ano, "serie")      # já está no cache
+            if serie:
+                pedidos.append((serie, ep.temporada))
+    return list(dict.fromkeys(pedidos))
 
 
 def _mesmo_arquivo(a: Path, b: Path) -> bool:
@@ -199,12 +250,19 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
                     aplicar: bool = False, recursivo: bool = True, incluir_tmdbid: bool = False,
                     exigir_catalogo: bool = False, modo: str = "filmes", limpar_lixo: bool = True,
                     limite_trailer_mb: float = LIMITE_TRAILER_MB,
-                    ao_planejar=None, ao_progresso=None) -> list[Movimento]:
+                    ao_planejar=None, ao_progresso=None,
+                    apagar_pasta_origem: bool = False, ao_analisar=None,
+                    nomes_episodios: bool = False) -> list[Movimento]:
     """Organiza todos os vídeos de `origem` na biblioteca `pasta_filmes` (no modo "series",
     a pasta de séries do Jellyfin). Devolve o que fez (ou faria).
     limpar_lixo: ao aplicar, apaga .url/.txt de propaganda e trailers pequenos (< limite_trailer_mb).
     ao_planejar(movimentos): chamado com o plano, antes de mover (para mostrar a lista).
-    ao_progresso(indice, movimento, fracao): andamento de cada item (0.0 a 1.0) enquanto move."""
+    ao_progresso(indice, movimento, fracao): andamento de cada item (0.0 a 1.0) enquanto move.
+    apagar_pasta_origem: no fim, apaga a pasta do torrent INTEIRA (com o que sobrou nela), se for
+    seguro (ver _planejar_pastas_a_apagar). Irreversível: a pré-visualização mostra quais.
+    ao_analisar(fracao, texto): andamento da ANÁLISE (consultas ao TMDB + planejamento), 0.0 a 1.0.
+    nomes_episodios: no modo séries, acrescenta o nome do episódio (TMDB) depois do número;
+    episódios já organizados só com o número também são renomeados."""
     if modo not in MODOS:
         raise ValueError(f"modo deve ser um de {MODOS}")
     limpar_cache()                       # os arquivos podem ter mudado desde a última execução
@@ -215,12 +273,36 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
     videos = _listar_videos(origem, pasta_filmes, recursivo)
     # Trailers/propagandas pequenos não são filmes: ficam fora do planejamento (e viram lixo).
     trailers = {v for v in videos if modo == "filmes" and eh_trailer(v, origem, limite_trailer_mb)}
-    movimentos = [planejar(v, pasta_filmes, catalogo, incluir_tmdbid, exigir_catalogo, modo,
-                           origem, limite_trailer_mb)
-                  for v in videos if v not in trailers]
+    analisar = [v for v in videos if v not in trailers]
+    avisar_analise = ao_analisar or (lambda *a: None)
+    # Com o TMDB, as consultas pela internet são quase todo o tempo da análise: são feitas antes,
+    # em paralelo, e ocupam 90% da barra. Sem TMDB, a análise é só local (rápida).
+    peso_tmdb = 0.9 if getattr(catalogo, "usa_tmdb", False) and analisar else 0.0
+    if peso_tmdb:
+        avisar_analise(0.0, "Consultando o TMDB...")
+        com_episodios = nomes_episodios and modo == "series"
+        peso_nomes = peso_tmdb / 2 if com_episodios else peso_tmdb       # séries: metade busca a série,
+        catalogo.pre_buscar(_consultas(analisar, modo),                   # metade os nomes dos episódios
+                            lambda feitas, total: avisar_analise(peso_nomes * feitas / total,
+                                                                 f"Consultando o TMDB: {feitas} de {total}"))
+        if com_episodios:
+            catalogo.pre_buscar_episodios(
+                _temporadas(analisar, catalogo),
+                lambda feitas, total: avisar_analise(peso_nomes + (peso_tmdb - peso_nomes) * feitas / total,
+                                                     f"Nomes dos episódios: temporada {feitas} de {total}"))
+    movimentos = []
+    passo = max(1, len(analisar) // 100)                 # no máximo ~100 avisos (não trava a janela)
+    for n, v in enumerate(analisar, 1):
+        movimentos.append(planejar(v, pasta_filmes, catalogo, incluir_tmdbid, exigir_catalogo, modo,
+                                   origem, limite_trailer_mb, nomes_episodios))
+        if n % passo == 0 or n == len(analisar):
+            avisar_analise(peso_tmdb + (1 - peso_tmdb) * n / len(analisar),
+                           f"Analisando: {n} de {len(analisar)} – {v.name}")
     _marcar_destinos_repetidos(movimentos)
     if limpar_lixo:
         _planejar_lixo(movimentos, origem, modo, limite_trailer_mb)
+    if apagar_pasta_origem:
+        _planejar_pastas_a_apagar(movimentos, origem, pasta_filmes, trailers)
     if not aplicar:
         return movimentos
     if ao_planejar:
@@ -259,10 +341,98 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
             except OSError as erro:                           # arquivo em uso: não impede o resto
                 mov.detalhe = f"não consegui apagar {lixo.name}: {erro}"
         avisar(indice, mov, 1.0)
-    if feitos or apagados:
-        _gravar_log(pasta_filmes, feitos, apagados)
+    pastas_apagadas = _apagar_pastas_de_origem(movimentos, trailers, origem) if apagar_pasta_origem else []
+    if feitos or apagados or pastas_apagadas:
+        _gravar_log(pasta_filmes, feitos, apagados, pastas_apagadas)
         _apagar_pastas_que_esvaziaram(pastas_de_onde_sairam, origem)
     return movimentos
+
+
+# ----------------------------------------------------------------- apagar a pasta do torrent
+def _pasta_do_torrent(video: Path, origem: Path) -> Path | None:
+    """A subpasta de 1º nível da origem onde o vídeo está (None se ele está solto na origem)."""
+    try:
+        relativo = video.parent.resolve().relative_to(origem.resolve())
+    except ValueError:
+        return None
+    return origem / relativo.parts[0] if relativo.parts else None
+
+
+def _videos_que_ficariam(pasta: Path, saem: set[Path]) -> list[Path]:
+    """Vídeos dentro da pasta (e subpastas) que NÃO estão saindo dela."""
+    sobra = []
+    for raiz, _, arquivos in os.walk(pasta):
+        for nome in arquivos:
+            arquivo = Path(raiz) / nome
+            if eh_video(arquivo) and arquivo.resolve() not in saem:
+                sobra.append(arquivo)
+    return sobra
+
+
+def _descartaveis(movimentos: list[Movimento], trailers: set[Path]) -> set[Path]:
+    """Vídeos que podem sumir junto com a pasta: amostras ('sample') e trailers pequenos."""
+    return {p.resolve() for p in trailers} | {m.origem.resolve() for m in movimentos if m.status == "ignorado"}
+
+
+def _planejar_pastas_a_apagar(movimentos: list[Movimento], origem: Path, biblioteca: Path,
+                              trailers: set[Path]) -> None:
+    """Marca (no 1º filme de cada pasta) as pastas de torrent que é SEGURO apagar inteiras:
+       - é uma subpasta da origem (nunca a origem nem a biblioteca);
+       - nenhum destino fica dentro dela (no modo 'mesma pasta', a pasta do filme não some);
+       - não sobra nenhum vídeo nela além dos que estão sendo movidos, amostras e trailers."""
+    destinos = [m.destino.resolve() for m in movimentos if m.destino]
+    bib = biblioteca.resolve()
+    saem = {m.origem.resolve() for m in movimentos if m.status == "simulado"} | _descartaveis(movimentos, trailers)
+    por_pasta: dict[Path, list[Movimento]] = {}
+    for m in movimentos:
+        if m.status == "simulado" and (pasta := _pasta_do_torrent(m.origem, origem)):
+            por_pasta.setdefault(pasta, []).append(m)
+    for pasta, movs in por_pasta.items():
+        p = pasta.resolve()
+        if p == bib or p in bib.parents:
+            continue                                         # a biblioteca está dentro dela
+        if any(d == p or p in d.parents for d in destinos):
+            continue                                         # algum filme vai ficar aqui dentro
+        if _videos_que_ficariam(pasta, saem):
+            continue                                         # tem vídeo que não está saindo
+        movs[0].pasta_apagar = pasta
+
+
+def _apagar_pastas_de_origem(movimentos: list[Movimento], trailers: set[Path], origem: Path) -> list[Path]:
+    """Depois de mover tudo: apaga as pastas marcadas, conferindo de novo antes (só se todos os
+    filmes dela foram movidos e nenhum vídeo sobrou)."""
+    apagadas = []
+    saem_ok = _descartaveis(movimentos, trailers)
+    por_pasta: dict[Path, list[Movimento]] = {}               # agrupa UMA vez (antes: n x n)
+    for m in movimentos:
+        if m.status in ("movido", "erro", "simulado") and (pasta := _pasta_do_torrent(m.origem, origem)):
+            por_pasta.setdefault(pasta, []).append(m)
+    for mov in movimentos:
+        pasta = mov.pasta_apagar
+        if not pasta or not pasta.exists():
+            continue
+        da_pasta = por_pasta.get(pasta, [])
+        if any(m.status != "movido" for m in da_pasta):
+            mov.detalhe = "pasta de origem mantida: um filme dela não foi movido"
+            continue
+        if _videos_que_ficariam(pasta, saem_ok):
+            mov.detalhe = "pasta de origem mantida: ainda tem vídeo dentro"
+            continue
+        try:
+            if sys.version_info >= (3, 12):                 # o parâmetro mudou de nome no 3.12
+                shutil.rmtree(pasta, onexc=_tirar_somente_leitura)
+            else:
+                shutil.rmtree(pasta, onerror=_tirar_somente_leitura)
+            apagadas.append(pasta)
+        except OSError as erro:
+            mov.detalhe = f"não consegui apagar a pasta {pasta.name}: {erro}"
+    return apagadas
+
+
+def _tirar_somente_leitura(funcao, caminho, _excecao) -> None:
+    """No Windows, arquivo 'somente leitura' impede apagar: tira o atributo e tenta de novo."""
+    os.chmod(caminho, 0o700)
+    funcao(caminho)
 
 
 BLOCO_COPIA = 8 * 1024 * 1024
@@ -330,13 +500,15 @@ def _marcar_destinos_repetidos(movimentos: list[Movimento]) -> None:
         vistos.add(chave)
 
 
-def _gravar_log(pasta_filmes: Path, feitos: list[tuple[Path, Path]], apagados: list[Path] = ()) -> Path:
+def _gravar_log(pasta_filmes: Path, feitos: list[tuple[Path, Path]], apagados: list[Path] = (),
+                pastas_apagadas: list[Path] = ()) -> Path:
     pasta = pasta_filmes / PASTA_LOGS
     pasta.mkdir(parents=True, exist_ok=True)
     log = pasta / f"log-{datetime.now():%Y%m%d-%H%M%S-%f}.json"
     log.write_text(json.dumps({"raiz": str(pasta_filmes),
                                "itens": [{"de": str(a), "para": str(b)} for a, b in feitos],
-                               "apagados": [str(a) for a in apagados]},
+                               "apagados": [str(a) for a in apagados],
+                               "pastas_apagadas": [str(p) for p in pastas_apagadas]},
                               ensure_ascii=False, indent=2), encoding="utf-8")
     return log
 
@@ -369,6 +541,9 @@ def desfazer(log: str | Path) -> list[str]:
             _remover_pastas_vazias(para.parent, raiz, itens, mensagens)
         except OSError as erro:
             mensagens.append(f"erro em {para}: {erro}")
+    if dados.get("pastas_apagadas"):
+        mensagens.append(f"{len(dados['pastas_apagadas'])} pasta(s) de origem foram apagadas: o que sobrou "
+                         "nelas (amostras, prints...) não volta; os filmes voltaram para pastas recriadas")
     if dados.get("apagados"):
         mensagens.append(f"{len(dados['apagados'])} arquivo(s) de lixo foram apagados e não voltam "
                          f"(ex.: {Path(dados['apagados'][0]).name})")

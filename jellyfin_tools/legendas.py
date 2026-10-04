@@ -27,6 +27,36 @@ from videoscraper.rede import ClienteHTTP
 from .nomes import eh_video, extrair_episodio, extrair_titulo_e_ano, ler_nome_jellyfin, similaridade
 
 IDIOMA_PADRAO = "pt-BR"
+
+# Apelidos aceitos ao digitar os idiomas -> código que o Jellyfin entende no nome do arquivo.
+APELIDOS_IDIOMA = {
+    "pt-br": "pt-BR", "ptbr": "pt-BR", "pt_br": "pt-BR", "br": "pt-BR", "pt": "pt-BR", "por": "pt-BR",
+    "portugues": "pt-BR", "português": "pt-BR", "pt-pt": "pt-PT", "ptpt": "pt-PT",
+    "en": "en", "eng": "en", "english": "en", "ingles": "en", "inglês": "en",
+    "es": "es", "spa": "es", "esp": "es", "espanol": "es", "español": "es", "espanhol": "es",
+    "fr": "fr", "fre": "fr", "fra": "fr", "frances": "fr", "francês": "fr",
+    "it": "it", "ita": "it", "italiano": "it", "de": "de", "ger": "de", "deu": "de", "alemao": "de",
+    "alemão": "de", "ja": "ja", "jpn": "ja", "japones": "ja", "japonês": "ja",
+}
+
+
+def normalizar_idiomas(texto) -> list[str]:
+    """'pt-BR, inglês; es' -> ['pt-BR', 'en', 'es'] (sem repetir, na ordem digitada).
+    Aceita também uma lista. Códigos desconhecidos no formato 'xx' ou 'xx-YY' passam como estão."""
+    import re
+    partes = texto if isinstance(texto, (list, tuple)) else re.split(r"[,;\s]+", str(texto or ""))
+    idiomas = []
+    for parte in partes:
+        chave = str(parte).strip().lower()
+        if not chave:
+            continue
+        codigo = APELIDOS_IDIOMA.get(chave)
+        if codigo is None and re.fullmatch(r"[a-z]{2,3}(-[a-z]{2})?", chave):
+            base, _, regiao = chave.partition("-")
+            codigo = f"{base}-{regiao.upper()}" if regiao else base
+        if codigo and codigo not in idiomas:
+            idiomas.append(codigo)
+    return idiomas
 TAMANHO_MAXIMO = 5 * 1024 * 1024        # legenda é texto: 5 MB já é muito
 SIMILARIDADE_MINIMA = 0.6
 

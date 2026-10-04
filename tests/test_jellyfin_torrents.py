@@ -146,3 +146,65 @@ def test_artes_e_propaganda(tmp_path):
     (tmp_path / "sub").mkdir()
     assert eh_lixo(tmp_path / "sub" / "qualquer.txt", tmp_path)        # dentro da pasta do torrent
     assert not eh_lixo(tmp_path / "qualquer.txt", tmp_path)            # na raiz, sem cara de propaganda
+
+
+# ----------------------------------------------------------------- apagar a pasta do torrent
+def test_apagar_pasta_de_origem_com_sobras(tmp_path):
+    downloads, filmes = tmp_path / "Downloads", tmp_path / "Filmes"
+    torrent = downloads / "Creed.II.2018.1080p-BLUDV"
+    _video(torrent / CREED, 2 * MB)
+    _video(torrent / "Sample" / "creed-sample.mkv", 10_000)                 # amostra: pode sumir junto
+    _arquivo(torrent / "Screens" / "cena01.png")                            # sobra qualquer
+    _arquivo(torrent / "release.nfo", b"RELEASE INFO")
+    previa, _ = organizar_e_legendar(downloads, filmes, CatalogoLocal.padrao(), limite_trailer_mb=LIMITE,
+                                     apagar_pasta_origem=True)
+    [m] = [x for x in previa if x.status == "simulado"]
+    assert m.pasta_apagar == torrent and "apagar a pasta" in m.resumo_extras
+    assert torrent.exists()                                                 # prévia não apaga
+
+    organizar_e_legendar(downloads, filmes, CatalogoLocal.padrao(), aplicar=True, limite_trailer_mb=LIMITE,
+                         apagar_pasta_origem=True)
+    assert not torrent.exists()
+    assert (filmes / "Creed II (2018)" / "Creed II (2018).mkv").exists()
+    mensagens = desfazer(ultimo_log(filmes))                               # o filme volta; as sobras não
+    assert (torrent / CREED).exists() and not (torrent / "Screens").exists()
+    assert any("pasta(s) de origem foram apagadas" in t for t in mensagens)
+
+
+def test_pasta_nao_e_apagada_se_sobrar_video_ou_for_a_raiz(tmp_path):
+    downloads, filmes = tmp_path / "Downloads", tmp_path / "Filmes"
+    pack = downloads / "Pack.de.Filmes"
+    _video(pack / "Matrix.1999.mkv", 2 * MB)
+    _video(pack / "video_sem_ano.mp4", 2 * MB)                              # não identificado: fica
+    _video(downloads / "Cidade.de.Deus.2002.mkv", 2 * MB)                    # solto na raiz
+    _arquivo(downloads / "minhas_notas.txt")
+    movs, _ = organizar_e_legendar(downloads, filmes, CatalogoLocal.padrao(), aplicar=True,
+                                   limite_trailer_mb=LIMITE, apagar_pasta_origem=True)
+    assert all(m.pasta_apagar is None for m in movs)
+    assert (pack / "video_sem_ano.mp4").exists()                             # nada que não foi movido some
+    assert (downloads / "minhas_notas.txt").exists()                         # a raiz nunca é apagada
+
+
+def test_mesma_pasta_nos_dois_campos_nao_apaga_a_pasta_do_filme(tmp_path):
+    biblioteca = tmp_path / "Filmes"
+    _video(biblioteca / "Matrix (1999)" / "Matrix.1999.1080p.mkv", 2 * MB)   # só renomeia lá dentro
+    _arquivo(biblioteca / "Matrix (1999)" / "poster.jpg")
+    _video(biblioteca / "Creed.II.2018-BLUDV" / CREED, 2 * MB)
+    _arquivo(biblioteca / "Creed.II.2018-BLUDV" / "release.nfo")
+    organizar_e_legendar(biblioteca, biblioteca, CatalogoLocal.padrao(), aplicar=True, limite_trailer_mb=LIMITE,
+                         apagar_pasta_origem=True)
+    assert (biblioteca / "Matrix (1999)" / "Matrix (1999).mkv").exists()
+    assert (biblioteca / "Matrix (1999)" / "poster.jpg").exists()            # a pasta do filme ficou
+    assert not (biblioteca / "Creed.II.2018-BLUDV").exists()                 # a do torrent saiu
+
+
+def test_midia_solta_ganha_pasta_propria(tmp_path):
+    """Só o arquivo de vídeo, sem pasta: ganha a pasta 'Nome (Ano)' (inclusive já com nome certo)."""
+    biblioteca = tmp_path / "Filmes"
+    _video(biblioteca / "Matrix (1999).mkv", 2 * MB)                         # nome certo, mas solto
+    _video(biblioteca / "Cidade.de.Deus.2002.1080p.mkv", 2 * MB)             # nome bagunçado e solto
+    movs, _ = organizar_e_legendar(biblioteca, biblioteca, CatalogoLocal.padrao(), aplicar=True,
+                                   limite_trailer_mb=LIMITE)
+    assert sorted(m.status for m in movs) == ["movido", "movido"]
+    assert (biblioteca / "Matrix (1999)" / "Matrix (1999).mkv").exists()
+    assert (biblioteca / "Cidade de Deus (2002)" / "Cidade de Deus (2002).mkv").exists()

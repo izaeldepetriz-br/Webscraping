@@ -212,3 +212,12 @@ def site_legendas():
     srv.base = base
     yield srv
     srv.shutdown()
+
+
+@pytest.fixture(autouse=True)
+def _cache_tmdb_limpo():
+    """O CatalogoTMDB guarda as respostas entre execuções: cada teste começa do zero."""
+    from jellyfin_tools.catalogo import CatalogoTMDB
+    CatalogoTMDB.limpar_cache()
+    yield
+    CatalogoTMDB.limpar_cache()

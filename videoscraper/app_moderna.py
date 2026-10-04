@@ -25,9 +25,10 @@ from urllib.parse import unquote, urlparse
 import tkinter as tk
 from tkinter import filedialog
 
-from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, ConfigSite, ProvedorOpenSubtitles,
-                            ProvedorSiteHTML, baixar_legendas_series, desfazer, organizar_pasta)
-from jellyfin_tools.legendas import episodios_da_biblioteca
+from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, ConfigSite, ErroCatalogo,
+                            ProvedorOpenSubtitles, ProvedorSiteHTML, baixar_legendas_series, desfazer,
+                            organizar_pasta)
+from jellyfin_tools.legendas import episodios_da_biblioteca, normalizar_idiomas
 from jellyfin_tools.metadados import ClienteTMDB
 from jellyfin_tools.notificacoes import Notificador
 from jellyfin_tools.organizador import ultimo_log
@@ -46,6 +47,11 @@ from .servico import MENSAGEM_ROBOTS, Trabalho, fazer_login
 
 PASTA_PADRAO = os.path.abspath("videos_baixados")
 TEXTOS_SITUACAO = {"ok": "baixado", "pulado": "pulado", "erro": "erro"}
+# Status do organizador -> categoria do filtro "Mostrar" da tabela
+CATEGORIA = {"simulado": "mover", "movido": "movido", "organizado": "organizado", "conflito": "conflito",
+             "nao_identificado": "nao_identificado", "ignorado": "ignorado", "erro": "erro"}
+OK_LEGENDA = ("baixada", "ja_existe")
+
 # Chaves e tokens: só vão para o config.json se o usuário marcar "Lembrar as chaves".
 SEGREDOS = ("chave_tmdb", "chave_opensubtitles", "jellyfin_api_key", "discord_webhook", "telegram_token")
 
@@ -84,6 +90,7 @@ class AppModerna(JanelaModerna):
         self._log = configurar_log(self.arquivo_log, no_terminal=False)
         self._log.addHandler(_LogParaFila(self.fila))
         self._previa = None                     # "assinatura" das opções da última pré-visualização
+        self._tmdb_ativo = False                # o TMDB estava marcado na última análise?
         self._movimentos_previa: list = []      # o que a última pré-visualização mostrou
         self._carregar_config()
         self._stdout, self._stderr = sys.stdout, sys.stderr
@@ -262,7 +269,7 @@ class AppModerna(JanelaModerna):
         # Avisos de progresso: só o ÚLTIMO de cada tipo (e de cada linha) importa neste ciclo.
         ultimo: dict = {}
         for posicao, (tipo, dado) in enumerate(mensagens):
-            if tipo in ("jf_total", "jf_atual"):
+            if tipo in ("jf_total", "jf_atual", "jf_analise"):
                 ultimo[tipo] = posicao
             elif tipo == "jf_prog":
                 ultimo[("jf_prog", dado[0])] = posicao
@@ -320,19 +327,31 @@ class AppModerna(JanelaModerna):
         elif tipo == "jf_legenda":
             iid, resultado = dado
             self.atualizar_linha_jf(iid, *STATUS_LEGENDA.get(resultado.status, (resultado.status, None)))
+        elif tipo == "jf_legendas":                    # vários idiomas: "pt-BR ✓ · en ✓ · es ✕"
+            iid, por_idioma = dado
+            texto = " · ".join(f"{idioma} {'✓' if st in OK_LEGENDA else '✕'}"
+                                    for idioma, st in por_idioma.items())
+            self.atualizar_linha_jf(iid, texto, None)
         elif tipo == "jf_limpar":
             self.limpar_tabela_jf()
         elif tipo == "jf_prog":
             iid, fracao, status = dado
             self.definir_progresso_linha_jf(iid, fracao)
             if fracao >= 1.0 and not status.startswith("_"):     # "_legenda": só o progresso
-                self.atualizar_situacao_jf(iid, *STATUS_MOVIMENTO.get(status, (status, None)))
+                self.atualizar_situacao_jf(iid, *STATUS_MOVIMENTO.get(status, (status, None)),
+                                           categoria=CATEGORIA.get(status))
                 if status == "erro":
                     self.definir_progresso_linha_jf(iid, None, "erro")
         elif tipo == "jf_atual":
             self._mostrar_detalhe(int(dado), "Agora")
         elif tipo == "jf_total":
             self.definir_progresso_total(*dado)
+        elif tipo == "jf_analise":                      # pré-visualização: "45% · Analisando: 75 de 166"
+            fracao, texto = dado
+            self.definir_progresso_total(fracao, texto)
+            self.definir_progresso_rodape(fracao, texto)
+        elif tipo == "jf_tmdb_estado":
+            self.definir_estado_tmdb(*dado)
         elif tipo == "status_fim":
             self._texto_fim = dado
         elif tipo == "fim":
@@ -382,20 +401,27 @@ class AppModerna(JanelaModerna):
         assinatura = self._assinatura(o)
 
         self.definir_progresso_total(None)
+        self._tmdb_ativo = o.tmdb
 
         def tarefa():
             print(f"\nPré-visualizando ({'séries' if o.modo == 'series' else 'filmes'}): {o.origem} -> {o.destino}")
-            movimentos = organizar_pasta(o.origem, o.destino, self._catalogo(o), aplicar=False,
+            catalogo = self._catalogo(o)
+            movimentos = organizar_pasta(o.origem, o.destino, catalogo, aplicar=False,
                                          incluir_tmdbid=o.incluir_tmdbid, exigir_catalogo=o.exigir_catalogo,
-                                         modo=o.modo, limpar_lixo=o.limpar_lixo)
+                                         modo=o.modo, limpar_lixo=o.limpar_lixo,
+                                         apagar_pasta_origem=o.apagar_pasta_origem,
+                                         nomes_episodios=o.nomes_episodios,
+                                         ao_analisar=self._avisar_analise)
             for m in movimentos:
                 print(m)
             quantos = sum(m.status == "simulado" for m in movimentos)
             prontos = sum(m.status == "organizado" for m in movimentos)
             self.fila.put(("jf_movimentos", movimentos))
             self.fila.put(("jf_previa", (assinatura, quantos)))
+            resumo_tmdb = self._resumo_tmdb(catalogo, movimentos) if o.tmdb else ""
             self.fila.put(("status_fim", f"Pré-visualização: {quantos} para mover, {prontos} já organizado(s), "
-                                         f"{len(movimentos) - quantos - prontos} com pendência. Nada foi movido."))
+                                         f"{len(movimentos) - quantos - prontos} com pendência.{resumo_tmdb} "
+                                         "Nada foi movido."))
             if not movimentos:
                 self.fila.put(("msg", ("Nenhum vídeo", f"Não achei vídeos em:\n{o.origem}", "aviso")))
 
@@ -418,6 +444,13 @@ class AppModerna(JanelaModerna):
         lixo = sum(len(m.apagar or []) for m in self._movimentos_previa) if o.limpar_lixo else 0
         aviso_lixo = (f"\n\n{lixo} arquivo(s) de lixo (.url, .txt, trailers) serão APAGADOS. "
                       "Isso não tem como desfazer." if lixo else "")
+        pastas = [m.pasta_apagar for m in self._movimentos_previa if m.pasta_apagar]
+        if pastas:
+            aviso_lixo += (f"\n\n{len(pastas)} pasta(s) de torrent serão APAGADAS inteiras, com o que sobrar "
+                           "nelas (amostras, prints, .nfo de release...). Isso não tem como desfazer.")
+        ocultos = self.linhas_ocultas_jf("mover")
+        if ocultos:
+            aviso_lixo += f"\n\nAtenção: {ocultos} deles estão escondidos pelo filtro \"Mostrar\" e também serão movidos."
         if not self.perguntar("Organizar", f"Mover {quantos} arquivo(s) para:\n{o.destino}\n\n"
                               "Nada é sobrescrito, e você pode voltar atrás com 'Desfazer última'."
                               + aviso_lixo):
@@ -425,6 +458,7 @@ class AppModerna(JanelaModerna):
         self._salvar_config()
         self._previa = None
         self.liberar_organizar(False)
+        self._tmdb_ativo = o.tmdb
 
         def tarefa():
             print(f"\nOrganizando: {o.origem} -> {o.destino}")
@@ -457,7 +491,10 @@ class AppModerna(JanelaModerna):
             movimentos = organizar_pasta(o.origem, o.destino, self._catalogo(o), aplicar=True,
                                          incluir_tmdbid=o.incluir_tmdbid, exigir_catalogo=o.exigir_catalogo,
                                          modo=o.modo, limpar_lixo=o.limpar_lixo,
-                                         ao_planejar=ao_planejar, ao_progresso=ao_progresso)
+                                         apagar_pasta_origem=o.apagar_pasta_origem,
+                                         nomes_episodios=o.nomes_episodios,
+                                         ao_planejar=ao_planejar, ao_progresso=ao_progresso,
+                                         ao_analisar=self._avisar_analise)
             movidos = [(i, m) for i, m in enumerate(movimentos) if m.status == "movido"]
             resultados = []
             if movidos:
@@ -500,22 +537,34 @@ class AppModerna(JanelaModerna):
 
         def tarefa():                            # séries: só legendas (metadados ficam com o Jellyfin)
             alvos = episodios_da_biblioteca(destino)
-            linhas = [("/".join(v.relative_to(destino).parts), f"{v.stem}.{o.idioma}.srt") for v in alvos]
+            idiomas = normalizar_idiomas(o.idioma) or ["pt-BR"]
+            sufixo = f".{idiomas[0]}.srt" + (f"  (+{', '.join(idiomas[1:])})" if len(idiomas) > 1 else "")
+            linhas = [("/".join(v.relative_to(destino).parts), f"{v.stem}{sufixo}") for v in alvos]
             funcao = baixar_legendas_series
             self.fila.put(("jf_alvos", linhas))
             print(f"\nProcurando legendas para {len(alvos)} item(ns) em {destino}")
-            total = len(alvos) or 1
             self.fila.put(("jf_total", (0.0, f"Legendas: 0 de {len(alvos)}")))
 
-            def ao_terminar(i, r):
-                self.fila.put(("jf_legenda", (str(i), r)))
-                self.fila.put(("jf_prog", (str(i), 1.0, "_legenda")))
-                self.fila.put(("jf_total", ((i + 1) / total, f"Legendas: {i + 1} de {len(alvos)} "
-                                                             f"({(i + 1) * 100 // total}%)")))
+            por_item: dict[int, dict] = {}
+            passos = (len(alvos) * len(idiomas)) or 1
 
+            def ao_terminar(i, r, idioma):
+                por_item.setdefault(i, {})[idioma] = r.status
+                if len(idiomas) == 1:
+                    self.fila.put(("jf_legenda", (str(i), r)))
+                else:
+                    self.fila.put(("jf_legendas", (str(i), dict(por_item[i]))))
+                feitos = sum(len(v) for v in por_item.values())
+                self.fila.put(("jf_prog", (str(i), len(por_item[i]) / len(idiomas), "_legenda")))
+                self.fila.put(("jf_total", (feitos / passos, f"Legendas: {feitos} de {passos} "
+                                                             f"({feitos * 100 // passos}%)")))
+
+            resultados = []
             with self._provedores(o) as provedores:
-                resultados = funcao(destino, provedores, o.idioma, o.sobrescrever, catalogo=self._catalogo(o),
-                                    ao_terminar=ao_terminar, parar=self.evento_parar.is_set)
+                for idioma in idiomas:                 # um arquivo de legenda por idioma
+                    resultados += funcao(destino, provedores, idioma, o.sobrescrever, catalogo=self._catalogo(o),
+                                         ao_terminar=lambda i, r, idioma=idioma: ao_terminar(i, r, idioma),
+                                         parar=self.evento_parar.is_set)
             baixadas = sum(r.status == "baixada" for r in resultados)
             self.fila.put(("status_fim", f"Legendas: {baixadas} baixada(s) de {len(alvos)} item(ns)."))
 
@@ -525,7 +574,9 @@ class AppModerna(JanelaModerna):
         """Filmes já organizados: legenda + pôster/backdrop + .nfo do que faltar (sem avisos)."""
         def tarefa():
             itens = itens_da_biblioteca(destino, self._log)
-            self.fila.put(("jf_alvos", [(nome, f"{nome}.{o.idioma}.srt") for _, nome in itens]))
+            idiomas = normalizar_idiomas(o.idioma) or ["pt-BR"]
+            sufixo = f".{idiomas[0]}.srt" + (f"  (+{', '.join(idiomas[1:])})" if len(idiomas) > 1 else "")
+            self.fila.put(("jf_alvos", [(nome, f"{nome}{sufixo}") for _, nome in itens]))
             self._log.info("Completar biblioteca: %d filme(s) em %s", len(itens), destino)
             resultados = self._pos_processar(o, itens, list(range(len(itens))), "Completando",
                                              legendas=True, notificar=False)
@@ -547,7 +598,9 @@ class AppModerna(JanelaModerna):
 
         def ao_item(k, resultado):
             iid = str(iids[k])
-            if resultado.legenda:
+            if len(resultado.legendas) > 1:
+                self.fila.put(("jf_legendas", (iid, {k: r.status for k, r in resultado.legendas.items()})))
+            elif resultado.legenda:
                 self.fila.put(("jf_legenda", (iid, resultado.legenda)))
             self.fila.put(("jf_prog", (iid, 1.0, "_pos")))
             self.fila.put(("jf_total", ((k + 1) / total, f"{etapa} – legendas e metadados: {k + 1} de "
@@ -561,6 +614,50 @@ class AppModerna(JanelaModerna):
                             jellyfin_url=o.jellyfin_url,
                             jellyfin_api_key=o.jellyfin_api_key if o.atualizar_jellyfin else "")
             return pos_processar(itens, cfg, self._log, ao_item=ao_item, parar=self.evento_parar.is_set)
+
+    def _avisar_analise(self, fracao: float, texto: str) -> None:
+        """Chamado pela thread enquanto analisa (consulta o TMDB e planeja cada arquivo)."""
+        self.fila.put(("jf_analise", (fracao, texto)))
+
+    def _resumo_tmdb(self, catalogo, movimentos) -> str:
+        """' TMDB identificou 150 de 166.' (e avisa se o TMDB não respondeu)."""
+        erro = next((c.erro for c in getattr(catalogo, "catalogos", (catalogo,)) if getattr(c, "erro", "")), "")
+        analisados = [m for m in movimentos if m.fonte_nome]
+        pelo_tmdb = sum(m.fonte_nome == "TMDB" for m in analisados)
+        if erro:
+            self._log.warning("TMDB: %s", erro)
+            self.fila.put(("jf_tmdb_estado", (False, f"Sem resposta na prévia: {erro}")))
+            self.fila.put(("msg", ("TMDB não respondeu",
+                                   f"{erro}\n\nOs nomes vieram do catálogo local ou do próprio arquivo "
+                                   "(coluna \"Nome via\"). Use \"Testar conexão com o TMDB\" para conferir.",
+                                   "aviso")))
+        self._log.info("TMDB identificou %d de %d", pelo_tmdb, len(analisados))
+        return f" TMDB identificou {pelo_tmdb} de {len(analisados)}."
+
+    def ao_testar_tmdb(self) -> None:
+        o = self.obter_opcoes_jellyfin()
+        if not o.chave_tmdb:
+            self.mostrar_mensagem("TMDB", "Cole a chave da API do TMDB no campo acima.\n\n"
+                                  "Ela é gratuita: themoviedb.org > Configurações > API.", "aviso")
+            return
+
+        def tarefa():
+            try:
+                texto = CatalogoTMDB(o.chave_tmdb).testar()
+            except ErroCatalogo as erro:
+                self._log.warning("TMDB: %s", erro)
+                self.fila.put(("jf_tmdb_estado", (False, f"Sem conexão: {erro}")))
+                self.fila.put(("msg", ("TMDB", f"Não consegui conectar: {erro}.", "erro")))
+                return
+            self._log.info("TMDB: %s", texto)
+            dica = ("" if o.tmdb else "\n\nMarque \"Consultar o TMDB para confirmar nomes\" para usar o TMDB "
+                    "na pré-visualização.")
+            self.fila.put(("jf_tmdb_estado", (True, "TMDB conectado" + ("" if o.tmdb else " (desmarcado abaixo)"))))
+            self.fila.put(("msg", ("TMDB conectado",
+                                   f"Tudo certo: {texto}.\n\nNa tabela, a coluna \"Nome via\" mostra "
+                                   f"\"TMDB ✓\" em cada arquivo cujo nome o TMDB identificou.{dica}", "sucesso")))
+
+        self._rodar("Testando o TMDB...", tarefa)
 
     def ao_testar_jellyfin(self) -> None:
         o = self.obter_opcoes_jellyfin()
@@ -654,7 +751,7 @@ class AppModerna(JanelaModerna):
     def _assinatura(o) -> tuple:
         """O que, se mudar, invalida a pré-visualização."""
         return (o.modo, o.origem, o.destino, o.tmdb, o.chave_tmdb, o.incluir_tmdbid, o.exigir_catalogo,
-                o.limpar_lixo)
+                o.limpar_lixo, o.apagar_pasta_origem, o.nomes_episodios)
 
     def _problema_legendas(self, o) -> str | None:
         fontes = self.FONTES_LEGENDA
@@ -666,8 +763,9 @@ class AppModerna(JanelaModerna):
         return None
 
     def _catalogo(self, o):
+        """Com o TMDB marcado, ele vem PRIMEIRO (fonte oficial); o catálogo local fica de reserva."""
         local = CatalogoLocal.padrao()
-        return CatalogoEmCadeia(local, CatalogoTMDB(o.chave_tmdb)) if o.tmdb else local
+        return CatalogoEmCadeia(CatalogoTMDB(o.chave_tmdb), local) if o.tmdb else local
 
     @contextlib.contextmanager
     def _provedores(self, o):
@@ -699,6 +797,7 @@ class AppModerna(JanelaModerna):
         apagar = ", ".join(a.name for a in (m.apagar or []))
         extras = "   |   ".join(t for t in (f"Vai junto: {junto}" if junto else "",
                                             f"Apagar: {apagar}" if apagar else "",
+                                            f"Apagar a pasta inteira: {m.pasta_apagar}" if m.pasta_apagar else "",
                                             m.detalhe if m.status != "simulado" else "") if t)
         self.mostrar_detalhe_jf(
             f"Antes → Depois  ({titulo}: #{indice + 1})", str(m.origem.parent), m.origem.name,
@@ -717,7 +816,18 @@ class AppModerna(JanelaModerna):
             if m.destino and m.resumo_extras and m.status in ("simulado", "movido"):
                 novo += f"   ({m.resumo_extras})"
             progresso = "" if m.status == "simulado" else "—"      # "—": não vai mexer
-            self.adicionar_linha_jf(str(i), i + 1, texto, cor, m.origem.name, novo, "", progresso)
+            self.adicionar_linha_jf(str(i), i + 1, texto, cor, m.origem.name, novo, "", progresso,
+                                    categoria=CATEGORIA.get(m.status), fonte=self._texto_fonte(m))
+
+    def _texto_fonte(self, m) -> str:
+        """Coluna 'Nome via'. Com o TMDB ligado: 'TMDB ✓' (identificou) ou 'TMDB ✕ (catálogo/arquivo)'.
+        Sem o TMDB: só de onde veio ('catálogo' ou 'arquivo')."""
+        fonte = m.fonte_nome
+        if not fonte:
+            return "—"
+        if fonte == "TMDB":
+            return "TMDB ✓"
+        return f"TMDB ✕ ({fonte})" if self._tmdb_ativo else fonte
 
     # --- configurações (pastas e opções lembradas entre execuções)
     def _carregar_config(self) -> None:

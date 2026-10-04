@@ -35,6 +35,9 @@ ARTES = {"poster": "poster", "folder": "poster", "cover": "poster", "backdrop": 
 # palavras no nome da legenda -> código de idioma (sem nenhuma: pt-BR)
 IDIOMAS = (("en", {"en", "eng", "english", "ingles"}),
            ("es", {"es", "spa", "spanish", "espanol", "esp"}),
+           ("fr", {"fr", "fre", "fra", "french", "frances"}),
+           ("it", {"ita", "italian", "italiano"}),
+           ("de", {"ger", "deu", "german", "alemao"}),
            ("pt-BR", {"pt", "br", "ptbr", "por", "pob", "portugues", "portuguese", "brazilian"}))
 PALAVRAS_FORCADA = {"forced", "forcada", "forcadas", "forcado", "forcados"}
 PALAVRAS_PROPAGANDA = {"leia", "leiame", "readme", "visite", "acesse", "www", "trailer", "teaser", "promo",

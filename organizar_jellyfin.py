@@ -37,15 +37,17 @@ PASTA_FILMES = r"E:\Filmes_Organizados"           # biblioteca de Filmes do Jell
 MODO = "filmes"                                   # "filmes" ou "series"
 APLICAR = False                                   # False = só simula (mude para True ou use --aplicar)
 APAGAR_LIXO = True                                # .url, .txt de propaganda e trailers pequenos
+APAGAR_PASTA_ORIGEM = False                       # apagar a pasta do torrent inteira depois de transferir
 LIMITE_TRAILER_MB = 100
 
 # TMDB (nomes corretos, pôster pt-BR, backdrop, sinopse): https://www.themoviedb.org/settings/api
 TMDB_API_KEY = ""
+NOMES_EPISODIOS = True                            # séries: "Dark S01E01 - Segredos.mkv" (precisa do TMDB)
 BAIXAR_IMAGENS_TMDB = True
 GERAR_NFO = True
 
 # Legendas: use UMA ou mais fontes. Ficam vazias = não busca legenda.
-IDIOMA_LEGENDA = "pt-BR"
+IDIOMAS_LEGENDA = "pt-BR"                         # um ou vários: "pt-BR, en, es" (um .srt por idioma)
 OPENSUBTITLES_API_KEY = ""                        # https://www.opensubtitles.com/consumers
 SITE_LEGENDAS_URL = ""                            # ex.: "https://site/busca?q={consulta}" (que permita robôs)
 USAR_SITE_DEMO_LEGENDAS = False                   # site SIMULADO local, só para testar
@@ -92,7 +94,8 @@ def cfg(nome: str):
 # ----------------------------------------------------------------------------- montagem
 def montar_catalogo():
     local = CatalogoLocal.padrao()
-    return CatalogoEmCadeia(local, CatalogoTMDB(cfg("TMDB_API_KEY"))) if cfg("TMDB_API_KEY") else local
+    # Com chave, o TMDB vem primeiro (fonte oficial); o catálogo local fica de reserva (sem internet).
+    return CatalogoEmCadeia(CatalogoTMDB(cfg("TMDB_API_KEY")), local) if cfg("TMDB_API_KEY") else local
 
 
 def montar_provedores_legenda(log) -> tuple[list, list]:
@@ -120,7 +123,7 @@ def montar_config_pos(log, notificar: bool = True) -> tuple[ConfigPos, list]:
     if tmdb is None:
         log.info("TMDB_API_KEY vazio: pôster, backdrop e .nfo do TMDB não serão baixados")
     provedores, desligar = montar_provedores_legenda(log)
-    config = ConfigPos(provedores=provedores, idioma=cfg("IDIOMA_LEGENDA"), tmdb=tmdb,
+    config = ConfigPos(provedores=provedores, idioma=cfg("IDIOMAS_LEGENDA"), tmdb=tmdb,
                        imagens=cfg("BAIXAR_IMAGENS_TMDB"), nfo=cfg("GERAR_NFO"),
                        notificador=Notificador(cfg("DISCORD_WEBHOOK_URL"), cfg("TELEGRAM_BOT_TOKEN"),
                                                cfg("TELEGRAM_CHAT_ID")),
@@ -149,7 +152,9 @@ def organizar(aplicar: bool, log) -> int:
              entrada, filmes, cfg("MODO"))
     try:
         movimentos = organizar_pasta(entrada, filmes, montar_catalogo(), aplicar=aplicar, modo=cfg("MODO"),
-                                     limpar_lixo=cfg("APAGAR_LIXO"), limite_trailer_mb=cfg("LIMITE_TRAILER_MB"))
+                                     limpar_lixo=cfg("APAGAR_LIXO"), limite_trailer_mb=cfg("LIMITE_TRAILER_MB"),
+                                     apagar_pasta_origem=cfg("APAGAR_PASTA_ORIGEM"),
+                                     nomes_episodios=cfg("NOMES_EPISODIOS"))
     except Exception as erro:
         log.critical("Falha ao organizar a pasta: %s", erro, exc_info=True)
         return 1
@@ -157,6 +162,9 @@ def organizar(aplicar: bool, log) -> int:
         getattr(log, NIVEL_POR_STATUS.get(m.status, "info"))("%s", m)
         for lixo in (m.apagar or []) if m.status in ("movido", "simulado") else []:
             log.info("    %s: %s", "apagado" if aplicar else "seria apagado", lixo.name)
+        if m.pasta_apagar:
+            log.info("    pasta de origem %s: %s", "apagada" if aplicar and not m.pasta_apagar.exists()
+                     else "seria apagada" if not aplicar else "mantida", m.pasta_apagar)
     if not aplicar:
         log.info("Simulação concluída: nada foi movido. Rode com --aplicar (ou APLICAR = True).")
         return 0

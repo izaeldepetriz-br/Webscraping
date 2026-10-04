@@ -85,6 +85,7 @@ class OpcoesJellyfin:
     incluir_tmdbid: bool
     exigir_catalogo: bool
     limpar_lixo: bool            # apagar .url/.txt de propaganda e trailers pequenos
+    apagar_pasta_origem: bool    # apagar a pasta do torrent inteira depois de transferir
     legendas: bool               # baixar legendas ao organizar
     fonte_legenda: str           # um de JanelaModerna.FONTES_LEGENDA
     chave_opensubtitles: str
@@ -100,6 +101,8 @@ class OpcoesJellyfin:
     discord_webhook: str = ""
     telegram_token: str = ""
     telegram_chat_id: str = ""
+    filtros_ocultos: tuple = ()      # situações escondidas na tabela (só visual)
+    nomes_episodios: bool = True     # séries: 'Dark S01E01 - Segredos.mkv' (nome do episódio pelo TMDB)
 
 
 # =============================================================================== componentes
@@ -207,6 +210,9 @@ class JanelaModerna(ctk.CTk):
         self.minsize(1100, 680)
         self._pasta_padrao = pasta_padrao
         self._ocupado = False
+        self._contadores: dict = {}                   # último texto de cada contador de tabela
+        self._barra_animada = False
+        self._status_base = "Pronto."
 
         self.f_titulo = ctk.CTkFont(Tema.FAMILIA, 26, "bold")
         self.f_sub = ctk.CTkFont(Tema.FAMILIA, 13)
@@ -456,6 +462,8 @@ class JanelaModerna(ctk.CTk):
                              fg_color=Tema.CARTAO)
         vazio.place(relx=0.5, rely=0.55, anchor="center")
         self._extras_tabela[str(tabela)] = (contador, vazio)
+        self._topos_tabela = getattr(self, "_topos_tabela", {})
+        self._topos_tabela[str(tabela)] = topo
 
         faixa = ctk.CTkFrame(cartao, fg_color="transparent")
         faixa.grid(row=2, column=0, columnspan=2, sticky="ew", padx=18, pady=14)
@@ -525,9 +533,13 @@ class JanelaModerna(ctk.CTk):
 
     # ------------------------------------------------------------------ aba Jellyfin
     COLUNAS_JF = (("n", "#", 44, False), ("status", "Situação", 150, False),
-                  ("atual", "Arquivo atual", 210, True), ("novo", "Novo nome (a pasta leva o mesmo nome)", 300, True),
-                  ("legenda", "Legenda", 130, False), ("progresso", "Progresso", 150, False))
+                  ("atual", "Arquivo atual", 175, True), ("novo", "Novo nome (a pasta leva o mesmo nome)", 235, True),
+                  ("legenda", "Legenda", 115, False), ("progresso", "Progresso", 135, False),
+                  ("fonte", "Nome via", 150, False))
+    # Ordem na TELA: "Nome via" logo depois do novo nome (os valores continuam na ordem acima)
+    ORDEM_TELA_JF = ("n", "status", "atual", "novo", "fonte", "legenda", "progresso")
     FONTES_LEGENDA = ("Site de demonstração", "OpenSubtitles (API)", "Site de busca (URL)")
+    IDIOMAS_JF = (("pt-BR", "Português"), ("en", "Inglês"), ("es", "Espanhol"))
     ROTULOS_DESTINO = {"Filmes": "Biblioteca de Filmes do Jellyfin:", "Séries": "Biblioteca de Séries do Jellyfin:"}
 
     def _montar_aba_jellyfin(self, aba) -> None:
@@ -579,12 +591,19 @@ class JanelaModerna(ctk.CTk):
         self.campo_chave_tmdb = self._entrada(lateral, self.var_jf_chave_tmdb, "themoviedb.org > Configurações > API",
                                               show="•")
         self.campo_chave_tmdb.pack(fill="x", pady=(2, 6), **p)
+        self.bt_testar_tmdb = self._botao(lateral, "Testar conexão com o TMDB", self.ao_testar_tmdb)
+        self.bt_testar_tmdb.pack(fill="x", pady=(0, 4), **p)
+        self.lb_estado_tmdb = ctk.CTkLabel(lateral, text="", font=self.f_rotulo, text_color=Tema.TEXTO_FRACO,
+                                           anchor="w", justify="left", wraplength=250)
+        self.lb_estado_tmdb.pack(fill="x", pady=(0, 6), **p)
         self.cb_tmdb = self._checkbox(lateral, "Consultar o TMDB para confirmar nomes", self.var_jf_tmdb)
         self._checkbox(lateral, "Baixar pôster e backdrop (se faltarem)", self.var_jf_imagens)
         self._checkbox(lateral, "Criar arquivo .nfo (sinopse, duração...)", self.var_jf_nfo)
         self.var_jf_tmdbid = tk.BooleanVar(value=False)
         self.var_jf_exigir = tk.BooleanVar(value=False)
         self.cb_tmdbid = self._checkbox(lateral, "Incluir [tmdbid] no nome da pasta", self.var_jf_tmdbid)
+        self.var_jf_nomes_ep = tk.BooleanVar(value=True)
+        self._checkbox(lateral, "Séries: nome do episódio depois do\nnúmero (S01E07 - Nome)", self.var_jf_nomes_ep)
         self._checkbox(lateral, "Só mover o que estiver no catálogo", self.var_jf_exigir)
 
         self._separador(lateral)
@@ -592,6 +611,9 @@ class JanelaModerna(ctk.CTk):
         self.var_jf_lixo = tk.BooleanVar(value=True)
         self._checkbox(lateral, "Apagar lixo do torrent (.url, .txt\nde propaganda, trailers < 100 MB)",
                        self.var_jf_lixo)
+        self.var_jf_apagar_pasta = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Apagar a pasta do torrent depois de\ntransferir (com o que sobrar nela)",
+                       self.var_jf_apagar_pasta)
         self._rotulo(lateral, "Imagens (poster, backdrop...) e legendas\nlocais vão junto com o filme.",
                      fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(2, 0), **p)
 
@@ -616,11 +638,13 @@ class JanelaModerna(ctk.CTk):
                                             "Chave da API do OpenSubtitles", show="•")
         self.campo_url_site = self._entrada(self.quadro_fonte, self.var_jf_url_site,
                                             "https://site/busca?q={consulta}")
-        linha = ctk.CTkFrame(lateral, fg_color="transparent")
-        linha.pack(fill="x", pady=(8, 2), **p)
-        self.var_jf_idioma = tk.StringVar(value="pt-BR")
-        self._entrada(linha, self.var_jf_idioma, width=90).pack(side="right")
-        self._rotulo(linha, "Idioma da legenda:").pack(side="left")
+        self._rotulo(lateral, "Idiomas das legendas (um arquivo cada):").pack(anchor="w", pady=(10, 2), **p)
+        self.vars_idioma_jf = {codigo: tk.BooleanVar(value=(codigo == "pt-BR")) for codigo, _ in self.IDIOMAS_JF}
+        for codigo, nome in self.IDIOMAS_JF:
+            self._checkbox(lateral, f"{nome} ({codigo})", self.vars_idioma_jf[codigo])
+        self._rotulo(lateral, "Outros idiomas:").pack(anchor="w", pady=(4, 0), **p)
+        self.var_jf_outros_idiomas = tk.StringVar()
+        self._entrada(lateral, self.var_jf_outros_idiomas, "ex.: fr, it, de").pack(fill="x", pady=(2, 4), **p)
         self.var_jf_sobrescrever = tk.BooleanVar(value=False)
         self._checkbox(lateral, "Trocar legendas que já existem", self.var_jf_sobrescrever)
 
@@ -663,14 +687,51 @@ class JanelaModerna(ctk.CTk):
         self.tabela_jf, faixa = self._criar_tabela(
             corpo, "Arquivos", self.COLUNAS_JF,
             "Escolha as pastas e clique em Pré-visualizar. Nada é movido sem você confirmar.")
+        self.tabela_jf.configure(displaycolumns=self.ORDEM_TELA_JF)
         self.bt_abrir_biblioteca = self._botao(faixa, "Abrir pasta da biblioteca", self.ao_abrir_biblioteca,
                                                "fantasma")
         self.bt_abrir_biblioteca.pack(side="left")
         self.bt_abrir_log = self._botao(faixa, "Abrir log", self.ao_abrir_log, "fantasma")
         self.bt_abrir_log.pack(side="left", padx=(6, 0))
         self.tabela_jf.bind("<<TreeviewSelect>>", lambda e: self.ao_selecionar_jf())
+        self._montar_filtros_jf(self._topos_tabela[str(self.tabela_jf)])
         self._montar_detalhe_jf(corpo)
         self._criar_console(corpo, linha=2)
+
+    # Situações que dá para esconder/mostrar na tabela (o filtro é só visual).
+    FILTROS_JF = (("mover", "Vai mover"), ("movido", "Movido"), ("organizado", "Já organizado"),
+                  ("conflito", "Conflito"), ("nao_identificado", "Não identificado"), ("ignorado", "Ignorado"),
+                  ("erro", "Erro"))
+
+    def _montar_filtros_jf(self, topo) -> None:
+        self._ordem_jf: list[str] = []          # todas as linhas, na ordem (visíveis ou não)
+        self._categoria_jf: dict[str, str | None] = {}
+        self.vars_filtro_jf = {chave: tk.BooleanVar(value=True) for chave, _ in self.FILTROS_JF}
+        linha = ctk.CTkFrame(topo, fg_color="transparent")
+        # before=: empacotada ANTES do título, ganha a largura toda embaixo (senão iria para o lado)
+        linha.pack(side="bottom", fill="x", pady=(8, 0), before=topo.winfo_children()[0])
+        self._rotulo(linha, "Mostrar:", fonte=ctk.CTkFont(Tema.FAMILIA, 11, "bold")).pack(side="left", padx=(0, 8))
+        for chave, texto in self.FILTROS_JF:
+            ctk.CTkCheckBox(linha, text=texto, variable=self.vars_filtro_jf[chave], command=self.aplicar_filtro_jf,
+                            font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_SUAVE, fg_color=Tema.PRIMARIA,
+                            hover_color=Tema.PRIMARIA_HOVER, border_color=Tema.CAMPO_BORDA, checkbox_width=16,
+                            checkbox_height=16, corner_radius=4, border_width=2).pack(side="left", padx=(0, 10))
+
+    def _visivel_jf(self, iid: str) -> bool:
+        categoria = self._categoria_jf.get(iid)
+        return categoria is None or categoria not in self.vars_filtro_jf or self.vars_filtro_jf[categoria].get()
+
+    def aplicar_filtro_jf(self) -> None:
+        """Esconde/mostra as linhas conforme as caixas marcadas, mantendo a ordem original."""
+        tabela = self.tabela_jf
+        tabela.detach(*self._ordem_jf)
+        for iid in self._ordem_jf:
+            if self._visivel_jf(iid):
+                tabela.move(iid, "", "end")
+        self._atualizar_contador(tabela)
+
+    def linhas_ocultas_jf(self, categoria: str) -> int:
+        return sum(1 for iid in self._ordem_jf if self._categoria_jf.get(iid) == categoria and not self._visivel_jf(iid))
 
     def _montar_detalhe_jf(self, corpo) -> None:
         """Cartão 'Antes -> Depois' com a pasta e o arquivo, como estão e como vão ficar."""
@@ -776,12 +837,28 @@ class JanelaModerna(ctk.CTk):
             incluir_tmdbid=self.var_jf_tmdbid.get(), exigir_catalogo=self.var_jf_exigir.get(),
             limpar_lixo=self.var_jf_lixo.get(), legendas=self.var_jf_legendas.get(), fonte_legenda=self.var_jf_fonte.get(),
             chave_opensubtitles=self.var_jf_chave_os.get().strip(), url_site=self.var_jf_url_site.get().strip(),
-            idioma=self.var_jf_idioma.get().strip() or "pt-BR", sobrescrever=self.var_jf_sobrescrever.get(),
+            idioma=self.idiomas_jf(), sobrescrever=self.var_jf_sobrescrever.get(),
             lembrar_chaves=self.var_jf_lembrar.get(), imagens_tmdb=self.var_jf_imagens.get(),
             gerar_nfo=self.var_jf_nfo.get(), jellyfin_url=self.var_jf_url.get().strip(),
             jellyfin_api_key=self.var_jf_chave_jellyfin.get().strip(), atualizar_jellyfin=self.var_jf_atualizar.get(),
             discord_webhook=self.var_jf_discord.get().strip(), telegram_token=self.var_jf_telegram_token.get().strip(),
-            telegram_chat_id=self.var_jf_telegram_chat.get().strip())
+            telegram_chat_id=self.var_jf_telegram_chat.get().strip(),
+            apagar_pasta_origem=self.var_jf_apagar_pasta.get(), nomes_episodios=self.var_jf_nomes_ep.get(),
+            filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
+
+    def idiomas_jf(self) -> str:
+        """Idiomas marcados + 'Outros', ex.: 'pt-BR, en, fr' (sem nenhum: 'pt-BR')."""
+        from jellyfin_tools.legendas import normalizar_idiomas
+        marcados = [codigo for codigo, var in self.vars_idioma_jf.items() if var.get()]
+        todos = normalizar_idiomas(marcados + normalizar_idiomas(self.var_jf_outros_idiomas.get()))
+        return ", ".join(todos) or "pt-BR"
+
+    def definir_idiomas_jf(self, texto: str) -> None:
+        from jellyfin_tools.legendas import normalizar_idiomas
+        idiomas = normalizar_idiomas(texto)
+        for codigo, var in self.vars_idioma_jf.items():
+            var.set(codigo in idiomas)
+        self.var_jf_outros_idiomas.set(", ".join(i for i in idiomas if i not in self.vars_idioma_jf))
 
     def destinos_jellyfin(self) -> dict:
         """Pasta de Filmes e de Séries (cada modo tem a sua)."""
@@ -792,12 +869,13 @@ class JanelaModerna(ctk.CTk):
         """Preenche a aba com valores salvos (chaves que não existirem ficam como estão)."""
         textos = {"origem": self.var_jf_origem, "chave_tmdb": self.var_jf_chave_tmdb,
                   "chave_opensubtitles": self.var_jf_chave_os, "url_site": self.var_jf_url_site,
-                  "idioma": self.var_jf_idioma, "jellyfin_url": self.var_jf_url,
+                  "jellyfin_url": self.var_jf_url,
                   "jellyfin_api_key": self.var_jf_chave_jellyfin, "discord_webhook": self.var_jf_discord,
                   "telegram_token": self.var_jf_telegram_token, "telegram_chat_id": self.var_jf_telegram_chat}
         marcas = {"tmdb": self.var_jf_tmdb, "incluir_tmdbid": self.var_jf_tmdbid,
                   "exigir_catalogo": self.var_jf_exigir, "legendas": self.var_jf_legendas,
                   "limpar_lixo": self.var_jf_lixo, "imagens_tmdb": self.var_jf_imagens,
+                  "apagar_pasta_origem": self.var_jf_apagar_pasta, "nomes_episodios": self.var_jf_nomes_ep,
                   "gerar_nfo": self.var_jf_nfo, "atualizar_jellyfin": self.var_jf_atualizar,
                   "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar}
         for chave, var in textos.items():
@@ -806,6 +884,11 @@ class JanelaModerna(ctk.CTk):
         for chave, var in marcas.items():
             if chave in dados:
                 var.set(bool(dados[chave]))
+        if dados.get("idioma"):
+            self.definir_idiomas_jf(dados["idioma"])
+        if "filtros_ocultos" in dados:
+            for chave, var in self.vars_filtro_jf.items():
+                var.set(chave not in dados["filtros_ocultos"])
         if dados.get("fonte_legenda") in self.FONTES_LEGENDA:
             self.var_jf_fonte.set(dados["fonte_legenda"])
         self._destinos["Filmes"] = dados.get("destino_filmes", self._destinos["Filmes"])
@@ -814,19 +897,27 @@ class JanelaModerna(ctk.CTk):
         self._mostrar_campos_jf()
 
     def limpar_tabela_jf(self) -> None:
-        self.tabela_jf.delete(*self.tabela_jf.get_children())
+        self.tabela_jf.delete(*self._ordem_jf)
+        self._ordem_jf.clear()
+        self._categoria_jf.clear()
         self._atualizar_contador(self.tabela_jf)
 
     def adicionar_linha_jf(self, iid: str, numero: int, situacao: str, tipo: str | None,
-                           atual: str, novo: str, legenda: str = "", progresso: str = "") -> None:
-        """tipo: 'ok', 'erro', 'pulado' ou None (linha neutra)."""
+                           atual: str, novo: str, legenda: str = "", progresso: str = "",
+                           categoria: str | None = None, fonte: str = "") -> None:
+        """tipo: 'ok', 'erro', 'pulado' ou None (linha neutra).
+        fonte: de onde veio o nome novo (coluna 'Nome via'), ex.: 'TMDB ✓'."""
         if tipo:
             situacao = f"{self.SIMBOLO_SITUACAO[tipo]}  {situacao}"
             tags = (tipo,)
         else:
             tags = ("par" if len(self.tabela_jf.get_children()) % 2 == 0 else "impar",)
-        self.tabela_jf.insert("", "end", iid=iid, values=(numero, situacao, atual, novo, legenda, progresso),
+        self.tabela_jf.insert("", "end", iid=iid, values=(numero, situacao, atual, novo, legenda, progresso, fonte),
                               tags=tags)
+        self._ordem_jf.append(iid)
+        self._categoria_jf[iid] = categoria
+        if not self._visivel_jf(iid):
+            self.tabela_jf.detach(iid)                 # escondida pelo filtro (continua existindo)
         self._atualizar_contador(self.tabela_jf)
 
     def atualizar_linha_jf(self, iid: str, legenda: str | None = None, legenda_tipo: str | None = None) -> None:
@@ -837,7 +928,8 @@ class JanelaModerna(ctk.CTk):
             simbolo = self.SIMBOLO_SITUACAO.get(legenda_tipo or "", "")
             valores[4] = f"{simbolo}  {legenda}" if simbolo else legenda
         self.tabela_jf.item(iid, values=valores)
-        self.tabela_jf.see(iid)
+        if self._visivel_jf(iid):
+            self.tabela_jf.see(iid)
 
     @staticmethod
     def barra_texto(fracao: float) -> str:
@@ -854,17 +946,48 @@ class JanelaModerna(ctk.CTk):
         valores[5] = texto if fracao is None else self.barra_texto(fracao)
         self.tabela_jf.item(iid, values=valores)
 
-    def atualizar_situacao_jf(self, iid: str, texto: str, tipo: str | None) -> None:
+    def atualizar_situacao_jf(self, iid: str, texto: str, tipo: str | None, categoria: str | None = None) -> None:
         if not self.tabela_jf.exists(iid):
             return
         valores = list(self.tabela_jf.item(iid, "values"))
         valores[1] = f"{self.SIMBOLO_SITUACAO[tipo]}  {texto}" if tipo else texto
         tags = (tipo,) if tipo else self.tabela_jf.item(iid, "tags")
         self.tabela_jf.item(iid, values=valores, tags=tags)
-        self.tabela_jf.see(iid)
+        if categoria is not None and categoria != self._categoria_jf.get(iid):
+            estava_visivel = self._visivel_jf(iid)
+            self._categoria_jf[iid] = categoria        # ex.: "vai mover" virou "movido"
+            if estava_visivel and not self._visivel_jf(iid):
+                self.tabela_jf.detach(iid)             # só esta linha (rápido)
+                self._atualizar_contador(self.tabela_jf)
+            elif not estava_visivel and self._visivel_jf(iid):
+                self.aplicar_filtro_jf()               # reaparece na posição certa (raro)
+        if self._visivel_jf(iid):
+            self.tabela_jf.see(iid)
+
+    def definir_estado_tmdb(self, ok: bool | None, texto: str) -> None:
+        """Linha abaixo do botão 'Testar conexão com o TMDB': verde (ok), vermelha (erro) ou neutra."""
+        cor = {True: Tema.SUCESSO, False: Tema.PERIGO}.get(ok, Tema.TEXTO_FRACO)
+        simbolo = {True: self.SIMBOLO_SITUACAO["ok"] + "  ", False: self.SIMBOLO_SITUACAO["erro"] + "  "}.get(ok, "")
+        self.lb_estado_tmdb.configure(text=simbolo + texto if texto else "", text_color=cor)
+
+    def definir_progresso_rodape(self, fracao: float, texto: str = "") -> None:
+        """Rodapé com a PORCENTAGEM: a barra deixa de ser a animação 'vai e volta' e passa a
+        mostrar quanto já foi feito; o texto vira ex.: 'Pré-visualizando... 45%  ·  Analisando: 75 de 166'."""
+        if not self._ocupado:
+            return
+        if self._barra_animada:
+            self.barra.stop()
+            self.barra.configure(mode="determinate")
+            self._barra_animada = False
+        fracao = min(max(fracao, 0.0), 1.0)
+        self.barra.set(fracao)
+        self.var_status.set(f"{self._status_base} {int(fracao * 100)}%" + (f"  ·  {texto}" if texto else ""))
 
     def definir_progresso_total(self, fracao: float | None, texto: str = "") -> None:
-        """Barra e texto de progresso TOTAL no topo dos consoles ('O que está acontecendo')."""
+        """Barra e texto de progresso TOTAL no topo dos consoles ('O que está acontecendo')
+        e a porcentagem no rodapé."""
+        if fracao is not None:
+            self.definir_progresso_rodape(fracao)
         for rotulo, barra in self._progresso_total:
             if fracao is None:
                 rotulo.configure(text="")
@@ -953,6 +1076,7 @@ class JanelaModerna(ctk.CTk):
 
     def definir_status(self, texto: str, ocupado: bool | None = None) -> None:
         self.var_status.set(texto)
+        self._status_base = texto                     # a porcentagem é acrescentada depois dele
         if ocupado is not None:
             self.definir_ocupado(ocupado)
 
@@ -962,7 +1086,7 @@ class JanelaModerna(ctk.CTk):
         estado = "disabled" if ocupado else "normal"
         for b in (self.bt_buscar, self.bt_baixar_sel, self.bt_baixar_todos, self.bt_login,
                   self.bt_previa, self.bt_legendas, self.bt_desfazer, self.bt_testar_jellyfin,
-                  self.bt_testar_avisos):
+                  self.bt_testar_avisos, self.bt_testar_tmdb):
             b.configure(state=estado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
         for parar in (self.bt_parar, self.bt_parar_jf):
@@ -972,8 +1096,10 @@ class JanelaModerna(ctk.CTk):
         if ocupado:
             self.barra.configure(mode="indeterminate", progress_color=Tema.PRIMARIA)
             self.barra.start()
+            self._barra_animada = True
         else:
             self.barra.stop()
+            self._barra_animada = False
             # o modo animado não volta sozinho ao zero; e no zero o CTk ainda desenha um "pontinho"
             self.barra.configure(mode="determinate", progress_color=Tema.SECUNDARIA)
             self.barra.set(0)
@@ -989,12 +1115,22 @@ class JanelaModerna(ctk.CTk):
 
     def _atualizar_contador(self, tabela) -> None:
         contador, vazio = self._extras_tabela[str(tabela)]
-        total = len(tabela.get_children())
-        contador.configure(text=str(total))
-        if total:
-            vazio.place_forget()
-        else:
-            vazio.place(relx=0.5, rely=0.55, anchor="center")
+        visiveis = len(tabela.get_children())
+        total = len(self._ordem_jf) if str(tabela) == str(getattr(self, "tabela_jf", "")) else visiveis
+        texto = str(total) if visiveis == total else f"{visiveis} de {total}"
+        # Velocidade: com milhares de linhas isto roda a cada linha; redesenhar o rótulo do CTk
+        # (e trocar a largura) só quando o texto muda de verdade.
+        anterior = self._contadores.get(str(tabela))
+        if anterior == (texto, bool(total)):
+            return
+        self._contadores[str(tabela)] = (texto, bool(total))
+        if anterior is None or anterior[0] != texto:
+            contador.configure(text=texto, width=34 if visiveis == total else 80)
+        if anterior is None or anterior[1] != bool(total):
+            if total:
+                vazio.place_forget()
+            else:
+                vazio.place(relx=0.5, rely=0.55, anchor="center")
 
     def _ajustar_checks(self) -> None:
         if self.var_pausar.get() or self.var_visivel.get():
@@ -1060,6 +1196,9 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_selecionar_jf(self) -> None:
+        pass
+
+    def ao_testar_tmdb(self) -> None:
         pass
 
     def ao_testar_jellyfin(self) -> None:

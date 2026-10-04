@@ -135,3 +135,31 @@ def test_opensubtitles_limite_e_queda_para_proximo_provedor(tmp_path, api_falsa,
     assert r.status == "baixada" and r.detalhe.startswith("demo")
     with pytest.raises(ErroLegenda):
         ProvedorOpenSubtitles("")
+
+
+# ------------------------------------------------------------------ vários idiomas
+def test_normalizar_idiomas():
+    from jellyfin_tools.legendas import normalizar_idiomas
+    assert normalizar_idiomas("pt-BR, inglês; ES  fr") == ["pt-BR", "en", "es", "fr"]
+    assert normalizar_idiomas("ptbr, pt-br, PT") == ["pt-BR"]                  # sem repetir
+    assert normalizar_idiomas(["en", "zh-tw", "???"]) == ["en", "zh-TW"]       # desconhecido válido passa
+    assert normalizar_idiomas("") == []
+
+
+def test_varios_idiomas_um_arquivo_por_idioma(tmp_path, site_legendas):
+    from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, pos_processar
+    pasta = _pasta_filme(tmp_path, "Matrix (1999)")
+    [r] = pos_processar(itens_da_biblioteca(tmp_path),
+                        ConfigPos(provedores=[_provedor(site_legendas)], idioma="pt-BR, en, es"))
+    assert {k: v.status for k, v in r.legendas.items()} == {"pt-BR": "baixada", "en": "baixada",
+                                                           "es": "nao_encontrada"}
+    assert r.legenda is r.legendas["pt-BR"]                                    # o principal é o 1º
+    assert "Hello" in (pasta / "Matrix (1999).en.srt").read_text(encoding="utf-8")
+    assert "Olá" in (pasta / "Matrix (1999).pt-BR.srt").read_text(encoding="utf-8")
+    assert not (pasta / "Matrix (1999).es.srt").exists()
+
+
+def test_legenda_local_em_frances_e_reconhecida(tmp_path):
+    from jellyfin_tools.extras import nome_da_legenda
+    assert nome_da_legenda(tmp_path / "Filme.FRENCH.srt", "Filme (2000)") == "Filme (2000).fr.srt"
+    assert nome_da_legenda(tmp_path / "Filme.Italiano.srt", "Filme (2000)") == "Filme (2000).it.srt"

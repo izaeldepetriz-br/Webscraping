@@ -456,3 +456,197 @@ def test_erro_interno_nao_congela_a_janela(app):
     app._rodar("Testando...", lambda: None)                             # e a tarefa termina normalmente
     esperar(app)
     assert "bug de teste" in app.arquivo_log.read_text(encoding="utf-8")
+
+
+# ------------------------------------------------------------------ filtro, idiomas e apagar pasta
+def _video_grande(caminho, mb=101):
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    with open(caminho, "wb") as f:
+        f.truncate(mb * 1024 * 1024)
+
+
+def test_filtro_por_situacao(app, tmp_path):
+    from videoscraper import config
+    biblioteca = tmp_path / "Filmes"
+    _video_grande(biblioteca / "Matrix (1999)" / "Matrix (1999).mkv")            # já organizado
+    _video_grande(biblioteca / "Cidade.de.Deus.2002.1080p.mkv")                    # vai mover
+    _video_grande(biblioteca / "video_sem_ano.mp4")                                # não identificado
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_origem.set(str(biblioteca))
+    app.var_jf_destino.set(str(biblioteca))
+    app.var_jf_legendas.set(False)
+    app.bt_previa.invoke()
+    esperar(app)
+    assert len(_linhas_jf(app)) == 3
+
+    app.vars_filtro_jf["organizado"].set(False)                                   # desmarca "Já organizado"
+    app.aplicar_filtro_jf()
+    assert [l[2] for l in _linhas_jf(app)] == ["Cidade.de.Deus.2002.1080p.mkv", "video_sem_ano.mp4"]
+    assert app._extras_tabela[str(app.tabela_jf)][0].cget("text") == "2 de 3"     # contador "visíveis de total"
+
+    app.vars_filtro_jf["mover"].set(False)                                        # esconde quem vai mover
+    app.aplicar_filtro_jf()
+    perguntas = []
+    app.perguntar = lambda t, m: perguntas.append(m) or True
+    app.bt_organizar.invoke()
+    esperar(app)
+    assert "1 deles estão escondidos pelo filtro" in perguntas[0]                 # avisa antes de mover
+    assert (biblioteca / "Cidade de Deus (2002)" / "Cidade de Deus (2002).mkv").exists()
+    app.vars_filtro_jf["movido"].set(False)                                       # "movido" também some
+    app.aplicar_filtro_jf()
+    assert [l[2] for l in _linhas_jf(app)] == ["video_sem_ano.mp4"]
+
+    app._salvar_config()                                                          # o filtro é lembrado
+    assert set(config.carregar()["jellyfin"]["filtros_ocultos"]) == {"organizado", "mover", "movido"}
+
+
+def test_varios_idiomas_pela_janela(app, tmp_path):
+    origem = tmp_path / "Downloads"
+    _video_grande(origem / "Matrix.1999.1080p.mkv")
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_origem.set(str(origem))
+    app.var_jf_destino.set(str(tmp_path / "Filmes"))
+    app.vars_idioma_jf["en"].set(True)
+    app.var_jf_outros_idiomas.set("francês")
+    assert app.idiomas_jf() == "pt-BR, en, fr"
+    app.bt_previa.invoke()
+    esperar(app)
+    app.bt_organizar.invoke()
+    esperar(app)
+    pasta = tmp_path / "Filmes" / "Matrix (1999)"
+    assert (pasta / "Matrix (1999).pt-BR.srt").exists() and (pasta / "Matrix (1999).en.srt").exists()
+    assert not (pasta / "Matrix (1999).fr.srt").exists()                          # o site não tem francês
+    assert _linhas_jf(app)[0][4] == "pt-BR ✓ · en ✓ · fr ✕"
+
+    app.definir_idiomas_jf("es, de")                                              # carregar do config
+    assert app.vars_idioma_jf["es"].get() and not app.vars_idioma_jf["pt-BR"].get()
+    assert app.var_jf_outros_idiomas.get() == "de"
+
+
+def test_apagar_pasta_do_torrent_pela_janela(app, tmp_path):
+    torrent = tmp_path / "Downloads" / "Matrix.1999.1080p-GRUPO"
+    _video_grande(torrent / "Matrix.1999.1080p.mkv")
+    (torrent / "Screens").mkdir()
+    (torrent / "Screens" / "cena.png").write_bytes(b"x")
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_origem.set(str(tmp_path / "Downloads"))
+    app.var_jf_destino.set(str(tmp_path / "Filmes"))
+    app.var_jf_legendas.set(False)
+    app.var_jf_apagar_pasta.set(True)
+    app.bt_previa.invoke()
+    esperar(app)
+    assert "apagar a pasta" in _linhas_jf(app)[0][3]
+    app.tabela_jf.selection_set("0")
+    app.update()
+    assert "Apagar a pasta inteira:" in app.lb_detalhe_extras.cget("text")
+    perguntas = []
+    app.perguntar = lambda t, m: perguntas.append(m) or True
+    app.bt_organizar.invoke()
+    esperar(app)
+    assert "1 pasta(s) de torrent serão APAGADAS" in perguntas[0]
+    assert not torrent.exists() and (tmp_path / "Downloads").exists()
+    assert (tmp_path / "Filmes" / "Matrix (1999)" / "Matrix (1999).mkv").exists()
+
+
+# ------------------------------------------------------------------ TMDB: teste, "Nome via", episódios, %
+@pytest.fixture
+def tmdb_gui(app, api_falsa, monkeypatch):
+    from jellyfin_tools.catalogo import CatalogoTMDB
+    base = api_falsa.base + "/3"
+
+    class TMDBFalso(CatalogoTMDB):
+        def __init__(self, chave, **kw):
+            super().__init__(chave, base_url=base)
+
+    monkeypatch.setattr(app_moderna, "CatalogoTMDB", TMDBFalso)
+    api_falsa.rotas["/3/configuration"] = lambda q: (
+        (200, {}) if q.get("api_key") == ["boa"] else (401, {"status_message": "Invalid API key"}))
+    matrix = {"results": [{"id": 603, "title": "Matrix", "original_title": "The Matrix",
+                           "release_date": "1999-03-31"}]}
+    api_falsa.rotas["/3/search/movie"] = lambda q: (
+        (401, {}) if q.get("api_key") != ["boa"] else (200, matrix if q["query"] == ["Matrix"] else {"results": []}))
+    api_falsa.rotas["/3/search/tv"] = lambda q: (200, {"results": [
+        {"id": 70523, "name": "Dark", "original_name": "Dark", "first_air_date": "2017-12-01"}]})
+    api_falsa.rotas["/3/tv/70523/season/1"] = lambda q: (200, {"episodes": [
+        {"episode_number": 1, "name": "Segredos"}, {"episode_number": 2, "name": "Mentiras"}]})
+    return api_falsa
+
+
+def test_botao_testar_conexao_com_o_tmdb(app, tmdb_gui):
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_chave_tmdb.set("")
+    app.bt_testar_tmdb.invoke()
+    assert app.caixas[-1][:2] == ("aviso", "TMDB")                     # sem chave: nem tenta
+
+    app.var_jf_chave_tmdb.set("errada")
+    app.bt_testar_tmdb.invoke()
+    esperar(app)
+    assert app.caixas[-1][0] == "erro" and "recusou a chave" in app.caixas[-1][2]
+    assert app.lb_estado_tmdb.cget("text").startswith("✕  Sem conexão")
+
+    app.var_jf_chave_tmdb.set("boa")
+    app.var_jf_tmdb.set(True)
+    app.bt_testar_tmdb.invoke()
+    esperar(app)
+    assert app.caixas[-1][:2] == ("sucesso", "TMDB conectado") and "TMDB ✓" in app.caixas[-1][2]
+    assert app.lb_estado_tmdb.cget("text") == "✓  TMDB conectado"
+
+
+def test_coluna_nome_via_e_porcentagem_na_previa(app, tmdb_gui, tmp_path):
+    _preparar(app, tmp_path, ["Matrix.1999.mkv", "Interestelar.2014.mkv", "Filme.Caseiro.2020.mkv"])
+    estados = []
+    original = app.definir_progresso_rodape
+
+    def espiar(fracao, texto=""):
+        original(fracao, texto)
+        estados.append((app.var_status.get(), app.barra.get()))
+    app.definir_progresso_rodape = espiar
+
+    app.var_jf_chave_tmdb.set("boa")
+    app.var_jf_tmdb.set(True)
+    app.bt_previa.invoke()
+    esperar(app)
+    via = {l[2]: l[6] for l in _linhas_jf(app)}
+    assert via == {"Matrix.1999.mkv": "TMDB ✓", "Interestelar.2014.mkv": "TMDB ✕ (catálogo)",
+                   "Filme.Caseiro.2020.mkv": "TMDB ✕ (arquivo)"}
+    assert "TMDB identificou 1 de 3." in app.var_status.get()
+    # o rodapé mostrou a porcentagem (e a barra acompanhou) durante a prévia
+    assert any(s.startswith("Pré-visualizando... 100%  ·  Analisando: 3 de 3") for s, _ in estados)
+    assert estados[-1][1] == pytest.approx(1.0)
+
+    app.var_jf_tmdb.set(False)                                         # sem TMDB: só a origem do nome
+    app.bt_previa.invoke()
+    esperar(app)
+    assert sorted(l[6] for l in _linhas_jf(app)) == ["arquivo", "catálogo", "catálogo"]
+
+
+def test_tmdb_fora_do_ar_avisa_na_previa(app, tmdb_gui, tmp_path):
+    _preparar(app, tmp_path, ["Matrix.1999.mkv"])
+    app.var_jf_chave_tmdb.set("errada")
+    app.var_jf_tmdb.set(True)
+    app.bt_previa.invoke()
+    esperar(app)
+    assert app.caixas[-1][:2] == ("aviso", "TMDB não respondeu")
+    assert _linhas_jf(app)[0][6] == "TMDB ✕ (catálogo)"                # o catálogo local salvou o nome
+    assert app.lb_estado_tmdb.cget("text").startswith("✕  Sem resposta na prévia")
+
+
+def test_series_com_nome_do_episodio_pela_janela(app, tmdb_gui, tmp_path):
+    origem, series = _preparar(app, tmp_path, ["Dark.S01E01.1080p.mkv", "Dark.S01E02.mkv"], modo="Séries")
+    app.var_jf_chave_tmdb.set("boa")
+    app.var_jf_tmdb.set(True)
+    assert app.var_jf_nomes_ep.get()                                    # vem marcado
+    app.bt_previa.invoke()
+    esperar(app)
+    novos = sorted(l[3] for l in _linhas_jf(app))
+    assert novos == ["Dark S01E01 - Segredos.mkv", "Dark S01E02 - Mentiras.mkv"]
+    app.bt_organizar.invoke()
+    esperar(app)
+    assert sorted(p.name for p in (series / "Dark (2017)" / "Season 01").glob("*.mkv")) == [
+        "Dark S01E01 - Segredos.mkv", "Dark S01E02 - Mentiras.mkv"]
+
+    app.var_jf_nomes_ep.set(False)                                      # desmarcado: só o número
+    (origem / "Dark.S01E03.mkv").write_bytes(b"v")
+    app.bt_previa.invoke()
+    esperar(app)
+    assert [l[3] for l in _linhas_jf(app) if l[2] == "Dark.S01E03.mkv"] == ["Dark S01E03.mkv"]

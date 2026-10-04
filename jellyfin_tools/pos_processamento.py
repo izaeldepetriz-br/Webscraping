@@ -22,7 +22,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .legendas import ResultadoLegenda, baixar_legenda, baixar_legenda_episodio, pastas_de_filmes
+from .legendas import (ResultadoLegenda, baixar_legenda, baixar_legenda_episodio, normalizar_idiomas,
+                       pastas_de_filmes)
 from .metadados import ClienteTMDB, ResultadoMetadados, enriquecer_filme
 from .nomes import eh_video, ler_nome_jellyfin
 from .notificacoes import Notificador
@@ -33,7 +34,8 @@ from .servidor_jellyfin import ErroJellyfin, atualizar_biblioteca
 @dataclass
 class ConfigPos:
     provedores: list = field(default_factory=list)       # fontes de legenda (vazio = não busca)
-    idioma: str = "pt-BR"
+    idioma: str = "pt-BR"                                  # um idioma, ou vários: "pt-BR, en, es"
+    idiomas: list | None = None                            # se preenchido, vale no lugar de `idioma`
     tmdb: ClienteTMDB | None = None                        # None = sem pôster/backdrop/.nfo
     imagens: bool = True
     nfo: bool = True
@@ -45,10 +47,16 @@ class ConfigPos:
     trabalhadores: int = 4                                 # filmes processados ao mesmo tempo
 
 
+    @property
+    def lista_idiomas(self) -> list[str]:
+        return normalizar_idiomas(self.idiomas or self.idioma) or ["pt-BR"]
+
+
 @dataclass
 class ResultadoItem:
     nome: str
-    legenda: ResultadoLegenda | None = None
+    legenda: ResultadoLegenda | None = None                # a do 1º idioma (o principal)
+    legendas: dict = field(default_factory=dict)           # idioma -> ResultadoLegenda
     metadados: ResultadoMetadados | None = None
     erro: str = ""
 
@@ -84,15 +92,17 @@ def processar_item(m, cfg: ConfigPos, log=None, trava_legendas=None) -> Resultad
     originais = [m.filme.titulo_original] if m.filme and getattr(m.filme, "titulo_original", "") else []
 
     if cfg.provedores:
-        try:
-            with trava_legendas or contextlib.nullcontext():
-                r = _legenda(m, cfg, pasta, originais)
-            resultado.legenda = r
-            nivel = log.info if r.status in ("baixada", "ja_existe") else log.warning
-            nivel("Legenda de %s: %s%s", nome_base, r.status, f" ({r.detalhe})" if r.detalhe else "")
-        except Exception as erro:
-            log.error("Legenda de %s falhou: %s", nome_base, erro, exc_info=True)
-            resultado.erro = str(erro)
+        for idioma in cfg.lista_idiomas:                       # um arquivo por idioma
+            try:
+                with trava_legendas or contextlib.nullcontext():
+                    r = _legenda(m, cfg, pasta, originais, idioma)
+                resultado.legendas[idioma] = r
+                resultado.legenda = resultado.legenda or r
+                nivel = log.info if r.status in ("baixada", "ja_existe") else log.warning
+                nivel("Legenda %s de %s: %s%s", idioma, nome_base, r.status, f" ({r.detalhe})" if r.detalhe else "")
+            except Exception as erro:
+                log.error("Legenda %s de %s falhou: %s", idioma, nome_base, erro, exc_info=True)
+                resultado.erro = str(erro)
 
     if cfg.tmdb is not None and not m.episodio and (cfg.imagens or cfg.nfo):   # séries: o Jellyfin cuida
         lido = ler_nome_jellyfin(pasta.name)
@@ -109,10 +119,10 @@ def processar_item(m, cfg: ConfigPos, log=None, trava_legendas=None) -> Resultad
     return resultado
 
 
-def _legenda(m, cfg: ConfigPos, pasta: Path, originais: list[str]) -> ResultadoLegenda:
+def _legenda(m, cfg: ConfigPos, pasta: Path, originais: list[str], idioma: str) -> ResultadoLegenda:
     if m.episodio:
-        return baixar_legenda_episodio(m.destino, cfg.provedores, idioma=cfg.idioma, titulos_alternativos=originais)
-    return baixar_legenda(pasta, cfg.provedores, idioma=cfg.idioma, titulos_alternativos=originais)
+        return baixar_legenda_episodio(m.destino, cfg.provedores, idioma=idioma, titulos_alternativos=originais)
+    return baixar_legenda(pasta, cfg.provedores, idioma=idioma, titulos_alternativos=originais)
 
 
 def pos_processar(itens: list, cfg: ConfigPos, log=None, ao_item=None, parar=None) -> list[ResultadoItem]:

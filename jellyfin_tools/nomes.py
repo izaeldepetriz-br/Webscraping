@@ -222,9 +222,13 @@ def extrair_episodio(nome_arquivo: str) -> EpisodioExtraido | None:
     return EpisodioExtraido(nome, temporada, episodio, ano)
 
 
-def nome_episodio_jellyfin(serie: str, temporada: int, episodio: int) -> str:
-    """'Breaking Bad', 2, 5 -> 'Breaking Bad S02E05' (padrão de episódios do Jellyfin)."""
-    return f"{limpar_para_arquivo(serie)} S{temporada:02d}E{episodio:02d}"
+def nome_episodio_jellyfin(serie: str, temporada: int, episodio: int, titulo_episodio: str = "") -> str:
+    """'Breaking Bad', 2, 5 -> 'Breaking Bad S02E05' (padrão de episódios do Jellyfin).
+    Com o nome do episódio (TMDB), o número continua e o nome vem depois:
+    'Breaking Bad S02E05 - Quatro Dias Fora' (o Jellyfin entende os dois jeitos)."""
+    nome = f"{limpar_para_arquivo(serie)} S{temporada:02d}E{episodio:02d}"
+    titulo = limpar_para_arquivo(titulo_episodio or "")
+    return f"{nome} - {titulo[:120].rstrip('. ')}" if titulo else nome
 
 
 def pasta_temporada(temporada: int) -> str:
