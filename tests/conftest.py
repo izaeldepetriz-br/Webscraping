@@ -15,6 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 if not os.environ.get("VIDEOSCRAPER_CHROME") and Path("/opt/pw-browsers/chromium").exists():
     os.environ["VIDEOSCRAPER_CHROME"] = "/opt/pw-browsers/chromium"
 
+# Os testes não consultam o GitHub ao abrir a janela (o aviso de versão nova é testado à parte).
+os.environ.setdefault("VIDEOSCRAPER_SEM_ATUALIZACAO", "1")
+
 VIDEO = b"\x00\x00\x00\x18ftypmp42" + b"x" * 5000
 
 ESTATICA = """<html><head>

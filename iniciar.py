@@ -64,7 +64,13 @@ def _verificar() -> int:
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     comando, _ = comando_instalar_chromium()
     faltando = [c for c in comando[:2] if getattr(sys, "frozen", False) and not os.path.exists(c)]
-    print(f"ok: {len(catalogo.filmes)} títulos no catálogo, ffmpeg em {ffmpeg}, "
+    from videoscraper.atualizacao import versao_atual
+    from videoscraper import bandeja
+    from jellyfin_tools.conflitos import nota  # noqa: F401
+    from jellyfin_tools.tv_ao_vivo import ler_m3u  # noqa: F401
+    if sys.platform == "win32" and not bandeja.disponivel():
+        faltando.append("pystray (ícone perto do relógio)")
+    print(f"ok: versão {versao_atual()}, {len(catalogo.filmes)} títulos no catálogo, ffmpeg em {ffmpeg}, "
           f"instalador do navegador {'OK' if not faltando else 'FALTANDO: ' + str(faltando)}")
     return 1 if faltando else 0
 

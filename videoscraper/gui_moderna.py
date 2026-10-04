@@ -108,11 +108,15 @@ class OpcoesJellyfin:
     vigiar: bool = False             # pasta vigiada ligada
     vigiar_min: float = 5            # de quanto em quanto tempo conferir
     pastas_vigiadas: tuple = ()      # pastas de download (ex.: as do uTorrent); vazio = a pasta de origem
+    pastas_protegidas: tuple = ()    # pastas que o organizador nunca mexe (ex.: as do Sonarr/Radarr)
     conferir_auto: bool = False      # conferir os .strm sozinho
     conferir_a_cada: float = 7
     conferir_unidade: str = "dias"   # "minutos", "horas" ou "dias"
     remover_quebrados: bool = False
     ultima_conferencia: str = ""     # data/hora (ISO) da última conferência automática
+    avisar_versao: bool = True       # ao abrir, avisar se saiu versão nova (página Releases do GitHub)
+    versao_avisada: str = ""         # a última versão já avisada (não repete o aviso a cada abertura)
+    fechar_na_bandeja: bool = False  # o X esconde a janela perto do relógio (a vigia continua)
 
 
 # Máximo dos campos "Máx. de páginas" e "Máx. de vídeos" (antes 2000 e 1000).
@@ -326,6 +330,178 @@ def _sem_acentos(texto: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", texto.lower()) if unicodedata.category(c) != "Mn")
 
 
+class JanelaCorrigirNome(ctk.CTkToplevel):
+    """"Corrigir nome": você diz qual série (ou filme) é; o organizador guarda a regra e lembra."""
+
+    def __init__(self, master, tipo: str, sugestao: str, onde: str, regra_atual: str = ""):
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.resposta = None
+        serie = tipo == "serie"
+        self.title("Corrigir nome")
+        self.resizable(False, False)
+        self.transient(master)
+        corpo = ctk.CTkFrame(self, fg_color="transparent")
+        corpo.pack(fill="both", expand=True, padx=26, pady=(20, 8))
+        ctk.CTkLabel(corpo, text="Qual série é?" if serie else "Qual filme é?",
+                     font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"), text_color=Tema.TEXTO, anchor="w").pack(fill="x")
+        explicacao = (f"Vale para TODOS os vídeos da pasta (e subpastas):\n{onde}\nO número do episódio continua "
+                      "vindo do nome de cada arquivo." if serie else f"Vale para o arquivo:\n{onde}")
+        if regra_atual:
+            explicacao += f"\n\nRegra atual: {regra_atual}"
+        ctk.CTkLabel(corpo, text=explicacao, font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, justify="left",
+                     anchor="w", wraplength=440).pack(fill="x", pady=(6, 10))
+        self.var_titulo, self.var_ano, self.var_temporada = tk.StringVar(value=sugestao), tk.StringVar(), tk.StringVar()
+        campos = [("Nome" + (" da série" if serie else " do filme") + ":", self.var_titulo, "ex.: Breaking Bad"),
+                  ("Ano (opcional, ajuda o TMDB):" if serie else "Ano:", self.var_ano, "ex.: 2008")]
+        if serie:
+            campos.append(("Temporada (opcional; vazio = numeração contínua):", self.var_temporada, "ex.: 5"))
+        for rotulo, var, dica in campos:
+            master._rotulo(corpo, rotulo).pack(anchor="w")
+            master._entrada(corpo, var, dica, altura=34).pack(fill="x", pady=(2, 8))
+        self.lb_erro = ctk.CTkLabel(corpo, text="", font=master.f_rotulo, text_color=Tema.PERIGO, anchor="w")
+        self.lb_erro.pack(fill="x")
+        botoes = ctk.CTkFrame(self, fg_color="transparent")
+        botoes.pack(fill="x", padx=26, pady=(4, 20))
+        master._botao(botoes, "Salvar e pré-visualizar", self._salvar, "primario").pack(side="right")
+        master._botao(botoes, "Cancelar", self.destroy, "fantasma", largura=90).pack(side="right", padx=(0, 8))
+        if regra_atual:
+            master._botao(botoes, "Esquecer a regra", self._esquecer, "perigo").pack(side="left")
+        self.bind("<Return>", lambda e: self._salvar())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_reqwidth()) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - self.winfo_reqheight()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+    def _salvar(self) -> None:
+        titulo = self.var_titulo.get().strip()
+        ano, temporada = self.var_ano.get().strip(), self.var_temporada.get().strip()
+        if not titulo:
+            self.lb_erro.configure(text="Escreva o nome.")
+            return
+        if (ano and not (ano.isdigit() and 1880 <= int(ano) <= 2100)) or (temporada and not temporada.isdigit()):
+            self.lb_erro.configure(text="Ano e temporada são números (ex.: 2008 e 5).")
+            return
+        self.resposta = {"titulo": titulo, "ano": int(ano) if ano else None,
+                         "temporada": int(temporada) if temporada else None}
+        self.destroy()
+
+    def _esquecer(self) -> None:
+        self.resposta = {"esquecer": True}
+        self.destroy()
+
+
+class JanelaCanais(ctk.CTkToplevel):
+    """TV ao vivo no Jellyfin: a lista de canais (.m3u), o guia (XMLTV) e a antena (HDHomeRun).
+    acoes: {'adicionar', 'importar_arquivo', 'importar_endereco', 'remover', 'conferir', 'publicar'}."""
+
+    COLUNAS = (("grupo", "Grupo", 110), ("situacao", "Situação", 190), ("url", "Link", 330))
+
+    def __init__(self, master, acoes: dict):
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.title("TV ao vivo no Jellyfin")
+        self.geometry("1080x700")
+        self.minsize(820, 560)
+        self.transient(master)
+        m = master
+        topo = ctk.CTkFrame(self, fg_color="transparent")
+        topo.pack(fill="x", padx=24, pady=(16, 4))
+        ctk.CTkLabel(topo, text="Canais ao vivo (TV ao vivo do Jellyfin)", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
+                     text_color=Tema.TEXTO, anchor="w").pack(fill="x")
+        ctk.CTkLabel(topo, text="Use só fontes que você tem direito de assistir: o sinal aberto oficial (a transmissão "
+                     "que o próprio canal publica), a lista da sua operadora ou uma antena com sintonizador de rede "
+                     "(HDHomeRun). Listas \"piratas\" de canais pagos não.", font=m.f_rotulo,
+                     text_color=Tema.AVISO, anchor="w", justify="left", wraplength=1020).pack(fill="x", pady=(2, 8))
+        linha = ctk.CTkFrame(topo, fg_color="transparent")
+        linha.pack(fill="x")
+        self.var_nome, self.var_link = tk.StringVar(), tk.StringVar()
+        m._rotulo(linha, "Canal:").pack(side="left", padx=(0, 4))
+        m._entrada(linha, self.var_nome, "Nome do canal", altura=34, width=200).pack(side="left")
+        m._rotulo(linha, "Link do sinal (.m3u8) ou de uma lista .m3u:").pack(side="left", padx=(10, 4))
+        m._entrada(linha, self.var_link, "Link do sinal (.m3u8...) ou de uma lista .m3u", altura=34).pack(
+            side="left", fill="x", expand=True, padx=(0, 8))
+        for texto, chave, tipo in (("Adicionar", "adicionar", "primario"), ("Importar do link", "importar_endereco",
+                                   "secundario"), ("Importar arquivo .m3u...", "importar_arquivo", "secundario")):
+            b = m._botao(linha, texto, acoes[chave], tipo)
+            b.configure(height=34)
+            b.pack(side="left", padx=(0, 6))
+
+        quadro = ctk.CTkFrame(self, fg_color=Tema.CARTAO)
+        quadro.pack(fill="both", expand=True, padx=24, pady=6)
+        quadro.grid_columnconfigure(0, weight=1)
+        quadro.grid_rowconfigure(0, weight=1)
+        self.tabela = ttk.Treeview(quadro, columns=[c[0] for c in self.COLUNAS], show="tree headings",
+                                   selectmode="extended", style="Moderno.Treeview")
+        self.tabela.heading("#0", text="Canal", anchor="w")
+        self.tabela.column("#0", width=230, minwidth=120, anchor="w")
+        for chave, texto, largura in self.COLUNAS:
+            self.tabela.heading(chave, text=texto, anchor="w")
+            self.tabela.column(chave, width=largura, minwidth=60, stretch=chave == "url", anchor="w")
+        self.tabela.tag_configure("ok", background="#13251b")
+        self.tabela.tag_configure("erro", background="#2a1618")
+        self.tabela.grid(row=0, column=0, sticky="nsew")
+        rolagem = ctk.CTkScrollbar(quadro, command=self.tabela.yview, button_color=Tema.CARTAO_BORDA)
+        rolagem.grid(row=0, column=1, sticky="ns", padx=(4, 0))
+        self.tabela.configure(yscrollcommand=rolagem.set)
+        self.tabela.bind("<Delete>", lambda e: acoes["remover"]())
+
+        faixa = ctk.CTkFrame(self, fg_color="transparent")
+        faixa.pack(fill="x", padx=24)
+        self.lb_resumo = ctk.CTkLabel(faixa, text="", font=m.f_rotulo, text_color=Tema.TEXTO_SUAVE)
+        self.lb_resumo.pack(side="left")
+        m._botao(faixa, "Conferir os links", acoes["conferir"], "secundario").pack(side="right")
+        m._botao(faixa, "Remover selecionados", acoes["remover"], "perigo").pack(side="right", padx=(0, 6))
+
+        campos = ctk.CTkFrame(self, fg_color="transparent")
+        campos.pack(fill="x", padx=24, pady=(10, 0))
+        campos.grid_columnconfigure((1, 3), weight=1)
+        self.var_guia, self.var_antena = tk.StringVar(), tk.StringVar()
+        self.var_pasta, self.var_no_servidor = tk.StringVar(), tk.StringVar()
+        for n, (rotulo, var, dica) in enumerate((
+                ("Guia de programação (XMLTV, opcional):", self.var_guia, "link ou arquivo .xml/.xml.gz"),
+                ("Antena HDHomeRun (IP, opcional):", self.var_antena, "ex.: 192.168.0.50"),
+                ("Salvar a lista (canais.m3u) em:", self.var_pasta, "uma pasta que o servidor do Jellyfin enxergue"),
+                ("Como o servidor enxerga o arquivo:", self.var_no_servidor, "só se for outro PC, ex.: E:\\TV\\canais.m3u"))):
+            linha, coluna = divmod(n, 2)
+            m._rotulo(campos, rotulo).grid(row=linha * 2, column=coluna * 2, columnspan=2, sticky="w",
+                                           padx=(0 if coluna == 0 else 12, 0))
+            m._entrada(campos, var, dica, altura=32).grid(row=linha * 2 + 1, column=coluna * 2, columnspan=2,
+                                                         sticky="ew", padx=(0 if coluna == 0 else 12, 0), pady=(2, 6))
+        rodape = ctk.CTkFrame(self, fg_color="transparent")
+        rodape.pack(fill="x", padx=24, pady=(4, 16))
+        ctk.CTkLabel(rodape, text="O Jellyfin recebe a lista, o guia e a antena pela API (endereço e chave da aba "
+                     "Jellyfin) e os canais aparecem em TV ao vivo.", font=m.f_rotulo, text_color=Tema.TEXTO_FRACO,
+                     anchor="w").pack(side="left")
+        m._botao(rodape, "Fechar", self.destroy, "fantasma", largura=90).pack(side="right")
+        m._botao(rodape, "Salvar e enviar ao Jellyfin", acoes["publicar"], "primario").pack(side="right", padx=(0, 8))
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    def preencher(self, linhas: list[tuple[str, str, str, str, str, bool | None]]) -> None:
+        """linhas: [(iid, nome, grupo, situação, link, ok)] (ok None = não conferido)."""
+        self.tabela.delete(*self.tabela.get_children())
+        for iid, nome, grupo, situacao, link, ok in linhas:
+            tags = () if ok is None else ("ok" if ok else "erro",)
+            self.tabela.insert("", "end", iid=iid, text=nome, values=(grupo, situacao, link), tags=tags)
+        fora = sum(1 for *_, ok in linhas if ok is False)
+        self.lb_resumo.configure(text=f"{len(linhas)} canal(is)" + (f" · {fora} fora do ar" if fora else ""))
+
+    def selecionados(self) -> list[str]:
+        return list(self.tabela.selection())
+
+    def valores(self) -> dict:
+        return {"guia": self.var_guia.get().strip(), "antena": self.var_antena.get().strip(),
+                "pasta": self.var_pasta.get().strip(), "no_servidor": self.var_no_servidor.get().strip()}
+
+    def definir_valores(self, dados: dict) -> None:
+        for chave, var in (("guia", self.var_guia), ("antena", self.var_antena), ("pasta", self.var_pasta),
+                           ("no_servidor", self.var_no_servidor)):
+            var.set(dados.get(chave, "") or "")
+
+
 # =============================================================================== janela
 class JanelaModerna(ctk.CTk):
     COLUNAS = (("n", "#", 48, False), ("status", "Situação", 110, False), ("titulo", "Título", 240, True),
@@ -340,7 +516,8 @@ class JanelaModerna(ctk.CTk):
     def __init__(self, pasta_padrao: str = "videos_baixados"):
         ctk.set_appearance_mode("dark")
         super().__init__(fg_color=Tema.FUNDO)
-        self.title("videoscraper - vídeos públicos")
+        from .atualizacao import versao_atual
+        self.title(f"videoscraper {versao_atual()} - vídeos públicos")
         altura = min(900, max(700, self.winfo_screenheight() - 90))
         self.geometry(f"1320x{altura}")
         self.minsize(1100, 680)
@@ -724,9 +901,10 @@ class JanelaModerna(ctk.CTk):
         self.bt_conferir_espelhos = self._botao(barra, "Conferir espelhos", self.ao_conferir_espelhos, largura=150)
         self.bt_relatorio = self._botao(barra, "Relatório", self.ao_relatorio, largura=110)
         self.bt_gerenciar_espelhos = self._botao(barra, "Espelhos...", self.ao_gerenciar_espelhos, largura=120)
+        self.bt_tv_ao_vivo = self._botao(barra, "TV ao vivo...", self.ao_tv_ao_vivo, largura=120)
         self.bt_parar_jf = self._botao(barra, "Parar", self.ao_parar, "perigo", largura=100)
         for b in (self.bt_previa, self.bt_organizar, self.bt_legendas, self.bt_desfazer, self.bt_conferir_espelhos,
-                  self.bt_relatorio, self.bt_gerenciar_espelhos):
+                  self.bt_relatorio, self.bt_gerenciar_espelhos, self.bt_tv_ao_vivo):
             b.pack(side="left", padx=(0, 10))
         self.bt_parar_jf.pack(side="right")
 
@@ -806,6 +984,16 @@ class JanelaModerna(ctk.CTk):
         self.txt_pastas_vigiadas.pack(fill="x", **p)
         self._botao(lateral, "Adicionar pasta...", self._adicionar_pasta_vigiada, "fantasma").pack(
             anchor="w", pady=(2, 4), **p)
+        # pastas que o organizador nunca mexe (ex.: as que o Sonarr/Radarr cuidam)
+        self._rotulo(lateral, "Pastas protegidas, uma por linha (ex.: as do\nSonarr/Radarr). O organizador nunca\n"
+                              "mexe nelas, nem entra nelas.").pack(anchor="w", pady=(4, 2), **p)
+        self.txt_pastas_protegidas = ctk.CTkTextbox(lateral, height=52, font=self.f_rotulo, fg_color=Tema.CAMPO,
+                                                    border_width=1, border_color=Tema.CAMPO_BORDA,
+                                                    text_color=Tema.TEXTO, corner_radius=Tema.RAIO_CONTROLE,
+                                                    wrap="none")
+        self.txt_pastas_protegidas.pack(fill="x", **p)
+        self._botao(lateral, "Proteger pasta...", self._adicionar_pasta_protegida, "fantasma").pack(
+            anchor="w", pady=(2, 4), **p)
         # conferência automática dos espelhos (.strm), em horas ou dias
         self.var_jf_conferir_auto = tk.BooleanVar(value=False)
         self._checkbox(lateral, "Conferir os espelhos (.strm) sozinho e\navisar no Discord/Telegram se quebrar",
@@ -827,6 +1015,15 @@ class JanelaModerna(ctk.CTk):
                                                   text_color=Tema.TEXTO_FRACO, anchor="w", justify="left",
                                                   wraplength=250)
         self.lb_estado_conferencia.pack(fill="x", padx=18, pady=(0, 4))
+        self.var_jf_iniciar_windows = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Iniciar junto com o Windows,\nminimizado perto do relógio", self.var_jf_iniciar_windows,
+                       comando=self.ao_alternar_inicializacao)
+        self.var_jf_fechar_bandeja = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Ao fechar (X), continuar rodando\nperto do relógio (a vigia segue)",
+                       self.var_jf_fechar_bandeja)
+        self.var_jf_avisar_versao = tk.BooleanVar(value=True)
+        self._checkbox(lateral, "Avisar quando sair versão nova\ndo programa (ao abrir)", self.var_jf_avisar_versao)
+        self.var_jf_versao_avisada = tk.StringVar(value="")
         self.lb_estado_vigia = ctk.CTkLabel(lateral, text="Desligada. Usa as pastas e opções desta aba; o que ainda "
                                             "está baixando (.part, .!qB) fica para a próxima.",
                                             font=self.f_rotulo, text_color=Tema.TEXTO_FRACO, anchor="w",
@@ -1013,6 +1210,17 @@ class JanelaModerna(ctk.CTk):
         self.lb_detalhe_titulo = ctk.CTkLabel(cartao, text="Antes → Depois  (clique numa linha da tabela)",
                                               font=self.f_secao, text_color=Tema.TEXTO, anchor="w")
         self.lb_detalhe_titulo.grid(row=0, column=0, columnspan=3, sticky="w", padx=18, pady=(10, 4))
+        # não identificado? você diz qual é a série/filme e o programa lembra (regra salva)
+        acoes = ctk.CTkFrame(cartao, fg_color="transparent")
+        acoes.grid(row=0, column=2, sticky="e", padx=(0, 18), pady=(10, 4))
+        self.bt_corrigir_nome = self._botao(acoes, "Corrigir nome...", self.ao_corrigir_nome, "secundario",
+                                            largura=140)
+        # conflito (cópia repetida ou já na biblioteca): fica a melhor, a outra sai (dá para desfazer)
+        self.bt_resolver_conflitos = self._botao(acoes, "Resolver conflitos...", self.ao_resolver_conflitos,
+                                                 "secundario", largura=160)
+        for b in (self.bt_resolver_conflitos, self.bt_corrigir_nome):
+            b.configure(height=30)
+            b.pack(side="right", padx=(8, 0))
         for coluna, texto in ((1, "Pasta"), (2, "Arquivo")):
             self._rotulo(cartao, texto, fonte=ctk.CTkFont(Tema.FAMILIA, 11, "bold")).grid(
                 row=1, column=coluna, sticky="w", padx=(0, 8))
@@ -1143,10 +1351,12 @@ class JanelaModerna(ctk.CTk):
             telegram_chat_id=self.var_jf_telegram_chat.get().strip(),
             apagar_pasta_origem=self.var_jf_apagar_pasta.get(), nomes_episodios=self.var_jf_nomes_ep.get(),
             vigiar=self.var_jf_vigiar.get(), vigiar_min=self.campo_vigia_min.get(),
-            pastas_vigiadas=tuple(self.pastas_vigiadas()),
+            pastas_vigiadas=tuple(self.pastas_vigiadas()), pastas_protegidas=tuple(self.pastas_protegidas()),
             conferir_auto=self.var_jf_conferir_auto.get(), conferir_a_cada=self.campo_conferir_a_cada.get(),
             conferir_unidade=self.var_jf_conferir_unidade.get(), remover_quebrados=self.var_jf_remover_quebrados.get(),
             ultima_conferencia=self.var_jf_ultima_conferencia.get(),
+            avisar_versao=self.var_jf_avisar_versao.get(), versao_avisada=self.var_jf_versao_avisada.get(),
+            fechar_na_bandeja=self.var_jf_fechar_bandeja.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
     def idiomas_jf(self) -> str:
@@ -1181,7 +1391,8 @@ class JanelaModerna(ctk.CTk):
                   "limpar_lixo": self.var_jf_lixo, "imagens_tmdb": self.var_jf_imagens,
                   "apagar_pasta_origem": self.var_jf_apagar_pasta, "nomes_episodios": self.var_jf_nomes_ep,
                   "vigiar": self.var_jf_vigiar, "conferir_auto": self.var_jf_conferir_auto,
-                  "remover_quebrados": self.var_jf_remover_quebrados,
+                  "remover_quebrados": self.var_jf_remover_quebrados, "avisar_versao": self.var_jf_avisar_versao,
+                  "fechar_na_bandeja": self.var_jf_fechar_bandeja,
                   "gerar_nfo": self.var_jf_nfo, "atualizar_jellyfin": self.var_jf_atualizar,
                   "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar}
         for chave, var in textos.items():
@@ -1196,12 +1407,16 @@ class JanelaModerna(ctk.CTk):
             self.campo_vigia_min.set(float(dados["vigiar_min"]))
         if dados.get("pastas_vigiadas"):
             self.definir_pastas_vigiadas(list(dados["pastas_vigiadas"]))
+        if dados.get("pastas_protegidas"):
+            self.definir_pastas_protegidas(list(dados["pastas_protegidas"]))
         if dados.get("conferir_a_cada"):
             self.campo_conferir_a_cada.set(float(dados["conferir_a_cada"]))
         if dados.get("conferir_unidade") in ("minutos", "horas", "dias"):
             self.var_jf_conferir_unidade.set(dados["conferir_unidade"])
         if dados.get("ultima_conferencia"):
             self.var_jf_ultima_conferencia.set(dados["ultima_conferencia"])
+        if dados.get("versao_avisada"):
+            self.var_jf_versao_avisada.set(dados["versao_avisada"])
         if "filtros_ocultos" in dados:
             for chave, var in self.vars_filtro_jf.items():
                 var.set(chave not in dados["filtros_ocultos"])
@@ -1292,6 +1507,20 @@ class JanelaModerna(ctk.CTk):
             pastas = pastas.splitlines()
         self.txt_pastas_vigiadas.delete("1.0", "end")
         self.txt_pastas_vigiadas.insert("1.0", "\n".join(p for p in pastas if p.strip()))
+
+    def pastas_protegidas(self) -> list[str]:
+        return [linha.strip() for linha in self.txt_pastas_protegidas.get("1.0", "end").splitlines() if linha.strip()]
+
+    def definir_pastas_protegidas(self, pastas) -> None:
+        if isinstance(pastas, str):
+            pastas = pastas.splitlines()
+        self.txt_pastas_protegidas.delete("1.0", "end")
+        self.txt_pastas_protegidas.insert("1.0", "\n".join(p for p in pastas if p.strip()))
+
+    def _adicionar_pasta_protegida(self) -> None:
+        pasta = filedialog.askdirectory()
+        if pasta and pasta not in self.pastas_protegidas():
+            self.definir_pastas_protegidas(self.pastas_protegidas() + [pasta])
 
     def _adicionar_pasta_vigiada(self) -> None:
         pasta = filedialog.askdirectory()
@@ -1521,6 +1750,12 @@ class JanelaModerna(ctk.CTk):
         self.wait_window(dialogo)
         return dialogo.resposta
 
+    def pedir_nome(self, tipo: str, sugestao: str, onde: str, regra_atual: str = "") -> dict | None:
+        """Janela do "Corrigir nome": {'titulo', 'ano', 'temporada'}, {'esquecer': True} ou None."""
+        janela = JanelaCorrigirNome(self, tipo, sugestao, onde, regra_atual)
+        self.wait_window(janela)
+        return janela.resposta
+
     def escolher(self, titulo: str, mensagem: str, opcoes: tuple[str, ...]) -> str | None:
         """Pergunta com vários botões; devolve o texto do escolhido (None = Cancelar)."""
         dialogo = DialogoModerno(self, titulo, mensagem, "info", opcoes=opcoes)
@@ -1631,6 +1866,18 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_abrir_relatorio(self) -> None:
+        pass
+
+    def ao_corrigir_nome(self) -> None:
+        pass
+
+    def ao_resolver_conflitos(self) -> None:
+        pass
+
+    def ao_alternar_inicializacao(self) -> None:
+        pass
+
+    def ao_tv_ao_vivo(self) -> None:
         pass
 
     def ao_relatorio(self) -> None:

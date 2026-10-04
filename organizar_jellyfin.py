@@ -76,6 +76,12 @@ ARQUIVO_LOG = "jellyfin_organizer.log"
 # Ex. com o uTorrent baixando em pastas separadas: [r"D:\Torrent\Filmes", r"D:\Torrent\Series"]
 # (por variável de ambiente: as pastas separadas por ponto e vírgula). Vazio = só a PASTA_ENTRADA.
 VIGIAR_PASTAS: list[str] = []
+# Pastas que o organizador NUNCA mexe (ex.: as do Sonarr/Radarr): nem organiza, nem apaga, nem põe legenda.
+PASTAS_PROTEGIDAS: list[str] = []
+# Regras do "Corrigir nome" (feitas na janela): "esta pasta é a série X". O script usa as mesmas.
+ARQUIVO_REGRAS = "~/.videoscraper/regras_nomes.json"
+# Canais ao vivo (feitos na janela "TV ao vivo..."): conferidos junto com os espelhos (avisa se sair do ar).
+ARQUIVO_CANAIS = "~/.videoscraper/canais.json"
 
 # Espelhos (.strm): conferir os links e avisar no Discord/Telegram se algum quebrar.
 # "7d" = a cada 7 dias, "12h" = a cada 12 horas, "30min" = a cada 30 minutos (mínimo 5 min),
@@ -90,7 +96,9 @@ TRABALHOS_SIMULTANEOS = 4                         # filmes processados ao mesmo 
 
 from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, ConfigSite,  # noqa: E402
                             ProvedorOpenSubtitles, ProvedorSiteHTML, ProvedorSubDL, organizar_pasta)
-from jellyfin_tools.organizador import organizar_misto  # noqa: E402
+from jellyfin_tools.organizador import organizar_misto, protegido  # noqa: E402
+from jellyfin_tools.regras import carregar_regras  # noqa: E402
+from jellyfin_tools.tv_ao_vivo import carregar_canais, conferir_canais, mensagem_fora_do_ar  # noqa: E402
 from jellyfin_tools.metadados import ClienteTMDB  # noqa: E402
 from jellyfin_tools.notificacoes import Notificador  # noqa: E402
 from jellyfin_tools.pos_processamento import (ConfigPos, itens_da_biblioteca, itens_de_series,  # noqa: E402
@@ -187,7 +195,8 @@ def organizar(aplicar: bool, log, filtro=None) -> int:
         movimentos = organizar_pasta(entrada, filmes, montar_catalogo(), aplicar=aplicar, modo=cfg("MODO"),
                                      limpar_lixo=cfg("APAGAR_LIXO"), limite_trailer_mb=cfg("LIMITE_TRAILER_MB"),
                                      apagar_pasta_origem=cfg("APAGAR_PASTA_ORIGEM"),
-                                     nomes_episodios=cfg("NOMES_EPISODIOS"), filtro=filtro)
+                                     nomes_episodios=cfg("NOMES_EPISODIOS"), filtro=filtro,
+                                     protegidas=cfg("PASTAS_PROTEGIDAS"), regras=_regras())
     except Exception as erro:
         log.critical("Falha ao organizar a pasta: %s", erro, exc_info=True)
         return 1
@@ -228,7 +237,8 @@ def vigiar(log, ciclos: int | None = None, dormir=time.sleep) -> int:
                 continue
             espera = cfg("PRONTO_APOS_MIN") * 60
             try:                                    # simulação rápida: tem algo novo e pronto?
-                previa = organizar_misto(pasta, filmes, series, CatalogoLocal.padrao(), filtro=filtro_prontos(espera))
+                previa = organizar_misto(pasta, filmes, series, CatalogoLocal.padrao(), filtro=filtro_prontos(espera),
+                                         protegidas=cfg("PASTAS_PROTEGIDAS"), regras=_regras())
                 novos = [m for m in previa if m.status == "simulado"]
                 if not novos:
                     continue
@@ -237,7 +247,8 @@ def vigiar(log, ciclos: int | None = None, dormir=time.sleep) -> int:
                                              aplicar=True, limpar_lixo=cfg("APAGAR_LIXO"),
                                              limite_trailer_mb=cfg("LIMITE_TRAILER_MB"),
                                              apagar_pasta_origem=cfg("APAGAR_PASTA_ORIGEM"),
-                                             nomes_episodios=cfg("NOMES_EPISODIOS"))
+                                             nomes_episodios=cfg("NOMES_EPISODIOS"),
+                                             protegidas=cfg("PASTAS_PROTEGIDAS"), regras=_regras())
             except Exception as erro:
                 log.error("Vigia: falha em %s: %s", pasta, erro, exc_info=True)
                 continue
@@ -259,17 +270,29 @@ def vigiar(log, ciclos: int | None = None, dormir=time.sleep) -> int:
 def conferir_espelhos(log) -> int:
     """Confere os .strm das bibliotecas, avisa no Discord/Telegram e (opcional) remove os quebrados."""
     pastas = [p for p in (cfg("PASTA_FILMES"), cfg("PASTA_SERIES")) if p and Path(p).expanduser().is_dir()]
-    if not pastas:
+    canais = carregar_canais(Path(cfg("ARQUIVO_CANAIS")).expanduser())
+    if not pastas and not canais:
         log.warning("Conferir espelhos: PASTA_FILMES/PASTA_SERIES não existem")
         return 1
     avisos = Notificador(cfg("DISCORD_WEBHOOK_URL"), cfg("TELEGRAM_BOT_TOKEN"), cfg("TELEGRAM_CHAT_ID"))
     todos, quebrados, removidos = conferir_e_avisar(*[Path(p).expanduser() for p in pastas], notificador=avisos,
-                                                    remover=cfg("REMOVER_ESPELHOS_QUEBRADOS"))
+                                                    remover=cfg("REMOVER_ESPELHOS_QUEBRADOS")) if pastas else ([], [], 0)
+    if canais:
+        fora = [(c, s) for c, s in conferir_canais(canais) if not s.ok]
+        for c, s in fora:
+            log.warning("[canal fora do ar] %s (%s)", c.nome, s.detalhe)
+        if fora and avisos.ativo:
+            avisos.enviar(*mensagem_fora_do_ar(fora))
+        log.info("=== Canais ao vivo: %d conferido(s), %d fora do ar ===", len(canais), len(fora))
     for _, arquivo, _, v in quebrados:
         log.warning("[quebrado] %s (%s)", arquivo, v.problema)
     log.info("=== Espelhos: %d conferido(s), %d quebrado(s), %d removido(s) ===", len(todos), len(quebrados), removidos)
     _marca_conferencia().write_text(datetime.now().isoformat(timespec="seconds"), encoding="utf-8")
     return 0
+
+
+def _regras():
+    return carregar_regras(Path(cfg("ARQUIVO_REGRAS")).expanduser())
 
 
 def _bibliotecas() -> list[Path]:
@@ -361,6 +384,7 @@ def completar_biblioteca(log) -> int:
         itens = itens_de_series(filmes, montar_catalogo(), log)
     else:
         itens = itens_da_biblioteca(filmes, log)
+    itens = [(m, nome) for m, nome in itens if not protegido(m.destino, cfg("PASTAS_PROTEGIDAS"))]
     log.info("=== Completar biblioteca: %d item(ns) em %s ===", len(itens), filmes)
     resultados = pos_processar_lote(itens, log, notificar=False)
     log.info("=== Fim: %d filme(s) verificados ===", len(resultados))

@@ -5,8 +5,12 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 datas = collect_data_files("customtkinter")                                   # temas e fontes da janela
 datas += [("jellyfin_tools/catalogo_filmes.json", "jellyfin_tools")]          # catálogo local
+import os  # noqa: E402
+if os.path.exists("videoscraper/versao_build.txt"):                          # a versão (gravada pelo GitHub)
+    datas += [("videoscraper/versao_build.txt", "videoscraper")]
 binaries, hiddenimports = [], ["videoscraper.app_moderna", "videoscraper.gui", "videoscraper.menu"]
-for pacote in ("imageio_ffmpeg", "playwright"):                               # ffmpeg e o instalador do navegador
+hiddenimports += ["pystray._win32", "PIL.Image", "PIL.ImageDraw"]               # ícone perto do relógio
+for pacote in ("imageio_ffmpeg", "playwright", "pystray"):                    # ffmpeg, instalador do navegador, ícone
     d, b, h = collect_all(pacote)
     datas, binaries, hiddenimports = datas + d, binaries + b, hiddenimports + h
 

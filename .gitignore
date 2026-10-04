@@ -11,3 +11,4 @@ jellyfin_organizer.log*
 # PyInstaller (gerar_exe.bat)
 build/
 dist/
+videoscraper/versao_build.txt

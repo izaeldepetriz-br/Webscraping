@@ -30,6 +30,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
+      - name: Gravar a versão no programa (aviso de versão nova)
+        shell: pwsh
+        run: |
+          $v = "${{ inputs.versao }}"
+          if (-not $v -and "${{ github.ref }}".StartsWith("refs/tags/v")) { $v = "${{ github.ref_name }}" }
+          if ($v) { Set-Content -Path videoscraper\versao_build.txt -Value $v -NoNewline }
       - name: Gerar o programa
         run: python -m PyInstaller videoscraper.spec --noconfirm
       - name: Autoteste do .exe

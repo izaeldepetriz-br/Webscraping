@@ -298,3 +298,19 @@ def test_copia_que_ja_esta_na_biblioteca_mostra_os_tamanhos(tmp_path):
     assert m.status == "conflito"
     assert m.detalhe == ("já existe na biblioteca (2.0 GB); este tem 5.0 GB, 2160p Remux. "
                          "Nada é sobrescrito: compare e apague o pior")
+
+
+def test_pastas_protegidas_nao_sao_tocadas(tmp_path):
+    """Pastas do Sonarr/Radarr: o organizador não entra nelas (nem para apagar a pasta do torrent)."""
+    from jellyfin_tools import CatalogoLocal, organizar_pasta
+    origem = tmp_path / "Downloads"
+    sonarr = origem / "Sonarr"
+    (sonarr / "Dark (2017)" / "Season 01").mkdir(parents=True)
+    (sonarr / "Dark (2017)" / "Season 01" / "Dark.S01E02.mkv").write_bytes(b"v")
+    (origem / "Matrix.1999.1080p").mkdir()
+    (origem / "Matrix.1999.1080p" / "Matrix.1999.1080p.mkv").write_bytes(b"v")
+    movs = organizar_pasta(origem, tmp_path / "Filmes", CatalogoLocal.padrao(), aplicar=True,
+                           protegidas=[str(sonarr), "  "])
+    assert [m.origem.name for m in movs] == ["Matrix.1999.1080p.mkv"]
+    assert (sonarr / "Dark (2017)" / "Season 01" / "Dark.S01E02.mkv").exists()
+    assert organizar_pasta(sonarr, tmp_path / "Filmes", protegidas=[sonarr]) == []   # a própria origem

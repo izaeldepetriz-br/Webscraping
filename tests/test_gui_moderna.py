@@ -1269,3 +1269,204 @@ def test_botao_abrir_relatorio(app, tmp_path):
     assert "Abrir relatório" in app.caixas[-1][2]
     app.bt_abrir_relatorio.invoke()                                      # agora abre a planilha
     assert len(abertos) == 1 and abertos[0].endswith(".csv") and abertos[0] == str(app.ultimo_relatorio())
+
+
+def test_pastas_protegidas_pela_janela(app, tmp_path):
+    origem = tmp_path / "Downloads"
+    sonarr = origem / "Sonarr"
+    sonarr.mkdir(parents=True)
+    (sonarr / "Dark.S01E02.mkv").write_bytes(b"v")
+    (origem / "Matrix.1999.mkv").write_bytes(b"v")
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_origem.set(str(origem))
+    app.var_jf_destino.set(str(tmp_path / "Filmes"))
+    app.definir_pastas_protegidas([str(sonarr)])
+    app.bt_previa.invoke()
+    esperar(app)
+    assert [l[2] for l in _linhas_jf(app)] == ["Matrix.1999.mkv"]
+    app._salvar_config()
+    from videoscraper import config
+    assert config.carregar()["jellyfin"]["pastas_protegidas"] == [str(sonarr)]
+
+
+def test_corrigir_nome_pela_janela(app, tmp_path):
+    """Não identificado -> 'Corrigir nome...' -> regra salva -> a prévia de novo já com o nome."""
+    origem = tmp_path / "Downloads" / "Pasta Estranha"
+    origem.mkdir(parents=True)
+    for nome in ("Ep 14.mp4", "Ep 15.mp4"):
+        (origem / nome).write_bytes(b"v")
+    app.seletor_aba.set("Jellyfin")
+    app.mostrar_aba("Jellyfin")
+    app.seletor_modo.set("Séries")
+    app._ao_trocar_modo("Séries")
+    app.var_jf_origem.set(str(origem))
+    app.var_jf_destino.set(str(tmp_path / "Series"))
+    app.bt_previa.invoke()
+    esperar(app)
+    assert all("Pasta Estranha" in l[3] for l in _linhas_jf(app))          # sem regra: o nome da pasta
+    pedidos = []
+    app.pedir_nome = lambda tipo, sugestao, onde, atual="": (pedidos.append((tipo, sugestao, onde)),
+                                                              {"titulo": "Breaking Bad", "ano": 2008, "temporada": 5})[1]
+    app.tabela_jf.selection_set("0")
+    app.bt_corrigir_nome.invoke()
+    esperar(app)
+    assert pedidos[0][0] == "serie" and str(origem) in pedidos[0][2]
+    assert sorted(l[3] for l in _linhas_jf(app)) == ["Breaking Bad S05E14.mp4", "Breaking Bad S05E15.mp4"]
+    from jellyfin_tools.regras import carregar_regras
+    assert [r.descricao() for r in carregar_regras(app.arquivo_regras)] == ["Breaking Bad (2008), temporada 5"]
+    app.pedir_nome = lambda *a, **k: {"esquecer": True}                   # "Esquecer a regra"
+    app.tabela_jf.selection_set("0")
+    app.bt_corrigir_nome.invoke()
+    esperar(app)
+    assert carregar_regras(app.arquivo_regras) == []
+
+
+def test_resolver_conflitos_pela_janela(app, tmp_path):
+    from test_conflitos import _video
+    origem, filmes = tmp_path / "Downloads", tmp_path / "Filmes"
+    _video(origem / "Matrix.1999.1080p.BluRay.mp4", 1080)
+    _video(origem / "Matrix.1999.720p.WEB-DL.mp4", 720)
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_origem.set(str(origem))
+    app.var_jf_destino.set(str(filmes))
+    app.bt_previa.invoke()
+    esperar(app)
+    assert sorted(l[1].split("  ")[-1] for l in _linhas_jf(app)) == ["conflito", "vai mover"]
+    perguntas = []
+    app.perguntar = lambda t, m: perguntas.append(m) or True
+    app.bt_resolver_conflitos.invoke()
+    for _ in range(4):                                  # compara -> confirma -> tira -> pré-visualiza de novo
+        esperar(app)
+    assert "fica: Matrix.1999.1080p.BluRay.mp4" in perguntas[-1] and "sai:  Matrix.1999.720p.WEB-DL.mp4" in perguntas[-1]
+    assert not (origem / "Matrix.1999.720p.WEB-DL.mp4").exists()
+    assert [l[1].split("  ")[-1] for l in _linhas_jf(app)] == ["vai mover"]   # a prévia nova, sem conflito
+
+
+def test_aviso_de_versao_nova_uma_vez_por_versao(app, monkeypatch):
+    from videoscraper import atualizacao
+    nova = atualizacao.VersaoNova("v9.9", "https://github.com/x/releases/tag/v9.9", "Novidades")
+    monkeypatch.setattr(atualizacao, "verificar", lambda *a, **k: nova)
+    abertos, escolhas = [], []
+    monkeypatch.setattr(app_moderna.webbrowser, "open", abertos.append)
+    app.escolher = lambda t, m, opcoes: (escolhas.append(m), opcoes[0])[1]
+    app.verificar_versao_nova()
+    for _ in range(40):
+        app.update()
+        time.sleep(0.05)
+    assert len(escolhas) == 1 and "v9.9" in escolhas[0] and abertos == [nova.url]
+    app.verificar_versao_nova()                                         # a mesma versão: não avisa de novo
+    for _ in range(20):
+        app.update()
+        time.sleep(0.05)
+    assert len(escolhas) == 1
+    from videoscraper import config
+    assert config.carregar()["jellyfin"]["versao_avisada"] == "v9.9"
+
+
+def test_bandeja_fechar_e_iniciar_com_o_windows(app, monkeypatch):
+    """X com "continuar perto do relógio": a janela some e o ícone aparece; "Abrir" e "Sair" no ícone."""
+    from videoscraper import bandeja, inicializacao
+
+    class IconeFalso:
+        def __init__(self, dono):
+            self.rodando = False
+            icones.append(self)
+
+        def run_detached(self):
+            self.rodando = True
+
+        def stop(self):
+            self.rodando = False
+
+    icones = []
+    monkeypatch.setattr(bandeja, "disponivel", lambda: True)
+    original = bandeja.Bandeja
+    monkeypatch.setattr(app_moderna.bandeja, "Bandeja",
+                        lambda pedir, titulo: original(pedir, titulo, fabrica=IconeFalso))
+    app.var_jf_fechar_bandeja.set(True)
+    app.fechar()                                                       # o X
+    app.update()
+    assert app.state() == "withdrawn" and icones[-1].rodando
+    app._bandeja.pedir("abrir")                                        # clique em "Abrir" (vem pela fila)
+    for _ in range(5):
+        app.update()
+        time.sleep(0.05)
+    assert app.state() == "normal" and not icones[-1].rodando
+
+    registro = {}
+
+    class RegistroFalso:                                               # winreg de mentira
+        HKEY_CURRENT_USER, REG_SZ = 1, 1
+
+        class _Chave:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        def CreateKey(self, *a):
+            return self._Chave()
+
+        OpenKey = CreateKey
+
+        def SetValueEx(self, chave, nome, _, tipo, valor):
+            registro[nome] = valor
+
+        def DeleteValue(self, chave, nome):
+            registro.pop(nome)
+
+        def QueryValueEx(self, chave, nome):
+            if nome not in registro:
+                raise FileNotFoundError(nome)
+            return registro[nome], 1
+
+    falso = RegistroFalso()
+    monkeypatch.setattr(inicializacao, "_registro", lambda: falso)
+    app.var_jf_fechar_bandeja.set(False)
+    app.var_jf_iniciar_windows.set(True)
+    app.ao_alternar_inicializacao()
+    assert registro["videoscraper"].endswith("--minimizado") and "iniciar.py" in registro["videoscraper"]
+    assert app.var_jf_fechar_bandeja.get() and inicializacao.ativo()
+    app.var_jf_iniciar_windows.set(False)
+    app.ao_alternar_inicializacao()
+    assert registro == {} and not inicializacao.ativo()
+
+
+def test_tv_ao_vivo_pela_janela(app, tmp_path, api_falsa):
+    """Adicionar, importar lista, conferir e enviar ao Jellyfin (servidor falso)."""
+    import json
+    api_falsa.rotas["/cultura.m3u8"] = lambda q: (200, b"#EXTM3U\n", {"Content-Type": "application/x-mpegURL"})
+    api_falsa.rotas["/lista.m3u"] = lambda q: (200, f"#EXTM3U\n#EXTINF:-1 group-title=\"Abertos\",Rádio\n"
+                                                     f"{api_falsa.base}/radio.mp3\n".encode(), {"Content-Type": "audio/x-mpegurl"})
+    api_falsa.rotas["/radio.mp3"] = lambda q: (404, b"", {})
+    tuners = []
+    api_falsa.rotas["/System/Configuration/livetv"] = lambda q: (200, {"TunerHosts": tuners, "ListingProviders": []})
+    api_falsa.rotas["/LiveTv/TunerHosts"] = lambda q: (tuners.append(json.loads(api_falsa.pedidos[-1]["corpo"])),
+                                                       (200, tuners[-1]))[1]
+    api_falsa.rotas["/ScheduledTasks"] = lambda q: (200, [])
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_url.set(api_falsa.base)
+    app.var_jf_chave_jellyfin.set("chave")
+    app.bt_tv_ao_vivo.invoke()
+    janela = app.janela_canais
+    janela.var_nome.set("TV Cultura")
+    janela.var_link.set(api_falsa.base + "/cultura.m3u8")
+    app._adicionar_canal()
+    janela.var_link.set(api_falsa.base + "/lista.m3u")                      # uma LISTA: importa todos
+    app._adicionar_canal()
+    esperar(app)
+    assert [janela.tabela.item(i, "text") for i in janela.tabela.get_children()] == ["TV Cultura", "Rádio"]
+    app._conferir_canais()
+    esperar(app)
+    situacoes = [janela.tabela.set(i, "situacao") for i in janela.tabela.get_children()]
+    assert situacoes[0] == "no ar" and "HTTP 404" in situacoes[1]
+    assert "1 fora do ar" in janela.lb_resumo.cget("text")
+    janela.var_pasta.set(str(tmp_path / "TV"))
+    app._publicar_canais()
+    esperar(app)
+    assert (tmp_path / "TV" / "canais.m3u").exists()
+    assert [(t["Type"], t["Url"]) for t in tuners] == [("m3u", str(tmp_path / "TV" / "canais.m3u"))]
+    assert "sintonizador M3U" in app.caixas[-1][2]
+    from jellyfin_tools.tv_ao_vivo import carregar_canais
+    assert len(carregar_canais(app.arquivo_canais)) == 2                    # a lista fica guardada

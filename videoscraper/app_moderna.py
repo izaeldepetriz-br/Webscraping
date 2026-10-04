@@ -29,14 +29,18 @@ from tkinter import filedialog
 from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, ConfigSite, ErroCatalogo,
                             ProvedorOpenSubtitles, ProvedorSiteHTML, ProvedorSubDL, desfazer, organizar_pasta)
 from jellyfin_tools.legendas import normalizar_idiomas
-from jellyfin_tools.nomes import extrair_episodio, normalizar
+from jellyfin_tools.nomes import extrair_episodio, extrair_titulo_e_ano, normalizar, serie_da_pasta
 from jellyfin_tools.metadados import ClienteTMDB
 from jellyfin_tools.notificacoes import Notificador
 from jellyfin_tools.espelho import (aplicar_espelho, classificar, conferir_e_avisar, conferir_espelhos,
                                     desfazer_ultima_remocao, intervalo_em_segundos, licenca_aberta,
                                     lotes_de_espelhos, nome_do_link, planejar_espelho, remover_espelhos,
                                     remover_espelhos_escolhidos, verificar_links)
-from jellyfin_tools.organizador import (DETALHE_EPISODIO, organizar_misto, problema_no_caminho, sugestao_de_caminho,
+from jellyfin_tools.conflitos import aplicar as aplicar_conflitos, decidir as decidir_conflitos
+from jellyfin_tools.tv_ao_vivo import (Canal, ClienteTV, carregar_canais, conferir_canais, importar as importar_canais,
+                                       mensagem_fora_do_ar, publicar as publicar_canais, salvar_canais)
+from jellyfin_tools.regras import RegraNome, adicionar_regra, carregar_regras, regra_para, salvar_regras
+from jellyfin_tools.organizador import (DETALHE_EPISODIO, episodio_do_video, protegido, organizar_misto, problema_no_caminho, sugestao_de_caminho,
                                        ultimo_log)
 from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, itens_de_series, pos_processar
 from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao
@@ -49,7 +53,8 @@ from . import config
 from .cli import salvar
 from .extracao import LinkVideo
 from .gui import ORIGENS, _SaidaParaFila, _so_caracteres_basicos
-from .gui_moderna import JanelaEspelhos, JanelaModerna, OpcoesInterface
+from . import atualizacao, bandeja, inicializacao
+from .gui_moderna import JanelaCanais, JanelaEspelhos, JanelaModerna, OpcoesInterface
 from .navegador import PERFIL_PADRAO, PlaywrightAusente
 from .servico import MENSAGEM_ROBOTS, Trabalho, fazer_login
 
@@ -116,6 +121,13 @@ class AppModerna(JanelaModerna):
         self._vigia_agendada = None             # pasta vigiada: id do próximo after()
         self._conferencia_agendada = None       # conferência automática dos espelhos
         self.janela_espelhos = None             # "Espelhos...": remover qualquer espelhamento
+        self._conflitos_pendentes = None        # "Resolver conflitos": decisões esperando a confirmação
+        self._previa_pendente = False
+        self._versao_pendente = None            # aviso de versão nova que chegou durante uma tarefa
+        self._bandeja = None                    # ícone perto do relógio (quando escondida)
+        self.janela_canais = None               # "TV ao vivo..."
+        self._canais, self._situacao_canais = [], {}
+        self._saindo = False
         self._espelhos_salvos = {}
         self._vigia_conferindo = False
         self._movimentos_previa: list = []      # o que a última pré-visualização mostrou
@@ -409,6 +421,25 @@ class AppModerna(JanelaModerna):
             self.definir_estado_conferencia(
                 f"{self._texto_ultima_conferencia()} {total} espelho(s), {quebrados} quebrado(s)"
                 + (f", {removidos} removido(s)." if removidos else "."), not quebrados)
+        elif tipo == "canais_importados":
+            self._juntar_canais(dado)
+        elif tipo == "canais_conferidos":
+            self._situacao_canais.update({c.url: sit for c, sit in dado})
+            self._mostrar_canais()
+        elif tipo == "bandeja":                        # clique no ícone perto do relógio
+            if dado == "abrir":
+                self.mostrar_janela()
+            elif dado == "sair":
+                self.sair_de_vez()
+        elif tipo == "versao_nova":
+            if self.trabalhando:                       # não interrompe uma tarefa: avisa no fim
+                self._versao_pendente = dado
+            else:
+                self._avisar_versao_nova(dado)
+        elif tipo == "conflitos_decididos":
+            self._conflitos_pendentes = dado               # pergunta depois do "fim" (a janela já está livre)
+        elif tipo == "previa_de_novo":
+            self._previa_pendente = True
         elif tipo == "espelhos_atualizar":             # janela "Espelhos...": relê a lista
             if self.janela_espelhos is not None and self.janela_espelhos.winfo_exists():
                 self._preencher_espelhos()
@@ -436,6 +467,15 @@ class AppModerna(JanelaModerna):
             if self._remocao_pendente:
                 quebrados, self._remocao_pendente = self._remocao_pendente, None
                 self.after(50, lambda: self._oferecer_remocao(quebrados))
+            if self._conflitos_pendentes:
+                pendentes, self._conflitos_pendentes = self._conflitos_pendentes, None
+                self.after(50, lambda: self._confirmar_conflitos(*pendentes))
+            if self._versao_pendente:
+                nova, self._versao_pendente = self._versao_pendente, None
+                self.after(50, lambda: self._avisar_versao_nova(nova))
+            if self._previa_pendente:
+                self._previa_pendente = False
+                self.after(50, self.ao_previsualizar)
 
 
     # ================================================================== auxiliares
@@ -489,8 +529,8 @@ class AppModerna(JanelaModerna):
                                          incluir_tmdbid=o.incluir_tmdbid, exigir_catalogo=o.exigir_catalogo,
                                          modo=o.modo, limpar_lixo=o.limpar_lixo,
                                          apagar_pasta_origem=o.apagar_pasta_origem,
-                                         nomes_episodios=o.nomes_episodios,
-                                         ao_analisar=self._avisar_analise)
+                                         nomes_episodios=o.nomes_episodios, protegidas=o.pastas_protegidas,
+                                         regras=self.regras_de_nome(), ao_analisar=self._avisar_analise)
             for m in movimentos:
                 self._log.info("%s", m)
             quantos = sum(m.status == "simulado" for m in movimentos)
@@ -656,7 +696,8 @@ class AppModerna(JanelaModerna):
             novos = 0
             for pasta in pastas:
                 try:
-                    previa = organizar_misto(pasta, filmes, series, CatalogoLocal.padrao(), filtro=filtro_prontos())
+                    previa = organizar_misto(pasta, filmes, series, CatalogoLocal.padrao(), filtro=filtro_prontos(),
+                                             protegidas=o.pastas_protegidas, regras=self.regras_de_nome())
                     novos += sum(m.status == "simulado" for m in previa)
                 except Exception as erro:
                     self._log.error("Vigia: não consegui olhar %s: %s", pasta, erro)
@@ -684,7 +725,8 @@ class AppModerna(JanelaModerna):
                 todos += organizar_misto(pasta, filmes, series, self._catalogo(o), filtro=filtro_prontos(),
                                          aplicar=True, incluir_tmdbid=o.incluir_tmdbid,
                                          exigir_catalogo=o.exigir_catalogo, limpar_lixo=o.limpar_lixo,
-                                         apagar_pasta_origem=o.apagar_pasta_origem, nomes_episodios=o.nomes_episodios)
+                                         apagar_pasta_origem=o.apagar_pasta_origem, nomes_episodios=o.nomes_episodios,
+                                         protegidas=o.pastas_protegidas, regras=self.regras_de_nome())
             for m in todos:
                 nivel = {"erro": self._log.error, "movido": self._log.info}.get(m.status, self._log.warning)
                 nivel("%s", m)
@@ -736,30 +778,46 @@ class AppModerna(JanelaModerna):
         self._destinos[self._modo_atual] = self.var_jf_destino.get()
         pastas = [p for p in dict.fromkeys((self._destinos.get("Filmes"), self._destinos.get("Séries")))
                   if p and Path(p).is_dir()]
-        if not pastas:
+        canais = carregar_canais(self.arquivo_canais)
+        if not pastas and not canais:
             self._log.warning("Conferência automática: escolha as bibliotecas de Filmes/Séries")
             return
         notificador = Notificador(o.discord_webhook, o.telegram_token, o.telegram_chat_id)
 
         def tarefa():
-            resultado, quebrados, removidos = conferir_e_avisar(
-                *pastas, notificador=notificador, remover=o.remover_quebrados,
-                ao_progresso=lambda f, t: self._avisar_analise(f / t, f"Conferindo espelhos: {f} de {t}"))
+            resultado, quebrados, removidos = [], [], 0
+            if pastas:
+                resultado, quebrados, removidos = conferir_e_avisar(
+                    *pastas, notificador=notificador, remover=o.remover_quebrados,
+                    ao_progresso=lambda f, t: self._avisar_analise(f / t, f"Conferindo espelhos: {f} de {t}"))
             linhas = []
             for raiz, arquivo, url, v in resultado:
                 texto = v.problema or v.aviso or "funcionando"
                 (self._log.info if v.ok else self._log.warning)("[%s] %s (%s)", "ok" if v.ok else "quebrado",
                                                                  arquivo, texto)
                 linhas.append(("/".join(arquivo.relative_to(raiz).parts), v.ok, texto))
+            fora = []
+            if canais:                                 # canais ao vivo: avisa se algum saiu do ar
+                situacoes = conferir_canais(canais, ao_progresso=lambda f, t: self._avisar_analise(
+                    f / t, f"Conferindo canais ao vivo: {f} de {t}"))
+                fora = [(c, s) for c, s in situacoes if not s.ok]
+                for c, s in situacoes:
+                    (self._log.info if s.ok else self._log.warning)("[canal %s] %s (%s)", "ok" if s.ok else "fora do ar",
+                                                                     c.nome, s.detalhe)
+                    linhas.append((f"TV ao vivo/{c.nome}", s.ok, s.detalhe))
+                if fora and notificador.ativo:
+                    notificador.enviar(*mensagem_fora_do_ar(fora))
             if linhas:
                 self.fila.put(("jf_espelhos", linhas))
-            if quebrados and not notificador.ativo:
-                self._log.warning("Há espelhos quebrados, mas o Discord/Telegram não está configurado para avisar")
-            self.fila.put(("conferencia_feita", (datetime.now().isoformat(timespec="seconds"), len(resultado),
-                                                 len(quebrados), removidos)))
+            if (quebrados or fora) and not notificador.ativo:
+                self._log.warning("Há espelhos/canais com problema, mas o Discord/Telegram não está configurado")
+            self.fila.put(("conferencia_feita", (datetime.now().isoformat(timespec="seconds"), len(resultado) + len(canais),
+                                                 len(quebrados) + len(fora), removidos)))
             self.fila.put(("status_fim", f"Espelhos: {len(resultado) - len(quebrados)} funcionando, "
-                                         f"{len(quebrados)} quebrado(s)" + (f", {removidos} removido(s)." if removidos
-                                                                           else ".")))
+                                         f"{len(quebrados)} quebrado(s)" + (f", {removidos} removido(s)" if removidos
+                                                                           else "")
+                                         + (f". Canais: {len(canais) - len(fora)} no ar, {len(fora)} fora." if canais
+                                            else ".")))
 
         self._rodar("Conferindo espelhos (automático)...", tarefa)
 
@@ -1036,6 +1094,7 @@ class AppModerna(JanelaModerna):
                                          modo=o.modo, limpar_lixo=o.limpar_lixo,
                                          apagar_pasta_origem=o.apagar_pasta_origem,
                                          nomes_episodios=o.nomes_episodios, filtro=filtro,
+                                         protegidas=o.pastas_protegidas, regras=self.regras_de_nome(),
                                          ao_planejar=ao_planejar, ao_progresso=ao_progresso,
                                          ao_analisar=self._avisar_analise)
             movidos = [(i, m) for i, m in enumerate(movimentos) if m.status == "movido"]
@@ -1102,9 +1161,13 @@ class AppModerna(JanelaModerna):
         def tarefa():
             if o.modo == "filmes":
                 itens = itens_da_biblioteca(destino, self._log)
-                linhas = [nome for _, nome in itens]
             else:
                 itens = itens_de_series(destino, self._catalogo(o), self._log)
+            if o.pastas_protegidas:                  # Sonarr/Radarr cuidam dessas: nem legenda o programa põe
+                itens = [(m, nome) for m, nome in itens if not protegido(m.destino, o.pastas_protegidas)]
+            if o.modo == "filmes":
+                linhas = [nome for _, nome in itens]
+            else:
                 linhas = ["/".join(m.destino.relative_to(destino).parts) for m, _ in itens]
             idiomas = normalizar_idiomas(o.idioma) or ["pt-BR"]
             sufixo = f".{idiomas[0]}.srt" + (f"  (+{', '.join(idiomas[1:])})" if len(idiomas) > 1 else "")
@@ -1258,6 +1321,99 @@ class AppModerna(JanelaModerna):
                 self.fila.put(("msg", ("Avisos", "Não consegui enviar. Veja o motivo em 'Abrir log'.", "erro")))
 
         self._rodar("Enviando aviso de teste...", tarefa)
+
+    # ================================================================== "Corrigir nome" (regras que você ensina)
+    @property
+    def arquivo_regras(self) -> Path:
+        return config.ARQUIVO.parent / "regras_nomes.json"
+
+    def regras_de_nome(self) -> list:
+        return carregar_regras(self.arquivo_regras)
+
+    def ao_corrigir_nome(self) -> None:
+        """Não identificado (ou nome errado): você diz qual série/filme é, a regra fica guardada e a
+        pré-visualização roda de novo. Série: vale para a pasta inteira; filme: para o arquivo."""
+        if self.trabalhando:
+            return
+        ids = [int(i) for i in self.tabela_jf.selection() if i.isdigit()]
+        movimentos = [self._movimentos_previa[i] for i in ids if 0 <= i < len(self._movimentos_previa)]
+        movimentos = [m for m in movimentos if m.status not in ("limpeza", "pasta_apagada")]
+        if not movimentos:
+            self.mostrar_mensagem("Corrigir nome", "Pré-visualize e clique no arquivo que ficou sem nome (ou com o "
+                                  "nome errado). Ctrl+clique escolhe vários.", "aviso")
+            return
+        tipo = "serie" if self.obter_opcoes_jellyfin().modo == "series" else "filme"
+        alvos = list(dict.fromkeys(m.origem.parent if tipo == "serie" else m.origem for m in movimentos))
+        primeiro = movimentos[0].origem
+        if tipo == "serie":
+            ep = episodio_do_video(primeiro)
+            sugestao = ep.serie if ep else (serie_da_pasta(primeiro.parent.name) or ("",))[0]
+        else:
+            sugestao = extrair_titulo_e_ano(primeiro.name).titulo
+        atual = regra_para(primeiro, self.regras_de_nome(), tipo)
+        onde = "\n".join(str(a) for a in alvos[:3]) + (f"\n… e mais {len(alvos) - 3}" if len(alvos) > 3 else "")
+        resposta = self.pedir_nome(tipo, atual.titulo if atual else sugestao, onde,
+                                   atual.descricao() if atual else "")
+        if not resposta:
+            return
+        if resposta.get("esquecer"):
+            esquecer = {os.path.normcase(os.path.abspath(str(a))) for a in alvos}
+            salvar_regras(self.arquivo_regras, [r for r in self.regras_de_nome() if not (
+                r.tipo == tipo and os.path.normcase(os.path.abspath(r.caminho)) in esquecer)])
+            self._log.info("Regra de nome esquecida: %s", onde.replace("\n", "; "))
+        else:
+            for alvo in alvos:
+                regra = RegraNome(str(alvo), tipo, resposta["titulo"], resposta.get("ano"),
+                                  resposta.get("temporada") if tipo == "serie" else None)
+                adicionar_regra(self.arquivo_regras, regra)
+                self._log.info("Regra de nome: %s -> %s", alvo, regra.descricao())
+        self.ao_previsualizar()
+
+    # ================================================================== conflitos com um clique
+    def ao_resolver_conflitos(self) -> None:
+        """Conflitos da prévia (os selecionados; sem seleção, todos): fica a melhor cópia, a outra vai
+        para .organizador/removidos. "Desfazer última" põe tudo de volta."""
+        if self.trabalhando:
+            return
+        ids = [int(i) for i in self.tabela_jf.selection() if i.isdigit()]
+        escolhidos = [self._movimentos_previa[i] for i in ids if 0 <= i < len(self._movimentos_previa)]
+        escolhidos = [m for m in escolhidos if m.status == "conflito"]
+        if not any(m.status == "conflito" for m in self._movimentos_previa):
+            self.mostrar_mensagem("Resolver conflitos", "Nenhum conflito na pré-visualização. (Conflito = duas "
+                                  "cópias do mesmo filme/episódio, ou um que já está na biblioteca.)", "info")
+            return
+        o = self.obter_opcoes_jellyfin()
+        previa = list(self._movimentos_previa)
+
+        def tarefa():
+            self._log.info("Comparando as cópias (resolução lida de cada vídeo)...")
+            decisoes = decidir_conflitos(previa, escolhidos or None)
+            self.fila.put(("conflitos_decididos", (decisoes, o)))
+
+        self._rodar("Comparando as cópias...", tarefa)
+
+    def _confirmar_conflitos(self, decisoes, o) -> None:
+        if not decisoes:
+            self.mostrar_mensagem("Resolver conflitos", "Não consegui comparar esses conflitos (arquivos sumiram?). "
+                                  "Pré-visualize de novo.", "aviso")
+            return
+        lista = "\n".join(d.texto() for d in decisoes[:6]) + (f"\n… e mais {len(decisoes) - 6}"
+                                                              if len(decisoes) > 6 else "")
+        if not self.perguntar("Resolver conflitos",
+                              f"{len(decisoes)} conflito(s): fica a melhor cópia (maior resolução, depois a origem e "
+                              f"o tamanho).\n\n{lista}\n\nA que sai vai para a pasta .organizador\\removidos (não é "
+                              "apagada de vez; \"Desfazer última\" põe de volta). Para liberar o espaço, apague essa "
+                              "pasta depois."):
+            return
+
+        def tarefa():
+            saiu, mensagens = aplicar_conflitos(decisoes, Path(o.destino), Path(o.origem) if o.origem else None)
+            for m in mensagens:
+                (self._log.warning if m.startswith("erro") else self._log.info)("%s", m)
+            self.fila.put(("status_fim", f"Conflitos: {saiu} cópia(s) pior(es) tiradas. Pré-visualizando de novo..."))
+            self.fila.put(("previa_de_novo", None))
+
+        self._rodar("Resolvendo conflitos...", tarefa)
 
     def ultimo_relatorio(self) -> Path | None:
         """A planilha do relatório mais recente (C:\\Users\\<você>\\.videoscraper\\relatorios)."""
@@ -1459,10 +1615,201 @@ class AppModerna(JanelaModerna):
             dados.setdefault(chave, os.environ.get(variavel, ""))
         dados.setdefault("origem", PASTA_PADRAO)
         self.definir_opcoes_jellyfin(dados)
+        self.var_jf_iniciar_windows.set(inicializacao.ativo())    # o que vale é o registro do Windows
         if self.var_jf_vigiar.get():                 # ficou ligada da última vez: volta a vigiar
             self.after(3000, self.ao_alternar_vigia)
         self.definir_estado_conferencia(self._texto_ultima_conferencia())
         self._conferencia_agendada = self.after(60_000, self._ciclo_conferencia)
+        if self.var_jf_avisar_versao.get() and not os.environ.get("VIDEOSCRAPER_SEM_ATUALIZACAO"):
+            self.after(4000, self.verificar_versao_nova)
+
+    # ================================================================== TV ao vivo (canais no Jellyfin)
+    @property
+    def arquivo_canais(self) -> Path:
+        return config.ARQUIVO.parent / "canais.json"
+
+    def ao_tv_ao_vivo(self) -> None:
+        if self.janela_canais is None or not self.janela_canais.winfo_exists():
+            self.janela_canais = JanelaCanais(self, {
+                "adicionar": self._adicionar_canal, "importar_arquivo": self._importar_canais_arquivo,
+                "importar_endereco": self._importar_canais_endereco, "remover": self._remover_canais,
+                "conferir": self._conferir_canais, "publicar": self._publicar_canais})
+            dados = config.carregar().get("tv", {})
+            dados.setdefault("pasta", str(config.ARQUIVO.parent / "tv"))
+            self.janela_canais.definir_valores(dados)
+        self._canais = carregar_canais(self.arquivo_canais)
+        self._mostrar_canais()
+        self.janela_canais.lift()
+
+    def _mostrar_canais(self) -> None:
+        if self.janela_canais is None or not self.janela_canais.winfo_exists():
+            return
+        linhas = []
+        for i, c in enumerate(self._canais):
+            situacao = self._situacao_canais.get(c.url)            # None = ainda não conferido
+            linhas.append((str(i), c.nome, c.grupo, situacao.detalhe if situacao else "—", c.url,
+                           situacao.ok if situacao else None))
+        self.janela_canais.preencher(linhas)
+
+    def _guardar_canais(self) -> None:
+        salvar_canais(self.arquivo_canais, self._canais)
+        if self.janela_canais is not None and self.janela_canais.winfo_exists():
+            tudo = config.carregar()
+            tudo["tv"] = self.janela_canais.valores()
+            config.salvar(tudo)
+        self._mostrar_canais()
+
+    def _juntar_canais(self, novos) -> int:
+        conhecidos = {c.url for c in self._canais}
+        somados = [c for c in novos if c.url not in conhecidos]
+        self._canais += somados
+        self._guardar_canais()
+        return len(somados)
+
+    def _adicionar_canal(self) -> None:
+        janela = self.janela_canais
+        nome, link = janela.var_nome.get().strip(), janela.var_link.get().strip()
+        if not link.lower().startswith(("http://", "https://", "rtsp://", "rtmp://", "udp://")):
+            self.mostrar_mensagem("TV ao vivo", "Cole o link do sinal do canal (começa com http://, https://, rtsp://...).",
+                                  "aviso")
+            return
+        if link.lower().split("?")[0].endswith(".m3u") and not nome:
+            self._importar_canais_endereco()                   # é uma LISTA de canais: importa todos
+            return
+        self._juntar_canais([Canal(nome or link.rsplit("/", 1)[-1], link)])
+        janela.var_nome.set("")
+        janela.var_link.set("")
+
+    def _importar_canais_arquivo(self) -> None:
+        arquivo = filedialog.askopenfilename(title="Lista de canais (.m3u)",
+                                             filetypes=[("Lista de canais", "*.m3u *.m3u8"), ("Todos", "*.*")])
+        if arquivo:
+            somados = self._juntar_canais(importar_canais(arquivo))
+            self._log.info("TV ao vivo: %d canal(is) importado(s) de %s", somados, arquivo)
+
+    def _importar_canais_endereco(self) -> None:
+        link = self.janela_canais.var_link.get().strip()
+        if not link.lower().startswith(("http://", "https://")):
+            self.mostrar_mensagem("TV ao vivo", "Cole o endereço da lista .m3u (http...) no campo do link.", "aviso")
+            return
+
+        def tarefa():
+            novos = importar_canais(link)
+            self._log.info("TV ao vivo: %d canal(is) na lista %s", len(novos), link)
+            self.fila.put(("canais_importados", novos))
+
+        self._rodar("Importando a lista de canais...", tarefa)
+
+    def _remover_canais(self) -> None:
+        tirar = {int(i) for i in self.janela_canais.selecionados()}
+        if tirar and self.perguntar("TV ao vivo", f"Tirar {len(tirar)} canal(is) da lista?"):
+            self._canais = [c for i, c in enumerate(self._canais) if i not in tirar]
+            self._guardar_canais()
+
+    def _conferir_canais(self) -> None:
+        canais = list(self._canais)
+        if not canais:
+            return
+
+        def tarefa():
+            situacoes = conferir_canais(canais, ao_progresso=lambda f, t: self._avisar_analise(
+                f / t, f"Conferindo canais: {f} de {t}"))
+            for c, sit in situacoes:
+                (self._log.info if sit.ok else self._log.warning)("[canal] %s: %s", c.nome, sit.detalhe)
+            fora = sum(1 for _, sit in situacoes if not sit.ok)
+            self.fila.put(("canais_conferidos", situacoes))
+            self.fila.put(("status_fim", f"Canais: {len(situacoes) - fora} no ar, {fora} fora do ar."))
+
+        self._rodar("Conferindo os canais ao vivo...", tarefa)
+
+    def _publicar_canais(self) -> None:
+        valores = self.janela_canais.valores()
+        if not self._canais and not valores["antena"]:
+            self.mostrar_mensagem("TV ao vivo", "Adicione canais (ou o IP da antena HDHomeRun) primeiro.", "aviso")
+            return
+        if not valores["pasta"]:
+            self.mostrar_mensagem("TV ao vivo", "Escolha a pasta onde salvar a lista (canais.m3u).", "aviso")
+            return
+        self._guardar_canais()
+        o = self.obter_opcoes_jellyfin()
+        canais = list(self._canais)
+
+        def tarefa():
+            cliente = ClienteTV(o.jellyfin_url, o.jellyfin_api_key) if o.jellyfin_url and o.jellyfin_api_key else None
+            feito = publicar_canais(canais, valores["pasta"], valores["no_servidor"], valores["guia"], cliente,
+                                    valores["antena"])
+            for linha in feito:
+                self._log.info("TV ao vivo: %s", linha)
+            dica = "" if cliente else ("\n\nSem o endereço e a chave do Jellyfin (aba Jellyfin), a lista só foi salva: "
+                                       "cadastre-a em Painel > TV ao vivo > Sintonizadores > M3U.")
+            self.fila.put(("msg", ("TV ao vivo", "\n".join(feito) + dica, "sucesso")))
+
+        self._rodar("Enviando os canais ao Jellyfin...", tarefa)
+
+    # ================================================================== Windows: iniciar junto e ícone no relógio
+    def ao_alternar_inicializacao(self) -> None:
+        ligar = self.var_jf_iniciar_windows.get()
+        try:
+            inicializacao.ativar(ligar)
+        except OSError as erro:
+            self.var_jf_iniciar_windows.set(inicializacao.ativo())
+            self.mostrar_mensagem("Iniciar com o Windows", f"Não deu: {erro}", "aviso")
+            return
+        if ligar:
+            self.var_jf_fechar_bandeja.set(True)         # quem inicia com o Windows quer ficar rodando
+        self._salvar_config()
+        self._log.info("Iniciar com o Windows: %s", "ligado (minimizado perto do relógio)" if ligar else "desligado")
+
+    def esconder_na_bandeja(self) -> None:
+        """Some da barra de tarefas e fica perto do relógio (sem a bandeja, só minimiza)."""
+        if self._bandeja is None and bandeja.disponivel():
+            self._bandeja = bandeja.Bandeja(lambda acao: self.fila.put(("bandeja", acao)),
+                                            f"videoscraper {atualizacao.versao_atual()}")
+        if self._bandeja is not None:
+            try:
+                self._bandeja.mostrar()
+                self.withdraw()
+                self._log.info("Rodando perto do relógio (clique no ícone para abrir). A vigia continua.")
+                return
+            except Exception as erro:                    # sem bandeja neste sistema: só minimiza
+                self._log.warning("Ícone perto do relógio indisponível: %s", erro)
+                self._bandeja = None
+        self.iconify()
+
+    def mostrar_janela(self) -> None:
+        if self._bandeja is not None:
+            self._bandeja.esconder()
+            self._bandeja = None
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+    def sair_de_vez(self) -> None:
+        self._saindo = True
+        self.mostrar_janela()
+        self.fechar()
+
+    # ================================================================== aviso de versão nova
+    def verificar_versao_nova(self, sempre: bool = False) -> None:
+        """Consulta a página Releases (em segundo plano). Cada versão nova é avisada uma vez só."""
+        ja_avisada = self.var_jf_versao_avisada.get()      # lido aqui: variável do Tk só na thread da janela
+
+        def consultar():
+            nova = atualizacao.verificar()
+            if nova and (sempre or nova.versao != ja_avisada):
+                self.fila.put(("versao_nova", nova))
+        threading.Thread(target=consultar, daemon=True).start()
+
+    def _avisar_versao_nova(self, nova) -> None:
+        self.var_jf_versao_avisada.set(nova.versao)
+        self._salvar_config()
+        self._log.info("Versão nova disponível: %s (esta é %s) %s", nova.versao, atualizacao.versao_atual(), nova.url)
+        notas = f"\n\nO que mudou:\n{nova.notas[:400]}" if nova.notas else ""
+        if self.escolher("Versão nova", f"Saiu a versão {nova.versao} do programa (esta é a "
+                         f"{atualizacao.versao_atual()}).\n\nPara atualizar: baixe o .zip na página, extraia e troque "
+                         f"a pasta do programa. Suas configurações continuam valendo.{notas}",
+                         ("Abrir a página de download", "Depois")) == "Abrir a página de download":
+            webbrowser.open(nova.url)
 
     def _salvar_config(self) -> None:
         o = self.obter_opcoes_jellyfin()
@@ -1486,8 +1833,15 @@ class AppModerna(JanelaModerna):
             subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", pasta])
 
     def fechar(self) -> None:
-        if self.trabalhando and not self.perguntar("Sair", "Ainda está trabalhando. Sair mesmo assim?"):
+        if self.var_jf_fechar_bandeja.get() and not self._saindo:
+            self._salvar_config()
+            self.esconder_na_bandeja()               # o X só esconde; "Sair" no ícone fecha de verdade
             return
+        if self.trabalhando and not self.perguntar("Sair", "Ainda está trabalhando. Sair mesmo assim?"):
+            self._saindo = False
+            return
+        if self._bandeja is not None:
+            self._bandeja.esconder()
         self._salvar_config()
         self.evento_parar.set()
         for agendado in (self._vigia_agendada, self._conferencia_agendada):
@@ -1499,8 +1853,12 @@ class AppModerna(JanelaModerna):
         self.destroy()
 
 
-def main() -> int:
-    AppModerna().mainloop()
+def main(minimizado: bool | None = None) -> int:
+    """minimizado (ou --minimizado): abre já perto do relógio (é assim que o Windows inicia)."""
+    app = AppModerna()
+    if minimizado if minimizado is not None else "--minimizado" in sys.argv:
+        app.after(300, app.esconder_na_bandeja)
+    app.mainloop()
     return 0
 
 

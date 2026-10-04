@@ -233,6 +233,39 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v1.5
+
+- **Corrigir nome** (painel "Antes → Depois"): clique num arquivo não identificado (ou com o nome errado),
+  em **Corrigir nome...**, e diga qual é a série (nome, ano e, se quiser, a temporada) ou o filme. No modo
+  Séries a regra vale para a **pasta inteira**: todos os episódios dela entram com esse nome, e o número de cada
+  episódio continua vindo do arquivo (um `S03E15` escrito no arquivo vale mais que a temporada da regra). A
+  regra fica guardada (`.videoscraper\regras_nomes.json`) e vale nas próximas organizações, na vigia e no
+  script; "Esquecer a regra" apaga.
+- **Resolver conflitos** (mesmo painel): fica a **melhor cópia**: a de maior resolução **lida do próprio vídeo**
+  (pelo ffmpeg; na biblioteca o nome já não diz "1080p"), depois a origem (BluRay > WEB > DVD) e o tamanho. Se a
+  cópia nova for melhor que a da biblioteca, ela entra no lugar. A que sai vai para
+  `.organizador\removidos` (o Jellyfin ignora) e **Desfazer última** põe de volta; para liberar o espaço de
+  vez, apague essa pasta. Com linhas selecionadas, resolve só elas; sem seleção, todos os conflitos.
+- **Pastas protegidas** (seção "Automático"): as pastas do **Sonarr/Radarr** (ou outras): o organizador nunca
+  entra nelas (nem organiza, nem apaga, nem põe legenda), nem pela vigia. No script: `PASTAS_PROTEGIDAS`.
+- **Aviso de versão nova**: ao abrir, o programa consulta a página Releases e avisa uma vez cada versão nova
+  ("Abrir a página de download"). A versão aparece no título da janela. Dá para desligar em "Automático".
+- **Iniciar com o Windows** (seção "Automático"): abre minimizado **perto do relógio**, com a vigia e a
+  conferência funcionando sem a janela aberta. Clique no ícone para abrir; "Sair" no menu dele fecha de
+  verdade. "Ao fechar (X), continuar rodando perto do relógio" faz o X só esconder a janela. Fica na lista do
+  Gerenciador de Tarefas > Inicializar (dá para desligar por lá também). Opção de linha de comando: `--minimizado`.
+- **TV ao vivo...** (barra de cima): canais ao vivo no Jellyfin (Painel > TV ao vivo), sem outro programa:
+  1. adicione canais (nome + link do sinal `.m3u8`) ou importe uma lista `.m3u` (arquivo ou endereço);
+  2. **Conferir os links**: no ar / fora do ar / pede login / link temporário (com token, que expira);
+  3. **Salvar e enviar ao Jellyfin**: grava `canais.m3u` e cadastra pela API o sintonizador M3U, o **guia de
+     programação** (XMLTV, opcional: sem ele os canais aparecem sem a grade de horários) e uma **antena
+     HDHomeRun** (IP, opcional: TV aberta digital pela antena, de graça e legal).
+  A pasta da lista precisa ser vista pelo **servidor** do Jellyfin; se ele roda em outro PC, preencha "Como o
+  servidor enxerga o arquivo" (ex.: `E:\TV\canais.m3u` lá, `\\Servidor\e\TV` aqui). A conferência automática
+  dos espelhos também confere os canais e avisa no Discord/Telegram quando um sai do ar (script:
+  `--conferir-espelhos`, `ARQUIVO_CANAIS`). Use só fontes que você tem direito de assistir: o sinal aberto
+  oficial, a lista da sua operadora ou a antena. Listas "piratas" de canais pagos não.
+
 ### Como a janela moderna é organizada (para quem quer mexer)
 
 - `videoscraper/gui_moderna.py`: **só a aparência** (`JanelaModerna`). Cores e fontes ficam na

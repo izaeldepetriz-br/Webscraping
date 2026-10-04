@@ -16,13 +16,13 @@ if not exist .venv (
 )
 call .venv\Scripts\activate.bat
 REM O marcador muda quando as dependencias mudam; assim quem ja tinha .venv atualiza sozinho.
-if not exist .venv\instalado-v3 (
+if not exist .venv\instalado-v4 (
   echo Instalando bibliotecas - so na primeira vez...
   python -m pip install --upgrade pip
   pip install -r requirements.txt || (pause & exit /b 1)
   echo Baixando o navegador Chromium para o modo navegador, cerca de 150 MB...
   python -m playwright install chromium || (pause & exit /b 1)
-  echo ok> .venv\instalado-v3
+  echo ok> .venv\instalado-v4
 )
 REM pythonw = abre so a janela, sem a tela preta. Menu de texto: python iniciar.py --texto
 start "" pythonw iniciar.py

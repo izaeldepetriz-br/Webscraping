@@ -30,7 +30,8 @@ from pathlib import Path
 from .catalogo import Catalogo, ErroCatalogo, Filme
 from .extras import (ARTES, LIMITE_TRAILER_MB, _arquivos, eh_propaganda_pequena, eh_trailer, imagem_do_video, limpar_cache,
                      lixo_da_pasta, marcar_repetidos, planejar_extras, tipo_de_arte)
-from .nomes import (EpisodioExtraido, eh_video, eh_video_da_biblioteca, extrair_episodio, qualidade, extrair_titulo_e_ano,
+from .regras import aplicar_regra, regra_para
+from .nomes import (EpisodioExtraido, NomeExtraido, eh_video, eh_video_da_biblioteca, extrair_episodio, qualidade, extrair_titulo_e_ano,
                     episodio_no_meio, formatar_titulo, marca_de_episodio, nome_episodio_jellyfin, nome_jellyfin,
                     normalizar, numeros_sem_serie, pasta_temporada, serie_da_pasta, temporada_da_pasta)
 
@@ -190,22 +191,26 @@ def _tem_irmao(video: Path, ep, extrator) -> bool:
 def planejar(video: Path, pasta_filmes: Path, catalogo: Catalogo | None = None,
              incluir_tmdbid: bool = False, exigir_catalogo: bool = False, modo: str = "filmes",
              raiz: Path | None = None, limite_mb: float = LIMITE_TRAILER_MB,
-             nomes_episodios: bool = False) -> Movimento:
+             nomes_episodios: bool = False, regras=()) -> Movimento:
     """Decide PARA ONDE o vídeo vai (e o que vai junto), sem mover nada.
     `raiz` é a pasta de origem da varredura (para saber se o vídeo está numa pasta só dele).
     nomes_episodios: séries ganham o nome do episódio, se o catálogo souber (TMDB):
-    'Dark S01E01 - Segredos.mkv'. Sem o nome, fica só o número ('Dark S01E01.mkv')."""
+    'Dark S01E01 - Segredos.mkv'. Sem o nome, fica só o número ('Dark S01E01.mkv').
+    regras: o que você ensinou no "Corrigir nome" (jellyfin_tools.regras)."""
     if "sample" in normalizar(video.stem).split():
         return Movimento(video, None, "ignorado", "arquivo de amostra (sample)")
     if eh_propaganda_pequena(video, limite_mb):          # 'BLUDV.mp4' junto dos episódios do site BLUDV
         return Movimento(video, None, "ignorado", "propaganda do site (não é filme nem episódio)")
     if modo == "series":
         return _planejar_episodio(video, pasta_filmes, catalogo, incluir_tmdbid, exigir_catalogo, raiz, limite_mb,
-                                  nomes_episodios)
+                                  nomes_episodios, regras)
 
-    if marca := marca_de_episodio(video.name):          # modo Filmes com episódio: avisa, não chuta
+    if regra := regra_para(video, regras, "filme"):     # você disse qual filme é ("Corrigir nome")
+        extraido = NomeExtraido(regra.titulo, regra.ano)
+    elif marca := marca_de_episodio(video.name):        # modo Filmes com episódio: avisa, não chuta
         return Movimento(video, None, "nao_identificado", f"{DETALHE_EPISODIO} ({marca}): use o modo Séries")
-    extraido = extrair_titulo_e_ano(video.name)
+    else:
+        extraido = extrair_titulo_e_ano(video.name)
     filme, detalhe = _consultar(catalogo, extraido.titulo, extraido.ano, "filme")
     if filme:
         titulo, ano = filme.titulo, filme.ano
@@ -228,8 +233,11 @@ def planejar(video: Path, pasta_filmes: Path, catalogo: Catalogo | None = None,
 
 def _planejar_episodio(video: Path, pasta_series: Path, catalogo: Catalogo | None,
                        incluir_tmdbid: bool, exigir_catalogo: bool, raiz: Path | None = None,
-                       limite_mb: float = LIMITE_TRAILER_MB, nomes_episodios: bool = False) -> Movimento:
+                       limite_mb: float = LIMITE_TRAILER_MB, nomes_episodios: bool = False,
+                       regras=()) -> Movimento:
     ep = episodio_do_video(video, raiz)
+    if regra := regra_para(video, regras, "serie"):     # você disse qual série é ("Corrigir nome")
+        ep = aplicar_regra(ep, video, regra)
     if not ep:
         return Movimento(video, None, "nao_identificado",
                          "não achei temporada/episódio no nome (ex.: S01E02, 1x02, Episodio 3)")
@@ -347,7 +355,20 @@ def _dentro(filho: Path, pai: Path) -> bool:
         return False
 
 
-def _listar_videos(origem: Path, pasta_filmes: Path, recursivo: bool) -> list[Path]:
+def protegido(caminho: str | Path, protegidas=()) -> bool:
+    """True se o caminho está numa pasta protegida (ex.: as do Sonarr/Radarr): o organizador não mexe."""
+    if not protegidas:
+        return False
+    alvo = os.path.normcase(os.path.abspath(caminho))
+    for pasta in protegidas:
+        if str(pasta).strip():
+            base = os.path.normcase(os.path.abspath(str(pasta).strip()))
+            if alvo == base or alvo.startswith(base.rstrip("\\/") + os.sep):
+                return True
+    return False
+
+
+def _listar_videos(origem: Path, pasta_filmes: Path, recursivo: bool, protegidas=()) -> list[Path]:
     """Vídeos da origem. Se a origem fica FORA da biblioteca, o que estiver dentro da biblioteca
     é ignorado (ex.: origem E:/ e biblioteca E:/Filmes). Se a origem É a biblioteca (ou uma pasta
     dela), olha tudo: o que já estiver no padrão vira 'organizado' no planejar()."""
@@ -356,8 +377,11 @@ def _listar_videos(origem: Path, pasta_filmes: Path, recursivo: bool) -> list[Pa
     biblioteca_dentro = not no_lugar and _dentro(pasta_filmes, origem)
     biblioteca = pasta_filmes.resolve()
     videos = []
+    if protegido(origem, protegidas):
+        return []
     for pasta, subpastas, arquivos in os.walk(origem):
-        subpastas[:] = sorted(d for d in subpastas if d != PASTA_LOGS)   # não entra no log
+        subpastas[:] = sorted(d for d in subpastas if d != PASTA_LOGS   # não entra no log
+                              and not protegido(Path(pasta) / d, protegidas))
         if not recursivo:
             subpastas[:] = []
         if biblioteca_dentro and (Path(pasta).resolve() == biblioteca or biblioteca in Path(pasta).resolve().parents):
@@ -388,7 +412,7 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
                     limite_trailer_mb: float = LIMITE_TRAILER_MB,
                     ao_planejar=None, ao_progresso=None,
                     apagar_pasta_origem: bool = False, ao_analisar=None,
-                    nomes_episodios: bool = False, filtro=None) -> list[Movimento]:
+                    nomes_episodios: bool = False, filtro=None, protegidas=(), regras=()) -> list[Movimento]:
     """Organiza todos os vídeos de `origem` na biblioteca `pasta_filmes` (no modo "series",
     a pasta de séries do Jellyfin). Devolve o que fez (ou faria).
     limpar_lixo: ao aplicar, apaga .url/.txt de propaganda e trailers pequenos (< limite_trailer_mb).
@@ -400,7 +424,8 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
     nomes_episodios: no modo séries, acrescenta o nome do episódio (TMDB) depois do número;
     episódios já organizados só com o número também são renomeados.
     filtro(video) -> bool: só os vídeos aprovados entram (ex.: vigia.filtro_prontos(), só o que
-    terminou de baixar); os outros ficam onde estão, sem aparecer no resultado."""
+    terminou de baixar); os outros ficam onde estão, sem aparecer no resultado.
+    protegidas: pastas que o organizador NUNCA mexe (ex.: as do Sonarr/Radarr), nem entra nelas."""
     if modo not in MODOS:
         raise ValueError(f"modo deve ser um de {MODOS}")
     limpar_cache()                       # os arquivos podem ter mudado desde a última execução
@@ -411,7 +436,7 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
     if not origem.is_dir():
         raise NotADirectoryError(f"pasta de origem não existe: {origem}")
 
-    videos = _listar_videos(origem, pasta_filmes, recursivo)
+    videos = _listar_videos(origem, pasta_filmes, recursivo, protegidas)
     marcar_repetidos(videos, limite_trailer_mb)          # propaganda repetida em cada pasta de episódio
     # Trailers/propagandas pequenos não são filmes: ficam fora do planejamento (e viram lixo).
     trailers = {v for v in videos if eh_trailer(v, origem, limite_trailer_mb, modo)}
@@ -439,7 +464,7 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
     passo = max(1, len(analisar) // 100)                 # no máximo ~100 avisos (não trava a janela)
     for n, v in enumerate(analisar, 1):
         movimentos.append(planejar(v, pasta_filmes, catalogo, incluir_tmdbid, exigir_catalogo, modo,
-                                   origem, limite_trailer_mb, nomes_episodios))
+                                   origem, limite_trailer_mb, nomes_episodios, regras))
         if n % passo == 0 or n == len(analisar):
             avisar_analise(peso_tmdb + (1 - peso_tmdb) * n / len(analisar),
                            f"Analisando: {n} de {len(analisar)} – {v.name}")
@@ -451,6 +476,12 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
         destinos = [m.destino.resolve() for m in movimentos if m.destino]
         movimentos += [s for s in sobras                  # nenhum destino novo dentro dela
                        if not any(s.origem.resolve() in d.parents for d in destinos)]
+    if protegidas:                                        # pasta com uma protegida dentro: não se apaga
+        for m in movimentos:
+            if m.pasta_apagar and any(protegido(p, [m.pasta_apagar]) for p in protegidas if str(p).strip()):
+                m.pasta_apagar = None
+        movimentos = [m for m in movimentos if not (m.status == "limpeza" and any(
+            protegido(p, [m.origem]) for p in protegidas if str(p).strip()))]
     if not aplicar:
         return movimentos
     if ao_planejar:
@@ -519,8 +550,15 @@ def organizar_misto(origem: str | Path, pasta_filmes: str | Path | None, pasta_s
     """Uma pasta de downloads com filmes E séries (ou cada pasta do uTorrent): os episódios vão para
     a biblioteca de Séries (modo séries) e o resto para a de Filmes. Sem uma das bibliotecas, aquele
     tipo fica onde está. `opcoes`: as mesmas de organizar_pasta (aplicar, limpar_lixo...)."""
+    regras = opcoes.get("regras", ())
+
+    def eh_serie(v: Path) -> bool:                    # o "Corrigir nome" decide antes do nome do arquivo
+        if regra_para(v, regras, "filme"):
+            return False
+        return regra_para(v, regras, "serie") is not None or eh_episodio_de_serie(v)
+
     def so(series: bool):
-        return lambda v: (filtro is None or filtro(v)) and eh_episodio_de_serie(v) == series
+        return lambda v: (filtro is None or filtro(v)) and eh_serie(v) == series
     movimentos = []
     if pasta_series:                                  # séries primeiro: a pasta do torrent esvazia antes
         movimentos += organizar_pasta(origem, pasta_series, catalogo, modo="series", filtro=so(True), **opcoes)
@@ -836,9 +874,9 @@ def _desfazer_espelho(dados: dict, mensagens: list[str]) -> None:
         de.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(para), str(de))
         mensagens.append(f"voltou: {de}")
-    lixeira = dados.get("lixeira")
-    if lixeira and Path(lixeira).is_dir() and not any(a.is_file() for a in Path(lixeira).rglob("*")):
-        shutil.rmtree(lixeira, ignore_errors=True)
+    for lixeira in [dados.get("lixeira"), *dados.get("lixeiras", [])]:     # removidos/<data> que esvaziou
+        if lixeira and Path(lixeira).is_dir() and not any(a.is_file() for a in Path(lixeira).rglob("*")):
+            shutil.rmtree(lixeira, ignore_errors=True)
 
 
 def ultimo_log(pasta_filmes: str | Path) -> Path | None:
