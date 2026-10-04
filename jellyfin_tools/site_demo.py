@@ -40,6 +40,7 @@ LEGENDAS = [
     (9, "Dark S01E02 WEBRip", 2017, "pt-BR", 650, "srt"),
     (10, "Dark S01E02 1080p", 2017, "en", 3000, "srt"),
     (11, "Breaking Bad S02E05 720p", 2008, "pt-BR", 1200, "zip"),
+    (12, "Velhos Bandidos (2026) WEB-DL", 2026, "pt-BR", 430, "srt"),
 ]
 
 

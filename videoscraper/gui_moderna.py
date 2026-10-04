@@ -83,6 +83,7 @@ class OpcoesJellyfin:
     chave_tmdb: str
     incluir_tmdbid: bool
     exigir_catalogo: bool
+    limpar_lixo: bool            # apagar .url/.txt de propaganda e trailers pequenos
     legendas: bool               # baixar legendas ao organizar
     fonte_legenda: str           # um de JanelaModerna.FONTES_LEGENDA
     chave_opensubtitles: str
@@ -556,6 +557,14 @@ class JanelaModerna(ctk.CTk):
         self._checkbox(lateral, "Só mover o que estiver no catálogo", self.var_jf_exigir)
 
         self._separador(lateral)
+        self._rotulo(lateral, "Limpeza", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
+        self.var_jf_lixo = tk.BooleanVar(value=True)
+        self._checkbox(lateral, "Apagar lixo do torrent (.url, .txt\nde propaganda, trailers < 100 MB)",
+                       self.var_jf_lixo)
+        self._rotulo(lateral, "Imagens (poster, backdrop...) e legendas\nlocais vão junto com o filme.",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(2, 0), **p)
+
+        self._separador(lateral)
         self._rotulo(lateral, "Legendas", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
         self.var_jf_legendas = tk.BooleanVar(value=True)
         self._checkbox(lateral, "Baixar legendas ao organizar", self.var_jf_legendas)
@@ -667,7 +676,7 @@ class JanelaModerna(ctk.CTk):
             origem=self.var_jf_origem.get().strip(), destino=self.var_jf_destino.get().strip(),
             tmdb=self.var_jf_tmdb.get(), chave_tmdb=self.var_jf_chave_tmdb.get().strip(),
             incluir_tmdbid=self.var_jf_tmdbid.get(), exigir_catalogo=self.var_jf_exigir.get(),
-            legendas=self.var_jf_legendas.get(), fonte_legenda=self.var_jf_fonte.get(),
+            limpar_lixo=self.var_jf_lixo.get(), legendas=self.var_jf_legendas.get(), fonte_legenda=self.var_jf_fonte.get(),
             chave_opensubtitles=self.var_jf_chave_os.get().strip(), url_site=self.var_jf_url_site.get().strip(),
             idioma=self.var_jf_idioma.get().strip() or "pt-BR", sobrescrever=self.var_jf_sobrescrever.get(),
             lembrar_chaves=self.var_jf_lembrar.get())
@@ -684,6 +693,7 @@ class JanelaModerna(ctk.CTk):
                   "idioma": self.var_jf_idioma}
         marcas = {"tmdb": self.var_jf_tmdb, "incluir_tmdbid": self.var_jf_tmdbid,
                   "exigir_catalogo": self.var_jf_exigir, "legendas": self.var_jf_legendas,
+                  "limpar_lixo": self.var_jf_lixo,
                   "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar}
         for chave, var in textos.items():
             if dados.get(chave):

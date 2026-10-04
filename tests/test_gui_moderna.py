@@ -303,3 +303,28 @@ def test_jellyfin_mesma_pasta_nos_dois_campos(app, tmp_path):
     app.bt_organizar.invoke()
     esperar(app)
     assert (biblioteca / "O Poderoso Chefão (1972)" / "O Poderoso Chefão (1972).mkv").is_file()
+
+
+def test_jellyfin_limpeza_de_torrent_pela_interface(app, tmp_path):
+    torrent = tmp_path / "Downloads" / "Creed.II.2018-BLUDV"
+    torrent.mkdir(parents=True)
+    with open(torrent / "Creed.II.2018.1080p.BluRay.6CH.x264.DUAL-WWW.BLUDV.TV-TioKennedy.mkv", "wb") as f:
+        f.truncate(101 * 1024 * 1024)       # "101 MB" sem ocupar disco (passa do limite de trailer)
+    for nome in ("BLUDV.TV.url", "Leia.txt", "Creed.II-poster.jpg", "Creed.II.FORCED.srt"):
+        (torrent / nome).write_bytes(b"x")
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_origem.set(str(tmp_path / "Downloads"))
+    app.var_jf_destino.set(str(tmp_path / "Filmes"))
+    app.var_jf_legendas.set(False)
+    app.bt_previa.invoke()
+    esperar(app)
+    [linha] = _linhas_jf(app)
+    assert "+1 legenda(s), 1 imagem(ns); apagar 2" in linha[3]
+    perguntas = []
+    app.perguntar = lambda t, m: perguntas.append(m) or True
+    app.bt_organizar.invoke()
+    esperar(app)
+    assert "2 arquivo(s) de lixo" in perguntas[0] and "não tem como desfazer" in perguntas[0]
+    assert sorted(p.name for p in (tmp_path / "Filmes" / "Creed II (2018)").iterdir()) == \
+        ["Creed II (2018).mkv", "Creed II (2018).pt-BR.forced.srt", "poster.jpg"]
+    assert not torrent.exists()

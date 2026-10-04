@@ -62,6 +62,7 @@ class AppModerna(JanelaModerna):
         self.trabalhando = False
         self._texto_fim: str | None = None      # texto do rodapé quando a tarefa acabar
         self._previa = None                     # "assinatura" das opções da última pré-visualização
+        self._movimentos_previa: list = []      # o que a última pré-visualização mostrou
         self._carregar_config()
         self._stdout, self._stderr = sys.stdout, sys.stderr
         self.protocol("WM_DELETE_WINDOW", self.fechar)
@@ -311,7 +312,7 @@ class AppModerna(JanelaModerna):
             print(f"\nPré-visualizando ({'séries' if o.modo == 'series' else 'filmes'}): {o.origem} -> {o.destino}")
             movimentos = organizar_pasta(o.origem, o.destino, self._catalogo(o), aplicar=False,
                                          incluir_tmdbid=o.incluir_tmdbid, exigir_catalogo=o.exigir_catalogo,
-                                         modo=o.modo)
+                                         modo=o.modo, limpar_lixo=o.limpar_lixo)
             for m in movimentos:
                 print(m)
             quantos = sum(m.status == "simulado" for m in movimentos)
@@ -338,10 +339,13 @@ class AppModerna(JanelaModerna):
         if problema:
             self.mostrar_mensagem("Legendas", problema, "aviso")
             return
-        quantos = sum(1 for i in self.tabela_jf.get_children()
-                      if str(self.tabela_jf.item(i, "values")[1]).startswith("vai mover"))
+        quantos = sum(m.status == "simulado" for m in self._movimentos_previa)
+        lixo = sum(len(m.apagar or []) for m in self._movimentos_previa) if o.limpar_lixo else 0
+        aviso_lixo = (f"\n\n{lixo} arquivo(s) de lixo (.url, .txt, trailers) serão APAGADOS. "
+                      "Isso não tem como desfazer." if lixo else "")
         if not self.perguntar("Organizar", f"Mover {quantos} arquivo(s) para:\n{o.destino}\n\n"
-                              "Nada é sobrescrito, e você pode voltar atrás com 'Desfazer última'."):
+                              "Nada é sobrescrito, e você pode voltar atrás com 'Desfazer última'."
+                              + aviso_lixo):
             return
         self._salvar_config()
         self._previa = None
@@ -351,7 +355,7 @@ class AppModerna(JanelaModerna):
             print(f"\nOrganizando: {o.origem} -> {o.destino}")
             movimentos = organizar_pasta(o.origem, o.destino, self._catalogo(o), aplicar=True,
                                          incluir_tmdbid=o.incluir_tmdbid, exigir_catalogo=o.exigir_catalogo,
-                                         modo=o.modo)
+                                         modo=o.modo, limpar_lixo=o.limpar_lixo)
             for m in movimentos:
                 print(m)
             self.fila.put(("jf_movimentos", movimentos))
@@ -465,7 +469,8 @@ class AppModerna(JanelaModerna):
     @staticmethod
     def _assinatura(o) -> tuple:
         """O que, se mudar, invalida a pré-visualização."""
-        return (o.modo, o.origem, o.destino, o.tmdb, o.chave_tmdb, o.incluir_tmdbid, o.exigir_catalogo)
+        return (o.modo, o.origem, o.destino, o.tmdb, o.chave_tmdb, o.incluir_tmdbid, o.exigir_catalogo,
+                o.limpar_lixo)
 
     def _problema_legendas(self, o) -> str | None:
         fontes = self.FONTES_LEGENDA
@@ -510,12 +515,15 @@ class AppModerna(JanelaModerna):
             return ResultadoLegenda(m.destino.parent, "erro", detalhe=str(erro))
 
     def _mostrar_movimentos(self, movimentos) -> None:
+        self._movimentos_previa = list(movimentos)
         self.limpar_tabela_jf()
         for i, m in enumerate(movimentos):
             texto, cor = STATUS_MOVIMENTO.get(m.status, (m.status, None))
             if m.status == "simulado" and m.detalhe:
                 texto = "vai mover (confira)"       # nome não confirmado no catálogo
             novo = m.destino_curto if m.destino else f"({m.detalhe})"
+            if m.destino and m.resumo_extras and m.status in ("simulado", "movido"):
+                novo += f"   ({m.resumo_extras})"
             self.adicionar_linha_jf(str(i), i + 1, texto, cor, m.origem.name, novo)
 
     # --- configurações (pastas e opções lembradas entre execuções)

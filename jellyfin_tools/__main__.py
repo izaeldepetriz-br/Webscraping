@@ -84,7 +84,9 @@ def _organizar(args) -> int:
         movimentos = organizar_pasta(args.origem, args.pasta_filmes, _criar_catalogo(args),
                                      aplicar=args.aplicar, recursivo=not args.sem_subpastas,
                                      incluir_tmdbid=args.tmdbid, exigir_catalogo=args.exigir_catalogo,
-                                     modo="series" if args.series else "filmes")
+                                     modo="series" if args.series else "filmes",
+                                     limpar_lixo=not args.manter_lixo,
+                                     limite_trailer_mb=args.limite_trailer_mb)
         for m in movimentos:
             print(m)
         if not args.aplicar:
@@ -167,12 +169,59 @@ def _demo(args) -> int:
     return 0
 
 
+def _demo_torrent(args) -> int:
+    """Os dois exemplos do pedido: Creed II (com propaganda) e Velhos Bandidos (sem legenda)."""
+    from .pipeline import organizar_e_legendar
+    raiz = Path(args.pasta).resolve()
+    if raiz.exists():
+        if not (raiz / ".demo").exists():
+            print(f"{raiz} já existe e não é uma pasta de demonstração; escolha outra com --pasta.")
+            return 1
+        shutil.rmtree(raiz)
+    torrent = raiz / "Downloads" / "Creed.II.2018.1080p.BluRay-BLUDV"
+    torrent.mkdir(parents=True)
+    (raiz / ".demo").touch()
+
+    def video(caminho, mb):
+        with open(caminho, "wb") as f:
+            f.truncate(int(mb * 1024 * 1024))       # tamanho "de mentira": não ocupa o disco de verdade
+
+    video(torrent / "Creed.II.2018.1080p.BluRay.6CH.x264.DUAL-WWW.BLUDV.TV-TioKennedy.mkv", 1500)
+    video(torrent / "BLUDV.TV-Trailer.mp4", 12)
+    for nome in ("BLUDV.TV.url", "Leia.txt", "Creed.II-backdrop.jpg", "Creed.II-poster.jpg", "Creed.II.FORCED.srt"):
+        (torrent / nome).write_bytes(b"1\n00:00:01,000 --> 00:00:02,000\nForcada\n" if nome.endswith(".srt") else b"x")
+    video(raiz / "Downloads" / "Velhos.Bandidos.2026.1080p.WEB-DL.NACIONAL.5.1.mkv", 900)
+
+    print("ANTES:\n" + raiz.name + "/\n" + arvore(raiz))
+    servidor, base = iniciar_site_demo()
+    try:
+        provedor = ProvedorSiteHTML(ConfigSite(f"{base}/busca?q={{consulta}}", nome="site demo"))
+        provedor.cliente.espera = 0.2
+        print("\nPré-visualização:")
+        previa, _ = organizar_e_legendar(raiz / "Downloads", raiz / "Filmes", CatalogoLocal.padrao())
+        for m in previa:
+            print("  ", m)
+            for lixo in m.apagar or []:
+                print("      apagar:", lixo.name)
+        print("\nAplicando...")
+        movimentos, legendas = organizar_e_legendar(raiz / "Downloads", raiz / "Filmes", CatalogoLocal.padrao(),
+                                                    [provedor], aplicar=True)
+        for r in legendas:
+            print("  ", r)
+    finally:
+        servidor.shutdown()
+    print("\nDEPOIS:\n" + raiz.name + "/\n" + arvore(raiz))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="jellyfin_tools", description="Organiza filmes e baixa legendas para o Jellyfin.")
     sub = ap.add_subparsers(dest="comando", required=True)
 
     d = sub.add_parser("demo", help="demonstração com arquivos fictícios")
     d.add_argument("--pasta", default="demo_jellyfin")
+    dt = sub.add_parser("demo-torrent", help="demonstração: torrent com propaganda, imagens e legenda FORCED")
+    dt.add_argument("--pasta", default="demo_torrent")
 
     o = sub.add_parser("organizar", help="mover/renomear vídeos para o padrão do Jellyfin")
     o.add_argument("origem")
@@ -183,6 +232,10 @@ def main(argv: list[str] | None = None) -> int:
     o.add_argument("--tmdbid", action="store_true", help="incluir [tmdbid-XXX] no nome da pasta")
     o.add_argument("--exigir-catalogo", action="store_true", help="só mover filmes confirmados no catálogo")
     o.add_argument("--sem-subpastas", action="store_true", help="não procurar dentro de subpastas")
+    o.add_argument("--manter-lixo", action="store_true",
+                   help="não apagar .url/.txt de propaganda nem trailers pequenos")
+    o.add_argument("--limite-trailer-mb", type=float, default=100,
+                   help="vídeo menor que isso, ao lado do filme e com cara de propaganda, é trailer (padrão 100)")
     o.add_argument("--series", action="store_true",
                    help="organizar episódios de séries (PASTA_FILMES = pasta de séries do Jellyfin)")
     _opcoes_legendas(o)
@@ -196,7 +249,8 @@ def main(argv: list[str] | None = None) -> int:
     de.add_argument("alvo", help="pasta de filmes (usa o último log) ou um arquivo de log")
 
     args = ap.parse_args(argv)
-    acoes = {"demo": _demo, "organizar": _organizar, "legendas": _legendas, "desfazer": _desfazer}
+    acoes = {"demo": _demo, "demo-torrent": _demo_torrent, "organizar": _organizar, "legendas": _legendas,
+             "desfazer": _desfazer}
     try:
         return acoes[args.comando](args)
     except (ErroCatalogo, ErroLegenda, NotADirectoryError) as erro:

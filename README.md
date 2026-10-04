@@ -168,6 +168,34 @@ Os nomes usam o **título brasileiro** (como o Jellyfin mostra com o idioma em p
 `Matrix (1999).pt-BR.srt` (sempre em UTF-8; aceita `.srt`, `.zip` e codificação antiga do Windows).
 Se o site de legendas não achar pelo título brasileiro, tenta o original (Interestelar → Interstellar).
 
+### Torrents: legendas locais, imagens e lixo
+
+Junto com o vídeo, o organizador cuida do que vem na pasta do torrent:
+
+| Arquivo na origem | Vira |
+|---|---|
+| `Creed.II.FORCED.srt` | `Creed II (2018).pt-BR.forced.srt` |
+| `Creed.II.ENG.srt` | `Creed II (2018).en.srt` |
+| `Creed.II-poster.jpg`, `-backdrop.jpg`, `-landscape.jpg`, `-logo.png` | `poster.jpg`, `backdrop.jpg`, `landscape.jpg`, `logo.png` |
+| `BLUDV.TV.url`, `Leia.txt`, trailer pequeno (< 100 MB) | **apagados** (só ao aplicar; dá para desligar) |
+
+Prefixos de site no nome (`[WWW.SITE.TV] Creed II 2018`) e etiquetas como `6CH`, `DUAL`,
+`NACIONAL` e `5.1` são ignorados. Se o filme ficar sem legenda completa (uma forced não conta),
+o programa busca a pt-BR.
+
+**Travas de segurança para apagar:** numa pasta só do torrent, apaga todo `.url`/`.txt` e os
+trailers. Na pasta raiz (ex.: `Downloads` com vários filmes soltos), só apaga o que tem cara de
+propaganda (nome com site, "Leia", "Visite", "trailer"...). Um vídeo pequeno só é trailer se
+houver um vídeo maior na mesma pasta, e nunca no modo séries. A pré-visualização lista tudo o
+que seria apagado, e apagar não tem desfazer.
+
+```bash
+python -m jellyfin_tools demo-torrent      # os dois exemplos: Creed II e Velhos Bandidos
+```
+
+No seu código, use `organizar_e_legendar(origem, biblioteca, catalogo, provedores, aplicar=True)`
+(veja `exemplo_jellyfin.py`).
+
 ### Experimente (sem mexer nos seus arquivos)
 
 ```bash

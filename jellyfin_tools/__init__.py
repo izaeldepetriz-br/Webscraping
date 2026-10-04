@@ -15,6 +15,8 @@ Módulos:
   catalogo    -> confirma título/ano: catálogo local (JSON) ou API oficial do TMDB
   organizador -> move/renomeia para Filmes/Nome (Ano)/... ou Séries/Nome (Ano)/Season 01/...
                  (com simulação e desfazer)
+  extras      -> legendas locais (FORCED, idiomas), imagens (poster.jpg...) e lixo de torrent
+  pipeline    -> organizar_e_legendar(): as 4 etapas de uma vez
   legendas    -> busca e baixa legendas (site HTML via BeautifulSoup ou API OpenSubtitles)
   site_demo   -> site de legendas SIMULADO, local, para testes e demonstração
 """
@@ -25,6 +27,7 @@ from .legendas import (CandidatoLegenda, ConfigSite, ErroLegenda, ProvedorOpenSu
                        baixar_legendas_biblioteca, baixar_legendas_series)
 from .nomes import EpisodioExtraido, NomeExtraido, extrair_episodio, extrair_titulo_e_ano, nome_jellyfin
 from .organizador import Movimento, desfazer, organizar_pasta
+from .pipeline import organizar_e_legendar
 
 __all__ = [
     "Catalogo", "CatalogoEmCadeia", "CatalogoLocal", "CatalogoTMDB", "ErroCatalogo", "Filme",
@@ -32,5 +35,5 @@ __all__ = [
     "ResultadoLegenda", "baixar_legenda", "baixar_legenda_episodio", "baixar_legendas_biblioteca",
     "baixar_legendas_series",
     "EpisodioExtraido", "NomeExtraido", "extrair_episodio", "extrair_titulo_e_ano", "nome_jellyfin",
-    "Movimento", "desfazer", "organizar_pasta",
+    "Movimento", "desfazer", "organizar_pasta", "organizar_e_legendar",
 ]

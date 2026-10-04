@@ -8,8 +8,7 @@ import os
 from pathlib import Path
 
 from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, ConfigSite,
-                            ProvedorOpenSubtitles, ProvedorSiteHTML, baixar_legenda,
-                            organizar_pasta)
+                            ProvedorOpenSubtitles, ProvedorSiteHTML, organizar_e_legendar)
 
 PASTA_BAGUNCADA = Path("C:/Users/Voce/Downloads")    # onde estão os vídeos com nomes bagunçados
 PASTA_FILMES = Path("D:/Jellyfin/Filmes")              # a pasta 'Filmes' da biblioteca do Jellyfin
@@ -33,17 +32,17 @@ def montar_provedores_de_legenda():
 
 
 def main():
-    movimentos = organizar_pasta(PASTA_BAGUNCADA, PASTA_FILMES, montar_catalogo(), aplicar=APLICAR)
+    # As 4 etapas de uma vez: limpar o nome, criar "Nome (Ano)/", levar legendas/imagens,
+    # apagar o lixo do torrent e baixar a legenda pt-BR que estiver faltando.
+    movimentos, legendas = organizar_e_legendar(
+        PASTA_BAGUNCADA, PASTA_FILMES, montar_catalogo(), montar_provedores_de_legenda(),
+        aplicar=APLICAR, limpar_lixo=True, limite_trailer_mb=100)
     for m in movimentos:
         print(m)
-
-    provedores = montar_provedores_de_legenda()
-    if APLICAR and provedores:
-        for m in movimentos:
-            if m.status == "movido":
-                # Pasta com título brasileiro; se o site só tiver o original, tenta ele também.
-                originais = [m.filme.titulo_original] if m.filme and m.filme.titulo_original else []
-                print(baixar_legenda(m.destino.parent, provedores, titulos_alternativos=originais))
+        for lixo in m.apagar or []:
+            print("    apagar:", lixo.name)
+    for r in legendas:
+        print(r)
 
 
 if __name__ == "__main__":

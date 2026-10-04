@@ -6,6 +6,10 @@
 A origem pode ser uma pasta separada (ex.: Downloads) OU a própria biblioteca: nesse caso
 o que já está no padrão aparece como 'organizado' e fica onde está.
 
+Arquivos que vêm junto (ver extras.py): legendas (inclusive "FORCED" e outros idiomas), imagens
+de arte (poster.jpg, backdrop.jpg...) e .nfo vão com o vídeo; lixo de torrent (.url, .txt de
+propaganda, trailers pequenos) é apagado ao aplicar, se limpar_lixo=True.
+
 Segurança:
   - Por padrão só SIMULA (aplicar=False): mostra o que faria, sem mexer em nada.
   - Nunca sobrescreve: se o destino já existe, o arquivo fica onde está (status 'conflito').
@@ -21,8 +25,9 @@ from datetime import datetime
 from pathlib import Path
 
 from .catalogo import Catalogo, ErroCatalogo, Filme
-from .nomes import (EXTENSOES_ACOMPANHANTES, eh_video, extrair_episodio, extrair_titulo_e_ano,
-                    formatar_titulo, nome_episodio_jellyfin, nome_jellyfin, normalizar, pasta_temporada)
+from .extras import LIMITE_TRAILER_MB, eh_trailer, lixo_da_pasta, planejar_extras
+from .nomes import (eh_video, extrair_episodio, extrair_titulo_e_ano, formatar_titulo, nome_episodio_jellyfin,
+                    nome_jellyfin, normalizar, pasta_temporada)
 
 PASTA_LOGS = ".organizador"
 MODOS = ("filmes", "series")
@@ -37,11 +42,26 @@ class Movimento:
     filme: Filme | None = None
     acompanhantes: list[tuple[Path, Path]] | None = None   # legendas/nfo que vão junto
     episodio: tuple[int, int] | None = None                # (temporada, episódio), só em séries
+    apagar: list[Path] | None = None                       # lixo da pasta de origem (.url, .txt, trailers)
 
     def __str__(self) -> str:
         destino = f" -> {self.destino_curto}" if self.destino else ""
-        detalhe = f" ({self.detalhe})" if self.detalhe else ""
+        partes = [p for p in (self.detalhe, self.resumo_extras) if p]
+        detalhe = f" ({'; '.join(partes)})" if partes else ""
         return f"[{self.status}] {self.origem.name}{destino}{detalhe}"
+
+    @property
+    def resumo_extras(self) -> str:
+        """Ex.: '+1 legenda, 2 imagens; apagar 2'."""
+        legendas = sum(1 for _, novo in self.acompanhantes or [] if novo.suffix.lower() in
+                       {".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt"})
+        imagens = sum(1 for _, novo in self.acompanhantes or [] if novo.suffix.lower() in
+                      {".jpg", ".png", ".webp"})
+        juntos = [t for n, t in ((legendas, f"{legendas} legenda(s)"), (imagens, f"{imagens} imagem(ns)")) if n]
+        texto = ("+" + ", ".join(juntos)) if juntos else ""
+        if self.apagar:
+            texto += ("; " if texto else "") + f"apagar {len(self.apagar)}"
+        return texto
 
     @property
     def destino_curto(self) -> str:
@@ -50,17 +70,6 @@ class Movimento:
             return ""
         partes = self.destino.parts[-3:] if self.episodio else self.destino.parts[-2:]
         return "/".join(partes)
-
-
-def _acompanhantes(video: Path, novo_nome: str, pasta_destino: Path) -> list[tuple[Path, Path]]:
-    """'Matrix.1999.x264.pt-BR.srt' (ao lado de 'Matrix.1999.x264.mp4') -> 'Matrix (1999).pt-BR.srt'."""
-    pares = []
-    for irmao in video.parent.iterdir():
-        if (irmao.is_file() and irmao != video and irmao.suffix.lower() in EXTENSOES_ACOMPANHANTES
-                and irmao.name.startswith(video.stem + ".")):
-            resto = irmao.name[len(video.stem):]          # ex.: ".pt-BR.srt"
-            pares.append((irmao, pasta_destino / f"{novo_nome}{resto}"))
-    return pares
 
 
 def _consultar(catalogo: Catalogo | None, titulo: str, ano: int | None, tipo: str):
@@ -73,24 +82,27 @@ def _consultar(catalogo: Catalogo | None, titulo: str, ano: int | None, tipo: st
         return None, f"catálogo indisponível: {erro}"
 
 
-def _finalizar(video: Path, pasta: Path, nome_arquivo: str, detalhe: str, filme, episodio=None) -> Movimento:
+def _finalizar(video: Path, pasta: Path, nome_arquivo: str, detalhe: str, filme, episodio=None,
+               raiz: Path | None = None, limite_mb: float = LIMITE_TRAILER_MB) -> Movimento:
     destino = pasta / f"{nome_arquivo}{video.suffix.lower()}"
     if _mesmo_arquivo(destino, video):
         return Movimento(video, destino, "organizado", "já está no padrão do Jellyfin", filme, None, episodio)
-    mov = Movimento(video, destino, "simulado", detalhe, filme, _acompanhantes(video, nome_arquivo, pasta),
-                    episodio)
+    extras = planejar_extras(video, nome_arquivo, pasta, raiz, "series" if episodio else "filmes", limite_mb)
+    mov = Movimento(video, destino, "simulado", detalhe, filme, extras.mover, episodio)
     if destino.exists() and not _mesmo_arquivo(destino, video):
         mov.status, mov.detalhe = "conflito", "já existe um arquivo com esse nome no destino"
     return mov
 
 
 def planejar(video: Path, pasta_filmes: Path, catalogo: Catalogo | None = None,
-             incluir_tmdbid: bool = False, exigir_catalogo: bool = False, modo: str = "filmes") -> Movimento:
-    """Decide PARA ONDE o vídeo vai, sem mover nada."""
+             incluir_tmdbid: bool = False, exigir_catalogo: bool = False, modo: str = "filmes",
+             raiz: Path | None = None, limite_mb: float = LIMITE_TRAILER_MB) -> Movimento:
+    """Decide PARA ONDE o vídeo vai (e o que vai junto), sem mover nada.
+    `raiz` é a pasta de origem da varredura (para saber se o vídeo está numa pasta só dele)."""
     if "sample" in normalizar(video.stem).split():
         return Movimento(video, None, "ignorado", "arquivo de amostra (sample)")
     if modo == "series":
-        return _planejar_episodio(video, pasta_filmes, catalogo, incluir_tmdbid, exigir_catalogo)
+        return _planejar_episodio(video, pasta_filmes, catalogo, incluir_tmdbid, exigir_catalogo, raiz, limite_mb)
 
     extraido = extrair_titulo_e_ano(video.name)
     filme, detalhe = _consultar(catalogo, extraido.titulo, extraido.ano, "filme")
@@ -107,11 +119,12 @@ def planejar(video: Path, pasta_filmes: Path, catalogo: Catalogo | None = None,
                          detalhe or "não achei o ano no nome; renomeie à mão ou use o TMDB")
 
     nome = nome_jellyfin(titulo, ano, filme.tmdb_id if filme else None, incluir_tmdbid)
-    return _finalizar(video, pasta_filmes / nome, nome, detalhe, filme)
+    return _finalizar(video, pasta_filmes / nome, nome, detalhe, filme, None, raiz, limite_mb)
 
 
 def _planejar_episodio(video: Path, pasta_series: Path, catalogo: Catalogo | None,
-                       incluir_tmdbid: bool, exigir_catalogo: bool) -> Movimento:
+                       incluir_tmdbid: bool, exigir_catalogo: bool, raiz: Path | None = None,
+                       limite_mb: float = LIMITE_TRAILER_MB) -> Movimento:
     ep = extrair_episodio(video.name)
     if not ep:
         return Movimento(video, None, "nao_identificado",
@@ -127,7 +140,7 @@ def _planejar_episodio(video: Path, pasta_series: Path, catalogo: Catalogo | Non
     pasta_serie = pasta_series / nome_jellyfin(nome, ano, serie.tmdb_id if serie else None, incluir_tmdbid)
     pasta = pasta_serie / pasta_temporada(ep.temporada)
     return _finalizar(video, pasta, nome_episodio_jellyfin(nome, ep.temporada, ep.episodio), detalhe, serie,
-                      (ep.temporada, ep.episodio))
+                      (ep.temporada, ep.episodio), raiz, limite_mb)
 
 
 def _mesmo_arquivo(a: Path, b: Path) -> bool:
@@ -182,22 +195,31 @@ def _apagar_pastas_que_esvaziaram(pastas: set[Path], origem: Path) -> None:
 
 def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Catalogo | None = None,
                     aplicar: bool = False, recursivo: bool = True, incluir_tmdbid: bool = False,
-                    exigir_catalogo: bool = False, modo: str = "filmes") -> list[Movimento]:
+                    exigir_catalogo: bool = False, modo: str = "filmes", limpar_lixo: bool = True,
+                    limite_trailer_mb: float = LIMITE_TRAILER_MB) -> list[Movimento]:
     """Organiza todos os vídeos de `origem` na biblioteca `pasta_filmes` (no modo "series",
-    a pasta de séries do Jellyfin). Devolve o que fez (ou faria)."""
+    a pasta de séries do Jellyfin). Devolve o que fez (ou faria).
+    limpar_lixo: ao aplicar, apaga .url/.txt de propaganda e trailers pequenos (< limite_trailer_mb)."""
     if modo not in MODOS:
         raise ValueError(f"modo deve ser um de {MODOS}")
     origem, pasta_filmes = Path(origem).expanduser(), Path(pasta_filmes).expanduser()
     if not origem.is_dir():
         raise NotADirectoryError(f"pasta de origem não existe: {origem}")
 
-    movimentos = [planejar(v, pasta_filmes, catalogo, incluir_tmdbid, exigir_catalogo, modo)
-                  for v in _listar_videos(origem, pasta_filmes, recursivo)]
+    videos = _listar_videos(origem, pasta_filmes, recursivo)
+    # Trailers/propagandas pequenos não são filmes: ficam fora do planejamento (e viram lixo).
+    trailers = {v for v in videos if modo == "filmes" and eh_trailer(v, origem, limite_trailer_mb)}
+    movimentos = [planejar(v, pasta_filmes, catalogo, incluir_tmdbid, exigir_catalogo, modo,
+                           origem, limite_trailer_mb)
+                  for v in videos if v not in trailers]
     _marcar_destinos_repetidos(movimentos)
+    if limpar_lixo:
+        _planejar_lixo(movimentos, origem, modo, limite_trailer_mb)
     if not aplicar:
         return movimentos
 
     feitos = []
+    apagados: list[Path] = []
     pastas_de_onde_sairam: set[Path] = set()
     for mov in movimentos:
         if mov.status != "simulado":
@@ -209,16 +231,37 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
             feitos.append((mov.origem, mov.destino))
             mov.status = "movido"
             for antigo, novo in mov.acompanhantes or []:
-                if novo.exists():
+                if novo.exists() or not antigo.exists():
                     continue
                 shutil.move(str(antigo), str(novo))
                 feitos.append((antigo, novo))
         except OSError as erro:                               # sem permissão, disco cheio, arquivo em uso...
             mov.status, mov.detalhe = "erro", str(erro)
-    if feitos:
-        _gravar_log(pasta_filmes, feitos)
+            continue
+        for lixo in mov.apagar or []:
+            try:
+                lixo.unlink()
+                apagados.append(lixo)
+            except FileNotFoundError:
+                pass
+            except OSError as erro:                           # arquivo em uso: não impede o resto
+                mov.detalhe = f"não consegui apagar {lixo.name}: {erro}"
+    if feitos or apagados:
+        _gravar_log(pasta_filmes, feitos, apagados)
         _apagar_pastas_que_esvaziaram(pastas_de_onde_sairam, origem)
     return movimentos
+
+
+def _planejar_lixo(movimentos: list[Movimento], origem: Path, modo: str, limite_mb: float) -> None:
+    """Para cada pasta de onde um vídeo vai sair, lista o lixo dela (no 1º movimento daquela pasta)."""
+    ja_vistas: set[Path] = set()
+    vao_junto = {antigo for m in movimentos for antigo, _ in (m.acompanhantes or [])}
+    for mov in movimentos:
+        pasta = mov.origem.parent
+        if mov.status != "simulado" or pasta in ja_vistas:
+            continue
+        ja_vistas.add(pasta)
+        mov.apagar = [a for a in lixo_da_pasta(pasta, origem, modo, limite_mb) if a not in vao_junto]
 
 
 def _marcar_destinos_repetidos(movimentos: list[Movimento]) -> None:
@@ -233,12 +276,13 @@ def _marcar_destinos_repetidos(movimentos: list[Movimento]) -> None:
         vistos.add(chave)
 
 
-def _gravar_log(pasta_filmes: Path, feitos: list[tuple[Path, Path]]) -> Path:
+def _gravar_log(pasta_filmes: Path, feitos: list[tuple[Path, Path]], apagados: list[Path] = ()) -> Path:
     pasta = pasta_filmes / PASTA_LOGS
     pasta.mkdir(parents=True, exist_ok=True)
     log = pasta / f"log-{datetime.now():%Y%m%d-%H%M%S-%f}.json"
     log.write_text(json.dumps({"raiz": str(pasta_filmes),
-                               "itens": [{"de": str(a), "para": str(b)} for a, b in feitos]},
+                               "itens": [{"de": str(a), "para": str(b)} for a, b in feitos],
+                               "apagados": [str(a) for a in apagados]},
                               ensure_ascii=False, indent=2), encoding="utf-8")
     return log
 
@@ -271,6 +315,9 @@ def desfazer(log: str | Path) -> list[str]:
             _remover_pastas_vazias(para.parent, raiz, itens, mensagens)
         except OSError as erro:
             mensagens.append(f"erro em {para}: {erro}")
+    if dados.get("apagados"):
+        mensagens.append(f"{len(dados['apagados'])} arquivo(s) de lixo foram apagados e não voltam "
+                         f"(ex.: {Path(dados['apagados'][0]).name})")
     log.rename(log.with_suffix(".desfeito.json"))
     return mensagens
 

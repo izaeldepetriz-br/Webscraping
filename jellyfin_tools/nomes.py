@@ -20,15 +20,36 @@ ETIQUETAS_TECNICAS = {
     "hdrip", "dvdrip", "dvdscr", "hdtv", "hdcam", "cam", "ts", "x264", "x265", "h264", "h265",
     "hevc", "avc", "xvid", "divx", "aac", "ac3", "eac3", "dts", "ddp", "dd5", "atmos", "truehd",
     "10bit", "8bit", "hdr", "hdr10", "dv", "sdr", "proper", "repack", "extended", "unrated",
-    "imax", "remastered", "yts", "yify", "rarbg",
+    "imax", "remastered", "yts", "yify", "rarbg", "2ch", "6ch", "8ch",
 }
 # Palavras comuns em nomes "caseiros" que não fazem parte do título.
 PALAVRAS_RUIDO = {
     "filme", "completo", "dublado", "dub", "legendado", "leg", "dual", "audio", "nacional",
     "portugues", "pt", "br", "ptbr", "torrent", "download", "baixar", "full", "movie",
+    "forced", "forcada", "forcadas", "legenda", "legendas", "www",
 }
 PALAVRAS_PEQUENAS = {"de", "da", "do", "das", "dos", "e", "o", "a", "os", "as", "em", "no", "na",
                      "nos", "nas", "um", "uma", "of", "the", "and", "an", "in", "on", "at", "to"}
+
+# Propaganda de site no nome: "[WWW.SITE.TV]", "WWW.SITE.COM", "SITE.TV" (removida antes de ler o título).
+_TLDS = r"(?:com|net|org|tv|to|io|me|cc|info|biz|site|xyz|vip|club|top|ws)(?:\.br)?"
+_RE_SITE = re.compile(
+    rf"\[[^\]]*(?:www\.|\.{_TLDS}\b)[^\]]*\]"          # [WWW.SITE.TV] ou [Acesse SITE.COM]
+    rf"|\bwww\.[a-z0-9-]+(?:\.[a-z0-9-]+)*"             # www.site.qualquer
+    rf"|\b[a-z0-9-]{{3,}}\.{_TLDS}\b",                   # SITE.TV, SITE.COM
+    re.IGNORECASE)
+# Canais de áudio ("5.1", "DDP5.1", "7.1") que, sem ano no nome, poluiriam o título.
+_RE_AUDIO = re.compile(r"(?<![\d.])(?:ddp?|e?ac3|aac|dts)?[ ._-]?[257][ .][01](?![\d])", re.IGNORECASE)
+
+
+def tem_site(texto: str) -> bool:
+    """True se o texto tem cara de propaganda de site (www., .com, .tv...)."""
+    return bool(_RE_SITE.search(texto))
+
+
+def _sem_propaganda(texto: str) -> str:
+    return _RE_AUDIO.sub(" ", _RE_SITE.sub(" ", texto))
+
 
 _RE_ANO = re.compile(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)")
 _RE_SEPARADORES = re.compile(r"[._\-\s\[\]\(\)\{\}+]+")
@@ -68,7 +89,7 @@ def extrair_titulo_e_ano(nome_arquivo: str) -> NomeExtraido:
     caminho = Path(nome_arquivo)
     base = caminho.stem if caminho.suffix.lower() in EXTENSOES_VIDEO | EXTENSOES_ACOMPANHANTES \
         else caminho.name
-    texto = _RE_SEPARADORES.sub(" ", base).strip()
+    texto = _RE_SEPARADORES.sub(" ", _sem_propaganda(base)).strip()
 
     # O ano é o ÚLTIMO ano plausível que não está no começo (ex.: "1917 2019" -> 2019;
     # "Blade Runner 2049 2017" -> 2017, porque 2049 está no futuro).
@@ -169,6 +190,7 @@ def extrair_episodio(nome_arquivo: str) -> EpisodioExtraido | None:
     caminho = Path(nome_arquivo)
     base = caminho.stem if caminho.suffix.lower() in EXTENSOES_VIDEO | EXTENSOES_ACOMPANHANTES \
         else caminho.name
+    base = _RE_SITE.sub(" ", base)
     for padrao in _PADROES_EPISODIO:
         m = padrao.search(base)
         if m:
