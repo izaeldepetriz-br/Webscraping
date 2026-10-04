@@ -67,6 +67,8 @@ def test_campo_numerico_respeita_limites():
 # ------------------------------------------------------------------ app completo (motor ligado)
 @pytest.fixture
 def app(monkeypatch, tmp_path):
+    from videoscraper import config
+    monkeypatch.setattr(config, "ARQUIVO", tmp_path / "config" / "config.json")   # não mexe no seu
     monkeypatch.setattr(app_moderna, "PERFIL_PADRAO", str(tmp_path / "perfil"))
     a = app_moderna.AppModerna()
     a.caixas = []
@@ -166,3 +168,118 @@ def test_navegador_pausa_e_login(app, servidor):
     app.bt_buscar.invoke()
     esperar(app)
     assert titulos(app) == ["Exclusivo"]
+
+
+# ------------------------------------------------------------------ aba Jellyfin
+FILMES = {"Matrix.1999.1080p.BluRay.x264-VERSAO.mp4": "Matrix (1999)/Matrix (1999).mp4",
+          "interestellar_filme_completo_dublado_2014.mkv": "Interestelar (2014)/Interestelar (2014).mkv",
+          "O.Poderoso.Chefao.1972.Bluray.mkv": "O Poderoso Chefão (1972)/O Poderoso Chefão (1972).mkv"}
+
+
+def _linhas_jf(app):
+    return [app.tabela_jf.item(i, "values") for i in app.tabela_jf.get_children()]
+
+
+def _preparar(app, tmp_path, nomes, modo="Filmes"):
+    origem = tmp_path / "Downloads"
+    origem.mkdir()
+    for n in nomes:
+        (origem / n).write_bytes(b"video")
+    app.seletor_aba.set("Jellyfin")
+    app.mostrar_aba("Jellyfin")
+    if modo == "Séries":
+        app.seletor_modo.set("Séries")
+        app._ao_trocar_modo("Séries")
+    app.var_jf_origem.set(str(origem))
+    app.var_jf_destino.set(str(tmp_path / modo))
+    return origem, tmp_path / modo
+
+
+def test_jellyfin_previa_organizar_legendas_e_desfazer(app, tmp_path):
+    origem, filmes = _preparar(app, tmp_path, FILMES)
+    assert app.bt_organizar.cget("state") == "disabled"          # sem prévia, não organiza
+
+    app.bt_previa.invoke()
+    esperar(app)
+    assert {l[1] for l in _linhas_jf(app)} == {"vai mover"}
+    assert not filmes.exists()                                    # prévia não move nada
+    assert app.bt_organizar.cget("state") == "normal"
+
+    app.bt_organizar.invoke()
+    esperar(app)
+    for destino in FILMES.values():
+        assert (filmes / destino).is_file()
+        pasta = (filmes / destino).parent
+        assert (pasta / f"{pasta.name}.pt-BR.srt").is_file()      # legenda do site de demonstração
+    assert all(l[1].endswith("movido") and l[4].endswith("baixada") for l in _linhas_jf(app))
+    assert app.caixas[-1][:2] == ("sucesso", "Organização concluída")
+    assert app.bt_organizar.cget("state") == "disabled"           # precisa de nova prévia
+
+    app.bt_desfazer.invoke()
+    esperar(app)
+    assert sorted(p.name for p in origem.iterdir()) == sorted(FILMES)
+    assert app.caixas[-1][1] == "Desfeito"
+
+
+def test_jellyfin_series_e_opcoes_mudadas_exigem_nova_previa(app, tmp_path):
+    origem, series = _preparar(app, tmp_path, ["Dark.S01E02.WEBRip.mkv", "sem_numero.mp4"], modo="Séries")
+    app.bt_previa.invoke()
+    esperar(app)
+    linhas = {l[2]: l for l in _linhas_jf(app)}
+    assert linhas["Dark.S01E02.WEBRip.mkv"][3] == "Dark (2017)/Season 01/Dark S01E02.mkv"
+    assert linhas["sem_numero.mp4"][1].endswith("não identificado")
+
+    app.var_jf_destino.set(str(tmp_path / "OutraPasta"))         # mudou depois da prévia
+    app.ao_organizar()
+    assert app.caixas[-1][1] == "Pré-visualize de novo" and not (tmp_path / "OutraPasta").exists()
+
+    app.var_jf_destino.set(str(series))
+    app.bt_previa.invoke()
+    esperar(app)
+    app.bt_organizar.invoke()
+    esperar(app)
+    assert (series / "Dark (2017)/Season 01/Dark S01E02.pt-BR.srt").is_file()
+    assert (origem / "sem_numero.mp4").exists()                  # não identificado fica onde está
+
+
+def test_jellyfin_baixar_legendas_que_faltam(app, tmp_path):
+    filmes = tmp_path / "Filmes"
+    for nome in ("Matrix (1999)", "Cidade de Deus (2002)"):
+        (filmes / nome).mkdir(parents=True)
+        (filmes / nome / f"{nome}.mkv").write_bytes(b"v")
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_destino.set(str(filmes))
+    app.bt_legendas.invoke()
+    esperar(app)
+    legendas = {l[2]: l[4] for l in _linhas_jf(app)}
+    assert legendas["Matrix (1999)"].endswith("baixada")
+    assert legendas["Cidade de Deus (2002)"].endswith("não encontrada")
+
+
+def test_jellyfin_validacoes_e_config(app, tmp_path):
+    from videoscraper import config
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_origem.set(str(tmp_path / "nao-existe"))
+    app.bt_previa.invoke()
+    assert app.caixas[-1][1] == "Pasta de origem"
+    (tmp_path / "o").mkdir()
+    app.var_jf_origem.set(str(tmp_path / "o"))
+    app.var_jf_destino.set(str(tmp_path / "F"))
+    app.var_jf_tmdb.set(True)
+    app.bt_previa.invoke()
+    assert app.caixas[-1][1] == "Chave do TMDB"
+
+    app.var_jf_tmdb.set(False)
+    app.var_jf_fonte.set(app.FONTES_LEGENDA[1])                  # OpenSubtitles sem chave
+    app.var_jf_chave_os.set("")
+    (tmp_path / "F").mkdir()
+    app.bt_legendas.invoke()
+    assert app.caixas[-1][1] == "Legendas"
+
+    app.var_jf_chave_os.set("segredo")
+    app._salvar_config()
+    salvo = config.carregar()["jellyfin"]
+    assert salvo["destino_filmes"] == str(tmp_path / "F") and "chave_opensubtitles" not in salvo
+    app.var_jf_lembrar.set(True)
+    app._salvar_config()
+    assert config.carregar()["jellyfin"]["chave_opensubtitles"] == "segredo"

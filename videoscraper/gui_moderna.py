@@ -73,6 +73,25 @@ class OpcoesInterface:
     pasta: str
 
 
+@dataclass
+class OpcoesJellyfin:
+    """Tudo o que o usuário escolheu na aba Jellyfin."""
+    modo: str                    # "filmes" ou "series"
+    origem: str                  # pasta com os arquivos bagunçados
+    destino: str                 # biblioteca do Jellyfin (Filmes ou Séries, conforme o modo)
+    tmdb: bool
+    chave_tmdb: str
+    incluir_tmdbid: bool
+    exigir_catalogo: bool
+    legendas: bool               # baixar legendas ao organizar
+    fonte_legenda: str           # um de JanelaModerna.FONTES_LEGENDA
+    chave_opensubtitles: str
+    url_site: str
+    idioma: str
+    sobrescrever: bool
+    lembrar_chaves: bool
+
+
 # =============================================================================== componentes
 class CampoNumerico(ctk.CTkFrame):
     """Seletor numérico moderno ( -  [ valor ]  + ). O CustomTkinter não tem Spinbox."""
@@ -187,14 +206,29 @@ class JanelaModerna(ctk.CTk):
         self.f_botao = ctk.CTkFont(Tema.FAMILIA, 13, "bold")
         self.f_mono = ctk.CTkFont(Tema.MONO, 12)
 
+        self._estilizar_tabela()
+        self._extras_tabela: dict = {}       # tabela -> (contador, texto de "vazio")
+        self.logs: list[ctk.CTkTextbox] = []  # um console por aba, com o mesmo conteúdo
+
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1)
+        self.grid_rowconfigure(1, weight=1)
         self._montar_cabecalho()
-        self._montar_endereco()
-        self._montar_acoes()
-        self._montar_corpo()
+        # Cada aba é um quadro na MESMA célula da grade; trocar de aba = mostrar um e esconder o outro.
+        self.aba_videos = ctk.CTkFrame(self, fg_color="transparent")
+        self.aba_jellyfin = ctk.CTkFrame(self, fg_color="transparent")
+        for aba in (self.aba_videos, self.aba_jellyfin):
+            aba.grid(row=1, column=0, sticky="nsew")
+            aba.grid_columnconfigure(0, weight=1)
+        self.aba_videos.grid_rowconfigure(2, weight=1)
+        self.aba_jellyfin.grid_rowconfigure(1, weight=1)
+        self._montar_endereco(self.aba_videos)
+        self._montar_acoes(self.aba_videos)
+        self._montar_corpo(self.aba_videos)
+        self._montar_aba_jellyfin(self.aba_jellyfin)
         self._montar_rodape()
+        self._organizar_liberado = False
         self.definir_ocupado(False)
+        self.mostrar_aba("Vídeos")
         self.campo_url.focus_set()
 
     # ------------------------------------------------------------------ fábrica de widgets
@@ -217,11 +251,11 @@ class JanelaModerna(ctk.CTk):
                              font=self.f_botao if tipo == "primario" else self.f_normal,
                              text_color_disabled=Tema.TEXTO_FRACO, width=largura or 0, **estilos)
 
-    def _entrada(self, master, var, dica="", altura=38) -> ctk.CTkEntry:
+    def _entrada(self, master, var, dica="", altura=38, **extra) -> ctk.CTkEntry:
         e = ctk.CTkEntry(master, textvariable=var, placeholder_text=dica, height=altura,
                          corner_radius=Tema.RAIO_CONTROLE, border_width=1, fg_color=Tema.CAMPO,
                          border_color=Tema.CAMPO_BORDA, text_color=Tema.TEXTO,
-                         placeholder_text_color=Tema.TEXTO_FRACO, font=self.f_normal)
+                         placeholder_text_color=Tema.TEXTO_FRACO, font=self.f_normal, **extra)
         e.bind("<FocusIn>", lambda ev: e.configure(border_color=Tema.CAMPO_FOCO))
         e.bind("<FocusOut>", lambda ev: e.configure(border_color=Tema.CAMPO_BORDA))
         return e
@@ -231,18 +265,47 @@ class JanelaModerna(ctk.CTk):
                             text_color=Tema.TEXTO_SUAVE if suave else Tema.TEXTO)
 
     # ------------------------------------------------------------------ 1. cabeçalho e endereço
+    SUBTITULOS = {
+        "Vídeos": "1) Cole o endereço da página    2) Clique em Buscar vídeos    3) Selecione e clique em Baixar",
+        "Jellyfin": "1) Escolha as pastas    2) Clique em Pré-visualizar    3) Confira e clique em Organizar",
+    }
+    TITULOS = {"Vídeos": "Extrair e baixar vídeos públicos",
+               "Jellyfin": "Organizar a biblioteca do Jellyfin"}
+
     def _montar_cabecalho(self) -> None:
         topo = ctk.CTkFrame(self, fg_color="transparent")
         topo.grid(row=0, column=0, sticky="ew", padx=28, pady=(18, 0))
-        ctk.CTkLabel(topo, text="Extrair e baixar vídeos públicos", font=self.f_titulo,
-                     text_color=Tema.TEXTO, anchor="w").pack(anchor="w")
-        ctk.CTkLabel(topo, font=self.f_sub, text_color=Tema.TEXTO_SUAVE, anchor="w",
-                     text="1) Cole o endereço da página    2) Clique em Buscar vídeos    "
-                          "3) Selecione e clique em Baixar").pack(anchor="w", pady=(2, 0))
+        textos = ctk.CTkFrame(topo, fg_color="transparent")
+        textos.pack(side="left")
+        self.lb_titulo = ctk.CTkLabel(textos, text=self.TITULOS["Vídeos"], font=self.f_titulo,
+                                      text_color=Tema.TEXTO, anchor="w")
+        self.lb_titulo.pack(anchor="w")
+        self.lb_subtitulo = ctk.CTkLabel(textos, font=self.f_sub, text_color=Tema.TEXTO_SUAVE, anchor="w",
+                                         text=self.SUBTITULOS["Vídeos"])
+        self.lb_subtitulo.pack(anchor="w", pady=(2, 0))
+        self.seletor_aba = ctk.CTkSegmentedButton(
+            topo, values=["Vídeos", "Jellyfin"], command=self.mostrar_aba, height=38,
+            corner_radius=Tema.RAIO_CONTROLE, font=self.f_botao, fg_color=Tema.CARTAO,
+            selected_color=Tema.PRIMARIA, selected_hover_color=Tema.PRIMARIA_HOVER,
+            unselected_color=Tema.CARTAO, unselected_hover_color=Tema.SECUNDARIA_HOVER, text_color=Tema.TEXTO)
+        self.seletor_aba.pack(side="right", pady=(4, 0))
 
-    def _montar_endereco(self) -> None:
-        cartao = self._cartao(self)
-        cartao.grid(row=1, column=0, sticky="ew", padx=28, pady=(14, 0))
+    def mostrar_aba(self, nome: str) -> None:
+        """'Vídeos' ou 'Jellyfin'."""
+        mostrar, esconder = ((self.aba_videos, self.aba_jellyfin) if nome == "Vídeos"
+                             else (self.aba_jellyfin, self.aba_videos))
+        esconder.grid_remove()
+        mostrar.grid()
+        self.seletor_aba.set(nome)
+        self.lb_titulo.configure(text=self.TITULOS[nome])
+        self.lb_subtitulo.configure(text=self.SUBTITULOS[nome])
+
+    def aba_atual(self) -> str:
+        return self.seletor_aba.get()
+
+    def _montar_endereco(self, aba) -> None:
+        cartao = self._cartao(aba)
+        cartao.grid(row=0, column=0, sticky="ew", padx=28, pady=(14, 0))
         cartao.grid_columnconfigure(1, weight=1)
         self._rotulo(cartao, "Endereço da página:", suave=False, fonte=self.f_secao).grid(
             row=0, column=0, padx=(20, 12), pady=18)
@@ -254,9 +317,9 @@ class JanelaModerna(ctk.CTk):
         self.bt_colar.grid(row=0, column=2, padx=(10, 20), pady=18)
 
     # ------------------------------------------------------------------ 3. barra de comandos
-    def _montar_acoes(self) -> None:
-        barra = ctk.CTkFrame(self, fg_color="transparent")
-        barra.grid(row=2, column=0, sticky="ew", padx=28, pady=12)
+    def _montar_acoes(self, aba) -> None:
+        barra = ctk.CTkFrame(aba, fg_color="transparent")
+        barra.grid(row=1, column=0, sticky="ew", padx=28, pady=12)
         self.bt_buscar = self._botao(barra, "Buscar vídeos", self.ao_buscar, "primario", largura=170)
         self.bt_baixar_sel = self._botao(barra, "Baixar selecionados", self.ao_baixar_selecionados, largura=170)
         self.bt_baixar_todos = self._botao(barra, "Baixar todos", self.ao_baixar_todos, largura=130)
@@ -267,23 +330,40 @@ class JanelaModerna(ctk.CTk):
         self.bt_parar.pack(side="right")
 
     # ------------------------------------------------------------------ corpo: opções + vídeos + log
-    def _montar_corpo(self) -> None:
-        corpo = ctk.CTkFrame(self, fg_color="transparent")
-        corpo.grid(row=3, column=0, sticky="nsew", padx=28)
+    def _montar_corpo(self, aba) -> None:
+        corpo = self._corpo(aba, linha=2)
+        self._montar_opcoes(corpo)
+        self._montar_tabela(corpo)
+        self._criar_console(corpo)
+
+    def _corpo(self, aba, linha: int) -> ctk.CTkFrame:
+        """Área de baixo de uma aba: painel lateral (coluna 0) + tabela e console (coluna 1)."""
+        corpo = ctk.CTkFrame(aba, fg_color="transparent")
+        corpo.grid(row=linha, column=0, sticky="nsew", padx=28)
         corpo.grid_columnconfigure(1, weight=1)
         corpo.grid_rowconfigure(0, weight=3)
         corpo.grid_rowconfigure(1, weight=2)
-        self._montar_opcoes(corpo)
-        self._montar_tabela(corpo)
-        self._montar_log(corpo)
+        return corpo
 
-    # 2. painel de opções (cartão lateral; rola se a tela for baixa)
-    def _montar_opcoes(self, corpo) -> None:
+    def _lateral(self, corpo) -> ctk.CTkScrollableFrame:
         lateral = ctk.CTkScrollableFrame(corpo, width=320, fg_color=Tema.CARTAO, corner_radius=Tema.RAIO,
                                          border_width=1, border_color=Tema.CARTAO_BORDA,
                                          scrollbar_button_color=Tema.CARTAO_BORDA,
                                          scrollbar_button_hover_color=Tema.CAMPO_BORDA)
         lateral.grid(row=0, column=0, rowspan=2, sticky="nsw", padx=(0, 14))
+        return lateral
+
+    def _checkbox(self, master, texto, var, comando=None) -> ctk.CTkCheckBox:
+        caixa = ctk.CTkCheckBox(master, text=texto, variable=var, command=comando,
+                                font=self.f_normal, text_color=Tema.TEXTO, fg_color=Tema.PRIMARIA,
+                                hover_color=Tema.PRIMARIA_HOVER, border_color=Tema.CAMPO_BORDA,
+                                checkbox_width=20, checkbox_height=20, corner_radius=6, border_width=2)
+        caixa.pack(anchor="w", pady=4, padx=18)
+        return caixa
+
+    # 2. painel de opções (cartão lateral; rola se a tela for baixa)
+    def _montar_opcoes(self, corpo) -> None:
+        lateral = self._lateral(corpo)
         p = dict(padx=18)
 
         self._rotulo(lateral, "Opções", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(12, 4), **p)
@@ -293,11 +373,7 @@ class JanelaModerna(ctk.CTk):
         for texto, var in (("Usar navegador (sites com\nJavaScript ou login)", self.var_nav),
                            ("Mostrar a janela do navegador", self.var_visivel),
                            ("Pausar para eu resolver verificações", self.var_pausar)):
-            ctk.CTkCheckBox(lateral, text=texto, variable=var, command=self._ajustar_checks,
-                            font=self.f_normal, text_color=Tema.TEXTO, fg_color=Tema.PRIMARIA,
-                            hover_color=Tema.PRIMARIA_HOVER, border_color=Tema.CAMPO_BORDA,
-                            checkbox_width=20, checkbox_height=20, corner_radius=6, border_width=2
-                            ).pack(anchor="w", pady=4, **p)
+            self._checkbox(lateral, texto, var, self._ajustar_checks)
 
         self._separador(lateral)
         self._rotulo(lateral, "Parâmetros", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
@@ -328,8 +404,9 @@ class JanelaModerna(ctk.CTk):
     def _separador(self, master) -> None:
         ctk.CTkFrame(master, height=1, fg_color=Tema.CARTAO_BORDA).pack(fill="x", padx=18, pady=10)
 
-    # 4. vídeos encontrados
-    def _montar_tabela(self, corpo) -> None:
+    def _criar_tabela(self, corpo, titulo: str, colunas, texto_vazio: str):
+        """Cartão com título + contador, tabela escura com rolagem e uma faixa para botões.
+        Devolve (tabela, faixa_de_botoes)."""
         cartao = self._cartao(corpo)
         cartao.grid(row=0, column=1, sticky="nsew", pady=(0, 14))
         cartao.grid_columnconfigure(0, weight=1)
@@ -337,39 +414,47 @@ class JanelaModerna(ctk.CTk):
 
         topo = ctk.CTkFrame(cartao, fg_color="transparent")
         topo.grid(row=0, column=0, columnspan=2, sticky="ew", padx=18, pady=(14, 8))
-        self._rotulo(topo, "Vídeos encontrados", suave=False, fonte=self.f_secao).pack(side="left")
-        self.lb_contador = ctk.CTkLabel(topo, text="0", font=ctk.CTkFont(Tema.FAMILIA, 11, "bold"),
-                                        fg_color=Tema.SECUNDARIA, text_color=Tema.TEXTO_SUAVE,
-                                        corner_radius=10, width=34, height=22)
-        self.lb_contador.pack(side="left", padx=10)
+        self._rotulo(topo, titulo, suave=False, fonte=self.f_secao).pack(side="left")
+        contador = ctk.CTkLabel(topo, text="0", font=ctk.CTkFont(Tema.FAMILIA, 11, "bold"),
+                                fg_color=Tema.SECUNDARIA, text_color=Tema.TEXTO_SUAVE,
+                                corner_radius=10, width=34, height=22)
+        contador.pack(side="left", padx=10)
 
-        self._estilizar_tabela()
         quadro = ctk.CTkFrame(cartao, fg_color=Tema.CARTAO, corner_radius=0)
         quadro.grid(row=1, column=0, sticky="nsew", padx=(18, 0))
         quadro.grid_columnconfigure(0, weight=1)
         quadro.grid_rowconfigure(0, weight=1)
-        self.tabela = ttk.Treeview(quadro, columns=[c[0] for c in self.COLUNAS], show="headings",
-                                   selectmode="extended", style="Moderno.Treeview")
-        for chave, titulo, largura, estica in self.COLUNAS:
-            self.tabela.heading(chave, text=titulo, anchor="w")
-            self.tabela.column(chave, width=largura, minwidth=40, stretch=estica, anchor="w")
-        self.tabela.grid(row=0, column=0, sticky="nsew")
-        self.tabela.tag_configure("par", background=Tema.LINHA_PAR)
-        self.tabela.tag_configure("impar", background=Tema.LINHA_IMPAR)
+        tabela = ttk.Treeview(quadro, columns=[c[0] for c in colunas], show="headings",
+                              selectmode="extended", style="Moderno.Treeview")
+        for chave, texto, largura, estica in colunas:
+            tabela.heading(chave, text=texto, anchor="w")
+            tabela.column(chave, width=largura, minwidth=40, stretch=estica, anchor="w")
+        tabela.grid(row=0, column=0, sticky="nsew")
+        tabela.tag_configure("par", background=Tema.LINHA_PAR)
+        tabela.tag_configure("impar", background=Tema.LINHA_IMPAR)
         for situacao, cor in self.FUNDO_SITUACAO.items():
-            self.tabela.tag_configure(situacao, background=cor)
-        self.tabela.bind("<Double-1>", lambda e: self.ao_abrir_link())
-        rolagem = ctk.CTkScrollbar(cartao, command=self.tabela.yview, button_color=Tema.CARTAO_BORDA,
+            tabela.tag_configure(situacao, background=cor)
+        rolagem = ctk.CTkScrollbar(cartao, command=tabela.yview, button_color=Tema.CARTAO_BORDA,
                                    button_hover_color=Tema.CAMPO_BORDA)
         rolagem.grid(row=1, column=1, sticky="ns", padx=(4, 10))
-        self.tabela.configure(yscrollcommand=rolagem.set)
+        tabela.configure(yscrollcommand=rolagem.set)
 
-        self.lb_vazio = ctk.CTkLabel(quadro, text="Nenhum vídeo ainda. Cole um endereço e clique em Buscar vídeos.",
-                                     font=self.f_normal, text_color=Tema.TEXTO_FRACO, fg_color=Tema.CARTAO)
-        self.lb_vazio.place(relx=0.5, rely=0.55, anchor="center")
+        vazio = ctk.CTkLabel(quadro, text=texto_vazio, font=self.f_normal, text_color=Tema.TEXTO_FRACO,
+                             fg_color=Tema.CARTAO)
+        vazio.place(relx=0.5, rely=0.55, anchor="center")
+        self._extras_tabela[str(tabela)] = (contador, vazio)
 
-        acoes = ctk.CTkFrame(cartao, fg_color="transparent")
-        acoes.grid(row=2, column=0, columnspan=2, sticky="ew", padx=18, pady=14)
+        faixa = ctk.CTkFrame(cartao, fg_color="transparent")
+        faixa.grid(row=2, column=0, columnspan=2, sticky="ew", padx=18, pady=14)
+        return tabela, faixa
+
+    # 4. vídeos encontrados
+    def _montar_tabela(self, corpo) -> None:
+        self.tabela, acoes = self._criar_tabela(
+            corpo, "Vídeos encontrados", self.COLUNAS,
+            "Nenhum vídeo ainda. Cole um endereço e clique em Buscar vídeos.")
+        self.lb_contador, self.lb_vazio = self._extras_tabela[str(self.tabela)]
+        self.tabela.bind("<Double-1>", lambda e: self.ao_abrir_link())
         self.bt_abrir_link = self._botao(acoes, "Abrir link", self.ao_abrir_link, "fantasma")
         self.bt_copiar_link = self._botao(acoes, "Copiar link", self.ao_copiar_link, "fantasma")
         self.bt_salvar_lista = self._botao(acoes, "Salvar lista (CSV/JSON/TXT)...", self.ao_salvar_lista, "fantasma")
@@ -391,8 +476,8 @@ class JanelaModerna(ctk.CTk):
                    foreground=[("selected", "#ffffff")])
         estilo.layout("Moderno.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])   # sem borda
 
-    # 5. console de logs
-    def _montar_log(self, corpo) -> None:
+    # 5. console de logs (um por aba; escrever_log escreve em todos)
+    def _criar_console(self, corpo) -> ctk.CTkTextbox:
         cartao = self._cartao(corpo)
         cartao.grid(row=1, column=1, sticky="nsew")
         cartao.grid_columnconfigure(0, weight=1)
@@ -404,19 +489,153 @@ class JanelaModerna(ctk.CTk):
         self._rotulo(topo, "O que está acontecendo", suave=False, fonte=self.f_secao).pack(side="left", padx=(8, 0))
         self._botao(topo, "Limpar", self.limpar_log, "fantasma", largura=70).pack(side="right")
 
-        self.log = ctk.CTkTextbox(cartao, fg_color=Tema.CONSOLE, text_color="#c9d1e3", font=self.f_mono,
-                                  corner_radius=Tema.RAIO_CONTROLE, border_width=1, border_color=Tema.CARTAO_BORDA,
-                                  scrollbar_button_color=Tema.CARTAO_BORDA, wrap="word")
-        self.log.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 16))
-        self.log.tag_config("erro", foreground=Tema.PERIGO)
-        self.log.tag_config("ok", foreground=Tema.SUCESSO)
-        self.log.tag_config("aviso", foreground=Tema.AVISO)
-        self.log.configure(state="disabled")
+        console = ctk.CTkTextbox(cartao, fg_color=Tema.CONSOLE, text_color="#c9d1e3", font=self.f_mono,
+                                 corner_radius=Tema.RAIO_CONTROLE, border_width=1, border_color=Tema.CARTAO_BORDA,
+                                 scrollbar_button_color=Tema.CARTAO_BORDA, wrap="word")
+        console.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 16))
+        console.tag_config("erro", foreground=Tema.PERIGO)
+        console.tag_config("ok", foreground=Tema.SUCESSO)
+        console.tag_config("aviso", foreground=Tema.AVISO)
+        console.configure(state="disabled")
+        self.logs.append(console)
+        if len(self.logs) == 1:
+            self.log = console           # o da aba Vídeos (nome mantido por compatibilidade)
+        return console
+
+    # ------------------------------------------------------------------ aba Jellyfin
+    COLUNAS_JF = (("n", "#", 44, False), ("status", "Situação", 150, False),
+                  ("atual", "Arquivo atual", 210, True), ("novo", "Novo nome no Jellyfin", 300, True),
+                  ("legenda", "Legenda", 140, False))
+    FONTES_LEGENDA = ("Site de demonstração", "OpenSubtitles (API)", "Site de busca (URL)")
+    ROTULOS_DESTINO = {"Filmes": "Biblioteca de Filmes do Jellyfin:", "Séries": "Biblioteca de Séries do Jellyfin:"}
+
+    def _montar_aba_jellyfin(self, aba) -> None:
+        barra = ctk.CTkFrame(aba, fg_color="transparent")
+        barra.grid(row=0, column=0, sticky="ew", padx=28, pady=(14, 12))
+        self.bt_previa = self._botao(barra, "Pré-visualizar", self.ao_previsualizar, "primario", largura=170)
+        self.bt_organizar = self._botao(barra, "Organizar", self.ao_organizar, largura=130)
+        self.bt_legendas = self._botao(barra, "Baixar legendas que faltam", self.ao_baixar_legendas, largura=210)
+        self.bt_desfazer = self._botao(barra, "Desfazer última", self.ao_desfazer, largura=140)
+        self.bt_parar_jf = self._botao(barra, "Parar", self.ao_parar, "perigo", largura=100)
+        for b in (self.bt_previa, self.bt_organizar, self.bt_legendas, self.bt_desfazer):
+            b.pack(side="left", padx=(0, 10))
+        self.bt_parar_jf.pack(side="right")
+
+        corpo = self._corpo(aba, linha=1)
+        lateral = self._lateral(corpo)
+        p = dict(padx=18)
+
+        self._rotulo(lateral, "Tipo de conteúdo", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(12, 6), **p)
+        self._destinos = {"Filmes": "", "Séries": ""}
+        self._modo_atual = "Filmes"
+        self.seletor_modo = ctk.CTkSegmentedButton(
+            lateral, values=["Filmes", "Séries"], command=self._ao_trocar_modo, height=34,
+            corner_radius=Tema.RAIO_CONTROLE, font=self.f_normal, fg_color=Tema.CAMPO,
+            selected_color=Tema.PRIMARIA, selected_hover_color=Tema.PRIMARIA_HOVER,
+            unselected_color=Tema.CAMPO, unselected_hover_color=Tema.SECUNDARIA_HOVER, text_color=Tema.TEXTO)
+        self.seletor_modo.pack(fill="x", **p)
+        self.seletor_modo.set("Filmes")
+
+        self._separador(lateral)
+        self._rotulo(lateral, "Pastas", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
+        self.var_jf_origem = tk.StringVar()
+        self.var_jf_destino = tk.StringVar()
+        self._campo_pasta(lateral, "Arquivos para organizar:", self.var_jf_origem, "ex.: C:/Users/Voce/Downloads")
+        self.lb_destino = self._campo_pasta(lateral, self.ROTULOS_DESTINO["Filmes"], self.var_jf_destino,
+                                            "ex.: D:/Jellyfin/Filmes")
+
+        self._separador(lateral)
+        self._rotulo(lateral, "Nomes", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
+        self.var_jf_tmdb = tk.BooleanVar(value=False)
+        self.var_jf_chave_tmdb = tk.StringVar()
+        self.cb_tmdb = self._checkbox(lateral, "Consultar também o TMDB", self.var_jf_tmdb, self._mostrar_campos_jf)
+        self.campo_chave_tmdb = self._entrada(lateral, self.var_jf_chave_tmdb, "Chave da API do TMDB", show="•")
+        self.var_jf_tmdbid = tk.BooleanVar(value=False)
+        self.var_jf_exigir = tk.BooleanVar(value=False)
+        self.cb_tmdbid = self._checkbox(lateral, "Incluir [tmdbid] no nome da pasta", self.var_jf_tmdbid)
+        self._checkbox(lateral, "Só mover o que estiver no catálogo", self.var_jf_exigir)
+
+        self._separador(lateral)
+        self._rotulo(lateral, "Legendas", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
+        self.var_jf_legendas = tk.BooleanVar(value=True)
+        self._checkbox(lateral, "Baixar legendas ao organizar", self.var_jf_legendas)
+        self._rotulo(lateral, "Fonte das legendas:").pack(anchor="w", pady=(6, 4), **p)
+        self.var_jf_fonte = tk.StringVar(value=self.FONTES_LEGENDA[0])
+        ctk.CTkOptionMenu(lateral, variable=self.var_jf_fonte, values=list(self.FONTES_LEGENDA),
+                          command=lambda v: self._mostrar_campos_jf(), height=36,
+                          corner_radius=Tema.RAIO_CONTROLE, font=self.f_normal, fg_color=Tema.CAMPO,
+                          button_color=Tema.SECUNDARIA, button_hover_color=Tema.SECUNDARIA_HOVER,
+                          dropdown_fg_color=Tema.CARTAO, dropdown_hover_color=Tema.SECUNDARIA_HOVER,
+                          dropdown_font=self.f_normal, text_color=Tema.TEXTO).pack(fill="x", **p)
+        self.quadro_fonte = ctk.CTkFrame(lateral, fg_color="transparent")
+        self.quadro_fonte.pack(fill="x")
+        self.var_jf_chave_os = tk.StringVar()
+        self.var_jf_url_site = tk.StringVar()
+        self.campo_chave_os = self._entrada(self.quadro_fonte, self.var_jf_chave_os,
+                                            "Chave da API do OpenSubtitles", show="•")
+        self.campo_url_site = self._entrada(self.quadro_fonte, self.var_jf_url_site,
+                                            "https://site/busca?q={consulta}")
+        linha = ctk.CTkFrame(lateral, fg_color="transparent")
+        linha.pack(fill="x", pady=(8, 2), **p)
+        self.var_jf_idioma = tk.StringVar(value="pt-BR")
+        self._entrada(linha, self.var_jf_idioma, width=90).pack(side="right")
+        self._rotulo(linha, "Idioma da legenda:").pack(side="left")
+        self.var_jf_sobrescrever = tk.BooleanVar(value=False)
+        self.var_jf_lembrar = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Trocar legendas que já existem", self.var_jf_sobrescrever)
+        self._checkbox(lateral, "Lembrar as chaves neste computador", self.var_jf_lembrar)
+        ctk.CTkFrame(lateral, height=12, fg_color="transparent").pack()
+        self._mostrar_campos_jf()
+
+        self.tabela_jf, faixa = self._criar_tabela(
+            corpo, "Arquivos", self.COLUNAS_JF,
+            "Escolha as pastas e clique em Pré-visualizar. Nada é movido sem você confirmar.")
+        self.bt_abrir_biblioteca = self._botao(faixa, "Abrir pasta da biblioteca", self.ao_abrir_biblioteca,
+                                               "fantasma")
+        self.bt_abrir_biblioteca.pack(side="left")
+        self._criar_console(corpo)
+
+    def _campo_pasta(self, master, rotulo: str, var: tk.StringVar, dica: str) -> ctk.CTkLabel:
+        lb = self._rotulo(master, rotulo)
+        lb.pack(anchor="w", padx=18, pady=(4, 4))
+        linha = ctk.CTkFrame(master, fg_color="transparent")
+        linha.pack(fill="x", padx=18, pady=(0, 6))
+        self._botao(linha, "Escolher...", lambda: self._escolher_pasta_em(var), largura=96).pack(side="right")
+        self._entrada(linha, var, dica).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        return lb
+
+    def _escolher_pasta_em(self, var: tk.StringVar) -> None:
+        pasta = filedialog.askdirectory(initialdir=var.get() or ".")
+        if pasta:
+            var.set(pasta)
+
+    def _mostrar_campos_jf(self) -> None:
+        """Mostra só os campos que fazem sentido para as escolhas atuais."""
+        if self.var_jf_tmdb.get():
+            self.campo_chave_tmdb.pack(fill="x", padx=18, pady=(0, 6), after=self.cb_tmdb)
+        else:
+            self.campo_chave_tmdb.pack_forget()
+        fonte = self.var_jf_fonte.get()
+        self.campo_chave_os.pack_forget()
+        self.campo_url_site.pack_forget()
+        if fonte == self.FONTES_LEGENDA[1]:
+            self.campo_chave_os.pack(fill="x", padx=18, pady=(8, 0))
+        elif fonte == self.FONTES_LEGENDA[2]:
+            self.campo_url_site.pack(fill="x", padx=18, pady=(8, 0))
+
+    def _ao_trocar_modo(self, modo: str) -> None:
+        """Filmes e Séries têm bibliotecas diferentes: cada modo lembra a sua pasta."""
+        self._destinos[self._modo_atual] = self.var_jf_destino.get()
+        self._modo_atual = modo
+        self.var_jf_destino.set(self._destinos.get(modo, ""))
+        self.lb_destino.configure(text=self.ROTULOS_DESTINO[modo])
+        self.limpar_tabela_jf()
+        self.liberar_organizar(False)              # a pré-visualização era do outro modo
 
     # ------------------------------------------------------------------ 5. rodapé
     def _montar_rodape(self) -> None:
         rodape = ctk.CTkFrame(self, fg_color=Tema.CARTAO, corner_radius=0, height=40, border_width=0)
-        rodape.grid(row=4, column=0, sticky="ew", pady=(14, 0))
+        rodape.grid(row=2, column=0, sticky="ew", pady=(14, 0))
         self.indicador = ctk.CTkFrame(rodape, width=10, height=10, corner_radius=5, fg_color=Tema.SUCESSO)
         self.indicador.pack(side="left", padx=(28, 8), pady=14)
         self.var_status = tk.StringVar(value="Pronto.")
@@ -441,17 +660,85 @@ class JanelaModerna(ctk.CTk):
             max_paginas=int(self.campo_maxp.get()), limite=int(self.campo_limite.get()),
             espera=float(self.campo_espera.get()), pasta=self.var_pasta.get().strip() or self._pasta_padrao)
 
+    def obter_opcoes_jellyfin(self) -> OpcoesJellyfin:
+        self._destinos[self._modo_atual] = self.var_jf_destino.get()
+        return OpcoesJellyfin(
+            modo="series" if self._modo_atual == "Séries" else "filmes",
+            origem=self.var_jf_origem.get().strip(), destino=self.var_jf_destino.get().strip(),
+            tmdb=self.var_jf_tmdb.get(), chave_tmdb=self.var_jf_chave_tmdb.get().strip(),
+            incluir_tmdbid=self.var_jf_tmdbid.get(), exigir_catalogo=self.var_jf_exigir.get(),
+            legendas=self.var_jf_legendas.get(), fonte_legenda=self.var_jf_fonte.get(),
+            chave_opensubtitles=self.var_jf_chave_os.get().strip(), url_site=self.var_jf_url_site.get().strip(),
+            idioma=self.var_jf_idioma.get().strip() or "pt-BR", sobrescrever=self.var_jf_sobrescrever.get(),
+            lembrar_chaves=self.var_jf_lembrar.get())
+
+    def destinos_jellyfin(self) -> dict:
+        """Pasta de Filmes e de Séries (cada modo tem a sua)."""
+        self._destinos[self._modo_atual] = self.var_jf_destino.get()
+        return {"Filmes": self._destinos["Filmes"].strip(), "Séries": self._destinos["Séries"].strip()}
+
+    def definir_opcoes_jellyfin(self, dados: dict) -> None:
+        """Preenche a aba com valores salvos (chaves que não existirem ficam como estão)."""
+        textos = {"origem": self.var_jf_origem, "chave_tmdb": self.var_jf_chave_tmdb,
+                  "chave_opensubtitles": self.var_jf_chave_os, "url_site": self.var_jf_url_site,
+                  "idioma": self.var_jf_idioma}
+        marcas = {"tmdb": self.var_jf_tmdb, "incluir_tmdbid": self.var_jf_tmdbid,
+                  "exigir_catalogo": self.var_jf_exigir, "legendas": self.var_jf_legendas,
+                  "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar}
+        for chave, var in textos.items():
+            if dados.get(chave):
+                var.set(dados[chave])
+        for chave, var in marcas.items():
+            if chave in dados:
+                var.set(bool(dados[chave]))
+        if dados.get("fonte_legenda") in self.FONTES_LEGENDA:
+            self.var_jf_fonte.set(dados["fonte_legenda"])
+        self._destinos["Filmes"] = dados.get("destino_filmes", self._destinos["Filmes"])
+        self._destinos["Séries"] = dados.get("destino_series", self._destinos["Séries"])
+        self.var_jf_destino.set(self._destinos[self._modo_atual])
+        self._mostrar_campos_jf()
+
+    def limpar_tabela_jf(self) -> None:
+        self.tabela_jf.delete(*self.tabela_jf.get_children())
+        self._atualizar_contador(self.tabela_jf)
+
+    def adicionar_linha_jf(self, iid: str, numero: int, situacao: str, tipo: str | None,
+                           atual: str, novo: str, legenda: str = "") -> None:
+        """tipo: 'ok', 'erro', 'pulado' ou None (linha neutra)."""
+        if tipo:
+            situacao = f"{self.SIMBOLO_SITUACAO[tipo]}  {situacao}"
+            tags = (tipo,)
+        else:
+            tags = ("par" if len(self.tabela_jf.get_children()) % 2 == 0 else "impar",)
+        self.tabela_jf.insert("", "end", iid=iid, values=(numero, situacao, atual, novo, legenda), tags=tags)
+        self._atualizar_contador(self.tabela_jf)
+
+    def atualizar_linha_jf(self, iid: str, legenda: str | None = None, legenda_tipo: str | None = None) -> None:
+        if not self.tabela_jf.exists(iid):
+            return
+        valores = list(self.tabela_jf.item(iid, "values"))
+        if legenda is not None:
+            simbolo = self.SIMBOLO_SITUACAO.get(legenda_tipo or "", "")
+            valores[4] = f"{simbolo}  {legenda}" if simbolo else legenda
+        self.tabela_jf.item(iid, values=valores)
+        self.tabela_jf.see(iid)
+
+    def liberar_organizar(self, sim: bool) -> None:
+        """O botão Organizar só funciona depois de uma pré-visualização."""
+        self._organizar_liberado = sim
+        self.bt_organizar.configure(state="normal" if sim and not self._ocupado else "disabled")
+
     def marcar_navegador(self) -> None:
         self.var_nav.set(True)
 
     def limpar_tabela(self) -> None:
         self.tabela.delete(*self.tabela.get_children())
-        self._atualizar_contador()
+        self._atualizar_contador(self.tabela)
 
     def adicionar_video(self, iid: str, numero: int, situacao: str, titulo: str, origem: str, link: str) -> None:
         listra = "par" if len(self.tabela.get_children()) % 2 == 0 else "impar"
         self.tabela.insert("", "end", iid=iid, values=(numero, situacao, titulo, origem, link), tags=(listra,))
-        self._atualizar_contador()
+        self._atualizar_contador(self.tabela)
 
     def atualizar_situacao(self, iid: str, texto: str, tipo: str) -> None:
         """tipo: 'ok' (verde), 'erro' (vermelho) ou 'pulado' (amarelo)."""
@@ -471,19 +758,20 @@ class JanelaModerna(ctk.CTk):
         return ids
 
     def escrever_log(self, texto: str) -> None:
-        """Acrescenta texto ao console. '\\r' volta ao início da linha (barra de progresso)."""
-        self.log.configure(state="normal")
-        for n, parte in enumerate(texto.split("\r")):
-            if n > 0:
-                self.log.delete("end-1c linestart", "end-1c")
-            for pedaco in parte.splitlines(keepends=True):      # cor decidida linha a linha
-                inicio = self.log.index("end-1c")
-                self.log.insert("end", pedaco)
-                tag = self._cor_da_linha(self.log.get(f"{inicio} linestart", "end-1c"))
-                if tag:
-                    self.log.tag_add(tag, f"{inicio} linestart", "end-1c")
-        self.log.see("end")
-        self.log.configure(state="disabled")
+        """Acrescenta texto aos consoles. '\\r' volta ao início da linha (barra de progresso)."""
+        for console in self.logs:
+            console.configure(state="normal")
+            for n, parte in enumerate(texto.split("\r")):
+                if n > 0:
+                    console.delete("end-1c linestart", "end-1c")
+                for pedaco in parte.splitlines(keepends=True):      # cor decidida linha a linha
+                    inicio = console.index("end-1c")
+                    console.insert("end", pedaco)
+                    tag = self._cor_da_linha(console.get(f"{inicio} linestart", "end-1c"))
+                    if tag:
+                        console.tag_add(tag, f"{inicio} linestart", "end-1c")
+            console.see("end")
+            console.configure(state="disabled")
 
     @staticmethod
     def _cor_da_linha(linha: str) -> str | None:
@@ -497,9 +785,10 @@ class JanelaModerna(ctk.CTk):
         return None
 
     def limpar_log(self) -> None:
-        self.log.configure(state="normal")
-        self.log.delete("1.0", "end")
-        self.log.configure(state="disabled")
+        for console in self.logs:
+            console.configure(state="normal")
+            console.delete("1.0", "end")
+            console.configure(state="disabled")
 
     def definir_status(self, texto: str, ocupado: bool | None = None) -> None:
         self.var_status.set(texto)
@@ -510,10 +799,13 @@ class JanelaModerna(ctk.CTk):
         """Liga/desliga botões, a barra animada e a cor do indicador."""
         self._ocupado = ocupado
         estado = "disabled" if ocupado else "normal"
-        for b in (self.bt_buscar, self.bt_baixar_sel, self.bt_baixar_todos, self.bt_login):
+        for b in (self.bt_buscar, self.bt_baixar_sel, self.bt_baixar_todos, self.bt_login,
+                  self.bt_previa, self.bt_legendas, self.bt_desfazer):
             b.configure(state=estado)
-        self.bt_parar.configure(state="normal" if ocupado else "disabled",
-                                border_color=Tema.PERIGO if ocupado else Tema.CAMPO_BORDA)
+        self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
+        for parar in (self.bt_parar, self.bt_parar_jf):
+            parar.configure(state="normal" if ocupado else "disabled",
+                            border_color=Tema.PERIGO if ocupado else Tema.CAMPO_BORDA)
         self.indicador.configure(fg_color=Tema.AVISO if ocupado else Tema.SUCESSO)
         if ocupado:
             self.barra.configure(mode="indeterminate", progress_color=Tema.PRIMARIA)
@@ -533,13 +825,14 @@ class JanelaModerna(ctk.CTk):
         self.wait_window(dialogo)
         return dialogo.resposta
 
-    def _atualizar_contador(self) -> None:
-        total = len(self.tabela.get_children())
-        self.lb_contador.configure(text=str(total))
+    def _atualizar_contador(self, tabela) -> None:
+        contador, vazio = self._extras_tabela[str(tabela)]
+        total = len(tabela.get_children())
+        contador.configure(text=str(total))
         if total:
-            self.lb_vazio.place_forget()
+            vazio.place_forget()
         else:
-            self.lb_vazio.place(relx=0.5, rely=0.55, anchor="center")
+            vazio.place(relx=0.5, rely=0.55, anchor="center")
 
     def _ajustar_checks(self) -> None:
         if self.var_pausar.get() or self.var_visivel.get():
@@ -586,6 +879,22 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_abrir_pasta(self) -> None:
+        pass
+
+    # --- aba Jellyfin
+    def ao_previsualizar(self) -> None:
+        pass
+
+    def ao_organizar(self) -> None:
+        pass
+
+    def ao_baixar_legendas(self) -> None:
+        pass
+
+    def ao_desfazer(self) -> None:
+        pass
+
+    def ao_abrir_biblioteca(self) -> None:
         pass
 
 

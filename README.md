@@ -33,6 +33,20 @@ Opções da janela:
 Outras interfaces: `python iniciar.py --classica` (janela cinza antiga) ou
 `python iniciar.py --texto` (menu no terminal).
 
+### Aba Jellyfin (organizar filmes e séries)
+
+No topo da janela, troque de **Vídeos** para **Jellyfin**:
+
+1. Escolha **Filmes** ou **Séries**, a pasta com os arquivos bagunçados e a pasta da biblioteca
+   (a mesma cadastrada no painel do Jellyfin).
+2. **Pré-visualizar** mostra "arquivo atual → novo nome" e não move nada.
+3. **Organizar** só fica disponível depois da pré-visualização. Se você mudar pastas ou opções,
+   precisa pré-visualizar de novo. Move, renomeia e, se marcado, baixa as legendas.
+4. **Desfazer última** devolve os arquivos. **Baixar legendas que faltam** percorre a biblioteca.
+
+As pastas e opções ficam salvas em `~/.videoscraper/config.json` (fora do projeto). As chaves de
+API só são salvas se você marcar "Lembrar as chaves neste computador".
+
 ### Como a janela moderna é organizada (para quem quer mexer)
 
 - `videoscraper/gui_moderna.py`: **só a aparência** (`JanelaModerna`). Cores e fontes ficam na

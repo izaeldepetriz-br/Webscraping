@@ -364,12 +364,15 @@ def episodios_da_biblioteca(pasta_series: str | Path) -> list[Path]:
 
 def baixar_legendas_biblioteca(pasta_filmes: str | Path, provedores: list, idioma: str = IDIOMA_PADRAO,
                                sobrescrever: bool = False, catalogo=None,
-                               ao_terminar=None) -> list[ResultadoLegenda]:
+                               ao_terminar=None, parar=None) -> list[ResultadoLegenda]:
     """Passa por todas as pastas 'Nome (Ano)' da biblioteca e baixa o que estiver faltando.
     Com `catalogo`, também tenta o título original de cada filme.
-    `ao_terminar(indice, resultado)` é chamado a cada filme (para mostrar o andamento)."""
+    `ao_terminar(indice, resultado)` é chamado a cada filme (para mostrar o andamento);
+    `parar()` devolvendo True interrompe entre um filme e outro."""
     resultados = []
     for i, pasta in enumerate(pastas_de_filmes(pasta_filmes)):
+        if parar and parar():
+            break
         resultado = baixar_legenda(pasta, provedores, idioma=idioma, sobrescrever=sobrescrever,
                                    titulos_alternativos=_titulo_original(catalogo, pasta))
         print(resultado, file=sys.stderr)
@@ -381,10 +384,12 @@ def baixar_legendas_biblioteca(pasta_filmes: str | Path, provedores: list, idiom
 
 def baixar_legendas_series(pasta_series: str | Path, provedores: list, idioma: str = IDIOMA_PADRAO,
                            sobrescrever: bool = False, catalogo=None,
-                           ao_terminar=None) -> list[ResultadoLegenda]:
+                           ao_terminar=None, parar=None) -> list[ResultadoLegenda]:
     """Igual a baixar_legendas_biblioteca, mas episódio por episódio de Séries/."""
     resultados = []
     for i, video in enumerate(episodios_da_biblioteca(pasta_series)):
+        if parar and parar():
+            break
         alternativos = _titulo_original(catalogo, video.parent.parent, "serie")
         resultado = baixar_legenda_episodio(video, provedores, idioma=idioma, sobrescrever=sobrescrever,
                                             titulos_alternativos=alternativos)
