@@ -38,7 +38,10 @@ Outras interfaces: `python iniciar.py --classica` (janela cinza antiga) ou
 No topo da janela, troque de **Vídeos** para **Jellyfin**:
 
 1. Escolha **Filmes** ou **Séries**, a pasta com os arquivos bagunçados e a pasta da biblioteca
-   (a mesma cadastrada no painel do Jellyfin).
+   (a mesma cadastrada no painel do Jellyfin: Painel → Bibliotecas → Pastas).
+   Se os arquivos bagunçados **já estão dentro da biblioteca**, use a mesma pasta nos dois campos:
+   o que já está no padrão aparece como "já organizado" e não é mexido, e as pastas que
+   ficarem vazias depois de mover são apagadas.
 2. **Pré-visualizar** mostra "arquivo atual → novo nome" e não move nada.
 3. **Organizar** só fica disponível depois da pré-visualização. Se você mudar pastas ou opções,
    precisa pré-visualizar de novo. Move, renomeia e, se marcado, baixa as legendas.

@@ -3,6 +3,9 @@
     Filmes:  <pasta_filmes>/Nome do Filme (Ano)/Nome do Filme (Ano).ext
     Séries:  <pasta_series>/Nome da Série (Ano)/Season 01/Nome da Série S01E02.ext
 
+A origem pode ser uma pasta separada (ex.: Downloads) OU a própria biblioteca: nesse caso
+o que já está no padrão aparece como 'organizado' e fica onde está.
+
 Segurança:
   - Por padrão só SIMULA (aplicar=False): mostra o que faria, sem mexer em nada.
   - Nunca sobrescreve: se o destino já existe, o arquivo fica onde está (status 'conflito').
@@ -29,7 +32,7 @@ MODOS = ("filmes", "series")
 class Movimento:
     origem: Path
     destino: Path | None
-    status: str          # simulado | movido | conflito | nao_identificado | ignorado | erro
+    status: str          # simulado | movido | organizado | conflito | nao_identificado | ignorado | erro
     detalhe: str = ""
     filme: Filme | None = None
     acompanhantes: list[tuple[Path, Path]] | None = None   # legendas/nfo que vão junto
@@ -72,9 +75,11 @@ def _consultar(catalogo: Catalogo | None, titulo: str, ano: int | None, tipo: st
 
 def _finalizar(video: Path, pasta: Path, nome_arquivo: str, detalhe: str, filme, episodio=None) -> Movimento:
     destino = pasta / f"{nome_arquivo}{video.suffix.lower()}"
+    if _mesmo_arquivo(destino, video):
+        return Movimento(video, destino, "organizado", "já está no padrão do Jellyfin", filme, None, episodio)
     mov = Movimento(video, destino, "simulado", detalhe, filme, _acompanhantes(video, nome_arquivo, pasta),
                     episodio)
-    if destino.exists() and destino.resolve() != video.resolve():
+    if destino.exists() and not _mesmo_arquivo(destino, video):
         mov.status, mov.detalhe = "conflito", "já existe um arquivo com esse nome no destino"
     return mov
 
@@ -125,18 +130,54 @@ def _planejar_episodio(video: Path, pasta_series: Path, catalogo: Catalogo | Non
                       (ep.temporada, ep.episodio))
 
 
+def _mesmo_arquivo(a: Path, b: Path) -> bool:
+    """Mesmo caminho? (no Windows, 'matrix (1999)' e 'Matrix (1999)' são a mesma pasta)"""
+    try:
+        return a.exists() and b.exists() and a.samefile(b)
+    except OSError:
+        return False
+
+
+def _dentro(filho: Path, pai: Path) -> bool:
+    try:
+        filho.resolve().relative_to(pai.resolve())
+        return True
+    except ValueError:
+        return False
+
+
 def _listar_videos(origem: Path, pasta_filmes: Path, recursivo: bool) -> list[Path]:
+    """Vídeos da origem. Se a origem fica FORA da biblioteca, o que estiver dentro da biblioteca
+    é ignorado (ex.: origem E:/ e biblioteca E:/Filmes). Se a origem É a biblioteca (ou uma pasta
+    dela), olha tudo: o que já estiver no padrão vira 'organizado' no planejar()."""
+    no_lugar = _dentro(origem, pasta_filmes)
     padrao = "**/*" if recursivo else "*"
     videos = []
     for arquivo in sorted(origem.glob(padrao)):
         if not arquivo.is_file() or not eh_video(arquivo):
             continue
-        try:
-            arquivo.resolve().relative_to(pasta_filmes.resolve())
-            continue                     # já está dentro da biblioteca: não mexe
-        except ValueError:
-            videos.append(arquivo)
+        if PASTA_LOGS in arquivo.relative_to(origem).parts:
+            continue
+        if not no_lugar and _dentro(arquivo, pasta_filmes):
+            continue
+        videos.append(arquivo)
     return videos
+
+
+def _apagar_pastas_que_esvaziaram(pastas: set[Path], origem: Path) -> None:
+    """Depois de mover, apaga as pastas de origem que ficaram vazias (ex.: 'Matrix.1999.1080p/').
+    Só pastas DENTRO da origem e só se estiverem vazias; a própria origem nunca é apagada."""
+    raiz = origem.resolve()
+    for pasta in sorted(pastas, key=lambda p: len(p.parts), reverse=True):
+        atual = pasta
+        while atual.exists() and atual.resolve() != raiz and raiz in atual.resolve().parents:
+            try:
+                if any(atual.iterdir()):
+                    break
+                atual.rmdir()
+            except OSError:
+                break
+            atual = atual.parent
 
 
 def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Catalogo | None = None,
@@ -157,9 +198,11 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
         return movimentos
 
     feitos = []
+    pastas_de_onde_sairam: set[Path] = set()
     for mov in movimentos:
         if mov.status != "simulado":
             continue
+        pastas_de_onde_sairam.add(mov.origem.parent)
         try:
             mov.destino.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(mov.origem), str(mov.destino))   # funciona até entre discos (C: -> D:)
@@ -174,6 +217,7 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
             mov.status, mov.detalhe = "erro", str(erro)
     if feitos:
         _gravar_log(pasta_filmes, feitos)
+        _apagar_pastas_que_esvaziaram(pastas_de_onde_sairam, origem)
     return movimentos
 
 

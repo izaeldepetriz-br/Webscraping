@@ -44,7 +44,8 @@ PASTA_PADRAO = os.path.abspath("videos_baixados")
 TEXTOS_SITUACAO = {"ok": "baixado", "pulado": "pulado", "erro": "erro"}
 
 # Aba Jellyfin: status do organizador / da legenda -> (texto, cor da linha)
-STATUS_MOVIMENTO = {"simulado": ("vai mover", None), "movido": ("movido", "ok"), "conflito": ("conflito", "pulado"),
+STATUS_MOVIMENTO = {"simulado": ("vai mover", None), "movido": ("movido", "ok"),
+                    "organizado": ("já organizado", "ok"), "conflito": ("conflito", "pulado"),
                     "nao_identificado": ("não identificado", "pulado"), "ignorado": ("ignorado", None),
                     "erro": ("erro", "erro")}
 STATUS_LEGENDA = {"baixada": ("baixada", "ok"), "ja_existe": ("já existia", None),
@@ -314,10 +315,11 @@ class AppModerna(JanelaModerna):
             for m in movimentos:
                 print(m)
             quantos = sum(m.status == "simulado" for m in movimentos)
+            prontos = sum(m.status == "organizado" for m in movimentos)
             self.fila.put(("jf_movimentos", movimentos))
             self.fila.put(("jf_previa", (assinatura, quantos)))
-            self.fila.put(("status_fim", f"Pré-visualização: {quantos} para mover, "
-                                         f"{len(movimentos) - quantos} ficam onde estão. Nada foi movido."))
+            self.fila.put(("status_fim", f"Pré-visualização: {quantos} para mover, {prontos} já organizado(s), "
+                                         f"{len(movimentos) - quantos - prontos} com pendência. Nada foi movido."))
             if not movimentos:
                 self.fila.put(("msg", ("Nenhum vídeo", f"Não achei vídeos em:\n{o.origem}", "aviso")))
 

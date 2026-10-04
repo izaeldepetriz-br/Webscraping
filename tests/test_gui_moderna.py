@@ -283,3 +283,23 @@ def test_jellyfin_validacoes_e_config(app, tmp_path):
     app.var_jf_lembrar.set(True)
     app._salvar_config()
     assert config.carregar()["jellyfin"]["chave_opensubtitles"] == "segredo"
+
+
+def test_jellyfin_mesma_pasta_nos_dois_campos(app, tmp_path):
+    biblioteca = tmp_path / "Filmes_Organizados"
+    (biblioteca / "Matrix (1999)").mkdir(parents=True)
+    (biblioteca / "Matrix (1999)" / "Matrix (1999).mp4").write_bytes(b"v")         # já organizado
+    (biblioteca / "O.Poderoso.Chefao.1972.Bluray.mkv").write_bytes(b"v")           # bagunçado
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_origem.set(str(biblioteca))
+    app.var_jf_destino.set(str(biblioteca))
+    app.var_jf_legendas.set(False)
+    app.bt_previa.invoke()
+    esperar(app)
+    situacoes = {l[2]: l[1] for l in _linhas_jf(app)}
+    assert situacoes["Matrix (1999).mp4"].endswith("já organizado")
+    assert situacoes["O.Poderoso.Chefao.1972.Bluray.mkv"] == "vai mover"
+    assert "1 para mover, 1 já organizado(s)" in app.var_status.get()
+    app.bt_organizar.invoke()
+    esperar(app)
+    assert (biblioteca / "O Poderoso Chefão (1972)" / "O Poderoso Chefão (1972).mkv").is_file()

@@ -137,3 +137,63 @@ def test_tmdb_erros_e_cadeia(api_falsa):
     assert cadeia.buscar("Desconhecido", 2001) is None
     with pytest.raises(ErroCatalogo):
         CatalogoTMDB("")
+
+
+# ----------------------------------------------------------------- origem = a própria biblioteca
+def test_organiza_dentro_da_propria_biblioteca(tmp_path):
+    """Caso comum: os filmes bagunçados JÁ estão na pasta do Jellyfin (mesma pasta nos 2 campos)."""
+    biblioteca = tmp_path / "Filmes_Organizados"
+    _criar(biblioteca / "Matrix.1999.1080p.BluRay", ["Matrix.1999.1080p.BluRay.x264-VERSAO.mp4"])
+    (biblioteca / "Matrix.1999.1080p.BluRay" / "Matrix.1999.1080p.BluRay.x264-VERSAO.pt-BR.srt").write_text("x")
+    _criar(biblioteca, ["O.Poderoso.Chefao.1972.Bluray.mkv"])                       # solto na raiz
+    _criar(biblioteca / "Interestelar (2014)", ["Interestelar (2014).mkv"])          # já no padrão
+    _criar(biblioteca / "Pasta com capa", ["interestellar_filme_completo_dublado_2014.mkv", ])
+    (biblioteca / "Pasta com capa" / "capa.jpg").write_bytes(b"jpg")                 # sobra: pasta fica
+
+    previa = {m.origem.name: m for m in organizar_pasta(biblioteca, biblioteca, CatalogoLocal.padrao())}
+    assert previa["Interestelar (2014).mkv"].status == "organizado"                  # não mexe
+    assert previa["Matrix.1999.1080p.BluRay.x264-VERSAO.mp4"].status == "simulado"
+    assert previa["interestellar_filme_completo_dublado_2014.mkv"].status == "conflito"  # já existe
+
+    movs = organizar_pasta(biblioteca, biblioteca, CatalogoLocal.padrao(), aplicar=True)
+    assert sum(m.status == "movido" for m in movs) == 2
+    assert (biblioteca / "Matrix (1999)" / "Matrix (1999).mp4").is_file()
+    assert (biblioteca / "Matrix (1999)" / "Matrix (1999).pt-BR.srt").is_file()
+    assert (biblioteca / "O Poderoso Chefão (1972)" / "O Poderoso Chefão (1972).mkv").is_file()
+    assert not (biblioteca / "Matrix.1999.1080p.BluRay").exists()                   # esvaziou: apagada
+    assert (biblioteca / "Pasta com capa" / "capa.jpg").exists()                     # não estava vazia
+    assert (biblioteca / "Interestelar (2014)" / "Interestelar (2014).mkv").is_file()
+
+    # Rodar de novo não muda nada: tudo que dava para arrumar já está no padrão.
+    de_novo = organizar_pasta(biblioteca, biblioteca, CatalogoLocal.padrao())
+    assert not [m for m in de_novo if m.status == "simulado"]
+
+    desfazer(ultimo_log(biblioteca))                                                  # e volta tudo
+    assert (biblioteca / "Matrix.1999.1080p.BluRay" / "Matrix.1999.1080p.BluRay.x264-VERSAO.mp4").is_file()
+    assert (biblioteca / "O.Poderoso.Chefao.1972.Bluray.mkv").is_file()
+    assert not (biblioteca / "Matrix (1999)").exists()
+
+
+def test_origem_dentro_da_biblioteca_e_biblioteca_dentro_da_origem(tmp_path):
+    biblioteca = tmp_path / "Filmes"
+    _criar(biblioteca / "Baixados", ["Matrix.1999.mkv"])
+    [m] = organizar_pasta(biblioteca / "Baixados", biblioteca, CatalogoLocal.padrao(), aplicar=True)
+    assert m.status == "movido" and (biblioteca / "Matrix (1999)" / "Matrix (1999).mkv").is_file()
+    assert (biblioteca / "Baixados").exists()               # a própria origem nunca é apagada
+
+    # Origem "maior" que a biblioteca (ex.: E:/ e E:/Filmes): o que está na biblioteca fica de fora.
+    _criar(tmp_path, ["Cidade.de.Deus.2002.mkv"])
+    movs = organizar_pasta(tmp_path, biblioteca, CatalogoLocal.padrao())
+    assert [m.origem.name for m in movs] == ["Cidade.de.Deus.2002.mkv"]
+
+
+def test_series_dentro_da_propria_biblioteca(tmp_path):
+    series = tmp_path / "Series"
+    _criar(series / "Dark (2017)" / "Season 01", ["Dark S01E01.mkv"])                # já no padrão
+    _criar(series / "baixados dark", ["Dark.S01E02.WEBRip.mkv"])
+    movs = {m.origem.name: m for m in organizar_pasta(series, series, CatalogoLocal.padrao(),
+                                                       aplicar=True, modo="series")}
+    assert movs["Dark S01E01.mkv"].status == "organizado"
+    assert movs["Dark.S01E02.WEBRip.mkv"].status == "movido"
+    assert (series / "Dark (2017)" / "Season 01" / "Dark S01E02.mkv").is_file()
+    assert not (series / "baixados dark").exists()
