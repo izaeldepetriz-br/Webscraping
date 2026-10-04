@@ -148,6 +148,9 @@ Outras opções da aba Jellyfin:
   execução. No script: `SUBDL_API_KEY`; na linha de comando: `--subdl`.
 - **Episódio no modo Filmes:** arquivo com `S05E19`, `5x19` ou "Temporada 5 Episódio 19" aparece
   como "é episódio de série (S05E19): use o modo Séries" (e não é consultado no TMDB como filme).
+  Anime com numeração contínua também ("Samurai X - 01", "- 02"... na mesma pasta, sem ano). Se a
+  biblioteca escolhida for a pasta da própria série (ex.: `Animes\Samurai X`), a sugestão usa a de
+  cima (`Animes`), para não criar `Samurai X\Samurai X`.
   Se a maioria da prévia for episódio, a janela pergunta se deve trocar para **Séries** e
   pré-visualizar de novo. ("Star.Wars.Episode.4.1977" continua sendo filme.)
 - **Cópias de qualidade diferente:** duas cópias do mesmo filme/episódio (ex.: 720p e 1080p) → vai a

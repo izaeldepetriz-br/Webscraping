@@ -142,6 +142,24 @@ def _finalizar(video: Path, pasta: Path, nome_arquivo: str, detalhe: str, filme,
     return mov
 
 
+def _episodio_em_sequencia(video: Path):
+    """Só o número, sem ano ('Samurai X - 01 Dual Audio.avi') E outros arquivos da mesma pasta com o
+    mesmo nome e outro número: é episódio de anime, não filme. Um 'Rocky 2.avi' sozinho não conta."""
+    ep = extrair_episodio(video.name)
+    if ep is None or not ep.absoluto or ep.ano is not None:
+        return None
+    try:
+        vizinhos = [a for a in video.parent.iterdir() if a != video and a.is_file() and eh_video(a)]
+    except OSError:
+        return None
+    serie = normalizar(ep.serie)
+    for vizinho in vizinhos:
+        outro = extrair_episodio(vizinho.name)
+        if outro and outro.absoluto and outro.episodio != ep.episodio and normalizar(outro.serie) == serie:
+            return ep
+    return None
+
+
 def planejar(video: Path, pasta_filmes: Path, catalogo: Catalogo | None = None,
              incluir_tmdbid: bool = False, exigir_catalogo: bool = False, modo: str = "filmes",
              raiz: Path | None = None, limite_mb: float = LIMITE_TRAILER_MB,
@@ -168,6 +186,9 @@ def planejar(video: Path, pasta_filmes: Path, catalogo: Catalogo | None = None,
     elif extraido.titulo and extraido.ano:
         titulo, ano = formatar_titulo(extraido.titulo), extraido.ano
         detalhe = detalhe or "não confirmado no catálogo: confira o nome"
+    elif ep := _episodio_em_sequencia(video):         # "Samurai X - 01", "- 02"...: anime no modo Filmes
+        return Movimento(video, None, "nao_identificado",
+                         f"{DETALHE_EPISODIO} (episódio {ep.episodio:02d}, numeração contínua): use o modo Séries")
     else:
         return Movimento(video, None, "nao_identificado",
                          detalhe or "não achei o ano no nome; renomeie à mão ou use o TMDB")

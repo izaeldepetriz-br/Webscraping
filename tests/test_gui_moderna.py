@@ -1176,3 +1176,27 @@ def test_espelhos_sem_selecao_avisa(app, tmp_path):
     app.janela_espelhos.bt_remover.invoke()
     assert app.caixas[-1][1] == "Nada selecionado"
     assert len(list(filmes.rglob("*.strm"))) == 4
+
+
+def test_anime_numerado_no_modo_filmes_oferece_series_na_pasta_certa(app, tmp_path):
+    """Caso real: origem e biblioteca = 'Series_Organizadas/Animes/Samurai X', modo Filmes, arquivos
+    'Samurai X - 01 Dual Audio.avi'. Tem de perguntar e usar 'Animes' como biblioteca de Séries."""
+    animes = tmp_path / "Series_Organizadas" / "Animes"
+    pasta = animes / "Samurai X"
+    pasta.mkdir(parents=True)
+    for n in (1, 2, 3):
+        (pasta / f"Samurai X - {n:02d} Dual Audio.avi").write_bytes(b"video")
+    app.seletor_aba.set("Jellyfin")
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_origem.set(str(pasta))
+    app.var_jf_destino.set(str(pasta))
+    perguntas = []
+    app.perguntar = lambda t, m: (perguntas.append((t, m)), True)[1]       # "Continuar"
+    app.bt_previa.invoke()
+    esperar(app)
+    esperar(app)                                                           # a 2ª prévia, já em Séries
+    titulo, texto = perguntas[0]
+    assert titulo == "Parece série" and "3 de 3" in texto and "numeração contínua" in texto
+    assert f"Biblioteca de Séries: {animes}" in texto and "pasta da própria série" in texto
+    assert app._modo_atual == "Séries" and app.var_jf_destino.get() == str(animes)
+    assert sorted(l[3] for l in _linhas_jf(app)) == [f"Samurai X S01E0{n}.avi" for n in (1, 2, 3)]

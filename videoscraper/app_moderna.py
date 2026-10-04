@@ -29,6 +29,7 @@ from tkinter import filedialog
 from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, ConfigSite, ErroCatalogo,
                             ProvedorOpenSubtitles, ProvedorSiteHTML, ProvedorSubDL, desfazer, organizar_pasta)
 from jellyfin_tools.legendas import normalizar_idiomas
+from jellyfin_tools.nomes import extrair_episodio, normalizar
 from jellyfin_tools.metadados import ClienteTMDB
 from jellyfin_tools.notificacoes import Notificador
 from jellyfin_tools.espelho import (aplicar_espelho, classificar, conferir_e_avisar, conferir_espelhos,
@@ -501,9 +502,10 @@ class AppModerna(JanelaModerna):
                                          f"{resumo_sobras}{resumo_tmdb} Nada foi movido."))
             if not movimentos:
                 self.fila.put(("msg", ("Nenhum vídeo", f"Não achei vídeos em:\n{o.origem}", "aviso")))
-            episodios = sum(m.detalhe.startswith(DETALHE_EPISODIO) for m in movimentos)
-            if o.modo == "filmes" and episodios and episodios * 2 >= len(movimentos):
-                self.fila.put(("sugerir_series", (episodios, len(movimentos))))   # pergunta depois do "fim"
+            episodios = [m for m in movimentos if m.detalhe.startswith(DETALHE_EPISODIO)]
+            if o.modo == "filmes" and episodios and len(episodios) * 2 >= len(movimentos):
+                series = {normalizar(ep.serie) for m in episodios if (ep := extrair_episodio(m.origem.name))}
+                self.fila.put(("sugerir_series", (len(episodios), len(movimentos), series)))  # depois do "fim"
 
         self._rodar("Pré-visualizando...", tarefa)
 
@@ -932,20 +934,29 @@ class AppModerna(JanelaModerna):
 
         self._rodar("Removendo espelhos quebrados...", tarefa)
 
-    def _oferecer_series(self, episodios: int, total: int) -> None:
+    def _oferecer_series(self, episodios: int, total: int, series: set[str] = frozenset()) -> None:
         """Prévia no modo Filmes com (quase) só episódios: oferece trocar para Séries e refazer."""
         destino_atual = self.var_jf_destino.get()
         destino_series = self._destinos.get("Séries") or destino_atual
+        aviso_pasta = ""
+        if destino_series and normalizar(Path(destino_series).name) in series:
+            # "...\Animes\Samurai X" é a pasta DA série; a biblioteca é a de cima ("...\Animes"),
+            # senão ficaria "Samurai X\Samurai X\Season 01".
+            aviso_pasta = (f"\n(\"{Path(destino_series).name}\" é a pasta da própria série: a biblioteca "
+                           "passa a ser a pasta de cima, e a série fica numa pasta dentro dela.)")
+            destino_series = str(Path(destino_series).parent)
         if not self.perguntar("Parece série",
-                              f"{episodios} de {total} arquivo(s) têm temporada e episódio no nome (ex.: S05E19).\n"
-                              "São episódios de série, e o modo Filmes procura título + ano de filme.\n\n"
+                              f"{episodios} de {total} arquivo(s) parecem episódios de série: temporada e episódio "
+                              "no nome (ex.: S05E19) ou numeração contínua de anime (ex.: \"Samurai X - 01\").\n"
+                              "O modo Filmes procura título + ano de filme, por isso ficaram como não "
+                              "identificados.\n\n"
                               f"Trocar para o modo Séries e pré-visualizar de novo?\n"
-                              f"Biblioteca de Séries: {destino_series}"):
+                              f"Biblioteca de Séries: {destino_series}{aviso_pasta}"):
             return
         self.seletor_modo.set("Séries")
         self._ao_trocar_modo("Séries")
-        if not self.var_jf_destino.get():
-            self.var_jf_destino.set(destino_atual)
+        if not self.var_jf_destino.get() or aviso_pasta:
+            self.var_jf_destino.set(destino_series)
         self.ao_previsualizar()
 
     def ao_organizar(self) -> None:

@@ -272,3 +272,21 @@ def test_animes_dos_exemplos_sao_identificados(tmp_path, pasta, arquivo, esperad
     (tmp_path / "Animes" / pasta / arquivo).write_bytes(b"v")
     [m] = organizar_pasta(tmp_path / "Animes", tmp_path / "Series", CatalogoLocal.padrao(), modo="series")
     assert (m.status, m.destino_curto, m.fonte_nome) == ("simulado", esperado, "catálogo")
+
+
+def test_anime_com_numeracao_continua_no_modo_filmes_avisa_que_e_serie(tmp_path):
+    """'Samurai X - 01 Dual Audio.avi' não tem S01E01 nem ano: no modo Filmes era só "não achei o ano".
+    Com outros números da mesma série na pasta, é episódio (e a janela oferece o modo Séries)."""
+    from jellyfin_tools.organizador import DETALHE_EPISODIO
+    pasta = tmp_path / "Samurai X"
+    pasta.mkdir()
+    for n in (1, 2, 3):
+        (pasta / f"Samurai X - {n:02d} Dual Audio.avi").write_bytes(b"v")
+    sozinho = tmp_path / "Avulsos"
+    sozinho.mkdir()
+    (sozinho / "Rocky 2.avi").write_bytes(b"v")                      # um filme sem ano, sozinho: não é série
+    movs = organizar_pasta(pasta, tmp_path / "Filmes", CatalogoLocal.padrao())
+    assert [m.detalhe for m in movs] == [
+        f"{DETALHE_EPISODIO} (episódio {n:02d}, numeração contínua): use o modo Séries" for n in (1, 2, 3)]
+    rocky = organizar_pasta(sozinho, tmp_path / "Filmes", CatalogoLocal.padrao())
+    assert rocky[0].status == "nao_identificado" and not rocky[0].detalhe.startswith(DETALHE_EPISODIO)
