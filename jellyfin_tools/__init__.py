@@ -22,7 +22,7 @@ Módulos:
 """
 
 from .catalogo import Catalogo, CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, ErroCatalogo, Filme
-from .legendas import (CandidatoLegenda, ConfigSite, ErroLegenda, ProvedorOpenSubtitles,
+from .legendas import (CandidatoLegenda, ConfigSite, ErroLegenda, ProvedorOpenSubtitles, ProvedorSubDL,
                        ProvedorSiteHTML, ResultadoLegenda, baixar_legenda, baixar_legenda_episodio,
                        baixar_legendas_biblioteca, baixar_legendas_series)
 from .nomes import EpisodioExtraido, NomeExtraido, extrair_episodio, extrair_titulo_e_ano, nome_jellyfin
@@ -31,7 +31,7 @@ from .pipeline import organizar_e_legendar
 
 __all__ = [
     "Catalogo", "CatalogoEmCadeia", "CatalogoLocal", "CatalogoTMDB", "ErroCatalogo", "Filme",
-    "CandidatoLegenda", "ConfigSite", "ErroLegenda", "ProvedorOpenSubtitles", "ProvedorSiteHTML",
+    "CandidatoLegenda", "ConfigSite", "ErroLegenda", "ProvedorOpenSubtitles", "ProvedorSiteHTML", "ProvedorSubDL",
     "ResultadoLegenda", "baixar_legenda", "baixar_legenda_episodio", "baixar_legendas_biblioteca",
     "baixar_legendas_series",
     "EpisodioExtraido", "NomeExtraido", "extrair_episodio", "extrair_titulo_e_ano", "nome_jellyfin",

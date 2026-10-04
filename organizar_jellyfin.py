@@ -49,6 +49,7 @@ GERAR_NFO = True
 # Legendas: use UMA ou mais fontes. Ficam vazias = não busca legenda.
 IDIOMAS_LEGENDA = "pt-BR"                         # um ou vários: "pt-BR, en, es" (um .srt por idioma)
 OPENSUBTITLES_API_KEY = ""                        # https://www.opensubtitles.com/consumers
+SUBDL_API_KEY = ""                                # https://subdl.com (Painel > API): reserva do OpenSubtitles
 SITE_LEGENDAS_URL = ""                            # ex.: "https://site/busca?q={consulta}" (que permita robôs)
 USAR_SITE_DEMO_LEGENDAS = False                   # site SIMULADO local, só para testar
 
@@ -67,7 +68,7 @@ TRABALHOS_SIMULTANEOS = 4                         # filmes processados ao mesmo 
 # =============================================================================================
 
 from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, ConfigSite,  # noqa: E402
-                            ProvedorOpenSubtitles, ProvedorSiteHTML, organizar_pasta)
+                            ProvedorOpenSubtitles, ProvedorSiteHTML, ProvedorSubDL, organizar_pasta)
 from jellyfin_tools.metadados import ClienteTMDB  # noqa: E402
 from jellyfin_tools.notificacoes import Notificador  # noqa: E402
 from jellyfin_tools.pos_processamento import (ConfigPos, itens_da_biblioteca, itens_de_series,  # noqa: E402
@@ -104,6 +105,8 @@ def montar_provedores_legenda(log) -> tuple[list, list]:
     provedores, desligar = [], []
     if cfg("OPENSUBTITLES_API_KEY"):
         provedores.append(ProvedorOpenSubtitles(cfg("OPENSUBTITLES_API_KEY")))
+    if cfg("SUBDL_API_KEY"):                         # depois do OpenSubtitles: entra quando ele não acha
+        provedores.append(ProvedorSubDL(cfg("SUBDL_API_KEY")))   # ou atinge o limite diário
     if cfg("SITE_LEGENDAS_URL"):
         provedores.append(ProvedorSiteHTML(ConfigSite(cfg("SITE_LEGENDAS_URL"))))
     if cfg("USAR_SITE_DEMO_LEGENDAS"):
@@ -113,7 +116,7 @@ def montar_provedores_legenda(log) -> tuple[list, list]:
         provedor.cliente.espera = 0                    # é local: não precisa de pausa entre pedidos
         provedores.append(provedor)
     if not provedores:
-        log.info("Legendas: nenhuma fonte configurada (OPENSUBTITLES_API_KEY / SITE_LEGENDAS_URL)")
+        log.info("Legendas: nenhuma fonte configurada (OPENSUBTITLES_API_KEY / SUBDL_API_KEY / SITE_LEGENDAS_URL)")
     return provedores, desligar
 
 

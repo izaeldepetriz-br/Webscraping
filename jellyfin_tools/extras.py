@@ -47,7 +47,10 @@ PALAVRAS_FORCADA = {"forced", "forcada", "forcadas", "forcado", "forcados"}
 PALAVRAS_PROPAGANDA = {"leia", "leiame", "readme", "visite", "acesse", "www", "trailer", "teaser", "promo",
                        "propaganda", "sample", "torrent", "torrents", "download", "baixe", "site",
                        "grupo", "canal", "facebook", "telegram", "whatsapp", "instagram", "discord",
-                       "twitter", "tiktok", "youtube", "baixar", "bet", "aposta", "apostas", "cassino"}
+                       "twitter", "tiktok", "youtube", "baixar", "bet", "aposta", "apostas", "cassino",
+                       # nomes de sites de torrent que aparecem sozinhos ('BLUDV.mp4')
+                       "bludv", "comando", "comandotorrents", "starckfilmes", "lapumia", "torrentdosfilmes",
+                       "vacatorrent", "1xbet"}
 SIMILARIDADE_EXTRA = 0.8
 
 

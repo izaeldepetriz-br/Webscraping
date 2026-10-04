@@ -11,7 +11,7 @@
   python -m jellyfin_tools legendas PASTA_FILMES [--series] [--legendas-demo | --site-legendas URL | --opensubtitles]
   python -m jellyfin_tools desfazer PASTA_FILMES        (desfaz a última organização)
 
-Chaves de API (opcionais) por variável de ambiente: TMDB_API_KEY, OPENSUBTITLES_API_KEY.
+Chaves de API (opcionais) por variável de ambiente: TMDB_API_KEY, OPENSUBTITLES_API_KEY, SUBDL_API_KEY.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 from .catalogo import CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, ErroCatalogo
-from .legendas import (ConfigSite, ErroLegenda, ProvedorOpenSubtitles, ProvedorSiteHTML,
+from .legendas import (ConfigSite, ErroLegenda, ProvedorOpenSubtitles, ProvedorSiteHTML, ProvedorSubDL,
                        baixar_legenda, baixar_legenda_episodio, baixar_legendas_biblioteca,
                        baixar_legendas_series)
 from .organizador import desfazer, organizar_pasta, ultimo_log
@@ -40,6 +40,8 @@ def _opcoes_legendas(p: argparse.ArgumentParser) -> None:
     g.add_argument("--site-legendas", metavar="URL",
                    help="URL de busca de um site que permite robôs, com {consulta}. Ex.: https://site/busca?q={consulta}")
     g.add_argument("--opensubtitles", action="store_true", help="API oficial (precisa de OPENSUBTITLES_API_KEY)")
+    g.add_argument("--subdl", action="store_true", help="API do SubDL (precisa de SUBDL_API_KEY); com "
+                   "--opensubtitles, entra quando ele não acha ou atinge o limite")
     g.add_argument("--idioma", default="pt-BR")
     g.add_argument("--sobrescrever", action="store_true", help="trocar legendas que já existem")
 
@@ -56,6 +58,8 @@ def _criar_provedores(args, desligar: list) -> list:
         provedores.append(ProvedorSiteHTML(ConfigSite(args.site_legendas)))
     if args.opensubtitles:
         provedores.append(ProvedorOpenSubtitles(os.environ.get("OPENSUBTITLES_API_KEY", "")))
+    if args.subdl:                                   # depois do OpenSubtitles: a reserva
+        provedores.append(ProvedorSubDL(os.environ.get("SUBDL_API_KEY", "")))
     return provedores
 
 

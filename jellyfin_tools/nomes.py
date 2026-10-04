@@ -221,11 +221,44 @@ def extrair_episodio(nome_arquivo: str) -> EpisodioExtraido | None:
     else:
         m = _PADRAO_SO_EPISODIO.search(base)
         if not m:
-            return None
+            return _episodio_absoluto(base)
         temporada, episodio = 1, int(m.group(1))
-    antes = base[:m.start()]
+    return _montar_episodio(base[:m.start()], temporada, episodio)
+
+
+# Anime: nome + só o número do episódio ("HunterXHunter 01", "Hunter x Hunter - 01 (1080p) [A1B2]",
+# "One.Piece.1071.1080p"). A temporada fica 1 (numeração absoluta, como os animes costumam vir).
+_RE_QUALIDADE = re.compile(r"(?i)[ ._-](?:\d{3,4}p|\d{3,4}x\d{3,4}|x26[45]|h\.?26[45]|hevc|web-?dl|webrip|blu-?ray|bdrip|dvdrip|"
+                           r"hdtv|dual|dublado|legendado|multi)(?![a-z0-9])")
+_RE_ABSOLUTO = re.compile(r"^(?P<antes>.*[a-zA-Z].*?)[ ._-]+(?:-[ ._-]*)?(?:ep[ ._-]*)?(?P<ep>\d{1,4})(?:v\d)?$",
+                          re.IGNORECASE)
+
+
+def _episodio_absoluto(base: str) -> EpisodioExtraido | None:
+    limpo = _RE_GRUPO_INICIAL.sub("", base)
+    limpo = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", limpo)          # [grupo] (1080p) [CRC]
+    if q := _RE_QUALIDADE.search(limpo):
+        limpo = limpo[:q.start()]
+    m = _RE_ABSOLUTO.match(limpo.strip(" ._-"))
+    if not m:
+        return None
+    episodio = int(m.group("ep"))
+    if episodio == 0 or 1900 <= episodio <= 2099:     # "Filme 2019" é ano, não episódio
+        return None
+    return _montar_episodio(m.group("antes"), 1, episodio)
+
+
+def _separar_palavras_grudadas(texto: str) -> str:
+    """'HunterXHunter' -> 'Hunter X Hunter' (só quando o nome não tem nenhum separador)."""
+    if re.search(r"[ ._-]", texto.strip(" ._-")):
+        return texto
+    return re.sub(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", texto)
+
+
+def _montar_episodio(antes: str, temporada: int, episodio: int) -> EpisodioExtraido | None:
     if not antes.strip(" ._-[]()"):
         return None                       # "S01E01.mkv": sem o nome da série não dá para organizar
+    antes = _separar_palavras_grudadas(antes)
     extraido = extrair_titulo_e_ano(antes + ".mkv")          # "Breaking.Bad.2008." -> ano 2008
     nome, ano = (extraido.titulo, extraido.ano) if extraido.ano else (_limpar_palavras(antes, True), None)
     nome = re.sub(r"\s*\b(?:temporada|season|temp)\s*$", "", nome, flags=re.I).strip()

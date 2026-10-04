@@ -856,3 +856,26 @@ def test_abrir_log_abre_so_a_acao_escolhida(app, tmp_path):
     app._ao_escolher_registro(app._menus_registro[1].cget("values")[-1])  # "Início": sem arquivo próprio
     app.bt_abrir_log.invoke()
     assert abertos[-1] == str(app.arquivo_log) and app.caixas[-1][1] == "Log"
+
+
+def test_subdl_na_janela_como_fonte_e_como_reserva(app):
+    from jellyfin_tools import ProvedorOpenSubtitles, ProvedorSubDL
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_fonte.set("OpenSubtitles (API)")
+    app._mostrar_campos_jf()
+    app.update()
+    assert app.campo_chave_subdl.winfo_ismapped() and "Reserva" in app.rot_chave_subdl.cget("text")
+    app.var_jf_chave_os.set("chave-os")
+    with app._provedores(app.obter_opcoes_jellyfin()) as provedores:      # sem chave do SubDL: só o OS
+        assert [type(p) for p in provedores] == [ProvedorOpenSubtitles]
+    app.var_jf_chave_subdl.set("chave-subdl")
+    with app._provedores(app.obter_opcoes_jellyfin()) as provedores:      # com ela: OS e, depois, o SubDL
+        assert [type(p) for p in provedores] == [ProvedorOpenSubtitles, ProvedorSubDL]
+
+    app.var_jf_fonte.set("SubDL (API)")
+    app._mostrar_campos_jf()
+    app.update()
+    assert not app.campo_chave_os.winfo_ismapped() and app.rot_chave_subdl.cget("text") == "Chave da API do SubDL:"
+    app.var_jf_chave_subdl.set("")
+    assert "SubDL" in app._problema_legendas(app.obter_opcoes_jellyfin())
+    assert "chave_subdl" in app_moderna.SEGREDOS                         # só é salva se pedir

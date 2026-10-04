@@ -240,8 +240,11 @@ class ProvedorOpenSubtitles:
         self.sessao = sessao or requests.Session()
         # A API exige um User-Agent com o nome do app e a chave no cabeçalho Api-Key.
         self.sessao.headers.update({"Api-Key": chave, "User-Agent": app, "Accept": "application/json"})
+        self.esgotado = False           # limite diário atingido: as próximas legendas vão para a reserva
 
     def _json(self, metodo: str, caminho: str, **kwargs) -> dict:
+        if self.esgotado:
+            raise ErroLegenda("limite diário atingido (usando a próxima fonte)")
         try:
             r = self.sessao.request(metodo, f"{self.base_url}{caminho}", timeout=self.timeout, **kwargs)
         except requests.RequestException as erro:
@@ -249,6 +252,7 @@ class ProvedorOpenSubtitles:
         if r.status_code in (401, 403):
             raise ErroLegenda("OpenSubtitles recusou a chave da API")
         if r.status_code == 406:
+            self.esgotado = True
             raise ErroLegenda("limite diário de downloads do OpenSubtitles atingido")
         if r.status_code == 429:
             raise ErroLegenda("OpenSubtitles: muitas consultas seguidas, espere um pouco")
@@ -293,6 +297,89 @@ class ProvedorOpenSubtitles:
         if not link:
             raise ErroLegenda("OpenSubtitles não devolveu o link de download")
         return _baixar_bytes(requests.Session(), link, self.timeout)
+
+
+# --------------------------------------------------------------------------- provedor: SubDL
+# Códigos de idioma do SubDL (os mesmos que o Bazarr usa): pt-BR -> BR_PT, pt -> PT, en -> EN...
+IDIOMAS_SUBDL = {"pt-br": "BR_PT", "pt": "PT", "en": "EN", "es": "ES", "fr": "FR", "it": "IT", "de": "DE",
+                 "ja": "JA", "ko": "KO", "zh": "ZH", "ru": "RU", "ar": "AR", "nl": "NL", "pl": "PL", "tr": "TR"}
+
+
+def _numero(valor) -> int | None:
+    try:
+        return int(valor)
+    except (TypeError, ValueError):
+        return None
+
+
+class ProvedorSubDL:
+    """API oficial do SubDL (https://subdl.com/panel/api): chave gratuita, boa RESERVA para quando o
+    OpenSubtitles atinge o limite diário. GET api.subdl.com/api/v1/subtitles; o arquivo (.zip) vem
+    de dl.subdl.com."""
+    nome = "SubDL"
+
+    def __init__(self, chave: str, base_url: str = "https://api.subdl.com/api/v1",
+                 base_download: str = "https://dl.subdl.com", sessao: requests.Session | None = None,
+                 timeout: float = 20):
+        if not chave:
+            raise ErroLegenda("informe a chave da API do SubDL (SUBDL_API_KEY)")
+        self.chave = chave
+        self.base_url = base_url.rstrip("/")
+        self.base_download = base_download.rstrip("/")
+        self.timeout = timeout
+        self.sessao = sessao or requests.Session()
+        self.sessao.headers.update({"User-Agent": "jellyfin-tools v1.0", "Accept": "application/json"})
+        self.esgotado = False
+
+    def buscar(self, titulo: str, ano: int | None, idioma: str = IDIOMA_PADRAO,
+               temporada: int | None = None, episodio: int | None = None) -> list[CandidatoLegenda]:
+        if self.esgotado:
+            raise ErroLegenda("limite do SubDL atingido")
+        codigo = IDIOMAS_SUBDL.get(idioma.lower(), idioma.split("-")[0].upper())
+        params = {"api_key": self.chave, "film_name": titulo, "languages": codigo, "subs_per_page": 30,
+                  "type": "movie" if episodio is None else "tv"}
+        if episodio is not None:
+            params.update(season_number=temporada, episode_number=episodio)
+        elif ano:
+            params["year"] = ano
+        try:
+            r = self.sessao.get(f"{self.base_url}/subtitles", params=params, timeout=self.timeout)
+        except requests.RequestException as erro:
+            raise ErroLegenda(f"SubDL fora do ar ou sem internet: {erro}") from erro
+        if r.status_code in (401, 403):
+            raise ErroLegenda("SubDL recusou a chave da API")
+        if r.status_code in (402, 429):
+            self.esgotado = True
+            raise ErroLegenda("limite de consultas do SubDL atingido")
+        if not r.ok:
+            raise ErroLegenda(f"SubDL respondeu HTTP {r.status_code}")
+        try:
+            dados = r.json()
+        except ValueError as erro:
+            raise ErroLegenda("SubDL devolveu uma resposta inválida") from erro
+        if dados.get("status") is False and "key" in str(dados.get("error", "")).lower():
+            raise ErroLegenda(f"SubDL: {dados.get('error')}")
+        obra = (dados.get("results") or [{}])[0]          # a obra encontrada (nome e ano oficiais)
+        candidatos = []
+        for item in dados.get("subtitles") or []:
+            caminho = item.get("url") or ""
+            outro_idioma = str(item.get("language") or "").upper()
+            if not caminho or (outro_idioma in IDIOMAS_SUBDL.values() and outro_idioma != codigo):
+                continue
+            if episodio is not None:
+                if item.get("full_season"):
+                    continue                              # pacote da temporada inteira: não é ESTE episódio
+                temp_item, ep_item = _numero(item.get("season")), _numero(item.get("episode"))
+                if ep_item is not None and ((temp_item or temporada), ep_item) != (temporada, episodio):
+                    continue
+            candidatos.append(CandidatoLegenda(
+                titulo=obra.get("name") or titulo, ano=obra.get("year") if episodio is None else None,
+                idioma=idioma, url=self.base_download + "/" + caminho.lstrip("/"), provedor=self.nome,
+                temporada=temporada, episodio=episodio, extra={"release": item.get("release_name", "")}))
+        return candidatos
+
+    def baixar(self, candidato: CandidatoLegenda) -> bytes:
+        return _baixar_bytes(self.sessao, candidato.url, self.timeout)
 
 
 # --------------------------------------------------------------------------- orquestração

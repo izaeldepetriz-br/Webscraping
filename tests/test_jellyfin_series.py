@@ -198,3 +198,69 @@ def test_um_maluco_no_pedaco_1x_entre_parenteses(tmp_path):
         "Um Maluco no Pedaço (1990)/Season 01/Um Maluco no Pedaço S01E01.avi",
         "Um Maluco no Pedaço (1990)/Season 01/Um Maluco no Pedaço S01E11.avi",
         "Um Maluco no Pedaço (1990)/Season 06/Um Maluco no Pedaço S06E09.avi"]
+
+
+@pytest.mark.parametrize("nome, serie, temporada, episodio", [
+    ("HunterXHunter 01.mp4", "Hunter X Hunter", 1, 1),
+    ("HunterXHunter 62.mp4", "Hunter X Hunter", 1, 62),
+    ("[SubsPlease] Hunter x Hunter - 01 (1080p) [A1B2].mkv", "Hunter x Hunter", 1, 1),
+    ("Dragon Ball 001 - 1280x960.mkv", "Dragon Ball", 1, 1),
+    ("Dragon.Ball.Z.045.1920x1080.mkv", "Dragon Ball Z", 1, 45),
+    ("One.Piece.1071.1080p.mkv", "One Piece", 1, 1071)])
+def test_anime_com_numeracao_absoluta(nome, serie, temporada, episodio):
+    ep = extrair_episodio(nome)
+    assert (ep.serie, ep.temporada, ep.episodio) == (serie, temporada, episodio)
+
+
+@pytest.mark.parametrize("nome", ["Matrix.1999.mkv", "Filme Caseiro 2019.mkv", "BLUDV.mp4", "Clique Aqui Agora.mp4"])
+def test_nao_viram_episodio(nome):
+    assert extrair_episodio(nome) is None
+
+
+def test_ano_da_pasta_escolhe_hunter_x_hunter_1999(tmp_path, api_falsa):
+    """Há duas séries 'Hunter x Hunter' (1999 e 2011); a pasta 'hunter-x-hunter-1999' decide."""
+    from jellyfin_tools import organizar_pasta
+
+    def busca(q):
+        series = [{"id": 46298, "name": "Hunter x Hunter", "first_air_date": "2011-10-02"},
+                  {"id": 2153, "name": "Hunter x Hunter", "first_air_date": "1999-10-16"}]
+        ano = q.get("first_air_date_year", [None])[0]
+        return 200, {"results": [s for s in series if not ano or s["first_air_date"].startswith(ano)]}
+    api_falsa.rotas["/3/search/tv"] = busca
+    pasta = tmp_path / "Animes" / "hunter-x-hunter-1999 Ranking"
+    pasta.mkdir(parents=True)
+    for e in (1, 62):
+        (pasta / f"HunterXHunter {e:02d}.mp4").write_bytes(b"v")
+    tmdb = CatalogoTMDB("k", base_url=api_falsa.base + "/3")
+    movs = organizar_pasta(pasta, tmp_path / "Series", tmdb, modo="series")
+    assert sorted(m.destino_curto for m in movs) == [
+        "Hunter x Hunter (1999)/Season 01/Hunter x Hunter S01E01.mp4",
+        "Hunter x Hunter (1999)/Season 01/Hunter x Hunter S01E62.mp4"]
+
+
+def test_dragon_ball_com_propaganda_bludv(tmp_path):
+    from jellyfin_tools import organizar_pasta
+    pasta = tmp_path / "Dragon Ball"
+    pasta.mkdir()
+    for e in (1, 2):
+        with open(pasta / f"Dragon Ball 00{e} - 1280x960.mkv", "wb") as f:
+            f.truncate(3 * 1024 * 1024)
+    (pasta / "BLUDV.mp4").write_bytes(b"p")
+    movs = organizar_pasta(tmp_path, tmp_path / "Series", CatalogoLocal.padrao(), modo="series", limite_trailer_mb=1)
+    assert sorted(m.status for m in movs) == ["simulado", "simulado"]       # BLUDV.mp4 não é pendência
+    assert [a.name for m in movs for a in m.apagar or []] == ["BLUDV.mp4"]
+
+
+@pytest.mark.parametrize("pasta, arquivo, esperado", [
+    ("hunter-x-hunter-1999 Ranking", "HunterXHunter 01.mp4", "Hunter x Hunter (1999)/Season 01/Hunter x Hunter S01E01.mp4"),
+    ("hunter-x-hunter-2011", "HunterXHunter 01.mp4", "Hunter x Hunter (2011)/Season 01/Hunter x Hunter S01E01.mp4"),
+    ("Tenchi Muyo/Tenchi Muyo! (Tenchi! Universe) [1995]", "Tenchi Muyo Universe 04.mkv",
+     "Tenchi Universe (1995)/Season 01/Tenchi Universe S01E04.mkv"),
+    ("Samurai X", "Samurai X - 01 Dual Audio.avi", "Samurai X (1996)/Season 01/Samurai X S01E01.avi"),
+    ("Dragon Ball", "Dragon Ball 001 - 1280x960.mkv", "Dragon Ball (1986)/Season 01/Dragon Ball S01E01.mkv")])
+def test_animes_dos_exemplos_sao_identificados(tmp_path, pasta, arquivo, esperado):
+    from jellyfin_tools import organizar_pasta
+    (tmp_path / "Animes" / pasta).mkdir(parents=True)
+    (tmp_path / "Animes" / pasta / arquivo).write_bytes(b"v")
+    [m] = organizar_pasta(tmp_path / "Animes", tmp_path / "Series", CatalogoLocal.padrao(), modo="series")
+    assert (m.status, m.destino_curto, m.fonte_nome) == ("simulado", esperado, "catálogo")

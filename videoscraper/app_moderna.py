@@ -26,7 +26,7 @@ import tkinter as tk
 from tkinter import filedialog
 
 from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, ConfigSite, ErroCatalogo,
-                            ProvedorOpenSubtitles, ProvedorSiteHTML, desfazer, organizar_pasta)
+                            ProvedorOpenSubtitles, ProvedorSiteHTML, ProvedorSubDL, desfazer, organizar_pasta)
 from jellyfin_tools.legendas import normalizar_idiomas
 from jellyfin_tools.metadados import ClienteTMDB
 from jellyfin_tools.notificacoes import Notificador
@@ -53,7 +53,8 @@ CATEGORIA = {"simulado": "mover", "movido": "movido", "organizado": "organizado"
 OK_LEGENDA = ("baixada", "ja_existe")
 
 # Chaves e tokens: só vão para o config.json se o usuário marcar "Lembrar as chaves".
-SEGREDOS = ("chave_tmdb", "chave_opensubtitles", "jellyfin_api_key", "discord_webhook", "telegram_token")
+SEGREDOS = ("chave_tmdb", "chave_opensubtitles", "chave_subdl", "jellyfin_api_key", "discord_webhook",
+            "telegram_token")
 
 
 class _LogParaFila(logging.Handler):
@@ -813,6 +814,8 @@ class AppModerna(JanelaModerna):
         fontes = self.FONTES_LEGENDA
         if o.fonte_legenda == fontes[1] and not o.chave_opensubtitles:
             return "Preencha a chave da API do OpenSubtitles (é gratuita em opensubtitles.com)."
+        if o.fonte_legenda == fontes[3] and not o.chave_subdl:
+            return "Preencha a chave da API do SubDL (é gratuita em subdl.com, no Painel > API)."
         if o.fonte_legenda == fontes[2] and "{consulta}" not in o.url_site:
             return "A URL de busca precisa ter {consulta} no lugar do termo pesquisado.\n" \
                    "Ex.: https://site.com/busca?q={consulta}"
@@ -832,8 +835,11 @@ class AppModerna(JanelaModerna):
             if o.fonte_legenda == fontes[0]:
                 servidor, base = iniciar_site_demo()
                 yield [ProvedorSiteHTML(ConfigSite(f"{base}/busca?q={{consulta}}", nome="site demo"))]
-            elif o.fonte_legenda == fontes[1]:
-                yield [ProvedorOpenSubtitles(o.chave_opensubtitles)]
+            elif o.fonte_legenda == fontes[1]:             # OpenSubtitles; o SubDL é a reserva (se houver)
+                yield [ProvedorOpenSubtitles(o.chave_opensubtitles)] + (
+                    [ProvedorSubDL(o.chave_subdl)] if o.chave_subdl else [])
+            elif o.fonte_legenda == fontes[3]:
+                yield [ProvedorSubDL(o.chave_subdl)]
             else:
                 yield [ProvedorSiteHTML(ConfigSite(o.url_site))]
         finally:
@@ -894,6 +900,7 @@ class AppModerna(JanelaModerna):
         dados = config.carregar().get("jellyfin", {})
         dados.setdefault("chave_tmdb", os.environ.get("TMDB_API_KEY", ""))
         dados.setdefault("chave_opensubtitles", os.environ.get("OPENSUBTITLES_API_KEY", ""))
+        dados.setdefault("chave_subdl", os.environ.get("SUBDL_API_KEY", ""))
         for chave, variavel in (("jellyfin_url", "JELLYFIN_URL"), ("jellyfin_api_key", "JELLYFIN_API_KEY"),
                                 ("discord_webhook", "DISCORD_WEBHOOK_URL"), ("telegram_token", "TELEGRAM_BOT_TOKEN"),
                                 ("telegram_chat_id", "TELEGRAM_CHAT_ID")):

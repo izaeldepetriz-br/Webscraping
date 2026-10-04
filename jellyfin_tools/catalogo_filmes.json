@@ -16,5 +16,14 @@
   {"tipo": "serie", "titulo": "The Expanse", "ano": 2015, "titulo_original": "The Expanse", "tmdb_id": 63639},
   {"tipo": "serie", "titulo": "Big Bang: A Teoria", "ano": 2007, "titulo_original": "The Big Bang Theory",
    "tmdb_id": 1418, "alternativos": ["Big Bang Theory", "Big Bang A Teoria"]},
-  {"tipo": "serie", "titulo": "Um Maluco no Pedaço", "ano": 1990, "titulo_original": "The Fresh Prince of Bel-Air"}
+  {"tipo": "serie", "titulo": "Um Maluco no Pedaço", "ano": 1990, "titulo_original": "The Fresh Prince of Bel-Air"},
+  {"tipo": "serie", "titulo": "Hunter x Hunter", "ano": 1999, "titulo_original": "HUNTER×HUNTER",
+   "alternativos": ["HunterXHunter", "Hunter X Hunter 1999"]},
+  {"tipo": "serie", "titulo": "Hunter x Hunter", "ano": 2011, "titulo_original": "HUNTER×HUNTER",
+   "alternativos": ["HunterXHunter", "Hunter X Hunter 2011"]},
+  {"tipo": "serie", "titulo": "Samurai X", "ano": 1996, "titulo_original": "Rurouni Kenshin",
+   "alternativos": ["Rurouni Kenshin", "Samurai X Rurouni Kenshin"]},
+  {"tipo": "serie", "titulo": "Tenchi Universe", "ano": 1995, "titulo_original": "Tenchi Universe",
+   "alternativos": ["Tenchi Muyo Universe", "Tenchi Muyo! Universe", "Tenchi! Universe"]},
+  {"tipo": "serie", "titulo": "Dragon Ball", "ano": 1986, "titulo_original": "ドラゴンボール"}
 ]

@@ -120,7 +120,17 @@ Outras opções da aba Jellyfin:
 - **Propaganda repetida:** vídeo pequeno, que não é episódio, com o MESMO nome em 3 ou mais pastas
   (ex.: `BAIXAR PROXIMO EPISÓDIO.mp4` em cada pasta de episódio) é tratado como propaganda.
 - **Formatos de episódio aceitos:** `S01E02`, `1x02`, `1x (11)` (número entre parênteses, como em
-  "Um maluco no pedaço 1x (11).avi"), "Temporada 2 Episódio 4" e "Episódio 3" (temporada 1).
+  "Um maluco no pedaço 1x (11).avi"), "Temporada 2 Episódio 4", "Episódio 3" (temporada 1) e o de
+  **anime**, só com o número (temporada 1): `HunterXHunter 01`, `Dragon Ball 001 - 1280x960`,
+  `[Grupo] Hunter x Hunter - 01 (1080p)`, `One.Piece.1071`. Palavras grudadas (`HunterXHunter`)
+  são separadas para a busca.
+- **Ano da pasta como dica:** sem ano no nome do arquivo, o ano da pasta escolhe entre séries de
+  mesmo nome (`hunter-x-hunter-1999/` → Hunter x Hunter de 1999, e não o de 2011).
+- **SubDL** (<https://subdl.com>, chave gratuita em Painel → API): fonte de legendas própria
+  ("SubDL (API)") ou **reserva do OpenSubtitles**: com a fonte "OpenSubtitles (API)", preencha
+  também "Reserva: chave do SubDL". Quando o OpenSubtitles não acha a legenda ou atinge o limite
+  diário, o SubDL é consultado; depois do limite, o OpenSubtitles não é mais chamado naquela
+  execução. No script: `SUBDL_API_KEY`; na linha de comando: `--subdl`.
 - **Episódio no modo Filmes:** arquivo com `S05E19`, `5x19` ou "Temporada 5 Episódio 19" aparece
   como "é episódio de série (S05E19): use o modo Séries" (e não é consultado no TMDB como filme).
   Se a maioria da prévia for episódio, a janela pergunta se deve trocar para **Séries** e

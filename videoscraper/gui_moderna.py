@@ -104,6 +104,7 @@ class OpcoesJellyfin:
     telegram_chat_id: str = ""
     filtros_ocultos: tuple = ()      # situações escondidas na tabela (só visual)
     nomes_episodios: bool = True     # séries: 'Dark S01E01 - Segredos.mkv' (nome do episódio pelo TMDB)
+    chave_subdl: str = ""            # SubDL: fonte própria ou reserva do OpenSubtitles
 
 
 # Máximo dos campos "Máx. de páginas" e "Máx. de vídeos" (antes 2000 e 1000).
@@ -576,7 +577,7 @@ class JanelaModerna(ctk.CTk):
                   ("fonte", "Nome via", 150, False))
     # Ordem na TELA: "Nome via" logo depois do novo nome (os valores continuam na ordem acima)
     ORDEM_TELA_JF = ("n", "status", "atual", "novo", "fonte", "legenda", "progresso")
-    FONTES_LEGENDA = ("Site de demonstração", "OpenSubtitles (API)", "Site de busca (URL)")
+    FONTES_LEGENDA = ("Site de demonstração", "OpenSubtitles (API)", "Site de busca (URL)", "SubDL (API)")
     IDIOMAS_JF = (("pt-BR", "Português"), ("en", "Inglês"), ("es", "Espanhol"))
     ROTULOS_DESTINO = {"Filmes": "Biblioteca de Filmes do Jellyfin:", "Séries": "Biblioteca de Séries do Jellyfin:"}
 
@@ -671,8 +672,13 @@ class JanelaModerna(ctk.CTk):
         self.quadro_fonte.pack(fill="x")
         self.var_jf_chave_os = tk.StringVar()
         self.var_jf_url_site = tk.StringVar()
+        self.var_jf_chave_subdl = tk.StringVar()
+        self.rot_chave_os = self._rotulo(self.quadro_fonte, "Chave da API do OpenSubtitles:")
         self.campo_chave_os = self._entrada(self.quadro_fonte, self.var_jf_chave_os,
-                                            "Chave da API do OpenSubtitles", show="•")
+                                            "opensubtitles.com > API consumers", show="•")
+        self.rot_chave_subdl = self._rotulo(self.quadro_fonte, "")
+        self.campo_chave_subdl = self._entrada(self.quadro_fonte, self.var_jf_chave_subdl,
+                                               "subdl.com > Painel > API", show="•")
         self.campo_url_site = self._entrada(self.quadro_fonte, self.var_jf_url_site,
                                             "https://site/busca?q={consulta}")
         self._rotulo(lateral, "Idiomas das legendas (um arquivo cada):").pack(anchor="w", pady=(10, 2), **p)
@@ -842,10 +848,20 @@ class JanelaModerna(ctk.CTk):
     def _mostrar_campos_jf(self) -> None:
         """Mostra só os campos que fazem sentido para as escolhas atuais."""
         fonte = self.var_jf_fonte.get()
-        self.campo_chave_os.pack_forget()
-        self.campo_url_site.pack_forget()
-        if fonte == self.FONTES_LEGENDA[1]:
-            self.campo_chave_os.pack(fill="x", padx=18, pady=(8, 0))
+        for campo in (self.rot_chave_os, self.campo_chave_os, self.rot_chave_subdl, self.campo_chave_subdl,
+                      self.campo_url_site):
+            campo.pack_forget()
+        if fonte == self.FONTES_LEGENDA[1]:                 # OpenSubtitles, com o SubDL de reserva
+            self.rot_chave_os.pack(anchor="w", padx=18, pady=(8, 0))
+            self.campo_chave_os.pack(fill="x", padx=18, pady=(2, 0))
+            self.rot_chave_subdl.configure(text="Reserva: chave do SubDL (usada quando o\n"
+                                                "OpenSubtitles atingir o limite; opcional):")
+            self.rot_chave_subdl.pack(anchor="w", padx=18, pady=(8, 0))
+            self.campo_chave_subdl.pack(fill="x", padx=18, pady=(2, 0))
+        elif fonte == self.FONTES_LEGENDA[3]:               # só o SubDL
+            self.rot_chave_subdl.configure(text="Chave da API do SubDL:")
+            self.rot_chave_subdl.pack(anchor="w", padx=18, pady=(8, 0))
+            self.campo_chave_subdl.pack(fill="x", padx=18, pady=(2, 0))
         elif fonte == self.FONTES_LEGENDA[2]:
             self.campo_url_site.pack(fill="x", padx=18, pady=(8, 0))
 
@@ -895,7 +911,8 @@ class JanelaModerna(ctk.CTk):
             tmdb=self.var_jf_tmdb.get(), chave_tmdb=self.var_jf_chave_tmdb.get().strip(),
             incluir_tmdbid=self.var_jf_tmdbid.get(), exigir_catalogo=self.var_jf_exigir.get(),
             limpar_lixo=self.var_jf_lixo.get(), legendas=self.var_jf_legendas.get(), fonte_legenda=self.var_jf_fonte.get(),
-            chave_opensubtitles=self.var_jf_chave_os.get().strip(), url_site=self.var_jf_url_site.get().strip(),
+            chave_opensubtitles=self.var_jf_chave_os.get().strip(), chave_subdl=self.var_jf_chave_subdl.get().strip(),
+            url_site=self.var_jf_url_site.get().strip(),
             idioma=self.idiomas_jf(), sobrescrever=self.var_jf_sobrescrever.get(),
             lembrar_chaves=self.var_jf_lembrar.get(), imagens_tmdb=self.var_jf_imagens.get(),
             gerar_nfo=self.var_jf_nfo.get(), jellyfin_url=self.var_jf_url.get().strip(),
@@ -928,6 +945,7 @@ class JanelaModerna(ctk.CTk):
         """Preenche a aba com valores salvos (chaves que não existirem ficam como estão)."""
         textos = {"origem": self.var_jf_origem, "chave_tmdb": self.var_jf_chave_tmdb,
                   "chave_opensubtitles": self.var_jf_chave_os, "url_site": self.var_jf_url_site,
+                  "chave_subdl": self.var_jf_chave_subdl,
                   "jellyfin_url": self.var_jf_url,
                   "jellyfin_api_key": self.var_jf_chave_jellyfin, "discord_webhook": self.var_jf_discord,
                   "telegram_token": self.var_jf_telegram_token, "telegram_chat_id": self.var_jf_telegram_chat}

@@ -182,3 +182,73 @@ def test_legenda_de_episodio_de_temporada_mais_nova_que_a_serie(tmp_path, api_fa
     assert r.status == "baixada", r.detalhe
     busca = next(p for p in api_falsa.pedidos if p["caminho"] == "/api/v1/subtitles")
     assert "year" not in busca["query"] and busca["query"]["season_number"] == ["2"]
+
+
+# ------------------------------------------------------------------ SubDL (reserva do OpenSubtitles)
+def _zip_com_srt(texto="1\n00:00:01,000 --> 00:00:02,000\nOlá do SubDL\n"):
+    import io
+    import zipfile
+    dados = io.BytesIO()
+    with zipfile.ZipFile(dados, "w") as z:
+        z.writestr("legenda.srt", texto)
+    return dados.getvalue()
+
+
+def _subdl_falso(api, subtitulos):
+    api.rotas["/api/v1/subtitles"] = lambda q: (200, {"status": True, "results": [
+        {"name": "The Last of Us", "year": 2023, "type": "tv"}], "subtitles": subtitulos})
+    api.rotas["/subtitle/1-2.zip"] = lambda q: (200, _zip_com_srt())
+
+
+def test_subdl_busca_episodio_em_portugues_e_baixa_o_zip(tmp_path, api_falsa):
+    from jellyfin_tools import ProvedorSubDL
+    from jellyfin_tools.legendas import baixar_legenda_episodio
+    _subdl_falso(api_falsa, [
+        {"url": "/subtitle/9-9.zip", "language": "BR_PT", "full_season": True},          # temporada inteira
+        {"url": "/subtitle/8-8.zip", "language": "BR_PT", "season": 2, "episode": 3},    # outro episódio
+        {"url": "/subtitle/7-7.zip", "language": "EN", "season": 2, "episode": 2},       # outro idioma
+        {"url": "/subtitle/1-2.zip", "language": "BR_PT", "season": 2, "episode": 2, "release_name": "TLOU.S02E02"}])
+    video = tmp_path / "The Last of Us (2023)" / "Season 02" / "The Last of Us S02E02 - Através do Vale.mkv"
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"v")
+    provedor = ProvedorSubDL("chave-subdl", base_url=api_falsa.base + "/api/v1", base_download=api_falsa.base)
+    r = baixar_legenda_episodio(video, [provedor])
+    assert r.status == "baixada", r.detalhe
+    assert "Olá do SubDL" in (video.parent / "The Last of Us S02E02 - Através do Vale.pt-BR.srt").read_text(encoding="utf-8")
+    q = next(p for p in api_falsa.pedidos if p["caminho"] == "/api/v1/subtitles")["query"]
+    assert (q["api_key"], q["languages"], q["type"], q["season_number"], q["episode_number"]) == (
+        ["chave-subdl"], ["BR_PT"], ["tv"], ["2"], ["2"])
+    assert "year" not in q
+
+
+def test_subdl_entra_quando_o_opensubtitles_atinge_o_limite(tmp_path, api_falsa):
+    from jellyfin_tools import ProvedorOpenSubtitles, ProvedorSubDL
+    from jellyfin_tools.legendas import baixar_legenda_episodio
+    api_falsa.rotas["/os/subtitles"] = lambda q: (200, {"data": [{"attributes": {
+        "language": "pt-BR", "files": [{"file_id": 5}], "feature_details": {
+            "parent_title": "The Last of Us", "season_number": int(q["season_number"][0]),
+            "episode_number": int(q["episode_number"][0])}}}]})
+    api_falsa.rotas["/os/download"] = lambda q: (406, {"message": "You have downloaded your allowed 20 subtitles"})
+    _subdl_falso(api_falsa, [{"url": "/subtitle/1-2.zip", "language": "BR_PT"}])
+    provedores = [ProvedorOpenSubtitles("k", base_url=api_falsa.base + "/os"),
+                  ProvedorSubDL("k2", base_url=api_falsa.base + "/api/v1", base_download=api_falsa.base)]
+    pasta = tmp_path / "The Last of Us (2023)" / "Season 02"
+    pasta.mkdir(parents=True)
+    for e in (1, 2, 3):
+        (pasta / f"The Last of Us S02E0{e}.mkv").write_bytes(b"v")
+        r = baixar_legenda_episodio(pasta / f"The Last of Us S02E0{e}.mkv", provedores)
+        assert r.status == "baixada" and r.detalhe.startswith("SubDL"), r.detalhe
+    assert provedores[0].esgotado
+    assert len([p for p in api_falsa.pedidos if p["caminho"] == "/os/download"]) == 1   # não insiste 3 vezes
+
+
+def test_subdl_chave_recusada_e_limite(api_falsa):
+    from jellyfin_tools import ErroLegenda, ProvedorSubDL
+    api_falsa.rotas["/api/v1/subtitles"] = lambda q: (403, {"status": False, "error": "invalid api key"})
+    with pytest.raises(ErroLegenda, match="recusou a chave"):
+        ProvedorSubDL("x", base_url=api_falsa.base + "/api/v1").buscar("Matrix", 1999)
+    api_falsa.rotas["/api/v1/subtitles"] = lambda q: (429, {"status": False})
+    provedor = ProvedorSubDL("x", base_url=api_falsa.base + "/api/v1")
+    with pytest.raises(ErroLegenda, match="limite"):
+        provedor.buscar("Matrix", 1999)
+    assert provedor.esgotado

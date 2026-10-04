@@ -180,7 +180,7 @@ def _planejar_episodio(video: Path, pasta_series: Path, catalogo: Catalogo | Non
     if not ep:
         return Movimento(video, None, "nao_identificado",
                          "não achei temporada/episódio no nome (ex.: S01E02, 1x02, Episodio 3)")
-    serie, detalhe = _consultar(catalogo, ep.serie, ep.ano, "serie")
+    serie, detalhe = _achar_serie(catalogo, ep, video, raiz)
     if serie:
         nome, ano = serie.titulo, serie.ano
     elif exigir_catalogo:
@@ -210,6 +210,8 @@ def _consultas(videos: list[Path], modo: str) -> list[tuple[str, int | None, str
         if modo == "series":
             ep = extrair_episodio(v.name)
             if ep:
+                if not ep.ano and (dica := _ano_da_pasta(v)):
+                    consultas.append((ep.serie, dica, "serie"))           # a busca com a dica de ano
                 consultas.append((ep.serie, ep.ano, "serie"))
         elif not marca_de_episodio(v.name):               # episódio no modo Filmes: nem consulta
             extraido = extrair_titulo_e_ano(v.name)
@@ -223,10 +225,35 @@ def _temporadas(videos: list[Path], catalogo: Catalogo) -> list[tuple[Filme, int
     for v in videos:
         ep = extrair_episodio(v.name)
         if ep:
-            serie, _ = _consultar(catalogo, ep.serie, ep.ano, "serie")      # já está no cache
+            serie, _ = _achar_serie(catalogo, ep, v)                          # já está no cache
             if serie:
                 pedidos.append((serie, ep.temporada))
     return list(dict.fromkeys(pedidos))
+
+
+def _achar_serie(catalogo, ep, video: Path, raiz: Path | None = None):
+    """Série no catálogo. Sem ano no nome do arquivo, o ano da pasta é uma DICA:
+    'hunter-x-hunter-1999/HunterXHunter 01.mp4' -> prefere a de 1999 (e não a de 2011)."""
+    dica = None if ep.ano else _ano_da_pasta(video, raiz)
+    if dica:
+        serie, detalhe = _consultar(catalogo, ep.serie, dica, "serie")
+        if serie and serie.ano == dica:
+            return serie, detalhe
+    return _consultar(catalogo, ep.serie, ep.ano, "serie")   # ano da pasta era outro (ex.: da temporada)
+
+
+_RE_ANO_PASTA = re.compile(r"(?<!\d)(19[3-9]\d|20[0-4]\d)(?!\d)")
+
+
+def _ano_da_pasta(video: Path, raiz: Path | None = None, niveis: int = 3) -> int | None:
+    """Ano no nome da pasta do episódio (ou de uma acima, sem sair da origem):
+    'hunter-x-hunter-1999 Ranking/HunterXHunter 01.mp4' -> 1999. Serve só de DICA para a busca."""
+    for pasta in [video.parent, *video.parent.parents][:niveis]:
+        if m := _RE_ANO_PASTA.search(pasta.name):
+            return int(m.group(1))
+        if raiz is not None and pasta == raiz:
+            break
+    return None
 
 
 def _mesmo_arquivo(a: Path, b: Path) -> bool:
