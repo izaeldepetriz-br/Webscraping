@@ -375,6 +375,8 @@ class AppModerna(JanelaModerna):
             self.definir_progresso_rodape(fracao, texto)
         elif tipo == "jf_tmdb_estado":
             self.definir_estado_tmdb(*dado)
+        elif tipo == "legendas_estado":
+            self.definir_estado_legendas(*dado)
         elif tipo == "status_fim":
             self._texto_fim = dado
         elif tipo == "espelho":                        # aba Vídeos: situação de cada link espelhado
@@ -773,6 +775,39 @@ class AppModerna(JanelaModerna):
                                    "aviso")))
         self._log.info("TMDB identificou %d de %d", pelo_tmdb, len(analisados))
         return f" TMDB identificou {pelo_tmdb} de {len(analisados)}."
+
+    def ao_testar_legendas(self) -> None:
+        """Testa a chave de cada fonte de legendas preenchida (OpenSubtitles e/ou SubDL)."""
+        o = self.obter_opcoes_jellyfin()
+        fontes = self.FONTES_LEGENDA
+        testes = []
+        if o.fonte_legenda == fontes[1] or o.chave_opensubtitles and o.fonte_legenda != fontes[3]:
+            testes.append(("OpenSubtitles", o.chave_opensubtitles, ProvedorOpenSubtitles))
+        if o.chave_subdl or o.fonte_legenda == fontes[3]:
+            testes.append(("SubDL", o.chave_subdl, ProvedorSubDL))
+        if not testes or not any(chave for _, chave, _ in testes):
+            self.mostrar_mensagem("Legendas", "Preencha a chave do OpenSubtitles e/ou do SubDL.", "aviso")
+            return
+
+        def tarefa():
+            linhas, todos_ok = [], True
+            for nome, chave, classe in testes:
+                if not chave:
+                    linhas.append(f"✕  {nome}: chave não preenchida")
+                    todos_ok = False
+                    continue
+                try:
+                    texto = classe(chave).testar()
+                    linhas.append(f"✓  {nome}: {texto}")
+                    self._log.info("Legendas - %s: %s", nome, texto)
+                except Exception as erro:              # ErroLegenda, rede...
+                    linhas.append(f"✕  {nome}: {erro}")
+                    self._log.warning("Legendas - %s: %s", nome, erro)
+                    todos_ok = False
+            self.fila.put(("legendas_estado", ("\n".join(linhas), todos_ok)))
+            self.fila.put(("msg", ("Fontes de legenda", "\n".join(linhas), "sucesso" if todos_ok else "erro")))
+
+        self._rodar("Testando as chaves das legendas...", tarefa)
 
     def ao_testar_tmdb(self) -> None:
         o = self.obter_opcoes_jellyfin()

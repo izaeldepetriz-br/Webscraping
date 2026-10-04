@@ -126,6 +126,8 @@ Outras opções da aba Jellyfin:
   são separadas para a busca.
 - **Ano da pasta como dica:** sem ano no nome do arquivo, o ano da pasta escolhe entre séries de
   mesmo nome (`hunter-x-hunter-1999/` → Hunter x Hunter de 1999, e não o de 2011).
+- **Testar chaves das legendas:** botão abaixo das chaves (OpenSubtitles e/ou SubDL); faz uma busca de
+  teste (que não gasta a cota de downloads) e mostra ✓/✕ para cada fonte.
 - **SubDL** (<https://subdl.com>, chave gratuita em Painel → API): fonte de legendas própria
   ("SubDL (API)") ou **reserva do OpenSubtitles**: com a fonte "OpenSubtitles (API)", preencha
   também "Reserva: chave do SubDL". Quando o OpenSubtitles não acha a legenda ou atinge o limite
@@ -179,7 +181,17 @@ cada play: a fluidez depende dele e da sua internet, e se o site tirar o arquivo
 de tocar. Para o que você quer guardar de vez, baixar continua sendo o mais estável.
 
 Nada é sobrescrito: um link que já tem `.strm`, ou um filme que já está baixado na biblioteca, é
-pulado. **Completar biblioteca** também enxerga os `.strm` (para baixar legendas que faltaram).
+pulado.
+
+**Onde os arquivos ficam (não precisa anexar nada no Jellyfin):** o programa grava os `.strm` (e as
+legendas, `poster.jpg`, `backdrop.jpg`, `.nfo`) direto nas pastas das bibliotecas escolhidas na aba
+Jellyfin, que devem ser as MESMAS cadastradas no Jellyfin (Painel → Bibliotecas → Pastas). Se a série
+ou o filme já existe, o item novo entra na mesma pasta e aparece junto. Com o endereço e a chave do
+servidor preenchidos e "Atualizar a biblioteca no fim (scan)" marcado, o Jellyfin é avisado na hora;
+sem isso, ele acha os arquivos no próximo scan automático (ou clique em "Escanear biblioteca").
+O Jellyfin completa as capas de séries/episódios e, com "Coleções automáticas" ligado na biblioteca,
+junta os filmes nas coleções do TMDB (ex.: "Matrix: Coleção"). O servidor do Jellyfin precisa de
+internet para tocar os `.strm`. **Completar biblioteca** também enxerga os `.strm` (para baixar legendas que faltaram).
 Muitos itens enviados por usuários (ex.: "DVDISO", "Dual Audio") não têm autorização do dono dos
 direitos: a primeira opção do botão espelha **só domínio público / Creative Commons**.
 

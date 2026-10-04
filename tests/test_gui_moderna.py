@@ -917,3 +917,31 @@ def test_espelhar_links_no_jellyfin_pela_janela(app, tmp_path, monkeypatch):
         "Filmes/Anjos Da Noite (2003)/Anjos Da Noite (2003).strm", "Filmes/Nosferatu (1922)/Nosferatu (1922).strm",
         "Series/Dark (2017)/Season 01/Dark S01E02.strm"]
     assert app.tabela.item("0", "values")[1].endswith("já espelhado")
+
+
+def test_botao_testar_chaves_das_legendas(app, api_falsa, monkeypatch):
+    from jellyfin_tools import ProvedorOpenSubtitles, ProvedorSubDL
+    base = api_falsa.base
+    monkeypatch.setattr(app_moderna, "ProvedorOpenSubtitles", lambda k: ProvedorOpenSubtitles(k, base_url=base + "/os"))
+    monkeypatch.setattr(app_moderna, "ProvedorSubDL", lambda k: ProvedorSubDL(k, base_url=base + "/api/v1"))
+    api_falsa.rotas["/os/subtitles"] = lambda q: (200, {"total_count": 7, "data": []})
+    api_falsa.rotas["/api/v1/subtitles"] = lambda q: (403, {"status": False, "error": "invalid api key"})
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_fonte.set("OpenSubtitles (API)")
+    app._mostrar_campos_jf()
+    app.update()
+    assert app.bt_testar_legendas.winfo_ismapped()
+    app.bt_testar_legendas.invoke()
+    assert app.caixas[-1][:2] == ("aviso", "Legendas")                     # sem chaves: nem tenta
+    app.var_jf_chave_os.set("os-boa")
+    app.var_jf_chave_subdl.set("subdl-errada")
+    app.bt_testar_legendas.invoke()
+    esperar(app)
+    estado = app.lb_estado_legendas.cget("text")
+    assert estado == ("✓  OpenSubtitles: chave aceita (7 legenda(s) de teste encontradas)\n"
+                      "✕  SubDL: SubDL recusou a chave da API")
+    assert app.caixas[-1][0] == "erro"
+    app.var_jf_fonte.set("Site de demonstração")
+    app._mostrar_campos_jf()
+    app.update()
+    assert not app.bt_testar_legendas.winfo_ismapped()                    # o site demo não tem chave

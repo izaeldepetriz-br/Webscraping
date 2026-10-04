@@ -252,3 +252,20 @@ def test_subdl_chave_recusada_e_limite(api_falsa):
     with pytest.raises(ErroLegenda, match="limite"):
         provedor.buscar("Matrix", 1999)
     assert provedor.esgotado
+
+
+def test_testar_chaves_opensubtitles_e_subdl(api_falsa):
+    from jellyfin_tools import ErroLegenda, ProvedorOpenSubtitles, ProvedorSubDL
+    api_falsa.rotas["/os/subtitles"] = lambda q: (
+        (200, {"total_count": 42, "data": []}) if q.get("query") == ["The Matrix"] else (400, {}))
+    assert ProvedorOpenSubtitles("k", base_url=api_falsa.base + "/os").testar() == \
+        "chave aceita (42 legenda(s) de teste encontradas)"
+    _subdl_falso(api_falsa, [{"url": "/subtitle/1-2.zip", "language": "BR_PT"}])
+    assert ProvedorSubDL("k", base_url=api_falsa.base + "/api/v1").testar() == \
+        "chave aceita (1 legenda(s) de teste encontradas)"
+    api_falsa.rotas["/os/subtitles"] = lambda q: (403, {"message": "invalid api key"})
+    with pytest.raises(ErroLegenda, match="recusou a chave"):
+        ProvedorOpenSubtitles("errada", base_url=api_falsa.base + "/os").testar()
+    api_falsa.rotas["/api/v1/subtitles"] = lambda q: (200, {"status": False, "error": "Invalid API key"})
+    with pytest.raises(ErroLegenda, match="Invalid API key"):
+        ProvedorSubDL("errada", base_url=api_falsa.base + "/api/v1").testar()

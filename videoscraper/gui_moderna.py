@@ -686,6 +686,11 @@ class JanelaModerna(ctk.CTk):
         self.rot_chave_subdl = self._rotulo(self.quadro_fonte, "")
         self.campo_chave_subdl = self._entrada(self.quadro_fonte, self.var_jf_chave_subdl,
                                                "subdl.com > Painel > API", show="•")
+        self.bt_testar_legendas = self._botao(self.quadro_fonte, "Testar chaves das legendas",
+                                              self.ao_testar_legendas)
+        self.lb_estado_legendas = ctk.CTkLabel(self.quadro_fonte, text="", font=self.f_rotulo,
+                                               text_color=Tema.TEXTO_FRACO, anchor="w", justify="left",
+                                               wraplength=250)
         self.campo_url_site = self._entrada(self.quadro_fonte, self.var_jf_url_site,
                                             "https://site/busca?q={consulta}")
         self._rotulo(lateral, "Idiomas das legendas (um arquivo cada):").pack(anchor="w", pady=(10, 2), **p)
@@ -856,7 +861,7 @@ class JanelaModerna(ctk.CTk):
         """Mostra só os campos que fazem sentido para as escolhas atuais."""
         fonte = self.var_jf_fonte.get()
         for campo in (self.rot_chave_os, self.campo_chave_os, self.rot_chave_subdl, self.campo_chave_subdl,
-                      self.campo_url_site):
+                      self.campo_url_site, self.bt_testar_legendas, self.lb_estado_legendas):
             campo.pack_forget()
         if fonte == self.FONTES_LEGENDA[1]:                 # OpenSubtitles, com o SubDL de reserva
             self.rot_chave_os.pack(anchor="w", padx=18, pady=(8, 0))
@@ -871,6 +876,9 @@ class JanelaModerna(ctk.CTk):
             self.campo_chave_subdl.pack(fill="x", padx=18, pady=(2, 0))
         elif fonte == self.FONTES_LEGENDA[2]:
             self.campo_url_site.pack(fill="x", padx=18, pady=(8, 0))
+        if fonte in (self.FONTES_LEGENDA[1], self.FONTES_LEGENDA[3]):   # fontes com chave: botão de teste
+            self.bt_testar_legendas.pack(fill="x", padx=18, pady=(8, 2))
+            self.lb_estado_legendas.pack(fill="x", padx=18)
 
     def _ao_trocar_modo(self, modo: str) -> None:
         """Filmes e Séries têm bibliotecas diferentes: cada modo lembra a sua pasta."""
@@ -1048,6 +1056,11 @@ class JanelaModerna(ctk.CTk):
         if self._visivel_jf(iid):
             self.tabela_jf.see(iid)
 
+    def definir_estado_legendas(self, texto: str, ok: bool | None) -> None:
+        """Linha abaixo de 'Testar chaves das legendas' (uma linha por fonte)."""
+        cor = {True: Tema.SUCESSO, False: Tema.PERIGO}.get(ok, Tema.TEXTO_FRACO)
+        self.lb_estado_legendas.configure(text=texto, text_color=cor)
+
     def definir_estado_tmdb(self, ok: bool | None, texto: str) -> None:
         """Linha abaixo do botão 'Testar conexão com o TMDB': verde (ok), vermelha (erro) ou neutra."""
         cor = {True: Tema.SUCESSO, False: Tema.PERIGO}.get(ok, Tema.TEXTO_FRACO)
@@ -1212,7 +1225,7 @@ class JanelaModerna(ctk.CTk):
         estado = "disabled" if ocupado else "normal"
         for b in (self.bt_buscar, self.bt_baixar_sel, self.bt_baixar_todos, self.bt_login,
                   self.bt_previa, self.bt_legendas, self.bt_desfazer, self.bt_testar_jellyfin,
-                  self.bt_testar_avisos, self.bt_testar_tmdb, self.bt_espelhar):
+                  self.bt_testar_avisos, self.bt_testar_tmdb, self.bt_espelhar, self.bt_testar_legendas):
             b.configure(state=estado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
         for parar in (self.bt_parar, self.bt_parar_jf):
@@ -1334,6 +1347,9 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_espelhar_jellyfin(self) -> None:
+        pass
+
+    def ao_testar_legendas(self) -> None:
         pass
 
     def ao_testar_jellyfin(self) -> None:

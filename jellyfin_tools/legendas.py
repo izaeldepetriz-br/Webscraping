@@ -13,6 +13,7 @@ Provedores (qualquer objeto com .nome, .buscar() e .baixar() serve):
 from __future__ import annotations
 
 import io
+import re
 import sys
 import zipfile
 from dataclasses import dataclass, field
@@ -43,7 +44,6 @@ APELIDOS_IDIOMA = {
 def normalizar_idiomas(texto) -> list[str]:
     """'pt-BR, inglês; es' -> ['pt-BR', 'en', 'es'] (sem repetir, na ordem digitada).
     Aceita também uma lista. Códigos desconhecidos no formato 'xx' ou 'xx-YY' passam como estão."""
-    import re
     partes = texto if isinstance(texto, (list, tuple)) else re.split(r"[,;\s]+", str(texto or ""))
     idiomas = []
     for parte in partes:
@@ -263,6 +263,12 @@ class ProvedorOpenSubtitles:
         except ValueError as erro:
             raise ErroLegenda("OpenSubtitles devolveu uma resposta inválida") from erro
 
+    def testar(self) -> str:
+        """Confere a chave com uma busca de teste (buscar não gasta a cota de downloads)."""
+        dados = self._json("GET", "/subtitles", params={"query": "The Matrix", "languages": "pt-br"})
+        total = dados.get("total_count", len(dados.get("data") or []))
+        return f"chave aceita ({total} legenda(s) de teste encontradas)"
+
     def buscar(self, titulo: str, ano: int | None, idioma: str = IDIOMA_PADRAO,
                temporada: int | None = None, episodio: int | None = None) -> list[CandidatoLegenda]:
         params = {"query": titulo, "languages": idioma.lower(), "type": "movie"}
@@ -331,6 +337,10 @@ class ProvedorSubDL:
         self.sessao.headers.update({"User-Agent": "jellyfin-tools v1.0", "Accept": "application/json"})
         self.esgotado = False
 
+    def testar(self) -> str:
+        """Confere a chave com uma busca de teste (sem baixar nada)."""
+        return f"chave aceita ({len(self.buscar('The Matrix', 1999))} legenda(s) de teste encontradas)"
+
     def buscar(self, titulo: str, ano: int | None, idioma: str = IDIOMA_PADRAO,
                temporada: int | None = None, episodio: int | None = None) -> list[CandidatoLegenda]:
         if self.esgotado:
@@ -357,7 +367,7 @@ class ProvedorSubDL:
             dados = r.json()
         except ValueError as erro:
             raise ErroLegenda("SubDL devolveu uma resposta inválida") from erro
-        if dados.get("status") is False and "key" in str(dados.get("error", "")).lower():
+        if dados.get("status") is False and re.search(r"key|chave|token", str(dados.get("error", "")), re.I):
             raise ErroLegenda(f"SubDL: {dados.get('error')}")
         obra = (dados.get("results") or [{}])[0]          # a obra encontrada (nome e ano oficiais)
         candidatos = []
