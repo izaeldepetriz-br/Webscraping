@@ -1,6 +1,7 @@
 # Gera o programa para Windows (.exe) numa máquina Windows do GitHub, a cada envio para a main.
 # O resultado fica em Actions > (a execução) > Artifacts > videoscraper-windows.
-# Ao criar uma tag v1.0, v1.1... o .zip também vai para a página de Releases.
+# Ao criar uma tag v1.0, v1.1... o .zip também vai para a página de Releases. Sem tag: Actions >
+# "Gerar o .exe (Windows)" > Run workflow > preencha "versao" (ex.: v1.1).
 name: Gerar o .exe (Windows)
 
 on:
@@ -8,6 +9,11 @@ on:
     branches: [main]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      versao:
+        description: "Publicar em Releases como esta versão (ex.: v1.1). Vazio = só gera o .exe"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -38,10 +44,12 @@ jobs:
         with:
           name: videoscraper-windows
           path: videoscraper-windows.zip
-      - name: Publicar na página de Releases (só em tags v*)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publicar na página de Releases (tags v* ou "versao" preenchida)
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.versao != ''
         uses: softprops/action-gh-release@v2
         with:
-          name: Versão ${{ github.ref_name }}
+          tag_name: ${{ inputs.versao || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          name: Versão ${{ inputs.versao || github.ref_name }}
           body_path: .github/notas-da-versao.md
           files: videoscraper-windows.zip
