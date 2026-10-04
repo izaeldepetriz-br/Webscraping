@@ -43,6 +43,8 @@ def _opcoes_busca(p: argparse.ArgumentParser) -> None:
     p.add_argument("-m", "--max-paginas", type=int, default=30, help="limite de páginas visitadas")
     p.add_argument("--qualquer-dominio", action="store_true", help="seguir links para outros sites")
     p.add_argument("--seletor", help="seletor CSS dos links (ex.: 'a.video-link'). Sem ele, detecta sozinho")
+    p.add_argument("--filtro-links", default="",
+                   help="ao seguir links, só os que contêm este texto (ex.: '/details/')")
 
 
 def criar_parser() -> argparse.ArgumentParser:
@@ -93,7 +95,7 @@ def _cmd_buscar(args) -> int:
                   chrome=args.chrome) as t:
         print("📥 Acessando" + (" com navegador..." if t.usa_navegador else "..."), file=sys.stderr)
         links = t.buscar(args.url, args.profundidade, args.max_paginas,
-                         not args.qualquer_dominio, args.seletor)
+                         not args.qualquer_dominio, args.seletor, args.filtro_links)
         print(f"\n📋 {len(links)} link(s) de vídeo encontrado(s).", file=sys.stderr)
         if t.bloqueadas and not links:
             print("\n" + MENSAGEM_ROBOTS, file=sys.stderr)

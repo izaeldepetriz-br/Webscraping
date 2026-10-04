@@ -75,6 +75,11 @@ customElements.define('app-busca', class extends HTMLElement {
 def ITEM(n):
     return f'<html><head><meta property="og:video" content="/m/item{n}.mp4"></head><body>item</body></html>'
 
+# Página com MENU (links únicos) antes dos resultados (links no mesmo formato), como no archive.org.
+MENU_E_RESULTADOS = ("<html><body><nav>" + "".join(f'<a href="/menu{i}">Menu {i}</a>' for i in range(20))
+                     + "</nav><main>" + "".join(f'<a href="/item/{i}">Item {i}</a>' for i in range(1, 9))
+                     + "</main></body></html>")
+
 AREA_LOGADA = '<html><body><a class="video-link" href="/privado/v.mp4">Exclusivo</a></body></html>'
 
 
@@ -116,6 +121,10 @@ def servidor(tmp_path_factory):
                 r = (200, "application/json", LISTA_JSON.encode())
             elif caminho == "/busca-shadow":
                 r = (200, "text/html; charset=utf-8", BUSCA_SHADOW.encode())
+            elif caminho == "/menu-e-resultados":
+                r = (200, "text/html", MENU_E_RESULTADOS.encode())
+            elif caminho.startswith("/menu"):
+                r = (200, "text/html", b"<html><body>pagina de menu</body></html>")
             elif caminho.startswith("/item/"):
                 r = (200, "text/html", ITEM(caminho.rsplit("/", 1)[1]).encode())
             elif caminho == "/login-cookie":

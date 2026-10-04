@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
@@ -89,11 +89,31 @@ def links_da_pagina(pagina: Pagina, seletor: str | None = None) -> list[LinkVide
     return list(achados.values())
 
 
+def _formato(url: str) -> str:
+    """O "formato" do link, sem a parte que varia:
+       'https://site/details/abc' -> 'site/details/*'   (resultados: muitos com o mesmo formato)
+       'https://site/about'       -> 'site/about'       (menu: um nível só, cada um é único)"""
+    p = urlparse(url)
+    partes = [x for x in p.path.split("/") if x]
+    if len(partes) >= 2:
+        return p.netloc + "/" + "/".join(partes[:-1]) + "/*"
+    return p.netloc + "/" + "/".join(partes)
+
+
+def priorizar(links: list[str]) -> list[str]:
+    """Resultados de busca/listas se repetem no MESMO formato (centenas de /details/...);
+    links de menu são únicos (/about, /donate). Visita primeiro os formatos mais repetidos,
+    para o limite de páginas não ser gasto com o menu do site."""
+    contagem = Counter(_formato(u) for u in links)
+    return sorted(links, key=lambda u: -contagem[_formato(u)])     # sorted é estável: mantém a ordem
+
+
 def rastrear(fonte, url_inicial: str, profundidade: int = 0, max_paginas: int = 50,
              mesmo_dominio: bool = True, seletor: str | None = None,
-             parar=None) -> list[LinkVideo]:
+             parar=None, filtro_links: str = "") -> list[LinkVideo]:
     """Busca em largura: a página inicial, depois as páginas que ela linka, e assim por diante.
-    `parar` (opcional) é uma função que devolve True quando o usuário pediu para interromper."""
+    `parar` (opcional) é uma função que devolve True quando o usuário pediu para interromper.
+    `filtro_links`: se preenchido, só segue links cujo endereço contém esse texto (ex.: "/details/")."""
     dominio = urlparse(url_inicial).netloc
     fila = deque([(url_inicial, 0)])
     visitadas: set[str] = set()
@@ -118,10 +138,14 @@ def rastrear(fonte, url_inicial: str, profundidade: int = 0, max_paginas: int = 
             resultados.setdefault(link.url, link)
 
         if nivel < profundidade:
-            for prox in extrair_links_de_navegacao(pagina.html, pagina.url):
+            proximos = []
+            for prox in dict.fromkeys(extrair_links_de_navegacao(pagina.html, pagina.url)):
                 if mesmo_dominio and urlparse(prox).netloc != dominio:
                     continue
+                if filtro_links and filtro_links not in prox:
+                    continue
                 if prox not in visitadas:
-                    fila.append((prox, nivel + 1))
+                    proximos.append(prox)
+            fila.extend((prox, nivel + 1) for prox in priorizar(proximos))
 
     return list(resultados.values())

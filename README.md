@@ -78,6 +78,18 @@ proíbem baixar vídeos sem o botão oficial de download. O programa respeita is
 
 Comece pelo simples. Se aparecer "0 links", tente com `--navegador`.
 
+### Páginas com centenas de resultados
+
+- **archive.org:** links de coleção (`https://archive.org/details/Comedy_Films`), de busca
+  (`https://archive.org/search?query=...`) ou de um item são lidos pela **API oficial** do
+  archive.org: o programa lista todos os itens (não só os que aparecem na tela) e escolhe o melhor
+  arquivo de vídeo de cada um. "Máx. de páginas" vira "máximo de itens" (até 2000). Confira a
+  licença de cada item.
+- **Outros sites:** com "Seguir links" ≥ 1, o programa visita primeiro os links que se repetem no
+  mesmo formato (os resultados, como `/filme/123`, `/filme/456`) e deixa por último os links únicos
+  do menu (`/sobre`, `/contato`). Para mandar explicitamente, use **"Seguir só links que contêm"**
+  (ex.: `/details/`) ou `--filtro-links` no terminal.
+
 ## Comandos (terminal)
 
 Com o ambiente ativado (`.venv\Scripts\activate` no Windows, `. .venv/bin/activate` no Linux/Mac):

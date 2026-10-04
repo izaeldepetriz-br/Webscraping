@@ -226,7 +226,7 @@ def test_jellyfin_series_e_opcoes_mudadas_exigem_nova_previa(app, tmp_path):
     app.bt_previa.invoke()
     esperar(app)
     linhas = {l[2]: l for l in _linhas_jf(app)}
-    assert linhas["Dark.S01E02.WEBRip.mkv"][3] == "Dark (2017)/Season 01/Dark S01E02.mkv"
+    assert linhas["Dark.S01E02.WEBRip.mkv"][3].startswith("Dark S01E02.mkv")   # só o nome, sem repetir a pasta
     assert linhas["sem_numero.mp4"][1].endswith("não identificado")
 
     app.var_jf_destino.set(str(tmp_path / "OutraPasta"))         # mudou depois da prévia
@@ -319,6 +319,7 @@ def test_jellyfin_limpeza_de_torrent_pela_interface(app, tmp_path):
     app.bt_previa.invoke()
     esperar(app)
     [linha] = _linhas_jf(app)
+    assert linha[3].startswith("Creed II (2018).mkv ")                       # só o nome, sem a pasta
     assert "+1 legenda(s), 1 imagem(ns); apagar 2" in linha[3]
     perguntas = []
     app.perguntar = lambda t, m: perguntas.append(m) or True

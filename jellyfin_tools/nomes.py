@@ -47,8 +47,12 @@ def tem_site(texto: str) -> bool:
     return bool(_RE_SITE.search(texto))
 
 
+# Etiqueta de grupo no começo do nome: "[Gekiga Fansub] - Filme..." (comum em animes).
+_RE_GRUPO_INICIAL = re.compile(r"^\s*\[[^\]]*\][\s._-]*")
+
+
 def _sem_propaganda(texto: str) -> str:
-    return _RE_AUDIO.sub(" ", _RE_SITE.sub(" ", texto))
+    return _RE_AUDIO.sub(" ", _RE_SITE.sub(" ", _RE_GRUPO_INICIAL.sub("", texto)))
 
 
 _RE_ANO = re.compile(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)")

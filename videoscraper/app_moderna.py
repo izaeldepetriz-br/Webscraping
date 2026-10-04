@@ -82,7 +82,8 @@ class AppModerna(JanelaModerna):
         def tarefa():
             with self._novo_trabalho(opcoes) as t:
                 print(f"Acessando{' com navegador' if t.usa_navegador else ''}: {url}")
-                links = t.buscar(url, opcoes.profundidade, opcoes.max_paginas, True, opcoes.seletor)
+                links = t.buscar(url, opcoes.profundidade, opcoes.max_paginas, True, opcoes.seletor,
+                                 opcoes.filtro_links)
                 print(f"{len(links)} vídeo(s) encontrado(s).")
                 self.fila.put(("links", links))
                 self._explicar_resultado(t, links)
@@ -163,7 +164,8 @@ class AppModerna(JanelaModerna):
                 lista = escolhidos
                 if not lista:                         # ainda não buscou: busca primeiro
                     print(f"Acessando: {url}")
-                    lista = t.buscar(url, opcoes.profundidade, opcoes.max_paginas, True, opcoes.seletor)
+                    lista = t.buscar(url, opcoes.profundidade, opcoes.max_paginas, True, opcoes.seletor,
+                                     opcoes.filtro_links)
                     self.fila.put(("links", lista))
                     if not lista:
                         self._explicar_resultado(t, lista)
@@ -521,7 +523,8 @@ class AppModerna(JanelaModerna):
             texto, cor = STATUS_MOVIMENTO.get(m.status, (m.status, None))
             if m.status == "simulado" and m.detalhe:
                 texto = "vai mover (confira)"       # nome não confirmado no catálogo
-            novo = m.destino_curto if m.destino else f"({m.detalhe})"
+            # Só o nome do arquivo: a pasta tem o mesmo nome (Filmes/Nome (Ano)/Nome (Ano).mkv)
+            novo = m.destino.name if m.destino else f"({m.detalhe})"
             if m.destino and m.resumo_extras and m.status in ("simulado", "movido"):
                 novo += f"   ({m.resumo_extras})"
             self.adicionar_linha_jf(str(i), i + 1, texto, cor, m.origem.name, novo)

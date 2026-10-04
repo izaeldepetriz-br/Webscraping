@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from . import archive_org
 from .coleta import FonteNavegador, FonteRequests, rastrear
 from .download import NaoBaixavel, baixar_video
 from .extracao import LinkVideo
@@ -58,9 +59,15 @@ class Trabalho:
         self.fonte.fechar()
 
     def buscar(self, url: str, profundidade: int = 0, max_paginas: int = 30,
-               mesmo_dominio: bool = True, seletor: str | None = None) -> list[LinkVideo]:
+               mesmo_dominio: bool = True, seletor: str | None = None,
+               filtro_links: str = "") -> list[LinkVideo]:
+        if archive_org.reconhece(url) and not seletor:
+            print("archive.org detectado: usando a API oficial (lista todos os itens, sem rolar a página).\n"
+                  f"Máx. de páginas = máx. de itens consultados ({max_paginas}).")
+            return archive_org.buscar(self.cliente, url, limite=max_paginas, parar=self.parar,
+                                      bloqueadas=self.fonte.bloqueadas)
         return rastrear(self.fonte, url, profundidade, max_paginas, mesmo_dominio,
-                        seletor or None, parar=self.parar)
+                        seletor or None, parar=self.parar, filtro_links=filtro_links)
 
     def baixar(self, links: list[LinkVideo], pasta: str, ao_terminar_item=None) -> Resumo:
         """Baixa os links. `ao_terminar_item(link, status, detalhe)` é chamado a cada vídeo

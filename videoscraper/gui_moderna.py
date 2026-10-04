@@ -66,6 +66,7 @@ class OpcoesInterface:
     visivel: bool
     pausar: bool
     seletor: str
+    filtro_links: str
     profundidade: int
     max_paginas: int
     limite: int
@@ -381,9 +382,12 @@ class JanelaModerna(ctk.CTk):
         self._rotulo(lateral, "Seletor CSS (opcional):").pack(anchor="w", **p)
         self.var_seletor = tk.StringVar()
         self._entrada(lateral, self.var_seletor, "ex.: a.video-link").pack(fill="x", pady=(4, 10), **p)
+        self._rotulo(lateral, "Seguir só links que contêm (opcional):").pack(anchor="w", **p)
+        self.var_filtro = tk.StringVar()
+        self._entrada(lateral, self.var_filtro, "ex.: /details/").pack(fill="x", pady=(4, 10), **p)
 
         self.campo_prof = self._numero(lateral, "Seguir links (níveis):", 0, 0, 5, 1)
-        self.campo_maxp = self._numero(lateral, "Máx. de páginas:", 30, 1, 300, 1)
+        self.campo_maxp = self._numero(lateral, "Máx. de páginas:", 30, 1, 2000, 10)
         self.campo_limite = self._numero(lateral, "Máx. de vídeos (0 = todos):", 0, 0, 1000, 1)
         self.campo_espera = self._numero(lateral, "Espera entre pedidos (s):", 1.5, 0.5, 10, 0.5, True)
 
@@ -505,7 +509,7 @@ class JanelaModerna(ctk.CTk):
 
     # ------------------------------------------------------------------ aba Jellyfin
     COLUNAS_JF = (("n", "#", 44, False), ("status", "Situação", 150, False),
-                  ("atual", "Arquivo atual", 210, True), ("novo", "Novo nome no Jellyfin", 300, True),
+                  ("atual", "Arquivo atual", 210, True), ("novo", "Novo nome (a pasta leva o mesmo nome)", 300, True),
                   ("legenda", "Legenda", 140, False))
     FONTES_LEGENDA = ("Site de demonstração", "OpenSubtitles (API)", "Site de busca (URL)")
     ROTULOS_DESTINO = {"Filmes": "Biblioteca de Filmes do Jellyfin:", "Séries": "Biblioteca de Séries do Jellyfin:"}
@@ -665,7 +669,8 @@ class JanelaModerna(ctk.CTk):
     def obter_opcoes(self) -> OpcoesInterface:
         return OpcoesInterface(
             navegador=self.var_nav.get(), visivel=self.var_visivel.get(), pausar=self.var_pausar.get(),
-            seletor=self.var_seletor.get().strip(), profundidade=int(self.campo_prof.get()),
+            seletor=self.var_seletor.get().strip(), filtro_links=self.var_filtro.get().strip(),
+            profundidade=int(self.campo_prof.get()),
             max_paginas=int(self.campo_maxp.get()), limite=int(self.campo_limite.get()),
             espera=float(self.campo_espera.get()), pasta=self.var_pasta.get().strip() or self._pasta_padrao)
 

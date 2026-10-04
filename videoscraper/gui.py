@@ -31,7 +31,7 @@ PASTA_PADRAO = os.path.abspath("videos_baixados")
 # Nomes amigáveis para a coluna "Origem" (de onde o link saiu).
 ORIGENS = {"video_tag": "vídeo da página", "source_tag": "vídeo da página", "iframe": "player embutido",
            "link": "link", "meta": "metadados", "json_ld": "dados da página", "script": "código da página",
-           "rede": "pedido do player", "seletor": "seletor CSS"}
+           "rede": "pedido do player", "seletor": "seletor CSS", "archive.org": "API do archive.org"}
 
 
 @dataclass
