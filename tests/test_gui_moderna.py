@@ -1053,3 +1053,65 @@ def test_espelho_pula_o_que_ja_esta_no_jellyfin(app, tmp_path, api_falsa, monkey
     assert [p.name for p in tmp_path.rglob("*.strm")] == ["Metropolis (1927).strm"]
     assert app.tabela.item("0", "values")[1].endswith("já no Jellyfin")
     assert "Já estavam no Jellyfin (pulados): 1" in app.caixas[-1][2]
+
+
+def test_relatorio_pela_janela(app, tmp_path):
+    filmes, series = tmp_path / "Filmes", tmp_path / "Series"
+    for caminho in (filmes / "Matrix (1999)" / "Matrix (1999).mkv", series / "Dark (2017)" / "Season 02" / "Dark S02E01.mkv",
+                    series / "Dark (2017)" / "Season 02" / "Dark S02E03.mkv"):
+        caminho.parent.mkdir(parents=True, exist_ok=True)
+        caminho.write_bytes(b"v")
+    app.mostrar_aba("Jellyfin")
+    app._destinos.update({"Filmes": str(filmes), "Séries": str(series)})
+    app.var_jf_destino.set(str(filmes))
+    app.bt_relatorio.invoke()
+    esperar(app)
+    linhas = [(l[1].split("  ")[-1], l[2], l[3]) for l in _linhas_jf(app)]
+    assert ("falta legenda pt-BR", "Matrix (1999)", "Matrix (1999).mkv") in linhas
+    assert ("falta pôster", "Matrix (1999)", "sem poster.jpg na pasta") in linhas
+    assert ("falta episódios", "Dark (2017) S02", "E02") in linhas
+    from videoscraper import config
+    planilhas = list((config.ARQUIVO.parent / "relatorios").glob("relatorio-*.csv"))
+    assert len(planilhas) == 1 and str(planilhas[0]) in app.caixas[-1][2]
+
+
+def test_conferencia_automatica_dos_espelhos(app, tmp_path, api_falsa, monkeypatch):
+    import json
+    from jellyfin_tools import espelho
+    api_falsa.rotas["/sumiu.mp4"] = lambda q: (404, b"", {})
+    api_falsa.rotas["/discord"] = lambda q: (204, b"")
+    original = espelho.verificar_links
+    monkeypatch.setattr(espelho, "verificar_links", lambda urls, **k: original(urls, **{**k, "respeitar_robots": False}))
+    filmes = tmp_path / "Filmes"
+    (filmes / "Quebrado (2001)").mkdir(parents=True)
+    (filmes / "Quebrado (2001)" / "Quebrado (2001).strm").write_text(api_falsa.base + "/sumiu.mp4\n", encoding="utf-8")
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_destino.set(str(filmes))
+    app.var_jf_discord.set(api_falsa.base + "/discord")
+    app.campo_conferir_a_cada.set(12)
+    app.var_jf_conferir_unidade.set("horas")
+    caixas = len(app.caixas)
+    app.var_jf_conferir_auto.set(True)
+    app.ao_alternar_conferencia()                                        # nunca conferiu: confere já
+    esperar(app)
+    avisos = [json.loads(p["corpo"])["content"] for p in api_falsa.pedidos if p["caminho"] == "/discord"]
+    assert len(avisos) == 1 and "Quebrado (2001)" in avisos[0]
+    assert len(app.caixas) == caixas                                     # automático: nenhuma caixa
+    assert app.var_jf_ultima_conferencia.get()
+    assert "1 quebrado(s)" in app.lb_estado_conferencia.cget("text")
+    from videoscraper import config
+    salvo = config.carregar()["jellyfin"]
+    assert (salvo["conferir_auto"], salvo["conferir_a_cada"], salvo["conferir_unidade"]) == (True, 12, "horas")
+    app._verificar_conferencia()                                         # antes de 12 h: não confere de novo
+    esperar(app)
+    assert len([p for p in api_falsa.pedidos if p["caminho"] == "/discord"]) == 1
+    assert "Próxima:" in app.lb_estado_conferencia.cget("text")
+    # em minutos: 30 min depois da última, confere de novo
+    from datetime import datetime, timedelta
+    app.campo_conferir_a_cada.set(30)
+    app.var_jf_conferir_unidade.set("minutos")
+    app.var_jf_ultima_conferencia.set((datetime.now() - timedelta(minutes=31)).isoformat(timespec="seconds"))
+    app._verificar_conferencia()
+    esperar(app)
+    assert len([p for p in api_falsa.pedidos if p["caminho"] == "/discord"]) == 2
+    assert config.carregar()["jellyfin"]["conferir_unidade"] == "minutos"

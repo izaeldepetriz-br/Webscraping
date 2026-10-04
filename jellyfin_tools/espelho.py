@@ -334,3 +334,46 @@ def remover_espelhos(quebrados: list[tuple]) -> int:
     for raiz, removidos in por_raiz.items():
         _gravar_log(raiz, [], extra={"strm_removidos": removidos})
     return sum(len(r) for r in por_raiz.values())
+
+
+# ----------------------------------------------------------------- conferência automática (com aviso)
+UNIDADES = {"minutos": 60, "horas": 3600, "dias": 86400}
+INTERVALO_MINIMO = 5 * 60   # conferir os links mais vezes que isso só sobrecarrega os sites
+
+
+def intervalo_em_segundos(valor, unidade: str = "dias") -> float:
+    """(12, 'horas') -> 43200; também aceita texto: '30min', '12h', '7d', '7' (dias), '1.5 dias'.
+    Nunca menos que INTERVALO_MINIMO (5 minutos)."""
+    if isinstance(valor, str):
+        texto = valor.strip().lower().replace(",", ".")
+        m = re.fullmatch(r"([\d.]+)\s*(m|min|mins|minuto|minutos|h|hora|horas|d|dia|dias)?", texto)
+        if not m:
+            raise ValueError(f"intervalo inválido: {valor!r} (use, por exemplo, 30min, 12h ou 7d)")
+        letra = (m.group(2) or "d")[0]
+        valor, unidade = float(m.group(1)), {"m": "minutos", "h": "horas", "d": "dias"}[letra]
+    return max(float(valor) * UNIDADES[unidade], INTERVALO_MINIMO)
+
+
+def mensagem_quebrados(quebrados: list, removidos: int = 0, limite: int = 15) -> tuple[str, str]:
+    """Texto do aviso (Discord, Telegram) com os espelhos quebrados e o motivo de cada um."""
+    import html
+    linhas = [(arquivo.stem, v.problema) for _, arquivo, _, v in quebrados[:limite]]
+    resto = f"\n… e mais {len(quebrados) - limite}" if len(quebrados) > limite else ""
+    rodape = "\nRemovidos da biblioteca (dá para voltar com 'Desfazer última')." if removidos else ""
+    titulo = f"{len(quebrados)} espelho(s) quebrado(s) no Jellyfin"
+    discord = f"\U0001F517 **{titulo}**\n" + "\n".join(f"• {n} — {p}" for n, p in linhas) + resto + rodape
+    telegram = (f"\U0001F517 <b>{html.escape(titulo)}</b>\n"
+                + "\n".join(f"• {html.escape(n)} — {html.escape(p)}" for n, p in linhas) + resto + rodape)
+    return discord, telegram
+
+
+def conferir_e_avisar(*pastas, notificador=None, remover: bool = False, ao_progresso=None,
+                      respeitar_robots: bool = True) -> tuple[list, list, int]:
+    """Confere os .strm, (opcional) remove os quebrados e avisa no Discord/Telegram se algum quebrou.
+    Devolve (todos, quebrados, quantos removidos)."""
+    resultado = conferir_espelhos(*pastas, ao_progresso=ao_progresso, respeitar_robots=respeitar_robots)
+    quebrados = [r for r in resultado if not r[3].ok]
+    removidos = remover_espelhos(quebrados) if quebrados and remover else 0
+    if quebrados and notificador is not None and getattr(notificador, "ativo", False):
+        notificador.enviar(*mensagem_quebrados(quebrados, removidos))
+    return resultado, quebrados, removidos

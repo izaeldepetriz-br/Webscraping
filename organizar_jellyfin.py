@@ -17,6 +17,8 @@ Uso:
   python organizar_jellyfin.py                         # SIMULAÇÃO: mostra o que faria
   python organizar_jellyfin.py --aplicar               # faz de verdade
   python organizar_jellyfin.py --vigiar               # fica de olho: organiza o que terminar de baixar
+  python organizar_jellyfin.py --relatorio            # o que falta: legendas, pôsteres, episódios (.csv)
+  python organizar_jellyfin.py --conferir-espelhos    # confere os .strm e avisa se algum quebrou
   python organizar_jellyfin.py --completar-biblioteca  # só baixa o que falta (pôster, .nfo, legenda)
                                                        # nos filmes que JÁ estão organizados
 """
@@ -27,6 +29,7 @@ import argparse
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 # =============================================================================================
@@ -73,6 +76,13 @@ ARQUIVO_LOG = "jellyfin_organizer.log"
 # Ex. com o uTorrent baixando em pastas separadas: [r"D:\Torrent\Filmes", r"D:\Torrent\Series"]
 # (por variável de ambiente: as pastas separadas por ponto e vírgula). Vazio = só a PASTA_ENTRADA.
 VIGIAR_PASTAS: list[str] = []
+
+# Espelhos (.strm): conferir os links e avisar no Discord/Telegram se algum quebrar.
+# "7d" = a cada 7 dias, "12h" = a cada 12 horas, "30min" = a cada 30 minutos (mínimo 5 min),
+# "" = não confere sozinho (só com --conferir-espelhos). Roda junto com o --vigiar, então em
+# minutos o tempo real é arredondado para o VIGIAR_A_CADA_MIN (ex.: "12min" com vigia de 5 → 15 min).
+CONFERIR_ESPELHOS_A_CADA = ""
+REMOVER_ESPELHOS_QUEBRADOS = False                # True = apaga os .strm quebrados (dá para desfazer)
 VIGIAR_A_CADA_MIN = 5                             # de quanto em quanto tempo conferir
 PRONTO_APOS_MIN = 2                               # arquivo parado há esse tempo = download terminado
 TRABALHOS_SIMULTANEOS = 4                         # filmes processados ao mesmo tempo (TMDB/legendas)
@@ -85,7 +95,10 @@ from jellyfin_tools.metadados import ClienteTMDB  # noqa: E402
 from jellyfin_tools.notificacoes import Notificador  # noqa: E402
 from jellyfin_tools.pos_processamento import (ConfigPos, itens_da_biblioteca, itens_de_series,  # noqa: E402
                                               pos_processar)
+from jellyfin_tools.espelho import conferir_e_avisar, intervalo_em_segundos  # noqa: E402
+from jellyfin_tools.legendas import normalizar_idiomas  # noqa: E402
 from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao  # noqa: E402
+from jellyfin_tools.relatorio import gerar_relatorio, resumo, salvar_csv  # noqa: E402
 from jellyfin_tools.site_demo import iniciar_site_demo  # noqa: E402
 from jellyfin_tools.vigia import filtro_prontos  # noqa: E402
 
@@ -232,8 +245,59 @@ def vigiar(log, ciclos: int | None = None, dormir=time.sleep) -> int:
             movidos = [m for m in movimentos if m.status == "movido"]
             if movidos:
                 pos_processar_lote([(m, m.destino.stem) for m in movidos], log)
+        if _conferencia_vencida():                  # junto com a vigia: os espelhos a cada X horas/dias
+            try:
+                conferir_espelhos(log)
+            except Exception as erro:
+                log.error("Conferir espelhos falhou: %s", erro, exc_info=True)
         if ciclos is None or volta < ciclos:
             dormir(cfg("VIGIAR_A_CADA_MIN") * 60)
+    return 0
+
+
+def conferir_espelhos(log) -> int:
+    """Confere os .strm das bibliotecas, avisa no Discord/Telegram e (opcional) remove os quebrados."""
+    pastas = [p for p in (cfg("PASTA_FILMES"), cfg("PASTA_SERIES")) if p and Path(p).expanduser().is_dir()]
+    if not pastas:
+        log.warning("Conferir espelhos: PASTA_FILMES/PASTA_SERIES não existem")
+        return 1
+    avisos = Notificador(cfg("DISCORD_WEBHOOK_URL"), cfg("TELEGRAM_BOT_TOKEN"), cfg("TELEGRAM_CHAT_ID"))
+    todos, quebrados, removidos = conferir_e_avisar(*[Path(p).expanduser() for p in pastas], notificador=avisos,
+                                                    remover=cfg("REMOVER_ESPELHOS_QUEBRADOS"))
+    for _, arquivo, _, v in quebrados:
+        log.warning("[quebrado] %s (%s)", arquivo, v.problema)
+    log.info("=== Espelhos: %d conferido(s), %d quebrado(s), %d removido(s) ===", len(todos), len(quebrados), removidos)
+    _marca_conferencia().write_text(datetime.now().isoformat(timespec="seconds"), encoding="utf-8")
+    return 0
+
+
+def _marca_conferencia() -> Path:
+    """Arquivo com a data da última conferência dos espelhos (ao lado do log)."""
+    pasta = Path(cfg("ARQUIVO_LOG")).expanduser().resolve().parent
+    pasta.mkdir(parents=True, exist_ok=True)
+    return pasta / "ultima_conferencia_espelhos.txt"
+
+
+def _conferencia_vencida() -> bool:
+    if not cfg("CONFERIR_ESPELHOS_A_CADA"):
+        return False
+    try:
+        ultima = datetime.fromisoformat(_marca_conferencia().read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return True
+    return (datetime.now() - ultima).total_seconds() >= intervalo_em_segundos(cfg("CONFERIR_ESPELHOS_A_CADA"))
+
+
+def relatorio(log) -> int:
+    """O que falta nas bibliotecas (legendas, pôsteres, episódios). Gera um .csv ao lado do log."""
+    filmes = cfg("PASTA_FILMES") or None
+    series = cfg("PASTA_SERIES") or None
+    catalogo = montar_catalogo() if cfg("TMDB_API_KEY") else None
+    pendencias = gerar_relatorio(filmes, series, normalizar_idiomas(cfg("IDIOMAS_LEGENDA")) or ["pt-BR"], catalogo)
+    for p in pendencias:
+        log.info("[falta %s] %s: %s", p.falta, p.item, p.detalhe)
+    arquivo = salvar_csv(pendencias, Path(cfg("ARQUIVO_LOG")).expanduser().resolve().parent / "relatorios")
+    log.info("=== Relatório: %s. Planilha: %s ===", resumo(pendencias), arquivo)
     return 0
 
 
@@ -258,6 +322,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--aplicar", action="store_true", help="mover de verdade (sem isso, só simula)")
     ap.add_argument("--completar-biblioteca", action="store_true",
                     help="não move nada: completa legenda/pôster/.nfo dos filmes já organizados")
+    ap.add_argument("--conferir-espelhos", action="store_true",
+                    help="confere os links dos .strm e avisa no Discord/Telegram se algum quebrou")
+    ap.add_argument("--relatorio", action="store_true",
+                    help="lista o que falta (legendas, pôsteres, episódios) e salva uma planilha .csv")
     ap.add_argument("--vigiar", action="store_true",
                     help="fica conferindo a PASTA_ENTRADA e organiza sozinho o que terminar de baixar")
     ap.add_argument("--entrada", help="sobrescreve PASTA_ENTRADA")
@@ -269,7 +337,8 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["PASTA_FILMES"] = args.filmes
 
     log = configurar_log(cfg("ARQUIVO_LOG"))
-    acao = "Completar biblioteca" if args.completar_biblioteca else "Vigiar" if args.vigiar else (
+    acao = "Completar biblioteca" if args.completar_biblioteca else "Vigiar" if args.vigiar else \
+        "Relatorio" if args.relatorio else "Conferir espelhos" if args.conferir_espelhos else (
         "Organizar" if args.aplicar or cfg("APLICAR") else "Simulacao")
     handler, arquivo_acao = None, None
     try:                                            # além do log geral, um arquivo só desta execução
@@ -283,6 +352,10 @@ def main(argv: list[str] | None = None) -> int:
             return completar_biblioteca(log)
         if args.vigiar:
             return vigiar(log)
+        if args.relatorio:
+            return relatorio(log)
+        if args.conferir_espelhos:
+            return conferir_espelhos(log)
         return organizar(args.aplicar or cfg("APLICAR"), log)
     except KeyboardInterrupt:
         log.warning("Interrompido pelo usuário")

@@ -224,3 +224,38 @@ def test_indice_do_jellyfin_chave_errada(api_falsa):
     api_falsa.rotas["/Items"] = lambda q: (401, {})
     with pytest.raises(ErroJellyfin, match="recusou"):
         indice_da_biblioteca(api_falsa.base, "errada")
+
+
+# ------------------------------------------------------------------ conferência automática com aviso
+def test_intervalo_em_horas_ou_dias():
+    import pytest
+    from jellyfin_tools.espelho import intervalo_em_segundos
+    assert intervalo_em_segundos("12h") == 12 * 3600 and intervalo_em_segundos("7d") == 7 * 86400
+    assert intervalo_em_segundos("7") == 7 * 86400 and intervalo_em_segundos(6, "horas") == 6 * 3600
+    assert intervalo_em_segundos("30min") == 30 * 60 and intervalo_em_segundos(45, "minutos") == 45 * 60
+    assert intervalo_em_segundos("1 minuto") == 5 * 60 and intervalo_em_segundos(2, "minutos") == 5 * 60  # mínimo
+    with pytest.raises(ValueError):
+        intervalo_em_segundos("toda semana")
+
+
+def test_conferir_e_avisar_no_discord_e_remover(tmp_path, api_falsa):
+    import json
+    from jellyfin_tools.espelho import conferir_e_avisar
+    from jellyfin_tools.notificacoes import Notificador
+    api_falsa.rotas["/ok.mp4"] = lambda q: (206, b"x", {"Content-Type": "video/mp4", "Accept-Ranges": "bytes"})
+    api_falsa.rotas["/sumiu.mp4"] = lambda q: (404, b"", {})
+    api_falsa.rotas["/discord"] = lambda q: (204, b"")
+    filmes = tmp_path / "Filmes"
+    for nome, url in (("Bom (2000)", "/ok.mp4"), ("Quebrado (2001)", "/sumiu.mp4")):
+        (filmes / nome).mkdir(parents=True)
+        (filmes / nome / f"{nome}.strm").write_text(api_falsa.base + url + "\n", encoding="utf-8")
+    avisos = Notificador(api_falsa.base + "/discord", "", "")
+    todos, quebrados, removidos = conferir_e_avisar(filmes, notificador=avisos, remover=True, respeitar_robots=False)
+    assert (len(todos), len(quebrados), removidos) == (2, 1, 1)
+    [aviso] = [json.loads(p["corpo"])["content"] for p in api_falsa.pedidos if p["caminho"] == "/discord"]
+    assert aviso.startswith("\U0001F517 **1 espelho(s) quebrado(s) no Jellyfin**")
+    assert "• Quebrado (2001) — arquivo não encontrado (removido?)" in aviso and "Desfazer última" in aviso
+    assert not (filmes / "Quebrado (2001)" / "Quebrado (2001).strm").exists()
+    api_falsa.pedidos.clear()
+    conferir_e_avisar(filmes, notificador=avisos, respeitar_robots=False)          # tudo ok: sem aviso
+    assert not [p for p in api_falsa.pedidos if p["caminho"] == "/discord"]

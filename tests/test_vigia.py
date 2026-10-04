@@ -102,3 +102,28 @@ def test_script_vigia_as_pastas_do_utorrent(tmp_path, monkeypatch):
         "Filmes/Matrix (1999)/Matrix (1999).mkv", "Series/Dark (2017)/Season 01/Dark S01E02.mkv"]
     assert (torrent_series / "Dark.S01" / "Dark.S01E03.mkv").exists()
     assert sorted(nome for _, nome in processados) == ["Dark S01E02", "Matrix (1999)"]   # legendas/pôster/aviso
+
+
+def test_script_confere_espelhos_junto_com_a_vigia(tmp_path, monkeypatch, api_falsa):
+    import json
+    import organizar_jellyfin as script
+    from jellyfin_tools import espelho
+    api_falsa.rotas["/sumiu.mp4"] = lambda q: (404, b"", {})
+    api_falsa.rotas["/discord"] = lambda q: (204, b"")
+    original = espelho.verificar_links
+    monkeypatch.setattr(espelho, "verificar_links", lambda urls, **k: original(urls, **{**k, "respeitar_robots": False}))
+    filmes = tmp_path / "Filmes"
+    (filmes / "Quebrado (2001)").mkdir(parents=True)
+    (filmes / "Quebrado (2001)" / "Quebrado (2001).strm").write_text(api_falsa.base + "/sumiu.mp4\n", encoding="utf-8")
+    (tmp_path / "Downloads").mkdir()
+    for nome, valor in {"PASTA_ENTRADA": tmp_path / "Downloads", "PASTA_FILMES": filmes, "PASTA_SERIES": "",
+                        "CONFERIR_ESPELHOS_A_CADA": "12h", "DISCORD_WEBHOOK_URL": api_falsa.base + "/discord",
+                        "ARQUIVO_LOG": tmp_path / "log" / "j.log"}.items():
+        monkeypatch.setenv(nome, str(valor))
+    log = script.configurar_log(tmp_path / "log" / "j.log", no_terminal=False)
+    script.vigiar(log, ciclos=2, dormir=lambda s: None)                # 2 voltas: confere só na 1ª (12 h)
+    avisos = [json.loads(p["corpo"])["content"] for p in api_falsa.pedidos if p["caminho"] == "/discord"]
+    assert len(avisos) == 1 and "Quebrado (2001)" in avisos[0]
+    assert (tmp_path / "log" / "ultima_conferencia_espelhos.txt").exists()
+    assert script.main(["--conferir-espelhos"]) == 0                   # sob demanda: confere de novo
+    assert len([p for p in api_falsa.pedidos if p["caminho"] == "/discord"]) == 2

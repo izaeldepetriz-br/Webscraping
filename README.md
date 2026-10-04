@@ -169,6 +169,21 @@ Outras opções da aba Jellyfin:
   (`VIGIAR_A_CADA_MIN`, `PRONTO_APOS_MIN`).
 - **Conferir espelhos:** confere o link de cada `.strm` das bibliotecas (o site ainda tem o vídeo?),
   mostra "funcionando"/"quebrado" na tabela e oferece remover os quebrados.
+- **Conferir espelhos automaticamente** (seção "Automático"): marque "Conferir os espelhos (.strm)
+  sozinho" e escolha em "A cada:" **N minutos, horas ou dias** (ex.: 30 minutos, 12 horas, 7 dias; mínimo de 5 minutos, para não sobrecarregar os sites). O programa confere os
+  `.strm` das duas bibliotecas nesse intervalo (mesmo que fique fechado: ao abrir, se já passou do
+  prazo, confere em 1 minuto) e **avisa no Discord/Telegram** só quando algum link quebrar
+  ("🔗 2 espelho(s) quebrado(s) no Jellyfin" + nome e motivo). Com "Remover os quebrados (dá para desfazer)" marcado,
+  ele também apaga esses `.strm` (o "Desfazer última" os recoloca). A data da última conferência
+  aparece embaixo. No script: `CONFERIR_ESPELHOS_A_CADA = "7d"` (ou `"12h"`, `"30min"`), que roda junto com o
+  `--vigiar`, `REMOVER_ESPELHOS_QUEBRADOS` e `--conferir-espelhos` para conferir uma vez agora.
+- **Relatório da biblioteca** (botão "Relatório"): lista o que falta, sem mexer em nada:
+  filmes **sem legenda** (em cada idioma escolhido; legenda "forced" não conta), filmes **sem
+  pôster** e **episódios faltando** numa temporada ("Dark — S02: falta E05, E07–E09"; com o TMDB
+  também o fim da temporada e temporadas inteiras) e episódios sem legenda. Aparece na tabela e é
+  salvo em `.csv` (abre no Excel) em `C:\Users\<você>\.videoscraper\relatorios`. No script:
+  `--relatorio`. Complementa o Sonarr: ele busca os episódios que faltam; o relatório também cobre
+  filmes, legendas e pôsteres.
 - **Desfazer o espelho:** "Desfazer última" também vale para o espelho: apaga os `.strm` criados (com a
   legenda/miniatura de mesmo nome e as pastas que o espelho criou, se não tiverem vídeo) e recoloca
   os `.strm` que o "Conferir espelhos" removeu.
@@ -362,6 +377,9 @@ Um arquivo só, com **as configurações no topo**, que faz tudo em sequência:
 python organizar_jellyfin.py                         # SIMULAÇÃO: só mostra e registra no log
 python organizar_jellyfin.py --aplicar               # de verdade
 python organizar_jellyfin.py --completar-biblioteca  # filmes JÁ organizados: baixa só o que falta
+python organizar_jellyfin.py --relatorio             # o que falta: legendas, pôsteres, episódios
+python organizar_jellyfin.py --conferir-espelhos     # confere os .strm agora (avisa se quebrou)
+python organizar_jellyfin.py --vigiar                # vigia as pastas (+ espelhos em CONFERIR_ESPELHOS_A_CADA)
 ```
 
 **Chaves e tokens:** em vez de escrevê-los no arquivo, crie variáveis de ambiente com o mesmo nome

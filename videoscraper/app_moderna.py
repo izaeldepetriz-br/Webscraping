@@ -31,12 +31,14 @@ from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, Confi
 from jellyfin_tools.legendas import normalizar_idiomas
 from jellyfin_tools.metadados import ClienteTMDB
 from jellyfin_tools.notificacoes import Notificador
-from jellyfin_tools.espelho import (aplicar_espelho, classificar, conferir_espelhos, licenca_aberta, nome_do_link,
-                                    planejar_espelho, remover_espelhos, verificar_links)
+from jellyfin_tools.espelho import (aplicar_espelho, classificar, conferir_e_avisar, conferir_espelhos,
+                                    intervalo_em_segundos, licenca_aberta, nome_do_link, planejar_espelho,
+                                    remover_espelhos, verificar_links)
 from jellyfin_tools.organizador import (DETALHE_EPISODIO, organizar_misto, problema_no_caminho, sugestao_de_caminho,
                                        ultimo_log)
 from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, itens_de_series, pos_processar
 from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao
+from jellyfin_tools.relatorio import gerar_relatorio, resumo, salvar_csv
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, indice_da_biblioteca, testar_conexao
 from jellyfin_tools.site_demo import iniciar_site_demo
 from jellyfin_tools.vigia import filtro_prontos
@@ -110,6 +112,7 @@ class AppModerna(JanelaModerna):
         self._sugestao_series = None            # prévia em Filmes com episódios: (episódios, total)
         self._remocao_pendente = None           # "Conferir espelhos": .strm quebrados a oferecer remoção
         self._vigia_agendada = None             # pasta vigiada: id do próximo after()
+        self._conferencia_agendada = None       # conferência automática dos espelhos
         self._vigia_conferindo = False
         self._movimentos_previa: list = []      # o que a última pré-visualização mostrou
         self._carregar_config()
@@ -394,6 +397,17 @@ class AppModerna(JanelaModerna):
             self._vigia_organizar(*dado)
         elif tipo == "sugerir_remocao":
             self._remocao_pendente = dado
+        elif tipo == "conferencia_feita":              # conferência automática dos espelhos
+            quando, total, quebrados, removidos = dado
+            self.var_jf_ultima_conferencia.set(quando)
+            self._salvar_config()
+            self.definir_estado_conferencia(
+                f"{self._texto_ultima_conferencia()} {total} espelho(s), {quebrados} quebrado(s)"
+                + (f", {removidos} removido(s)." if removidos else "."), not quebrados)
+        elif tipo == "jf_relatorio":                   # o que falta na biblioteca
+            self.limpar_tabela_jf()
+            for i, (item, falta, detalhe) in enumerate(dado):
+                self.adicionar_linha_jf(str(i), i + 1, f"falta {falta}", "pulado", item, detalhe)
         elif tipo == "jf_espelhos":                    # resultado do "Conferir espelhos"
             self.limpar_tabela_jf()
             for i, (nome, ok, texto) in enumerate(dado):
@@ -673,6 +687,101 @@ class AppModerna(JanelaModerna):
                                          "episódio(s) organizados."))
 
         self._rodar("Organizando (pasta vigiada)...", tarefa)
+
+    # ================================================================== conferência automática dos espelhos
+    def ao_alternar_conferencia(self) -> None:
+        if self.var_jf_conferir_auto.get():
+            self._log.info("Conferência automática dos espelhos ligada (a cada %s %s)",
+                           int(self.campo_conferir_a_cada.get()), self.var_jf_conferir_unidade.get())
+            self._verificar_conferencia()
+        else:
+            self.definir_estado_conferencia(self._texto_ultima_conferencia() + " Automático desligado.")
+
+    def _ciclo_conferencia(self) -> None:
+        """Roda a cada minuto; só confere quando já passou o período escolhido (minutos, horas ou dias)."""
+        self._conferencia_agendada = self.after(60_000, self._ciclo_conferencia)
+        self._verificar_conferencia()
+
+    def _texto_ultima_conferencia(self) -> str:
+        ultima = self.var_jf_ultima_conferencia.get()
+        try:
+            return f"Última conferência: {datetime.fromisoformat(ultima):%d/%m %H:%M}."
+        except ValueError:
+            return "Última conferência: nunca."
+
+    def _verificar_conferencia(self) -> None:
+        if not self.var_jf_conferir_auto.get() or self.trabalhando:
+            return
+        o = self.obter_opcoes_jellyfin()
+        intervalo = intervalo_em_segundos(o.conferir_a_cada, o.conferir_unidade)
+        try:
+            ultima = datetime.fromisoformat(o.ultima_conferencia)
+        except ValueError:
+            ultima = None
+        if ultima is not None and (datetime.now() - ultima).total_seconds() < intervalo:
+            proxima = ultima + timedelta(seconds=intervalo)
+            self.definir_estado_conferencia(f"{self._texto_ultima_conferencia()} Próxima: {proxima:%d/%m %H:%M}.")
+            return
+        self._destinos[self._modo_atual] = self.var_jf_destino.get()
+        pastas = [p for p in dict.fromkeys((self._destinos.get("Filmes"), self._destinos.get("Séries")))
+                  if p and Path(p).is_dir()]
+        if not pastas:
+            self._log.warning("Conferência automática: escolha as bibliotecas de Filmes/Séries")
+            return
+        notificador = Notificador(o.discord_webhook, o.telegram_token, o.telegram_chat_id)
+
+        def tarefa():
+            resultado, quebrados, removidos = conferir_e_avisar(
+                *pastas, notificador=notificador, remover=o.remover_quebrados,
+                ao_progresso=lambda f, t: self._avisar_analise(f / t, f"Conferindo espelhos: {f} de {t}"))
+            linhas = []
+            for raiz, arquivo, url, v in resultado:
+                texto = v.problema or v.aviso or "funcionando"
+                (self._log.info if v.ok else self._log.warning)("[%s] %s (%s)", "ok" if v.ok else "quebrado",
+                                                                 arquivo, texto)
+                linhas.append(("/".join(arquivo.relative_to(raiz).parts), v.ok, texto))
+            if linhas:
+                self.fila.put(("jf_espelhos", linhas))
+            if quebrados and not notificador.ativo:
+                self._log.warning("Há espelhos quebrados, mas o Discord/Telegram não está configurado para avisar")
+            self.fila.put(("conferencia_feita", (datetime.now().isoformat(timespec="seconds"), len(resultado),
+                                                 len(quebrados), removidos)))
+            self.fila.put(("status_fim", f"Espelhos: {len(resultado) - len(quebrados)} funcionando, "
+                                         f"{len(quebrados)} quebrado(s)" + (f", {removidos} removido(s)." if removidos
+                                                                           else ".")))
+
+        self._rodar("Conferindo espelhos (automático)...", tarefa)
+
+    # ================================================================== relatório da biblioteca
+    def ao_relatorio(self) -> None:
+        """O que falta nas bibliotecas: legendas (cada idioma), pôsteres, episódios. Gera um .csv."""
+        self._destinos[self._modo_atual] = self.var_jf_destino.get()
+        filmes, series = (self._destinos.get(t) or None for t in ("Filmes", "Séries"))
+        if not any(p and Path(p).is_dir() for p in (filmes, series)):
+            self.mostrar_mensagem("Relatório", "Escolha a biblioteca de Filmes e/ou de Séries.", "aviso")
+            return
+        o = self.obter_opcoes_jellyfin()
+        idiomas = normalizar_idiomas(o.idioma) or ["pt-BR"]
+        self._previa = None
+        self.liberar_organizar(False)
+
+        def tarefa():
+            catalogo = self._catalogo(o) if o.tmdb else None      # com o TMDB: confere o fim das temporadas
+            pendencias = gerar_relatorio(filmes, series, idiomas, catalogo)
+            for p in pendencias:
+                self._log.info("[falta %s] %s: %s", p.falta, p.item, p.detalhe)
+            arquivo = salvar_csv(pendencias, config.ARQUIVO.parent / "relatorios")
+            texto = resumo(pendencias)
+            self._log.info("Relatório: %s. Planilha: %s", texto, arquivo)
+            self.fila.put(("jf_relatorio", [(p.item, p.falta, p.detalhe) for p in pendencias]))
+            self.fila.put(("status_fim", f"Relatório: {len(pendencias)} pendência(s)."))
+            self.fila.put(("msg", ("Relatório da biblioteca",
+                                   f"{texto.replace('; ', chr(10))}\n\nA lista completa está na tabela e na "
+                                   f"planilha:\n{arquivo}" + ("" if o.tmdb else "\n\nCom o TMDB marcado, o "
+                                   "relatório também confere o fim das temporadas e temporadas inteiras."),
+                                   "info" if pendencias else "sucesso")))
+
+        self._rodar("Gerando o relatório...", tarefa)
 
     def ao_conferir_espelhos(self) -> None:
         """Confere o link de cada .strm das bibliotecas de Filmes e Séries (o site ainda tem o vídeo?)."""
@@ -1221,6 +1330,8 @@ class AppModerna(JanelaModerna):
         self.definir_opcoes_jellyfin(dados)
         if self.var_jf_vigiar.get():                 # ficou ligada da última vez: volta a vigiar
             self.after(3000, self.ao_alternar_vigia)
+        self.definir_estado_conferencia(self._texto_ultima_conferencia())
+        self._conferencia_agendada = self.after(60_000, self._ciclo_conferencia)
 
     def _salvar_config(self) -> None:
         o = self.obter_opcoes_jellyfin()
@@ -1248,8 +1359,9 @@ class AppModerna(JanelaModerna):
             return
         self._salvar_config()
         self.evento_parar.set()
-        if self._vigia_agendada:
-            self.after_cancel(self._vigia_agendada)
+        for agendado in (self._vigia_agendada, self._conferencia_agendada):
+            if agendado:
+                self.after_cancel(agendado)
         encerrar_log_da_acao(self._log_acao)
         self._log_acao = None
         sys.stdout, sys.stderr = self._stdout, self._stderr

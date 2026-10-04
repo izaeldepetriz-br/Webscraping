@@ -108,6 +108,11 @@ class OpcoesJellyfin:
     vigiar: bool = False             # pasta vigiada ligada
     vigiar_min: float = 5            # de quanto em quanto tempo conferir
     pastas_vigiadas: tuple = ()      # pastas de download (ex.: as do uTorrent); vazio = a pasta de origem
+    conferir_auto: bool = False      # conferir os .strm sozinho
+    conferir_a_cada: float = 7
+    conferir_unidade: str = "dias"   # "minutos", "horas" ou "dias"
+    remover_quebrados: bool = False
+    ultima_conferencia: str = ""     # data/hora (ISO) da última conferência automática
 
 
 # Máximo dos campos "Máx. de páginas" e "Máx. de vídeos" (antes 2000 e 1000).
@@ -599,8 +604,10 @@ class JanelaModerna(ctk.CTk):
         self.bt_legendas = self._botao(barra, "Completar biblioteca", self.ao_baixar_legendas, largura=190)
         self.bt_desfazer = self._botao(barra, "Desfazer última", self.ao_desfazer, largura=140)
         self.bt_conferir_espelhos = self._botao(barra, "Conferir espelhos", self.ao_conferir_espelhos, largura=150)
+        self.bt_relatorio = self._botao(barra, "Relatório", self.ao_relatorio, largura=110)
         self.bt_parar_jf = self._botao(barra, "Parar", self.ao_parar, "perigo", largura=100)
-        for b in (self.bt_previa, self.bt_organizar, self.bt_legendas, self.bt_desfazer, self.bt_conferir_espelhos):
+        for b in (self.bt_previa, self.bt_organizar, self.bt_legendas, self.bt_desfazer, self.bt_conferir_espelhos,
+                  self.bt_relatorio):
             b.pack(side="left", padx=(0, 10))
         self.bt_parar_jf.pack(side="right")
 
@@ -680,6 +687,27 @@ class JanelaModerna(ctk.CTk):
         self.txt_pastas_vigiadas.pack(fill="x", **p)
         self._botao(lateral, "Adicionar pasta...", self._adicionar_pasta_vigiada, "fantasma").pack(
             anchor="w", pady=(2, 4), **p)
+        # conferência automática dos espelhos (.strm), em horas ou dias
+        self.var_jf_conferir_auto = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Conferir os espelhos (.strm) sozinho e\navisar no Discord/Telegram se quebrar",
+                       self.var_jf_conferir_auto, comando=self.ao_alternar_conferencia)
+        linha = ctk.CTkFrame(lateral, fg_color="transparent")
+        linha.pack(fill="x", padx=18, pady=(0, 6))
+        self._rotulo(linha, "A cada:").pack(side="left")
+        self.var_jf_conferir_unidade = tk.StringVar(value="dias")
+        ctk.CTkOptionMenu(linha, variable=self.var_jf_conferir_unidade, values=["minutos", "horas", "dias"], width=96,
+                          height=32, corner_radius=Tema.RAIO_CONTROLE, font=self.f_normal, fg_color=Tema.CAMPO,
+                          button_color=Tema.SECUNDARIA, button_hover_color=Tema.SECUNDARIA_HOVER,
+                          dropdown_fg_color=Tema.CARTAO, text_color=Tema.TEXTO).pack(side="right")
+        self.campo_conferir_a_cada = CampoNumerico(linha, 7, 1, 999, 1, largura=102)
+        self.campo_conferir_a_cada.pack(side="right", padx=(0, 6))
+        self.var_jf_remover_quebrados = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Remover os quebrados (dá para desfazer)", self.var_jf_remover_quebrados)
+        self.var_jf_ultima_conferencia = tk.StringVar(value="")
+        self.lb_estado_conferencia = ctk.CTkLabel(lateral, text="Última conferência: nunca.", font=self.f_rotulo,
+                                                  text_color=Tema.TEXTO_FRACO, anchor="w", justify="left",
+                                                  wraplength=250)
+        self.lb_estado_conferencia.pack(fill="x", padx=18, pady=(0, 4))
         self.lb_estado_vigia = ctk.CTkLabel(lateral, text="Desligada. Usa as pastas e opções desta aba; o que ainda "
                                             "está baixando (.part, .!qB) fica para a próxima.",
                                             font=self.f_rotulo, text_color=Tema.TEXTO_FRACO, anchor="w",
@@ -961,6 +989,9 @@ class JanelaModerna(ctk.CTk):
             apagar_pasta_origem=self.var_jf_apagar_pasta.get(), nomes_episodios=self.var_jf_nomes_ep.get(),
             vigiar=self.var_jf_vigiar.get(), vigiar_min=self.campo_vigia_min.get(),
             pastas_vigiadas=tuple(self.pastas_vigiadas()),
+            conferir_auto=self.var_jf_conferir_auto.get(), conferir_a_cada=self.campo_conferir_a_cada.get(),
+            conferir_unidade=self.var_jf_conferir_unidade.get(), remover_quebrados=self.var_jf_remover_quebrados.get(),
+            ultima_conferencia=self.var_jf_ultima_conferencia.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
     def idiomas_jf(self) -> str:
@@ -994,7 +1025,8 @@ class JanelaModerna(ctk.CTk):
                   "exigir_catalogo": self.var_jf_exigir, "legendas": self.var_jf_legendas,
                   "limpar_lixo": self.var_jf_lixo, "imagens_tmdb": self.var_jf_imagens,
                   "apagar_pasta_origem": self.var_jf_apagar_pasta, "nomes_episodios": self.var_jf_nomes_ep,
-                  "vigiar": self.var_jf_vigiar,
+                  "vigiar": self.var_jf_vigiar, "conferir_auto": self.var_jf_conferir_auto,
+                  "remover_quebrados": self.var_jf_remover_quebrados,
                   "gerar_nfo": self.var_jf_nfo, "atualizar_jellyfin": self.var_jf_atualizar,
                   "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar}
         for chave, var in textos.items():
@@ -1009,6 +1041,12 @@ class JanelaModerna(ctk.CTk):
             self.campo_vigia_min.set(float(dados["vigiar_min"]))
         if dados.get("pastas_vigiadas"):
             self.definir_pastas_vigiadas(list(dados["pastas_vigiadas"]))
+        if dados.get("conferir_a_cada"):
+            self.campo_conferir_a_cada.set(float(dados["conferir_a_cada"]))
+        if dados.get("conferir_unidade") in ("minutos", "horas", "dias"):
+            self.var_jf_conferir_unidade.set(dados["conferir_unidade"])
+        if dados.get("ultima_conferencia"):
+            self.var_jf_ultima_conferencia.set(dados["ultima_conferencia"])
         if "filtros_ocultos" in dados:
             for chave, var in self.vars_filtro_jf.items():
                 var.set(chave not in dados["filtros_ocultos"])
@@ -1100,6 +1138,10 @@ class JanelaModerna(ctk.CTk):
         pasta = filedialog.askdirectory()
         if pasta and pasta not in self.pastas_vigiadas():
             self.definir_pastas_vigiadas(self.pastas_vigiadas() + [pasta])
+
+    def definir_estado_conferencia(self, texto: str, ok: bool | None = None) -> None:
+        cor = {True: Tema.SUCESSO, False: Tema.PERIGO}.get(ok, Tema.TEXTO_FRACO)
+        self.lb_estado_conferencia.configure(text=texto, text_color=cor)
 
     def definir_estado_vigia(self, texto: str, ligada: bool) -> None:
         self.lb_estado_vigia.configure(text=texto, text_color=Tema.SUCESSO if ligada else Tema.TEXTO_FRACO)
@@ -1274,7 +1316,7 @@ class JanelaModerna(ctk.CTk):
         for b in (self.bt_buscar, self.bt_baixar_sel, self.bt_baixar_todos, self.bt_login,
                   self.bt_previa, self.bt_legendas, self.bt_desfazer, self.bt_testar_jellyfin,
                   self.bt_testar_avisos, self.bt_testar_tmdb, self.bt_espelhar, self.bt_testar_legendas,
-                  self.bt_conferir_espelhos):
+                  self.bt_conferir_espelhos, self.bt_relatorio):
             b.configure(state=estado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
         for parar in (self.bt_parar, self.bt_parar_jf):
@@ -1405,6 +1447,12 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_alternar_vigia(self) -> None:
+        pass
+
+    def ao_relatorio(self) -> None:
+        pass
+
+    def ao_alternar_conferencia(self) -> None:
         pass
 
     def ao_testar_jellyfin(self) -> None:
