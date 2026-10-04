@@ -259,3 +259,100 @@ def test_conferir_e_avisar_no_discord_e_remover(tmp_path, api_falsa):
     api_falsa.pedidos.clear()
     conferir_e_avisar(filmes, notificador=avisos, respeitar_robots=False)          # tudo ok: sem aviso
     assert not [p for p in api_falsa.pedidos if p["caminho"] == "/discord"]
+
+
+# ------------------------------------------------------------------ gerenciar: remover qualquer espelhamento
+def _tres_espelhamentos(tmp_path):
+    filmes, series = tmp_path / "Filmes", tmp_path / "Series"
+    temporada = series / "Dark (2017)" / "Season 01"
+    temporada.mkdir(parents=True)
+    (temporada / "Dark S01E01.mkv").write_bytes(b"v")                   # baixado: nunca sai
+    for links in ([_link("Nosferatu (1922)", "n.mp4"), _link("Dark", "Dark.S01E02.mkv")],
+                  [_link("Metropolis (1927)", "m.mp4"), _link("A Viagem de Chihiro", "c.mp4", ano=2001)],
+                  [_link("Matrix (1999)", "x.mp4")]):
+        aplicar_espelho(planejar_espelho(links, filmes, series, CatalogoLocal.padrao()))
+    return filmes, series, temporada
+
+
+def test_lista_os_espelhamentos_numerados(tmp_path):
+    from jellyfin_tools.espelho import lotes_de_espelhos
+    filmes, series, _ = _tres_espelhamentos(tmp_path)
+    avulso = filmes / "Feito a mao (2000)"
+    avulso.mkdir()
+    (avulso / "Feito a mao (2000).strm").write_text("https://exemplo.org/a.mp4\n", encoding="utf-8")
+    lotes = lotes_de_espelhos(filmes, series)
+    assert [(lote.numero, [e.nome for e in lote.itens]) for lote in lotes] == [
+        (1, ["Dark S01E02", "Nosferatu (1922)"]),               # Filmes e Séries: um espelhamento só
+        (2, ["A Viagem de Chihiro (2001)", "Metropolis (1927)"]),
+        (3, ["Matrix (1999)"]),
+        (0, ["Feito a mao (2000)"])]
+    assert lotes[0].titulo.startswith("Espelhamento 1 — ") and lotes[0].titulo.endswith("· 2 item(ns)")
+    assert lotes[2].itens[0].url == BASE + "x.mp4"
+    assert lotes[3].titulo.startswith("Sem registro")
+
+
+def test_remove_o_primeiro_espelhamento_e_um_filme_do_segundo(tmp_path):
+    from jellyfin_tools import desfazer
+    from jellyfin_tools.espelho import lotes_de_espelhos, remover_espelhos_escolhidos
+    from jellyfin_tools.organizador import ultimo_log
+    filmes, series, temporada = _tres_espelhamentos(tmp_path)
+    (filmes / "Nosferatu (1922)" / "poster.jpg").write_bytes(b"jpg")
+    (temporada / "Dark S01E02.pt-BR.srt").write_text("legenda", encoding="utf-8")
+    (temporada / "Dark S01E02-thumb.jpg").write_bytes(b"jpg")
+    primeiro, segundo, terceiro = lotes_de_espelhos(filmes, series)
+
+    total, _ = remover_espelhos_escolhidos(primeiro.itens)          # o 1º inteiro (não o último!)
+    assert total == 2
+    assert not (filmes / "Nosferatu (1922)").exists()                # a pasta do filme sai inteira
+    assert sorted(p.name for p in temporada.iterdir()) == ["Dark S01E01.mkv"]   # o baixado fica
+    restantes = lotes_de_espelhos(filmes, series)
+    assert [lote.numero for lote in restantes] == [2, 3]             # os números não mudam
+
+    chihiro = [e for e in segundo.itens if e.nome.startswith("A Viagem")]   # um filme específico
+    assert remover_espelhos_escolhidos(chihiro)[0] == 1
+    assert [e.nome for lote in lotes_de_espelhos(filmes, series) for e in lote.itens] == [
+        "Metropolis (1927)", "Matrix (1999)"]
+    assert not list((filmes / ".organizador").glob("*.strm"))        # a lixeira não aparece no Jellyfin
+    from jellyfin_tools.espelho import espelhos_da_biblioteca
+    assert len(espelhos_da_biblioteca(filmes, series)) == 2
+
+    desfazer(ultimo_log(filmes))                                     # Desfazer: o Chihiro volta
+    assert (filmes / "A Viagem de Chihiro (2001)" / "A Viagem de Chihiro (2001).strm").exists()
+    desfazer(ultimo_log(series))                                     # e o Dark S01E02 com legenda e miniatura
+    assert sorted(p.name for p in temporada.iterdir()) == [
+        "Dark S01E01.mkv", "Dark S01E02-thumb.jpg", "Dark S01E02.pt-BR.srt", "Dark S01E02.strm"]
+    desfazer(ultimo_log(filmes))                                     # e o Nosferatu com o pôster
+    assert (filmes / "Nosferatu (1922)" / "poster.jpg").exists()
+    assert [lote.numero for lote in lotes_de_espelhos(filmes, series)] == [1, 2, 3]
+    assert not (filmes / ".organizador" / "removidos").exists() or not any(
+        a.is_file() for a in (filmes / ".organizador" / "removidos").rglob("*"))
+
+
+def test_desfazer_a_ultima_remocao_nas_duas_bibliotecas(tmp_path):
+    from jellyfin_tools.espelho import desfazer_ultima_remocao, lotes_de_espelhos, remover_espelhos_escolhidos
+    filmes, series, temporada = _tres_espelhamentos(tmp_path)
+    assert desfazer_ultima_remocao(filmes, series) == []             # nada removido ainda
+    primeiro = lotes_de_espelhos(filmes, series)[0]
+    remover_espelhos_escolhidos(primeiro.itens)                       # um filme e um episódio
+    mensagens = desfazer_ultima_remocao(filmes, series)
+    assert sum(m.startswith("voltou") for m in mensagens) == 2
+    assert [lote.numero for lote in lotes_de_espelhos(filmes, series)] == [1, 2, 3]
+
+
+def test_script_lista_e_remove_espelhamento(tmp_path, monkeypatch):
+    import organizar_jellyfin as script
+    filmes, series, temporada = _tres_espelhamentos(tmp_path)
+    for nome, valor in {"PASTA_FILMES": filmes, "PASTA_SERIES": series, "ARQUIVO_LOG": tmp_path / "log" / "j.log"}.items():
+        monkeypatch.setenv(nome, str(valor))
+    texto = lambda: (tmp_path / "log" / "j.log").read_text(encoding="utf-8")
+    assert script.main(["--espelhos"]) == 0
+    assert "Espelhamento 3" in texto() and "Matrix (1999).strm" in texto()
+    assert script.main(["--remover-espelhos", "1"]) == 0                       # simulação: nada sai
+    assert (filmes / "Nosferatu (1922)").exists() and "[sairia] Nosferatu (1922)" in texto()
+    assert script.main(["--remover-espelhos", "1", "--aplicar"]) == 0
+    assert not (filmes / "Nosferatu (1922)").exists() and not (temporada / "Dark S01E02.strm").exists()
+    assert script.main(["--remover-espelhos", "metropolis", "--aplicar"]) == 0  # um filme pelo nome
+    assert not (filmes / "Metropolis (1927)").exists()
+    assert script.main(["--desfazer-remocao-espelhos"]) == 0
+    assert (filmes / "Metropolis (1927)" / "Metropolis (1927).strm").exists()
+    assert script.main(["--remover-espelhos", "não existe"]) == 1

@@ -1115,3 +1115,64 @@ def test_conferencia_automatica_dos_espelhos(app, tmp_path, api_falsa, monkeypat
     esperar(app)
     assert len([p for p in api_falsa.pedidos if p["caminho"] == "/discord"]) == 2
     assert config.carregar()["jellyfin"]["conferir_unidade"] == "minutos"
+
+
+def test_espelhos_remover_qualquer_espelhamento_pela_janela(app, tmp_path, api_falsa):
+    from test_espelho_jellyfin import _tres_espelhamentos
+    filmes, series, temporada = _tres_espelhamentos(tmp_path)
+    api_falsa.rotas["/Library/Refresh"] = lambda q: (204, b"")
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_destino.set(str(filmes))
+    app._destinos["Séries"] = str(series)
+    app.var_jf_url.set(api_falsa.base)
+    app.var_jf_chave_jellyfin.set("chave")
+    perguntas = []
+    app.perguntar = lambda t, m: perguntas.append(m) or True
+    app.ao_gerenciar_espelhos()
+    janela = app.janela_espelhos
+    arvore = janela.arvore
+    titulos = [arvore.item(g, "text") for g in arvore.get_children()]
+    assert [t.split(" — ")[0] for t in titulos] == ["Espelhamento 1", "Espelhamento 2", "Espelhamento 3"]
+    primeiro = arvore.get_children()[0]
+    assert [arvore.item(i, "text").strip() for i in arvore.get_children(primeiro)] == ["Dark S01E02",
+                                                                                        "Nosferatu (1922)"]
+    assert [arvore.set(i, "biblioteca") for i in arvore.get_children(primeiro)] == ["Séries", "Filmes"]
+
+    arvore.selection_set(primeiro)                                   # o 1º espelhamento inteiro
+    janela.bt_remover.invoke()
+    esperar(app)
+    assert "Nosferatu (1922)" in perguntas[-1] and "Dark S01E02" in perguntas[-1]
+    assert [arvore.item(g, "text").split(" — ")[0] for g in arvore.get_children()] == ["Espelhamento 2",
+                                                                                      "Espelhamento 3"]
+    assert not (filmes / "Nosferatu (1922)").exists()
+    assert (temporada / "Dark S01E01.mkv").exists()
+    assert any(p["caminho"] == "/Library/Refresh" for p in api_falsa.pedidos)   # Jellyfin avisado
+
+    janela.var_busca.set("chíhiro")                                  # um filme específico (sem acento também)
+    app.update()
+    visiveis = [i for g in arvore.get_children() for i in arvore.get_children(g)]
+    assert [arvore.item(i, "text").strip() for i in visiveis] == ["A Viagem de Chihiro (2001)"]
+    arvore.selection_set(visiveis)
+    janela.bt_remover.invoke()
+    esperar(app)
+    janela.var_busca.set("")
+    app.update()
+    assert [arvore.item(i, "text").strip() for g in arvore.get_children() for i in arvore.get_children(g)] == [
+        "Metropolis (1927)", "Matrix (1999)"]
+
+    janela.bt_desfazer.invoke()                                      # volta só a última remoção
+    esperar(app)
+    nomes = [arvore.item(i, "text").strip() for g in arvore.get_children() for i in arvore.get_children(g)]
+    assert nomes == ["A Viagem de Chihiro (2001)", "Metropolis (1927)", "Matrix (1999)"]
+    assert not (filmes / "Nosferatu (1922)").exists()
+
+
+def test_espelhos_sem_selecao_avisa(app, tmp_path):
+    from test_espelho_jellyfin import _tres_espelhamentos
+    filmes, series, _ = _tres_espelhamentos(tmp_path)
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_destino.set(str(filmes))
+    app.ao_gerenciar_espelhos()
+    app.janela_espelhos.bt_remover.invoke()
+    assert app.caixas[-1][1] == "Nada selecionado"
+    assert len(list(filmes.rglob("*.strm"))) == 4

@@ -32,14 +32,15 @@ from jellyfin_tools.legendas import normalizar_idiomas
 from jellyfin_tools.metadados import ClienteTMDB
 from jellyfin_tools.notificacoes import Notificador
 from jellyfin_tools.espelho import (aplicar_espelho, classificar, conferir_e_avisar, conferir_espelhos,
-                                    intervalo_em_segundos, licenca_aberta, nome_do_link, planejar_espelho,
-                                    remover_espelhos, verificar_links)
+                                    desfazer_ultima_remocao, intervalo_em_segundos, licenca_aberta,
+                                    lotes_de_espelhos, nome_do_link, planejar_espelho, remover_espelhos,
+                                    remover_espelhos_escolhidos, verificar_links)
 from jellyfin_tools.organizador import (DETALHE_EPISODIO, organizar_misto, problema_no_caminho, sugestao_de_caminho,
                                        ultimo_log)
 from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, itens_de_series, pos_processar
 from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao
 from jellyfin_tools.relatorio import gerar_relatorio, resumo, salvar_csv
-from jellyfin_tools.servidor_jellyfin import ErroJellyfin, indice_da_biblioteca, testar_conexao
+from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca, indice_da_biblioteca, testar_conexao
 from jellyfin_tools.site_demo import iniciar_site_demo
 from jellyfin_tools.vigia import filtro_prontos
 
@@ -47,7 +48,7 @@ from . import config
 from .cli import salvar
 from .extracao import LinkVideo
 from .gui import ORIGENS, _SaidaParaFila, _so_caracteres_basicos
-from .gui_moderna import JanelaModerna, OpcoesInterface
+from .gui_moderna import JanelaEspelhos, JanelaModerna, OpcoesInterface
 from .navegador import PERFIL_PADRAO, PlaywrightAusente
 from .servico import MENSAGEM_ROBOTS, Trabalho, fazer_login
 
@@ -113,6 +114,8 @@ class AppModerna(JanelaModerna):
         self._remocao_pendente = None           # "Conferir espelhos": .strm quebrados a oferecer remoção
         self._vigia_agendada = None             # pasta vigiada: id do próximo after()
         self._conferencia_agendada = None       # conferência automática dos espelhos
+        self.janela_espelhos = None             # "Espelhos...": remover qualquer espelhamento
+        self._espelhos_salvos = {}
         self._vigia_conferindo = False
         self._movimentos_previa: list = []      # o que a última pré-visualização mostrou
         self._carregar_config()
@@ -404,6 +407,9 @@ class AppModerna(JanelaModerna):
             self.definir_estado_conferencia(
                 f"{self._texto_ultima_conferencia()} {total} espelho(s), {quebrados} quebrado(s)"
                 + (f", {removidos} removido(s)." if removidos else "."), not quebrados)
+        elif tipo == "espelhos_atualizar":             # janela "Espelhos...": relê a lista
+            if self.janela_espelhos is not None and self.janela_espelhos.winfo_exists():
+                self._preencher_espelhos()
         elif tipo == "jf_relatorio":                   # o que falta na biblioteca
             self.limpar_tabela_jf()
             for i, (item, falta, detalhe) in enumerate(dado):
@@ -816,6 +822,100 @@ class AppModerna(JanelaModerna):
                 self.fila.put(("sugerir_remocao", quebrados))      # pergunta depois do "fim"
 
         self._rodar("Conferindo espelhos...", tarefa)
+
+    # ================================================================== "Espelhos...": remover qualquer um
+    def _bibliotecas(self) -> dict[str, str]:
+        """{pasta: "Filmes"/"Séries"} das bibliotecas escolhidas que existem."""
+        self._destinos[self._modo_atual] = self.var_jf_destino.get()
+        pastas = {}
+        for tipo in ("Filmes", "Séries"):
+            pasta = self._destinos.get(tipo)
+            if pasta and Path(pasta).is_dir():
+                pastas.setdefault(pasta, tipo)
+        return pastas
+
+    def ao_gerenciar_espelhos(self) -> None:
+        if not self._bibliotecas():
+            self.mostrar_mensagem("Espelhos", "Escolha a biblioteca de Filmes e/ou de Séries.", "aviso")
+            return
+        if self.janela_espelhos is None or not self.janela_espelhos.winfo_exists():
+            self.janela_espelhos = JanelaEspelhos(self, self._remover_espelhos_escolhidos,
+                                                  self._desfazer_remocao_espelhos)
+        self._preencher_espelhos()
+        self.janela_espelhos.lift()
+        self.janela_espelhos.focus_force()
+
+    def _preencher_espelhos(self) -> None:
+        bibliotecas = self._bibliotecas()
+        tipos = {Path(p).resolve(): t for p, t in bibliotecas.items()}
+        self._espelhos_salvos, grupos = {}, []
+        for lote in lotes_de_espelhos(*bibliotecas):
+            linhas = []
+            for espelho in lote.itens:
+                iid = f"e{len(self._espelhos_salvos)}"
+                self._espelhos_salvos[iid] = espelho
+                linhas.append((iid, espelho.nome, tipos.get(espelho.raiz.resolve(), espelho.raiz.name), espelho.url))
+            grupos.append((lote.titulo, linhas))
+        self.janela_espelhos.preencher(grupos)
+
+    def _scan_se_ligado(self, o) -> None:
+        if o.atualizar_jellyfin and o.jellyfin_url and o.jellyfin_api_key:
+            try:
+                atualizar_biblioteca(o.jellyfin_url, o.jellyfin_api_key)
+            except ErroJellyfin as erro:
+                self._log.warning("Scan do Jellyfin não disparado: %s", erro)
+
+    def _remover_espelhos_escolhidos(self, iids: list[str]) -> None:
+        if self.trabalhando:
+            return
+        escolhidos = [self._espelhos_salvos[i] for i in iids if i in self._espelhos_salvos]
+        if not escolhidos:
+            self.mostrar_mensagem("Nada selecionado", "Clique num espelhamento (todos os itens dele) ou nos "
+                                  "filmes/episódios (Ctrl+clique para vários) e tente de novo.", "aviso")
+            return
+        nomes = "\n".join(f"• {e.nome}" for e in escolhidos[:8])
+        if len(escolhidos) > 8:
+            nomes += f"\n… e mais {len(escolhidos) - 8}"
+        if not self.perguntar("Remover espelhos",
+                              f"Tirar {len(escolhidos)} espelho(s) da biblioteca?\n\n{nomes}\n\n"
+                              "Saem junto a legenda, a miniatura e o .nfo de mesmo nome (e a pasta do filme ou da "
+                              "série, se ficar sem nenhum vídeo). Vídeos baixados não são tocados.\n"
+                              "\"Desfazer última remoção\" põe tudo de volta."):
+            return
+        o = self.obter_opcoes_jellyfin()
+
+        def tarefa():
+            total, mensagens = remover_espelhos_escolhidos(escolhidos)
+            for m in mensagens:
+                (self._log.warning if m.startswith("erro") else self._log.info)("%s", m)
+            self._log.info("%d espelho(s) tirado(s) da biblioteca (guardados em .organizador/removidos)", total)
+            if total:
+                self._scan_se_ligado(o)
+            self.fila.put(("status_fim", f"{total} espelho(s) removido(s). \"Desfazer última remoção\" põe de volta."))
+            self.fila.put(("espelhos_atualizar", None))
+
+        self._rodar("Removendo espelhos escolhidos...", tarefa)
+
+    def _desfazer_remocao_espelhos(self) -> None:
+        if self.trabalhando:
+            return
+        pastas = list(self._bibliotecas())
+        o = self.obter_opcoes_jellyfin()
+
+        def tarefa():
+            mensagens = desfazer_ultima_remocao(*pastas)
+            if not mensagens:
+                self.fila.put(("msg", ("Desfazer", "Não há remoção de espelhos para desfazer (ou depois dela "
+                                       "veio outra ação na biblioteca: use \"Desfazer última\").", "info")))
+                return
+            for m in mensagens:
+                self._log.info("%s", m)
+            voltaram = sum(m.startswith("voltou") for m in mensagens)
+            self._scan_se_ligado(o)
+            self.fila.put(("status_fim", f"Remoção desfeita: {voltaram} item(ns) voltaram."))
+            self.fila.put(("espelhos_atualizar", None))
+
+        self._rodar("Desfazendo a remoção de espelhos...", tarefa)
 
     def _oferecer_remocao(self, quebrados: list) -> None:
         if not self.perguntar("Espelhos quebrados",

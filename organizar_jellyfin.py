@@ -95,7 +95,8 @@ from jellyfin_tools.metadados import ClienteTMDB  # noqa: E402
 from jellyfin_tools.notificacoes import Notificador  # noqa: E402
 from jellyfin_tools.pos_processamento import (ConfigPos, itens_da_biblioteca, itens_de_series,  # noqa: E402
                                               pos_processar)
-from jellyfin_tools.espelho import conferir_e_avisar, intervalo_em_segundos  # noqa: E402
+from jellyfin_tools.espelho import (conferir_e_avisar, desfazer_ultima_remocao, intervalo_em_segundos,  # noqa: E402
+                                    lotes_de_espelhos, remover_espelhos_escolhidos)
 from jellyfin_tools.legendas import normalizar_idiomas  # noqa: E402
 from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao  # noqa: E402
 from jellyfin_tools.relatorio import gerar_relatorio, resumo, salvar_csv  # noqa: E402
@@ -271,6 +272,55 @@ def conferir_espelhos(log) -> int:
     return 0
 
 
+def _bibliotecas() -> list[Path]:
+    return [Path(p).expanduser() for p in dict.fromkeys((cfg("PASTA_FILMES"), cfg("PASTA_SERIES")))
+            if p and Path(p).expanduser().is_dir()]
+
+
+def listar_espelhos(log) -> int:
+    """Mostra os espelhamentos (1, 2, 3...) e os .strm de cada um."""
+    lotes = lotes_de_espelhos(*_bibliotecas())
+    if not lotes:
+        log.info("Nenhum espelho (.strm) nas bibliotecas")
+    for lote in lotes:
+        log.info("%s", lote.titulo)
+        for espelho in lote.itens:
+            log.info("    %s  <- %s", espelho.caminho, espelho.url)
+    return 0
+
+
+def remover_espelhos(alvo: str, aplicar: bool, log) -> int:
+    """alvo: o número de um espelhamento ("1") ou parte do nome ("Nosferatu"). Sem --aplicar, só mostra."""
+    lotes = lotes_de_espelhos(*_bibliotecas())
+    if alvo.strip().isdigit():
+        escolhidos = [e for lote in lotes if lote.numero == int(alvo) for e in lote.itens]
+    else:
+        procura = alvo.strip().lower()
+        escolhidos = [e for lote in lotes for e in lote.itens if procura in e.caminho.lower()]
+    if not escolhidos:
+        log.warning("Nenhum espelho encontrado para %r (veja a lista com --espelhos)", alvo)
+        return 1
+    for espelho in escolhidos:
+        log.info("%s %s", "[removendo]" if aplicar else "[sairia]", espelho.caminho)
+    if not aplicar:
+        log.info("=== SIMULAÇÃO: %d espelho(s) sairiam. Rode de novo com --aplicar ===", len(escolhidos))
+        return 0
+    total, mensagens = remover_espelhos_escolhidos(escolhidos)
+    for m in mensagens:
+        log.info("%s", m)
+    log.info("=== %d espelho(s) removido(s). Para voltar: --desfazer-remocao-espelhos ===", total)
+    return 0
+
+
+def desfazer_remocao_espelhos(log) -> int:
+    mensagens = desfazer_ultima_remocao(*_bibliotecas())
+    for m in mensagens:
+        log.info("%s", m)
+    if not mensagens:
+        log.info("Não há remoção de espelhos para desfazer")
+    return 0
+
+
 def _marca_conferencia() -> Path:
     """Arquivo com a data da última conferência dos espelhos (ao lado do log)."""
     pasta = Path(cfg("ARQUIVO_LOG")).expanduser().resolve().parent
@@ -324,6 +374,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="não move nada: completa legenda/pôster/.nfo dos filmes já organizados")
     ap.add_argument("--conferir-espelhos", action="store_true",
                     help="confere os links dos .strm e avisa no Discord/Telegram se algum quebrou")
+    ap.add_argument("--espelhos", action="store_true", help="lista os espelhamentos (1, 2, 3...) e os .strm de cada um")
+    ap.add_argument("--remover-espelhos", metavar="ALVO",
+                    help='tira um espelhamento ("1") ou um filme/série ("Nosferatu"); só simula sem --aplicar')
+    ap.add_argument("--desfazer-remocao-espelhos", action="store_true", help="põe de volta a última remoção")
     ap.add_argument("--relatorio", action="store_true",
                     help="lista o que falta (legendas, pôsteres, episódios) e salva uma planilha .csv")
     ap.add_argument("--vigiar", action="store_true",
@@ -338,7 +392,8 @@ def main(argv: list[str] | None = None) -> int:
 
     log = configurar_log(cfg("ARQUIVO_LOG"))
     acao = "Completar biblioteca" if args.completar_biblioteca else "Vigiar" if args.vigiar else \
-        "Relatorio" if args.relatorio else "Conferir espelhos" if args.conferir_espelhos else (
+        "Relatorio" if args.relatorio else "Conferir espelhos" if args.conferir_espelhos else \
+        "Espelhos" if args.espelhos or args.remover_espelhos or args.desfazer_remocao_espelhos else (
         "Organizar" if args.aplicar or cfg("APLICAR") else "Simulacao")
     handler, arquivo_acao = None, None
     try:                                            # além do log geral, um arquivo só desta execução
@@ -356,6 +411,12 @@ def main(argv: list[str] | None = None) -> int:
             return relatorio(log)
         if args.conferir_espelhos:
             return conferir_espelhos(log)
+        if args.espelhos:
+            return listar_espelhos(log)
+        if args.remover_espelhos:
+            return remover_espelhos(args.remover_espelhos, args.aplicar, log)
+        if args.desfazer_remocao_espelhos:
+            return desfazer_remocao_espelhos(log)
         return organizar(args.aplicar or cfg("APLICAR"), log)
     except KeyboardInterrupt:
         log.warning("Interrompido pelo usuário")

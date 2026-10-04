@@ -777,6 +777,17 @@ def _desfazer_espelho(dados: dict, mensagens: list[str]) -> None:
         arquivo.parent.mkdir(parents=True, exist_ok=True)
         arquivo.write_text(item["url"] + "\n", encoding="utf-8")
         mensagens.append(f"voltou: {arquivo}")
+    for item in reversed(dados.get("espelhos_guardados", [])):     # "Gerenciar espelhos" -> remover
+        de, para = Path(item["de"]), Path(item["para"])
+        if de.exists() or not para.exists():
+            mensagens.append(f"não desfeito ({'já existe' if de.exists() else 'sumiu da lixeira'}): {de}")
+            continue
+        de.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(para), str(de))
+        mensagens.append(f"voltou: {de}")
+    lixeira = dados.get("lixeira")
+    if lixeira and Path(lixeira).is_dir() and not any(a.is_file() for a in Path(lixeira).rglob("*")):
+        shutil.rmtree(lixeira, ignore_errors=True)
 
 
 def ultimo_log(pasta_filmes: str | Path) -> Path | None:

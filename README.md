@@ -184,6 +184,17 @@ Outras opções da aba Jellyfin:
   salvo em `.csv` (abre no Excel) em `C:\Users\<você>\.videoscraper\relatorios`. No script:
   `--relatorio`. Complementa o Sonarr: ele busca os episódios que faltam; o relatório também cobre
   filmes, legendas e pôsteres.
+- **Remover qualquer espelhamento (não só o último):** o botão **"Espelhos..."** lista os `.strm` das
+  duas bibliotecas agrupados por espelhamento ("Espelhamento 1 — 04/10/2026 18:10 · 12 item(ns)",
+  "Espelhamento 2"...; os feitos à mão ficam em "Sem registro"). Selecione um espelhamento inteiro
+  (ex.: o 1º de 3) ou só um filme/episódio (campo "Procurar", Ctrl+clique para vários) e clique em
+  **Remover selecionados**. Saem junto a legenda, a miniatura e o `.nfo` de mesmo nome, e a pasta do
+  filme/temporada/série se ficar sem nenhum vídeo (vídeos baixados nunca são tocados). Nada é
+  apagado de vez: vai para `.organizador/removidos` dentro da biblioteca (o Jellyfin ignora essa
+  pasta) e **"Desfazer última remoção"** põe de volta, nas duas bibliotecas de uma vez. Os números
+  dos espelhamentos não mudam depois de uma remoção. No script: `--espelhos` (lista),
+  `--remover-espelhos 1` ou `--remover-espelhos "Nosferatu"` (só simula; com `--aplicar` remove) e
+  `--desfazer-remocao-espelhos`.
 - **Desfazer o espelho:** "Desfazer última" também vale para o espelho: apaga os `.strm` criados (com a
   legenda/miniatura de mesmo nome e as pastas que o espelho criou, se não tiverem vídeo) e recoloca
   os `.strm` que o "Conferir espelhos" removeu.
@@ -379,6 +390,8 @@ python organizar_jellyfin.py --aplicar               # de verdade
 python organizar_jellyfin.py --completar-biblioteca  # filmes JÁ organizados: baixa só o que falta
 python organizar_jellyfin.py --relatorio             # o que falta: legendas, pôsteres, episódios
 python organizar_jellyfin.py --conferir-espelhos     # confere os .strm agora (avisa se quebrou)
+python organizar_jellyfin.py --espelhos              # lista os espelhamentos (1, 2, 3...)
+python organizar_jellyfin.py --remover-espelhos 1 --aplicar   # tira o 1º espelhamento (ou um nome)
 python organizar_jellyfin.py --vigiar                # vigia as pastas (+ espelhos em CONFERIR_ESPELHOS_A_CADA)
 ```
 

@@ -24,18 +24,22 @@ só o que é domínio público ou licença aberta (Creative Commons).
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 import requests
 
-from .nomes import extrair_titulo_e_ano, marca_de_episodio
-from .organizador import PASTA_LOGS, _consultas, _gravar_log, planejar
+from .nomes import eh_video_da_biblioteca, extrair_titulo_e_ano, marca_de_episodio
+from .organizador import EXTRAS_DO_STRM, PASTA_LOGS, _consultas, _gravar_log, planejar
 
 # etiquetas de lançamento que não fazem parte do nome ("Anjos da Noite 2003 (Dual Audio) PT-BR")
 _RE_ETIQUETAS = re.compile(r"[\[(]?\b(?:dvd(?:rip|iso)?|r\dbr|vhs|dual[ ._-]*audio|pt[ ._-]?br|dublado|dublagem"
@@ -268,6 +272,7 @@ def aplicar_espelho(itens: list[ItemEspelho], gravar_log: bool = True) -> list[I
     """Cria os .strm planejados (status 'criar'). Nunca sobrescreve nada. Grava um log em cada
     biblioteca (.organizador): 'Desfazer última' apaga o que o espelho criou."""
     registro: dict[Path, dict] = {}
+    espelhamento = f"{datetime.now():%Y%m%d-%H%M%S-%f}"     # o mesmo nos logs de Filmes e de Séries
     for item in itens:
         if item.status != "criar":
             continue
@@ -277,7 +282,8 @@ def aplicar_espelho(itens: list[ItemEspelho], gravar_log: bool = True) -> list[I
             with open(item.destino, "x", encoding="utf-8") as f:     # "x": falha se já existir
                 f.write(item.link.url + "\n")
             item.status = "criado"
-            reg = registro.setdefault(item.raiz or item.destino.parent, {"strm_criados": [], "pastas_criadas": []})
+            reg = registro.setdefault(item.raiz or item.destino.parent,
+                                      {"espelhamento": espelhamento, "strm_criados": [], "pastas_criadas": []})
             reg["strm_criados"].append(str(item.destino))
             if nova is not None:
                 reg["pastas_criadas"].append(str(nova))
@@ -377,3 +383,166 @@ def conferir_e_avisar(*pastas, notificador=None, remover: bool = False, ao_progr
     if quebrados and notificador is not None and getattr(notificador, "ativo", False):
         notificador.enviar(*mensagem_quebrados(quebrados, removidos))
     return resultado, quebrados, removidos
+
+
+# ----------------------------------------------------------------- gerenciar: remover o espelhamento escolhido
+_RE_DATA_LOG = re.compile(r"log-(\d{8}-\d{6})")
+
+
+@dataclass
+class EspelhoSalvo:
+    """Um .strm que está na biblioteca."""
+    raiz: Path
+    arquivo: Path
+    url: str = ""
+
+    @property
+    def nome(self) -> str:
+        return self.arquivo.stem
+
+    @property
+    def caminho(self) -> str:
+        return "/".join(self.arquivo.relative_to(self.raiz).parts)
+
+
+@dataclass
+class LoteEspelho:
+    """Um espelhamento (um clique em "Espelhar no Jellyfin"), com os .strm dele que ainda existem.
+    numero 1 = o mais antigo; 0 = .strm sem registro (feitos à mão ou antes do histórico)."""
+    numero: int
+    data: datetime | None
+    itens: list[EspelhoSalvo] = field(default_factory=list)
+
+    @property
+    def titulo(self) -> str:
+        if not self.numero:
+            return f"Sem registro (feitos à mão ou antes do histórico) · {len(self.itens)} item(ns)"
+        quando = f" — {self.data:%d/%m/%Y %H:%M}" if self.data else ""
+        return f"Espelhamento {self.numero}{quando} · {len(self.itens)} item(ns)"
+
+
+def _chave(caminho: Path) -> str:
+    """Compara caminhos do log com os do disco (no Windows, sem diferenciar maiúsculas)."""
+    return os.path.normcase(os.path.abspath(caminho))
+
+
+def _data_do_log(log: Path) -> datetime | None:
+    m = _RE_DATA_LOG.match(log.name)
+    return datetime.strptime(m.group(1), "%Y%m%d-%H%M%S") if m else None
+
+
+def lotes_de_espelhos(*pastas) -> list[LoteEspelho]:
+    """Os espelhamentos feitos nas bibliotecas, do mais antigo ao mais novo, cada um com os .strm
+    que ainda existem. A numeração (Espelhamento 1, 2, 3...) não muda quando um deles é removido."""
+    existentes = {_chave(a): (raiz, a) for raiz, a in espelhos_da_biblioteca(*pastas)}
+    criacoes: dict[str, list] = {}               # id do espelhamento -> [data, [.strm criados]]
+    for raiz in dict.fromkeys(Path(p) for p in pastas if p):
+        for log in sorted((raiz / PASTA_LOGS).glob("log-*.json")):
+            if log.name.endswith(".desfeito.json"):
+                continue
+            try:
+                dados = json.loads(log.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(dados, dict) or not dados.get("strm_criados"):
+                continue
+            data = _data_do_log(log)
+            ident = dados.get("espelhamento") or (f"{data:%Y%m%d-%H%M%S}" if data else log.name)
+            entrada = criacoes.setdefault(ident, [data, []])
+            entrada[1] += dados["strm_criados"]
+    lotes, dono = [], {}
+    for numero, (_, (data, criados)) in enumerate(sorted(criacoes.items(), key=lambda kv: kv[0]), start=1):
+        lotes.append(LoteEspelho(numero, data))
+        for caminho in criados:
+            dono[_chave(Path(caminho))] = numero - 1          # recriado depois: fica no mais novo
+    sem_registro = LoteEspelho(0, None)
+    for chave, (raiz, arquivo) in existentes.items():
+        lote = lotes[dono[chave]] if chave in dono else sem_registro
+        lote.itens.append(EspelhoSalvo(raiz, arquivo, ler_strm(arquivo)))
+    for lote in lotes + [sem_registro]:
+        lote.itens.sort(key=lambda e: e.caminho.lower())
+    return [lote for lote in lotes + [sem_registro] if lote.itens]
+
+
+def _extras_do_strm(arquivo: Path) -> list[Path]:
+    """Legenda, miniatura e .nfo com o mesmo nome do .strm."""
+    if not arquivo.parent.is_dir():
+        return []
+    return [a for a in sorted(arquivo.parent.iterdir())
+            if a.is_file() and a.suffix.lower() in EXTRAS_DO_STRM
+            and a.name.startswith((arquivo.stem + ".", arquivo.stem + "-"))]
+
+
+def _pasta_que_sai_junto(arquivo: Path, raiz: Path, escolhidos: set[str], memoria: dict) -> Path | None:
+    """A pasta mais de fora (abaixo da biblioteca) cujos vídeos são TODOS .strm escolhidos: o filme,
+    a temporada ou a série inteira. Pasta com algum vídeo baixado ou .strm não escolhido fica."""
+    candidata, pasta = None, arquivo.parent
+    while pasta != raiz and raiz in pasta.parents:
+        if pasta not in memoria:
+            videos = [a for a in pasta.rglob("*") if a.is_file() and eh_video_da_biblioteca(a)]
+            memoria[pasta] = all(_chave(v) in escolhidos for v in videos)
+        if not memoria[pasta]:
+            break
+        candidata, pasta = pasta, pasta.parent
+    return candidata
+
+
+def remover_espelhos_escolhidos(itens: list[EspelhoSalvo]) -> tuple[int, list[str]]:
+    """Tira da biblioteca os .strm escolhidos (qualquer espelhamento, não só o último), com a legenda,
+    a miniatura e o .nfo de mesmo nome. Se a pasta do filme/temporada/série fica sem nenhum vídeo,
+    sai a pasta inteira (pôster, backdrop...). Nada é apagado: vai para
+    <biblioteca>/.organizador/removidos/<data>/ e "Desfazer última" devolve.
+    Devolve (quantos .strm saíram, mensagens)."""
+    agora = f"{datetime.now():%Y%m%d-%H%M%S-%f}"
+    total, mensagens = 0, []
+    por_raiz: dict[Path, list[EspelhoSalvo]] = {}
+    for item in itens:
+        if item.arquivo.exists():
+            por_raiz.setdefault(item.raiz, []).append(item)
+    for raiz, lista in por_raiz.items():
+        lixeira = raiz / PASTA_LOGS / "removidos" / agora
+        escolhidos = {_chave(i.arquivo) for i in lista}
+        memoria: dict = {}
+        pastas = {p for i in lista if (p := _pasta_que_sai_junto(i.arquivo, raiz, escolhidos, memoria))}
+        pastas = {p for p in pastas if not any(o in p.parents for o in pastas)}       # só a mais de fora
+        movimentos = [(p, lixeira / p.relative_to(raiz)) for p in sorted(pastas)]
+        for i in lista:
+            if not any(p in i.arquivo.parents for p in pastas):
+                movimentos += [(a, lixeira / a.relative_to(raiz)) for a in [i.arquivo] + _extras_do_strm(i.arquivo)]
+        guardados = []
+        for de, para in movimentos:
+            try:
+                strm = [de] if de.is_file() else [a for a in de.rglob("*.strm") if _chave(a) in escolhidos]
+                para.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(de), str(para))
+                guardados.append({"de": str(de), "para": str(para)})
+                total += sum(1 for a in strm if a.suffix.lower() == EXTENSAO)
+                mensagens.append(f"espelho tirado da biblioteca: {de.relative_to(raiz)}")
+            except OSError as erro:
+                mensagens.append(f"erro em {de}: {erro}")
+        if guardados:
+            _gravar_log(raiz, [], extra={"espelhos_guardados": guardados, "lixeira": str(lixeira)})
+    return total, mensagens
+
+
+def desfazer_ultima_remocao(*pastas) -> list[str]:
+    """Desfaz a última remoção feita em "Gerenciar espelhos", nas duas bibliotecas de uma vez
+    (uma remoção que pegou filmes e episódios grava um log em cada uma)."""
+    from .organizador import desfazer, ultimo_log
+    candidatos = []
+    for raiz in dict.fromkeys(Path(p) for p in pastas if p):
+        log = ultimo_log(raiz) if raiz.is_dir() else None
+        try:
+            dados = json.loads(log.read_text(encoding="utf-8")) if log else {}
+        except (OSError, ValueError):
+            continue
+        if isinstance(dados, dict) and dados.get("espelhos_guardados") and dados.get("lixeira"):
+            candidatos.append((Path(dados["lixeira"]).name, log))
+    if not candidatos:
+        return []
+    mais_nova = max(c[0] for c in candidatos)
+    mensagens = []
+    for marca, log in candidatos:
+        if marca == mais_nova:
+            mensagens += desfazer(log)
+    return mensagens

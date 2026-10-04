@@ -226,6 +226,106 @@ class DialogoModerno(ctk.CTkToplevel):
         self.destroy()
 
 
+class JanelaEspelhos(ctk.CTkToplevel):
+    """Os espelhos (.strm) das bibliotecas agrupados por espelhamento (1, 2, 3...), para tirar
+    qualquer um, não só o último: um espelhamento inteiro, um filme ou alguns episódios."""
+
+    COLUNAS = (("biblioteca", "Biblioteca", 110), ("link", "Link", 360))
+
+    def __init__(self, master, ao_remover, ao_desfazer):
+        """ao_remover(iids dos .strm escolhidos); ao_desfazer(): volta a última remoção."""
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.title("Espelhos no Jellyfin")
+        self.geometry("1040x620")
+        self.minsize(760, 420)
+        self.transient(master)
+        self._grupos: list[tuple[str, list[tuple[str, str, str, str]]]] = []
+
+        topo = ctk.CTkFrame(self, fg_color="transparent")
+        topo.pack(fill="x", padx=24, pady=(18, 6))
+        ctk.CTkLabel(topo, text="Espelhos (.strm) nas bibliotecas", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
+                     text_color=Tema.TEXTO, anchor="w").pack(fill="x")
+        ctk.CTkLabel(topo, text="Escolha um espelhamento inteiro (ex.: o 1º) ou só um filme/episódio "
+                     "(Ctrl+clique para vários) e clique em Remover. Nada é apagado de vez: "
+                     "\"Desfazer última remoção\" põe de volta.", font=master.f_rotulo,
+                     text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left", wraplength=980).pack(fill="x", pady=(4, 8))
+        busca = ctk.CTkFrame(topo, fg_color="transparent")
+        busca.pack(fill="x")
+        ctk.CTkLabel(busca, text="Procurar:", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE).pack(side="left")
+        self.var_busca = tk.StringVar()
+        self.campo_busca = master._entrada(busca, self.var_busca, "nome do filme ou da série", altura=34)
+        self.campo_busca.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        self.var_busca.trace_add("write", lambda *_: self._mostrar())
+
+        quadro = ctk.CTkFrame(self, fg_color=Tema.CARTAO)
+        quadro.pack(fill="both", expand=True, padx=24, pady=6)
+        quadro.grid_columnconfigure(0, weight=1)
+        quadro.grid_rowconfigure(0, weight=1)
+        self.arvore = ttk.Treeview(quadro, columns=[c[0] for c in self.COLUNAS], show="tree headings",
+                                   selectmode="extended", style="Moderno.Treeview")
+        self.arvore.heading("#0", text="Espelhamento / item", anchor="w")
+        self.arvore.column("#0", width=430, minwidth=200, stretch=True, anchor="w")
+        for chave, texto, largura in self.COLUNAS:
+            self.arvore.heading(chave, text=texto, anchor="w")
+            self.arvore.column(chave, width=largura, minwidth=60, stretch=chave == "link", anchor="w")
+        self.arvore.tag_configure("grupo", background=Tema.SECUNDARIA, font=(Tema.FAMILIA, 11, "bold"))
+        self.arvore.grid(row=0, column=0, sticky="nsew")
+        rolagem = ctk.CTkScrollbar(quadro, command=self.arvore.yview, button_color=Tema.CARTAO_BORDA,
+                                   button_hover_color=Tema.CAMPO_BORDA)
+        rolagem.grid(row=0, column=1, sticky="ns", padx=(4, 0))
+        self.arvore.configure(yscrollcommand=rolagem.set)
+        self.arvore.bind("<<TreeviewSelect>>", lambda e: self._contar())
+
+        rodape = ctk.CTkFrame(self, fg_color="transparent")
+        rodape.pack(fill="x", padx=24, pady=(6, 18))
+        self.lb_resumo = ctk.CTkLabel(rodape, text="", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE)
+        self.lb_resumo.pack(side="left")
+        master._botao(rodape, "Fechar", self.destroy, "fantasma", largura=90).pack(side="right")
+        self.bt_remover = master._botao(rodape, "Remover selecionados", lambda: ao_remover(self.selecionados()),
+                                        "perigo", largura=190)
+        self.bt_remover.pack(side="right", padx=(0, 8))
+        self.bt_desfazer = master._botao(rodape, "Desfazer última remoção", ao_desfazer, largura=200)
+        self.bt_desfazer.pack(side="right", padx=(0, 8))
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.bind("<Delete>", lambda e: ao_remover(self.selecionados()))
+
+    def preencher(self, grupos: list[tuple[str, list[tuple[str, str, str, str]]]]) -> None:
+        """grupos: [(título do espelhamento, [(iid, nome, biblioteca, link)])]."""
+        self._grupos = grupos
+        self._mostrar()
+
+    def _mostrar(self) -> None:
+        procura = _sem_acentos(self.var_busca.get().strip())
+        self.arvore.delete(*self.arvore.get_children())
+        for n, (titulo, itens) in enumerate(self._grupos):
+            visiveis = [i for i in itens if procura in _sem_acentos(i[1])]
+            if not visiveis:
+                continue
+            grupo = self.arvore.insert("", "end", iid=f"grupo-{n}", text=titulo, open=True, tags=("grupo",))
+            for k, (iid, nome, biblioteca, link) in enumerate(visiveis):
+                self.arvore.insert(grupo, "end", iid=iid, text="   " + nome, values=(biblioteca, link),
+                                   tags=("par" if k % 2 == 0 else "impar",))
+        self._contar()
+
+    def selecionados(self) -> list[str]:
+        """Os .strm escolhidos; um espelhamento selecionado vale por todos os itens dele (os visíveis)."""
+        escolhidos = []
+        for iid in self.arvore.selection():
+            filhos = self.arvore.get_children(iid) if iid.startswith("grupo-") else (iid,)
+            escolhidos += [f for f in filhos if f not in escolhidos]
+        return escolhidos
+
+    def _contar(self) -> None:
+        total = sum(len(self.arvore.get_children(g)) for g in self.arvore.get_children())
+        escolhidos = len(self.selecionados())
+        self.lb_resumo.configure(text=f"{total} espelho(s)" + (f" · {escolhidos} selecionado(s)" if escolhidos else ""))
+
+
+def _sem_acentos(texto: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", texto.lower()) if unicodedata.category(c) != "Mn")
+
+
 # =============================================================================== janela
 class JanelaModerna(ctk.CTk):
     COLUNAS = (("n", "#", 48, False), ("status", "Situação", 110, False), ("titulo", "Título", 240, True),
@@ -605,9 +705,10 @@ class JanelaModerna(ctk.CTk):
         self.bt_desfazer = self._botao(barra, "Desfazer última", self.ao_desfazer, largura=140)
         self.bt_conferir_espelhos = self._botao(barra, "Conferir espelhos", self.ao_conferir_espelhos, largura=150)
         self.bt_relatorio = self._botao(barra, "Relatório", self.ao_relatorio, largura=110)
+        self.bt_gerenciar_espelhos = self._botao(barra, "Espelhos...", self.ao_gerenciar_espelhos, largura=120)
         self.bt_parar_jf = self._botao(barra, "Parar", self.ao_parar, "perigo", largura=100)
         for b in (self.bt_previa, self.bt_organizar, self.bt_legendas, self.bt_desfazer, self.bt_conferir_espelhos,
-                  self.bt_relatorio):
+                  self.bt_relatorio, self.bt_gerenciar_espelhos):
             b.pack(side="left", padx=(0, 10))
         self.bt_parar_jf.pack(side="right")
 
@@ -1316,7 +1417,7 @@ class JanelaModerna(ctk.CTk):
         for b in (self.bt_buscar, self.bt_baixar_sel, self.bt_baixar_todos, self.bt_login,
                   self.bt_previa, self.bt_legendas, self.bt_desfazer, self.bt_testar_jellyfin,
                   self.bt_testar_avisos, self.bt_testar_tmdb, self.bt_espelhar, self.bt_testar_legendas,
-                  self.bt_conferir_espelhos, self.bt_relatorio):
+                  self.bt_conferir_espelhos, self.bt_relatorio, self.bt_gerenciar_espelhos):
             b.configure(state=estado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
         for parar in (self.bt_parar, self.bt_parar_jf):
@@ -1447,6 +1548,9 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_alternar_vigia(self) -> None:
+        pass
+
+    def ao_gerenciar_espelhos(self) -> None:
         pass
 
     def ao_relatorio(self) -> None:
