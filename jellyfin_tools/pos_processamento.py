@@ -22,10 +22,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .legendas import (ResultadoLegenda, baixar_legenda, baixar_legenda_episodio, normalizar_idiomas,
-                       pastas_de_filmes)
+from .legendas import (ResultadoLegenda, baixar_legenda, baixar_legenda_episodio, episodios_da_biblioteca,
+                       normalizar_idiomas, pastas_de_filmes)
 from .metadados import ClienteTMDB, ResultadoMetadados, enriquecer_filme
-from .nomes import eh_video, ler_nome_jellyfin
+from .nomes import eh_video, extrair_episodio, ler_nome_jellyfin
 from .notificacoes import Notificador
 from .registro import obter_logger
 from .servidor_jellyfin import ErroJellyfin, atualizar_biblioteca
@@ -81,6 +81,29 @@ def itens_da_biblioteca(pasta_filmes: Path, log=None) -> list[tuple[ItemBibliote
         videos = sorted(v for v in pasta.iterdir() if v.is_file() and eh_video(v))
         video = next((v for v in videos if v.stem == pasta.name), videos[0])   # o de mesmo nome da pasta
         itens.append((ItemBiblioteca(video), pasta.name))
+    return itens
+
+
+def itens_de_series(pasta_series: Path, catalogo=None, log=None) -> list[tuple[ItemBiblioteca, str]]:
+    """Episódios já organizados (Séries/<Série (Ano)>/Season NN/<vídeo>) -> itens para pos_processar().
+    Com `catalogo`, cada série é consultada UMA vez (o título original ajuda a achar legenda)."""
+    log = log or obter_logger()
+    itens, series = [], {}
+    for video in episodios_da_biblioteca(pasta_series):
+        ep = extrair_episodio(video.name)
+        if not ep:
+            log.warning("Episódio sem S01E02 no nome, pulado: %s", video.name)
+            continue
+        pasta_serie = video.parent.parent
+        if pasta_serie not in series:
+            lido, serie = ler_nome_jellyfin(pasta_serie.name), None
+            if catalogo is not None and lido:
+                try:
+                    serie = catalogo.buscar(lido.titulo, lido.ano, "serie")
+                except Exception as erro:              # catálogo fora do ar não impede a legenda
+                    log.warning("Catálogo indisponível para %s: %s", pasta_serie.name, erro)
+            series[pasta_serie] = serie
+        itens.append((ItemBiblioteca(video, series[pasta_serie], (ep.temporada, ep.episodio)), video.stem))
     return itens
 
 

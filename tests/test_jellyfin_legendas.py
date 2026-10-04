@@ -163,3 +163,22 @@ def test_legenda_local_em_frances_e_reconhecida(tmp_path):
     from jellyfin_tools.extras import nome_da_legenda
     assert nome_da_legenda(tmp_path / "Filme.FRENCH.srt", "Filme (2000)") == "Filme (2000).fr.srt"
     assert nome_da_legenda(tmp_path / "Filme.Italiano.srt", "Filme (2000)") == "Filme (2000).it.srt"
+
+
+def test_legenda_de_episodio_de_temporada_mais_nova_que_a_serie(tmp_path, api_falsa):
+    """Caso real: The Last of Us (2023) S02E02. A legenda vem com o ano do EPISÓDIO (2025)."""
+    from jellyfin_tools import ProvedorOpenSubtitles
+    from jellyfin_tools.legendas import baixar_legenda_episodio
+    api_falsa.rotas["/api/v1/subtitles"] = lambda q: (200, {"data": [{"attributes": {
+        "language": "pt-BR", "download_count": 50, "files": [{"file_id": 7}],
+        "feature_details": {"parent_title": "The Last of Us", "year": 2025,
+                            "season_number": int(q["season_number"][0]), "episode_number": int(q["episode_number"][0])}}}]})
+    api_falsa.rotas["/api/v1/download"] = lambda q: (200, {"link": api_falsa.base + "/arquivo.srt"})
+    api_falsa.rotas["/arquivo.srt"] = lambda q: (200, "1\n00:00:01,000 --> 00:00:02,000\nOlá\n".encode())
+    video = tmp_path / "The Last of Us (2023)" / "Season 02" / "The Last of Us S02E02 - Através do Vale.mkv"
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"v")
+    r = baixar_legenda_episodio(video, [ProvedorOpenSubtitles("k", base_url=api_falsa.base + "/api/v1")])
+    assert r.status == "baixada", r.detalhe
+    busca = next(p for p in api_falsa.pedidos if p["caminho"] == "/api/v1/subtitles")
+    assert "year" not in busca["query"] and busca["query"]["season_number"] == ["2"]

@@ -29,7 +29,7 @@ from pathlib import Path
 
 from .catalogo import Catalogo, ErroCatalogo, Filme
 from .extras import (ARTES, LIMITE_TRAILER_MB, _arquivos, eh_propaganda_pequena, eh_trailer, imagem_do_video, limpar_cache,
-                     lixo_da_pasta, planejar_extras, tipo_de_arte)
+                     lixo_da_pasta, marcar_repetidos, planejar_extras, tipo_de_arte)
 from .nomes import (eh_video, extrair_episodio, extrair_titulo_e_ano, formatar_titulo, nome_episodio_jellyfin,
                     nome_jellyfin, normalizar, pasta_temporada)
 
@@ -305,6 +305,7 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
         raise NotADirectoryError(f"pasta de origem não existe: {origem}")
 
     videos = _listar_videos(origem, pasta_filmes, recursivo)
+    marcar_repetidos(videos, limite_trailer_mb)          # propaganda repetida em cada pasta de episódio
     # Trailers/propagandas pequenos não são filmes: ficam fora do planejamento (e viram lixo).
     trailers = {v for v in videos if eh_trailer(v, origem, limite_trailer_mb, modo)}
     # Pastas de torrent que uma organização ANTERIOR já esvaziou (só sobrou propaganda/imagens):

@@ -122,3 +122,27 @@ def test_tmdb_series_e_opensubtitles_episodio(tmp_path, api_falsa):
     assert busca["query"]["type"] == ["episode"] and busca["query"]["episode_number"] == ["2"]
     download = next(p for p in api_falsa.pedidos if p["caminho"] == "/api/v1/download")
     assert b'"file_id": 2' in download["corpo"]                       # o do episódio 2, não o mais baixado
+
+
+def test_completar_series_usa_o_mesmo_motor_do_organizar(tmp_path, site_legendas):
+    """Completar biblioteca (séries) = pós-processamento do Organizar, sem mover: legenda de cada
+    episódio em cada idioma, título original pelo catálogo (1 consulta por série)."""
+    from jellyfin_tools.pos_processamento import ConfigPos, itens_de_series, pos_processar
+    temporada = tmp_path / "Dark (2017)" / "Season 01"
+    temporada.mkdir(parents=True)
+    for nome in ("Dark S01E01 - Segredos.mkv", "Dark S01E02.mkv", "extra sem numero.mkv"):
+        (temporada / nome).write_bytes(b"v")
+
+    class Contador(CatalogoLocal):
+        consultas = 0
+
+        def buscar(self, *a, **k):
+            Contador.consultas += 1
+            return super().buscar(*a, **k)
+    itens = itens_de_series(tmp_path, Contador(CatalogoLocal.padrao().filmes))
+    assert [(m.destino.name, m.episodio) for m, _ in itens] == [("Dark S01E01 - Segredos.mkv", (1, 1)),
+                                                                 ("Dark S01E02.mkv", (1, 2))]
+    assert Contador.consultas == 1 and itens[0][0].filme.titulo == "Dark"
+    resultados = pos_processar(itens, ConfigPos(provedores=[_provedor(site_legendas)], idioma="pt-BR"))
+    assert [r.legenda.status for r in resultados] == ["baixada", "baixada"]
+    assert (temporada / "Dark S01E01 - Segredos.pt-BR.srt").is_file()

@@ -70,7 +70,8 @@ from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, Confi
                             ProvedorOpenSubtitles, ProvedorSiteHTML, organizar_pasta)
 from jellyfin_tools.metadados import ClienteTMDB  # noqa: E402
 from jellyfin_tools.notificacoes import Notificador  # noqa: E402
-from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, pos_processar  # noqa: E402
+from jellyfin_tools.pos_processamento import (ConfigPos, itens_da_biblioteca, itens_de_series,  # noqa: E402
+                                              pos_processar)
 from jellyfin_tools.registro import configurar_log  # noqa: E402
 from jellyfin_tools.site_demo import iniciar_site_demo  # noqa: E402
 
@@ -182,8 +183,11 @@ def completar_biblioteca(log) -> int:
     if not filmes.is_dir():
         log.critical("PASTA_FILMES não existe: %s", filmes)
         return 1
-    itens = itens_da_biblioteca(filmes, log)
-    log.info("=== Completar biblioteca: %d filme(s) em %s ===", len(itens), filmes)
+    if cfg("MODO") == "series":                     # episódios: legendas (o Jellyfin cuida dos metadados)
+        itens = itens_de_series(filmes, montar_catalogo(), log)
+    else:
+        itens = itens_da_biblioteca(filmes, log)
+    log.info("=== Completar biblioteca: %d item(ns) em %s ===", len(itens), filmes)
     resultados = pos_processar_lote(itens, log, notificar=False)
     log.info("=== Fim: %d filme(s) verificados ===", len(resultados))
     return 0

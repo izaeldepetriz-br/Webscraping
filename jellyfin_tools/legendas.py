@@ -125,14 +125,16 @@ def escolher_melhor(candidatos: list[CandidatoLegenda], titulo: str, ano: int | 
                     idioma: str, temporada: int | None = None,
                     episodio: int | None = None) -> CandidatoLegenda | None:
     """Mesmo idioma, mesmo ano, título parecido (e, em séries, o MESMO episódio);
-    entre os bons, o mais baixado."""
+    entre os bons, o mais baixado.
+    Séries: o ano NÃO é comparado. O ano da série é o da estreia (The Last of Us: 2023), mas a
+    legenda traz o ano do EPISÓDIO (2ª temporada: 2025); temporada + episódio + título bastam."""
     bons = []
     for c in candidatos:
         if c.idioma.lower() != idioma.lower():
             continue
         if episodio is not None and (c.temporada, c.episodio) != (temporada, episodio):
             continue                     # legenda de outro episódio fica fora do tempo do vídeo
-        if ano and c.ano and c.ano != ano:
+        if episodio is None and ano and c.ano and c.ano != ano:
             continue
         if similaridade(titulo, c.titulo) < SIMILARIDADE_MINIMA:
             continue
@@ -262,8 +264,8 @@ class ProvedorOpenSubtitles:
         params = {"query": titulo, "languages": idioma.lower(), "type": "movie"}
         if episodio is not None:
             params.update(type="episode", season_number=temporada, episode_number=episodio)
-        if ano:
-            params["year"] = ano
+        elif ano:
+            params["year"] = ano          # em séries, não: filtraria pelo ano do EPISÓDIO
         dados = self._json("GET", "/subtitles", params=params)
         candidatos = []
         for item in dados.get("data", []):

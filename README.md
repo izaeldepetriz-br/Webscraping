@@ -101,6 +101,20 @@ Outras opções da aba Jellyfin:
   (`E:\Series_OE:\Series_Organizadas\...`) ou caracteres que o Windows não aceita (`< > " | ? *`)
   são avisados antes da prévia, com a correção sugerida (a partir do último `E:\`). O motor também
   recusa o caminho antes de mexer em qualquer arquivo (antes, cada arquivo dava "WinError 123").
+- **Organizar × Completar biblioteca:** os dois usam o MESMO pós-processamento (legenda em cada
+  idioma, pôster/backdrop/`.nfo` nos filmes e um scan do Jellyfin no fim). A diferença:
+  **Organizar** move/renomeia o que está na pasta de origem e processa só o que acabou de mover
+  (e avisa no Discord/Telegram); **Completar biblioteca** não move nada e passa por TUDO que já está
+  na biblioteca, baixando só o que falta (ou trocando, se escolher "Substituir"). Agora vale também
+  para séries (antes, nas séries, o Completar só baixava legendas e não pedia o scan).
+- **Registro por ação:** o console "O que está acontecendo" guarda um registro para cada ação
+  (Pré-visualizar, Organizar, Completar, testes). O seletor no topo do console mostra a atual ou
+  uma anterior (até 30). No `jellyfin_organizer.log`, cada ação começa com `===== Organizando =====`.
+- **Legendas de séries:** a busca não usa mais o ano da série (o OpenSubtitles guarda o ano do
+  EPISÓDIO: a 2ª temporada de The Last of Us é de 2025, a série é de 2023), que descartava todas as
+  legendas das temporadas mais novas.
+- **Propaganda repetida:** vídeo pequeno, que não é episódio, com o MESMO nome em 3 ou mais pastas
+  (ex.: `BAIXAR PROXIMO EPISÓDIO.mp4` em cada pasta de episódio) é tratado como propaganda.
 - **Porcentagem na pré-visualização:** o rodapé mostra "Pré-visualizando... 45% · Consultando o
   TMDB: 75 de 166" e a barra acompanha.
 

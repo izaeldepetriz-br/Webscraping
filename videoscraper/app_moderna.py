@@ -26,13 +26,12 @@ import tkinter as tk
 from tkinter import filedialog
 
 from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, ConfigSite, ErroCatalogo,
-                            ProvedorOpenSubtitles, ProvedorSiteHTML, baixar_legendas_series, desfazer,
-                            organizar_pasta)
-from jellyfin_tools.legendas import episodios_da_biblioteca, normalizar_idiomas
+                            ProvedorOpenSubtitles, ProvedorSiteHTML, desfazer, organizar_pasta)
+from jellyfin_tools.legendas import normalizar_idiomas
 from jellyfin_tools.metadados import ClienteTMDB
 from jellyfin_tools.notificacoes import Notificador
 from jellyfin_tools.organizador import problema_no_caminho, sugestao_de_caminho, ultimo_log
-from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, pos_processar
+from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, itens_de_series, pos_processar
 from jellyfin_tools.registro import configurar_log
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, testar_conexao
 from jellyfin_tools.site_demo import iniciar_site_demo
@@ -218,6 +217,9 @@ class AppModerna(JanelaModerna):
         self.trabalhando = True
         self.evento_parar.clear()
         self.definir_status(status, ocupado=True)
+        acao = status.rstrip(". ")
+        self.iniciar_registro(acao)                  # cada ação com o seu registro no console
+        self._log.info("===== %s =====", acao)       # e um separador no arquivo de log
 
         def alvo():
             try:
@@ -406,7 +408,8 @@ class AppModerna(JanelaModerna):
         self._tmdb_ativo = o.tmdb
 
         def tarefa():
-            print(f"\nPré-visualizando ({'séries' if o.modo == 'series' else 'filmes'}): {o.origem} -> {o.destino}")
+            self._log.info("Pré-visualizando (%s): %s -> %s", "séries" if o.modo == "series" else "filmes",
+                           o.origem, o.destino)
             catalogo = self._catalogo(o)
             movimentos = organizar_pasta(o.origem, o.destino, catalogo, aplicar=False,
                                          incluir_tmdbid=o.incluir_tmdbid, exigir_catalogo=o.exigir_catalogo,
@@ -415,7 +418,7 @@ class AppModerna(JanelaModerna):
                                          nomes_episodios=o.nomes_episodios,
                                          ao_analisar=self._avisar_analise)
             for m in movimentos:
-                print(m)
+                self._log.info("%s", m)
             quantos = sum(m.status == "simulado" for m in movimentos)
             prontos = sum(m.status == "organizado" for m in movimentos)
             sobras = sum(m.status == "limpeza" for m in movimentos)
@@ -467,7 +470,7 @@ class AppModerna(JanelaModerna):
         self._tmdb_ativo = o.tmdb
 
         def tarefa():
-            print(f"\nOrganizando: {o.origem} -> {o.destino}")
+            self._log.info("Organizando: %s -> %s", o.origem, o.destino)
             etapas = 2                       # 1: mover   2: legendas/metadados/avisos/scan
             andamento = {"total": 0, "feitos": 0, "ultimo": {}}
 
@@ -553,63 +556,34 @@ class AppModerna(JanelaModerna):
         self._salvar_config()
         self._previa = None
         self.liberar_organizar(False)
-        destino = Path(o.destino)
-        if o.modo == "filmes":
-            self._completar_filmes(o, destino)
-            return
-
-        def tarefa():                            # séries: só legendas (metadados ficam com o Jellyfin)
-            alvos = episodios_da_biblioteca(destino)
-            idiomas = normalizar_idiomas(o.idioma) or ["pt-BR"]
-            sufixo = f".{idiomas[0]}.srt" + (f"  (+{', '.join(idiomas[1:])})" if len(idiomas) > 1 else "")
-            linhas = [("/".join(v.relative_to(destino).parts), f"{v.stem}{sufixo}") for v in alvos]
-            funcao = baixar_legendas_series
-            self.fila.put(("jf_alvos", linhas))
-            print(f"\nProcurando legendas para {len(alvos)} item(ns) em {destino}")
-            self.fila.put(("jf_total", (0.0, f"Legendas: 0 de {len(alvos)}")))
-
-            por_item: dict[int, dict] = {}
-            passos = (len(alvos) * len(idiomas)) or 1
-
-            def ao_terminar(i, r, idioma):
-                por_item.setdefault(i, {})[idioma] = r.status
-                if len(idiomas) == 1:
-                    self.fila.put(("jf_legenda", (str(i), r)))
-                else:
-                    self.fila.put(("jf_legendas", (str(i), dict(por_item[i]))))
-                feitos = sum(len(v) for v in por_item.values())
-                self.fila.put(("jf_prog", (str(i), len(por_item[i]) / len(idiomas), "_legenda")))
-                self.fila.put(("jf_total", (feitos / passos, f"Legendas: {feitos} de {passos} "
-                                                             f"({feitos * 100 // passos}%)")))
-
-            resultados = []
-            with self._provedores(o) as provedores:
-                for idioma in idiomas:                 # um arquivo de legenda por idioma
-                    resultados += funcao(destino, provedores, idioma, o.sobrescrever, catalogo=self._catalogo(o),
-                                         ao_terminar=lambda i, r, idioma=idioma: ao_terminar(i, r, idioma),
-                                         parar=self.evento_parar.is_set)
-            baixadas = sum(r.status == "baixada" for r in resultados)
-            self.fila.put(("status_fim", f"Legendas: {baixadas} baixada(s) de {len(alvos)} item(ns)."))
-
-        self._rodar("Baixando legendas...", tarefa)
+        self._completar(o, Path(o.destino))
 
     OPCOES_COMPLETAR = ("Só o que falta", "Substituir o que já existe")
 
-    def _completar_filmes(self, o, destino: Path) -> None:
-        """Filmes já organizados: legenda + pôster/backdrop + .nfo do que faltar (sem avisos)."""
+    def _completar(self, o, destino: Path) -> None:
+        """Itens JÁ organizados: o mesmo pós-processamento do Organizar (legendas em cada idioma,
+        pôster/backdrop/.nfo nos filmes e um scan do Jellyfin no fim), só que sem mover e sem avisos."""
         def tarefa():
-            itens = itens_da_biblioteca(destino, self._log)
+            if o.modo == "filmes":
+                itens = itens_da_biblioteca(destino, self._log)
+                linhas = [nome for _, nome in itens]
+            else:
+                itens = itens_de_series(destino, self._catalogo(o), self._log)
+                linhas = ["/".join(m.destino.relative_to(destino).parts) for m, _ in itens]
             idiomas = normalizar_idiomas(o.idioma) or ["pt-BR"]
             sufixo = f".{idiomas[0]}.srt" + (f"  (+{', '.join(idiomas[1:])})" if len(idiomas) > 1 else "")
-            self.fila.put(("jf_alvos", [(nome, f"{nome}{sufixo}") for _, nome in itens]))
-            self._log.info("Completar biblioteca: %d filme(s) em %s", len(itens), destino)
+            self.fila.put(("jf_alvos", [(atual, f"{nome}{sufixo}") for atual, (_, nome) in zip(linhas, itens)]))
+            tipo = "filme(s)" if o.modo == "filmes" else "episódio(s)"
+            self._log.info("Completar biblioteca: %d %s em %s", len(itens), tipo, destino)
             resultados = self._pos_processar(o, itens, list(range(len(itens))), "Completando",
                                              legendas=True, notificar=False)
-            baixadas = sum(1 for r in resultados if r.legenda and r.legenda.status == "baixada")
+            baixadas = sum(1 for r in resultados for le in (r.legendas or {"": r.legenda}).values()
+                           if le and le.status == "baixada")
             metadados = sum(1 for r in resultados if r.metadados and r.metadados.criados)
-            self.fila.put(("jf_total", (1.0, f"Concluído: {baixadas} legenda(s), {metadados} com pôster/.nfo")))
-            self.fila.put(("status_fim", f"Biblioteca completada: {baixadas} legenda(s), "
-                                         f"{metadados} filme(s) com pôster/.nfo novos."))
+            extra = f", {metadados} com pôster/.nfo" if o.modo == "filmes" else ""
+            self.fila.put(("jf_total", (1.0, f"Concluído: {baixadas} legenda(s){extra}")))
+            self.fila.put(("status_fim", f"Biblioteca completada: {len(itens)} {tipo}, {baixadas} legenda(s) "
+                                         f"baixada(s){extra}."))
 
         self._rodar("Completando a biblioteca...", tarefa)
 
@@ -737,10 +711,10 @@ class AppModerna(JanelaModerna):
         self.liberar_organizar(False)
 
         def tarefa():
-            print(f"\nDesfazendo: {log.name}")
+            self._log.info("Desfazendo: %s", log.name)
             mensagens = desfazer(log)
             for m in mensagens:
-                print(m)
+                self._log.info("%s", m)
             voltaram = sum(m.startswith("voltou") for m in mensagens)
             self.fila.put(("jf_limpar", None))
             self.fila.put(("status_fim", f"Desfeito: {voltaram} arquivo(s) voltaram."))

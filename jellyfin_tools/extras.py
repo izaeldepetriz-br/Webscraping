@@ -47,7 +47,7 @@ PALAVRAS_FORCADA = {"forced", "forcada", "forcadas", "forcado", "forcados"}
 PALAVRAS_PROPAGANDA = {"leia", "leiame", "readme", "visite", "acesse", "www", "trailer", "teaser", "promo",
                        "propaganda", "sample", "torrent", "torrents", "download", "baixe", "site",
                        "grupo", "canal", "facebook", "telegram", "whatsapp", "instagram", "discord",
-                       "twitter", "tiktok", "youtube"}
+                       "twitter", "tiktok", "youtube", "baixar", "bet", "aposta", "apostas", "cassino"}
 SIMILARIDADE_EXTRA = 0.8
 
 
@@ -70,11 +70,25 @@ def parece_propaganda(arquivo: Path) -> bool:
 # arquivo): milhares de consultas ao disco. Agora cada pasta é lida UMA vez por execução.
 # organizar_pasta() chama limpar_cache() no começo, porque os arquivos mudam entre execuções.
 _arquivos_da_pasta: dict[Path, dict[Path, int]] = {}
+# Vídeos pequenos (não episódio) com o MESMO nome em várias pastas: 'BAIXAR PROXIMO EPISÓDIO.mp4'
+# em cada pasta de episódio é propaganda, mesmo sem palavra conhecida no nome.
+_nomes_repetidos: set[str] = set()
+REPETICOES_PROPAGANDA = 3
 
 
 def limpar_cache() -> None:
     _arquivos_da_pasta.clear()
     _resolver.cache_clear()
+    _nomes_repetidos.clear()
+
+
+def marcar_repetidos(videos: list[Path], limite_mb: float = LIMITE_TRAILER_MB) -> None:
+    """Anota os nomes de vídeo pequeno (e não episódio) que aparecem em REPETICOES_PROPAGANDA pastas ou mais."""
+    contagem: dict[str, int] = {}
+    for v in videos:
+        if _tamanho(v) < limite_mb * 1024 * 1024 and extrair_episodio(v.name) is None:
+            contagem[v.name.lower()] = contagem.get(v.name.lower(), 0) + 1
+    _nomes_repetidos.update(n for n, vezes in contagem.items() if vezes >= REPETICOES_PROPAGANDA)
 
 
 @lru_cache(maxsize=4096)
@@ -128,8 +142,10 @@ def eh_trailer(video: Path, raiz: Path, limite_mb: float = LIMITE_TRAILER_MB, mo
 
 
 def eh_propaganda(video: Path) -> bool:
-    """'BLUDV.TV.mp4', 'www.site.com.mp4', 'Trailer.mp4': cara de propaganda e NÃO é episódio."""
-    return parece_propaganda(video) and extrair_episodio(video.name) is None
+    """'BLUDV.TV.mp4', 'www.site.com.mp4', 'Trailer.mp4' (ou o mesmo vídeo pequeno repetido em várias
+    pastas): cara de propaganda e NÃO é episódio."""
+    return ((parece_propaganda(video) or video.name.lower() in _nomes_repetidos)
+            and extrair_episodio(video.name) is None)
 
 
 def eh_propaganda_pequena(video: Path, limite_mb: float = LIMITE_TRAILER_MB) -> bool:

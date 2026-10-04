@@ -348,3 +348,65 @@ def test_atalhos_de_grupos_e_redes_sociais_sao_lixo(tmp_path):
         assert eh_lixo(raiz / nome, raiz)                          # mesmo na pasta raiz da origem
     _arquivo(raiz / "minhas_notas.txt")
     assert not eh_lixo(raiz / "minhas_notas.txt", raiz)            # nota pessoal continua a salvo
+
+
+def _the_last_of_us(series, temporadas=((1, "1 TEMPORADA"), (2, "2 TEMPORADA")), episodios=(1, 2, 3)):
+    """Caso real: Series/The Last of US/1 TEMPORADA/<pasta do episódio>/ com o episódio e 2 propagandas."""
+    for t, nome_temporada in temporadas:
+        for e in episodios:
+            base = f"The.Last.of.Us.S{t:02d}E{e:02d}.1080p.FULL.WEB-DL.DUAL.5.1"
+            pasta = series / "The Last of US" / nome_temporada / base
+            _video(pasta / f"{base}.mkv", 3 * MB)
+            _video(pasta / "1XBET.COM_promo_SHREK_dinheiro_livre.mp4", MB // 4)
+            _video(pasta / "BAIXAR PROXIMO EPISÓDIO.mp4", MB // 2)
+    return series / "The Last of US"
+
+
+def test_the_last_of_us_propaganda_em_cada_pasta_de_episodio(tmp_path):
+    from jellyfin_tools import organizar_pasta
+    series = tmp_path / "Series"
+    torrent = _the_last_of_us(series)
+    movs = organizar_pasta(series, series, CatalogoLocal.padrao(), modo="series", limite_trailer_mb=LIMITE,
+                           apagar_pasta_origem=True, aplicar=True)
+    assert {m.status for m in movs} == {"movido"} and len(movs) == 6       # sem "não identificado"
+    assert not torrent.exists()                                            # a pasta do torrent inteira
+    restantes = sorted(p.relative_to(series).as_posix() for p in series.rglob("*.mp4"))
+    assert restantes == []                                                 # nenhuma propaganda sobrou
+
+
+def test_propaganda_repetida_mesmo_sem_palavra_conhecida(tmp_path):
+    from jellyfin_tools import organizar_pasta
+    series = tmp_path / "Series"
+    for e in (1, 2, 3):
+        pasta = series / "Serie X" / f"Serie.X.S01E{e:02d}"
+        _video(pasta / f"Serie.X.S01E{e:02d}.mkv", 3 * MB)
+        _video(pasta / "Clique Aqui Agora.mp4", MB // 2)                   # nome sem palavra da lista
+    _video(series / "Outra" / "Extra.S01E01.mkv", 3 * MB)
+    _video(series / "Outra" / "Making of.mp4", MB // 2)                    # aparece 1 vez: fica
+    movs = organizar_pasta(series, series, CatalogoLocal.padrao(), modo="series", limite_trailer_mb=LIMITE)
+    apagar = sorted(a.parent.name + "/" + a.name for m in movs for a in m.apagar or [])
+    assert apagar == [f"Serie.X.S01E0{e}/Clique Aqui Agora.mp4" for e in (1, 2, 3)]
+
+
+def test_the_last_of_us_sobras_de_antes(tmp_path):
+    """O que sobrou no disco: os episódios já tinham saído; ficaram as pastas com as 2 propagandas."""
+    import json
+    from jellyfin_tools import organizar_pasta
+    from jellyfin_tools.organizador import PASTA_LOGS
+    series = tmp_path / "Series"
+    torrent = _the_last_of_us(series)
+    itens = []
+    for video in sorted(torrent.rglob("*.mkv")):
+        t, e = int(video.name[16:18]), int(video.name[19:21])
+        novo = series / "The Last of Us (2023)" / f"Season {t:02d}" / f"The Last of Us S{t:02d}E{e:02d}.mkv"
+        novo.parent.mkdir(parents=True, exist_ok=True)
+        video.rename(novo)
+        itens.append({"de": str(video), "para": str(novo)})
+    (series / PASTA_LOGS).mkdir()
+    (series / PASTA_LOGS / "log-1.json").write_text(json.dumps({"raiz": str(series), "itens": itens}),
+                                                    encoding="utf-8")
+    previa = organizar_pasta(series, series, CatalogoLocal.padrao(), modo="series", apagar_pasta_origem=True)
+    assert [m.origem for m in previa if m.status == "limpeza"] == [torrent]
+    assert not [m for m in previa if m.status == "nao_identificado"]
+    organizar_pasta(series, series, CatalogoLocal.padrao(), modo="series", apagar_pasta_origem=True, aplicar=True)
+    assert not torrent.exists() and len(list(series.rglob("*.mkv"))) == 6

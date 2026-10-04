@@ -779,3 +779,31 @@ def test_caminho_colado_e_avisado_antes_da_previa(app, tmp_path, monkeypatch):
     app.ao_validar = app._validar_jellyfin(precisa_origem=True)
     assert app.var_jf_destino.get() == r"E:\Series_Organizadas\Series"
     assert app.ao_validar is not None and app.ao_validar.destino == r"E:\Series_Organizadas\Series"
+
+
+def test_registro_por_acao_no_console(app, tmp_path):
+    _preparar(app, tmp_path, ["Matrix.1999.mkv"])
+    app.var_jf_legendas.set(False)
+    app.bt_previa.invoke()
+    esperar(app)
+    app.bt_organizar.invoke()
+    esperar(app)
+    console = app.logs[1]
+    nomes = app._menus_registro[1].cget("values")
+    assert "Organizando" in nomes[0] and "Pré-visualizando" in nomes[1]       # o mais novo primeiro
+    assert len(app._registros) == 3                                          # Início + as duas ações
+    texto_organizar = console.get("1.0", "end")
+    assert "===== Organizando =====" in texto_organizar and "Pré-visualizando (" not in texto_organizar
+
+    app._ao_escolher_registro(nomes[1])                                      # ver a prévia
+    texto_previa = console.get("1.0", "end")
+    assert "Pré-visualizando (filmes)" in texto_previa and "===== Organizando" not in texto_previa
+    app.escrever_log("linha nova da ação atual\n")                           # não mistura na prévia
+    assert "linha nova" not in console.get("1.0", "end")
+    app._ao_escolher_registro(nomes[0])
+    assert "linha nova da ação atual" in console.get("1.0", "end")
+
+    app.limpar_log()                                                         # limpa só o que está à mostra
+    assert console.get("1.0", "end").strip() == "" and app._registros[1]["partes"]
+    log = app.arquivo_log.read_text(encoding="utf-8")
+    assert "===== Pré-visualizando =====" in log and "===== Organizando =====" in log

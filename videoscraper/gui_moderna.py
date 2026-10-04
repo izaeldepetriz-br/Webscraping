@@ -16,6 +16,7 @@ from __future__ import annotations
 import sys
 import tkinter as tk
 from dataclasses import dataclass
+from datetime import datetime
 from tkinter import filedialog, ttk
 
 import customtkinter as ctk
@@ -248,6 +249,11 @@ class JanelaModerna(ctk.CTk):
         self._estilizar_tabela()
         self._extras_tabela: dict = {}       # tabela -> (contador, texto de "vazio")
         self.logs: list[ctk.CTkTextbox] = []  # um console por aba, com o mesmo conteúdo
+        # Registro POR AÇÃO: cada Pré-visualizar/Organizar/Completar/teste tem o seu; o seletor no topo
+        # do console mostra a ação atual ou uma anterior (antes era tudo numa lista só).
+        self._registros: list[dict] = [{"titulo": "1. Início", "partes": []}]
+        self._registro_visivel = 0
+        self._menus_registro: list[ctk.CTkOptionMenu] = []
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -532,6 +538,15 @@ class JanelaModerna(ctk.CTk):
             ctk.CTkFrame(topo, width=10, height=10, corner_radius=5, fg_color=cor).pack(side="left", padx=(0, 6))
         self._rotulo(topo, "O que está acontecendo", suave=False, fonte=self.f_secao).pack(side="left", padx=(8, 0))
         self._botao(topo, "Limpar", self.limpar_log, "fantasma", largura=70).pack(side="right")
+        menu = ctk.CTkOptionMenu(topo, values=self._nomes_registros(), command=self._ao_escolher_registro,
+                                 width=230, height=28, corner_radius=8, font=self.f_rotulo,
+                                 fg_color=Tema.CAMPO, button_color=Tema.SECUNDARIA,
+                                 button_hover_color=Tema.SECUNDARIA_HOVER, text_color=Tema.TEXTO,
+                                 dropdown_fg_color=Tema.CARTAO, dropdown_text_color=Tema.TEXTO,
+                                 dynamic_resizing=False)
+        menu.set(self._registros[self._registro_visivel]["titulo"])
+        menu.pack(side="right", padx=(0, 8))
+        self._menus_registro.append(menu)
         # progresso total (aparece só durante tarefas longas)
         barra = ctk.CTkProgressBar(topo, width=180, height=8, corner_radius=4, mode="determinate",
                                    fg_color=Tema.SECUNDARIA, progress_color=Tema.SUCESSO)
@@ -727,8 +742,8 @@ class JanelaModerna(ctk.CTk):
         self._cartao_detalhe_jf = self._montar_detalhe_jf(corpo)
         self._cartao_console_jf = self._criar_console(corpo, linha=2, altura=70).master
         # A lista fica com a maior parte da altura (antes dividia com o console e mostrava ~3 linhas)
-        corpo.grid_rowconfigure(0, weight=5, minsize=340)
-        corpo.grid_rowconfigure(2, weight=1)
+        corpo.grid_rowconfigure(0, weight=5, minsize=300)
+        corpo.grid_rowconfigure(2, weight=1, minsize=140)          # o registro da ação: ~4 linhas à vista
 
     # Situações que dá para esconder/mostrar na tabela (o filtro é só visual).
     FILTROS_JF = (("mover", "Vai mover"), ("movido", "Movido"), ("organizado", "Já organizado"),
@@ -1085,8 +1100,45 @@ class JanelaModerna(ctk.CTk):
             ids = [self.tabela.focus()]
         return ids
 
+    MAX_REGISTROS = 30                    # ações guardadas no seletor (as mais antigas saem)
+
+    def iniciar_registro(self, titulo: str) -> None:
+        """Começa o registro de uma nova ação ('13:24:05 · Organizando') e passa a mostrá-lo."""
+        numero = int(self._registros[-1]["titulo"].split(".", 1)[0]) + 1
+        self._registros.append({"titulo": f"{numero}. {datetime.now():%H:%M:%S} · {titulo}", "partes": []})
+        del self._registros[:-self.MAX_REGISTROS]
+        self._mostrar_registro(len(self._registros) - 1)
+
+    def _nomes_registros(self) -> list[str]:
+        return [r["titulo"] for r in reversed(self._registros)]          # o mais novo primeiro
+
+    def _ao_escolher_registro(self, titulo: str) -> None:
+        indice = next((i for i, r in enumerate(self._registros) if r["titulo"] == titulo), None)
+        if indice is not None:
+            self._mostrar_registro(indice)
+
+    def _mostrar_registro(self, indice: int) -> None:
+        """Troca o que os consoles mostram pelo registro escolhido."""
+        self._registro_visivel = indice
+        registro = self._registros[indice]
+        for menu in self._menus_registro:
+            menu.configure(values=self._nomes_registros())
+            menu.set(registro["titulo"])
+        for console in self.logs:
+            console.configure(state="normal")
+            console.delete("1.0", "end")
+            console.configure(state="disabled")
+        for parte in registro["partes"]:
+            self._inserir_nos_consoles(parte)
+
     def escrever_log(self, texto: str) -> None:
-        """Acrescenta texto aos consoles. '\\r' volta ao início da linha (barra de progresso)."""
+        """Acrescenta texto ao registro da ação ATUAL (e aos consoles, se ela estiver à mostra).
+        '\\r' volta ao início da linha (barra de progresso)."""
+        self._registros[-1]["partes"].append(texto)
+        if self._registro_visivel == len(self._registros) - 1:
+            self._inserir_nos_consoles(texto)
+
+    def _inserir_nos_consoles(self, texto: str) -> None:
         for console in self.logs:
             console.configure(state="normal")
             for n, parte in enumerate(texto.split("\r")):
@@ -1113,6 +1165,8 @@ class JanelaModerna(ctk.CTk):
         return None
 
     def limpar_log(self) -> None:
+        """Limpa o registro que está à mostra."""
+        self._registros[self._registro_visivel]["partes"].clear()
         for console in self.logs:
             console.configure(state="normal")
             console.delete("1.0", "end")
