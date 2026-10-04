@@ -16,7 +16,9 @@ Regras de segurança para APAGAR (é irreversível):
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 from .nomes import eh_video, extrair_titulo_e_ano, normalizar, similaridade, tem_site
@@ -54,11 +56,50 @@ def parece_propaganda(arquivo: Path) -> bool:
     return tem_site(arquivo.stem) or bool(_palavras(arquivo) & PALAVRAS_PROPAGANDA)
 
 
+# ----------------------------------------------------------------- cache de pastas
+# Com 166 filmes na mesma pasta, cada vídeo listava a pasta inteira de novo (e o tamanho de cada
+# arquivo): milhares de consultas ao disco. Agora cada pasta é lida UMA vez por execução.
+# organizar_pasta() chama limpar_cache() no começo, porque os arquivos mudam entre execuções.
+_arquivos_da_pasta: dict[Path, dict[Path, int]] = {}
+
+
+def limpar_cache() -> None:
+    _arquivos_da_pasta.clear()
+    _resolver.cache_clear()
+
+
+@lru_cache(maxsize=4096)
+def _resolver(pasta: Path) -> Path:
+    return pasta.resolve()
+
+
+def _arquivos(pasta: Path) -> dict[Path, int]:
+    """{arquivo: tamanho} da pasta, lido uma vez. os.scandir já traz o tamanho junto
+    (no Windows sem consultar arquivo por arquivo), muito mais rápido que iterdir() + stat()."""
+    if pasta not in _arquivos_da_pasta:
+        arquivos = {}
+        try:
+            with os.scandir(pasta) as itens:
+                for item in itens:
+                    try:
+                        if item.is_file():
+                            arquivos[Path(item.path)] = item.stat().st_size
+                    except OSError:
+                        continue
+        except OSError:
+            pass
+        _arquivos_da_pasta[pasta] = dict(sorted(arquivos.items()))
+    return _arquivos_da_pasta[pasta]
+
+
 def _tamanho(arquivo: Path) -> int:
-    try:
-        return arquivo.stat().st_size
-    except OSError:
-        return 0
+    tamanho = _arquivos(arquivo.parent).get(arquivo)
+    if tamanho is None:
+        try:
+            return arquivo.stat().st_size
+        except OSError:
+            return 0
+    return tamanho
 
 
 def eh_trailer(video: Path, raiz: Path, limite_mb: float = LIMITE_TRAILER_MB) -> bool:
@@ -66,10 +107,11 @@ def eh_trailer(video: Path, raiz: Path, limite_mb: float = LIMITE_TRAILER_MB) ->
     limite = limite_mb * 1024 * 1024
     if _tamanho(video) >= limite:
         return False
-    tem_filme_maior = any(eh_video(v) and v != video and _tamanho(v) >= limite for v in video.parent.iterdir())
+    tem_filme_maior = any(eh_video(v) and v != video and tamanho >= limite
+                          for v, tamanho in _arquivos(video.parent).items())
     if not tem_filme_maior:
         return False
-    if video.parent.resolve() == raiz.resolve():           # pasta raiz: só com cara de propaganda
+    if _resolver(video.parent) == _resolver(raiz):         # pasta raiz: só com cara de propaganda
         return parece_propaganda(video)
     return parece_propaganda(video) or extrair_titulo_e_ano(video.name).ano is None
 
@@ -78,7 +120,7 @@ def eh_lixo(arquivo: Path, raiz: Path) -> bool:
     """.url/.txt/atalhos. Na pasta raiz, só se tiver cara de propaganda."""
     if arquivo.suffix.lower() not in EXTENSOES_LIXO:
         return False
-    if arquivo.parent.resolve() == raiz.resolve():
+    if _resolver(arquivo.parent) == _resolver(raiz):
         return parece_propaganda(arquivo)
     return True
 
@@ -106,7 +148,13 @@ def _mesmo_filme(extra: Path, titulo_video: str, prefixo: str | None = None) -> 
     """O extra (legenda/imagem solta numa pasta com vários filmes) é deste filme? Compara pelo título."""
     texto = prefixo if prefixo is not None else extra.name
     titulo_extra = extrair_titulo_e_ano(texto + ".mkv" if prefixo is not None else texto).titulo
-    return bool(titulo_extra) and similaridade(titulo_extra, titulo_video) >= SIMILARIDADE_EXTRA
+    if not titulo_extra:
+        return False
+    # Filtro barato antes da comparação cara: títulos do mesmo filme começam igual
+    # ("Matrix..." nunca é "Cidade de Deus..."). Corta milhares de comparações numa pasta cheia.
+    if normalizar(titulo_extra)[:3] != normalizar(titulo_video)[:3]:
+        return False
+    return similaridade(titulo_extra, titulo_video) >= SIMILARIDADE_EXTRA
 
 
 def planejar_extras(video: Path, nome_base: str, pasta_destino: Path, raiz: Path | None,
@@ -115,10 +163,13 @@ def planejar_extras(video: Path, nome_base: str, pasta_destino: Path, raiz: Path
     plano = PlanoExtras()
     pasta = video.parent
     titulo_video = extrair_titulo_e_ano(video.name).titulo
-    videos_da_pasta = [v for v in pasta.iterdir() if v.is_file() and eh_video(v)
-                       and not (modo == "filmes" and raiz is not None and eh_trailer(v, raiz, limite_mb))]
+    arquivos = _arquivos(pasta)
     # "Pasta exclusiva": subpasta (não a raiz) com um único filme -> tudo nela é deste filme.
-    exclusiva = raiz is not None and pasta.resolve() != raiz.resolve() and len(videos_da_pasta) == 1
+    exclusiva = False
+    if raiz is not None and _resolver(pasta) != _resolver(raiz):
+        videos_da_pasta = [v for v in arquivos if eh_video(v)
+                           and not (modo == "filmes" and eh_trailer(v, raiz, limite_mb))]
+        exclusiva = len(videos_da_pasta) == 1
     usados: set[str] = set()
 
     def adicionar(origem: Path, nome_novo: str) -> None:
@@ -126,8 +177,8 @@ def planejar_extras(video: Path, nome_base: str, pasta_destino: Path, raiz: Path
             usados.add(nome_novo.lower())
             plano.mover.append((origem, pasta_destino / nome_novo))
 
-    for extra in sorted(pasta.iterdir()):
-        if not extra.is_file() or extra == video:
+    for extra in arquivos:
+        if extra == video:
             continue
         mesmo_prefixo = extra.name.startswith(video.stem + ".")
         ext = extra.suffix.lower()
@@ -148,9 +199,7 @@ def lixo_da_pasta(pasta: Path, raiz: Path, modo: str = "filmes",
                   limite_mb: float = LIMITE_TRAILER_MB) -> list[Path]:
     """Arquivos a apagar numa pasta de onde um filme está saindo."""
     lixo = []
-    for arquivo in sorted(pasta.iterdir()):
-        if not arquivo.is_file():
-            continue
+    for arquivo in _arquivos(pasta):
         if eh_lixo(arquivo, raiz) or (modo == "filmes" and eh_video(arquivo) and eh_trailer(arquivo, raiz, limite_mb)):
             lixo.append(arquivo)
     return lixo

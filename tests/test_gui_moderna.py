@@ -329,3 +329,27 @@ def test_jellyfin_limpeza_de_torrent_pela_interface(app, tmp_path):
     assert sorted(p.name for p in (tmp_path / "Filmes" / "Creed II (2018)").iterdir()) == \
         ["Creed II (2018).mkv", "Creed II (2018).pt-BR.forced.srt", "poster.jpg"]
     assert not torrent.exists()
+
+
+def test_jellyfin_progresso_por_pasta_total_e_antes_depois(app, tmp_path):
+    origem, filmes = _preparar(app, tmp_path, FILMES)
+    app.bt_previa.invoke()
+    esperar(app)
+    app.tabela_jf.selection_set("0")
+    app.update()
+    assert app.lb_detalhe_titulo.cget("text").startswith("Antes → Depois  (Selecionado: #1)")
+    assert app.var_antes_pasta.get() == str(origem)
+    assert app.var_antes_arquivo.get() in FILMES
+    assert app.var_depois_pasta.get().startswith(str(filmes))
+    assert app.var_depois_arquivo.get().endswith((".mkv", ".mp4"))
+
+    app.bt_organizar.invoke()
+    esperar(app)
+    for linha in _linhas_jf(app):
+        assert linha[5].endswith("100%") and linha[5].startswith("█" * 10)
+    rotulo, barra = app._progresso_total[1]                              # console da aba Jellyfin
+    assert rotulo.cget("text").startswith("Concluído: 3 movido(s), 3 legenda(s)")
+    assert barra.get() == 1.0
+    app.bt_previa.invoke()                                              # nova prévia esconde o total
+    esperar(app)
+    assert rotulo.cget("text") == ""

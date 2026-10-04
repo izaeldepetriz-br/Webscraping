@@ -19,13 +19,14 @@ Segurança:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from .catalogo import Catalogo, ErroCatalogo, Filme
-from .extras import LIMITE_TRAILER_MB, eh_trailer, lixo_da_pasta, planejar_extras
+from .extras import LIMITE_TRAILER_MB, eh_trailer, limpar_cache, lixo_da_pasta, planejar_extras
 from .nomes import (eh_video, extrair_episodio, extrair_titulo_e_ano, formatar_titulo, nome_episodio_jellyfin,
                     nome_jellyfin, normalizar, pasta_temporada)
 
@@ -164,17 +165,18 @@ def _listar_videos(origem: Path, pasta_filmes: Path, recursivo: bool) -> list[Pa
     é ignorado (ex.: origem E:/ e biblioteca E:/Filmes). Se a origem É a biblioteca (ou uma pasta
     dela), olha tudo: o que já estiver no padrão vira 'organizado' no planejar()."""
     no_lugar = _dentro(origem, pasta_filmes)
-    padrao = "**/*" if recursivo else "*"
+    # Só precisa conferir arquivo por arquivo se a biblioteca for uma subpasta da origem.
+    biblioteca_dentro = not no_lugar and _dentro(pasta_filmes, origem)
+    biblioteca = pasta_filmes.resolve()
     videos = []
-    for arquivo in sorted(origem.glob(padrao)):
-        if not arquivo.is_file() or not eh_video(arquivo):
+    for pasta, subpastas, arquivos in os.walk(origem):
+        subpastas[:] = sorted(d for d in subpastas if d != PASTA_LOGS)   # não entra no log
+        if not recursivo:
+            subpastas[:] = []
+        if biblioteca_dentro and (Path(pasta).resolve() == biblioteca or biblioteca in Path(pasta).resolve().parents):
             continue
-        if PASTA_LOGS in arquivo.relative_to(origem).parts:
-            continue
-        if not no_lugar and _dentro(arquivo, pasta_filmes):
-            continue
-        videos.append(arquivo)
-    return videos
+        videos += [Path(pasta) / nome for nome in arquivos if eh_video(Path(nome))]
+    return sorted(videos)
 
 
 def _apagar_pastas_que_esvaziaram(pastas: set[Path], origem: Path) -> None:
@@ -196,12 +198,16 @@ def _apagar_pastas_que_esvaziaram(pastas: set[Path], origem: Path) -> None:
 def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Catalogo | None = None,
                     aplicar: bool = False, recursivo: bool = True, incluir_tmdbid: bool = False,
                     exigir_catalogo: bool = False, modo: str = "filmes", limpar_lixo: bool = True,
-                    limite_trailer_mb: float = LIMITE_TRAILER_MB) -> list[Movimento]:
+                    limite_trailer_mb: float = LIMITE_TRAILER_MB,
+                    ao_planejar=None, ao_progresso=None) -> list[Movimento]:
     """Organiza todos os vídeos de `origem` na biblioteca `pasta_filmes` (no modo "series",
     a pasta de séries do Jellyfin). Devolve o que fez (ou faria).
-    limpar_lixo: ao aplicar, apaga .url/.txt de propaganda e trailers pequenos (< limite_trailer_mb)."""
+    limpar_lixo: ao aplicar, apaga .url/.txt de propaganda e trailers pequenos (< limite_trailer_mb).
+    ao_planejar(movimentos): chamado com o plano, antes de mover (para mostrar a lista).
+    ao_progresso(indice, movimento, fracao): andamento de cada item (0.0 a 1.0) enquanto move."""
     if modo not in MODOS:
         raise ValueError(f"modo deve ser um de {MODOS}")
+    limpar_cache()                       # os arquivos podem ter mudado desde a última execução
     origem, pasta_filmes = Path(origem).expanduser(), Path(pasta_filmes).expanduser()
     if not origem.is_dir():
         raise NotADirectoryError(f"pasta de origem não existe: {origem}")
@@ -217,17 +223,22 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
         _planejar_lixo(movimentos, origem, modo, limite_trailer_mb)
     if not aplicar:
         return movimentos
+    if ao_planejar:
+        ao_planejar(movimentos)
+    avisar = ao_progresso or (lambda *a: None)
 
     feitos = []
     apagados: list[Path] = []
     pastas_de_onde_sairam: set[Path] = set()
-    for mov in movimentos:
+    for indice, mov in enumerate(movimentos):
         if mov.status != "simulado":
             continue
         pastas_de_onde_sairam.add(mov.origem.parent)
+        avisar(indice, mov, 0.0)
         try:
             mov.destino.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(mov.origem), str(mov.destino))   # funciona até entre discos (C: -> D:)
+            # o vídeo é 95% do trabalho; legendas, imagens e lixo são o resto
+            mover_com_progresso(mov.origem, mov.destino, lambda f, i=indice, m=mov: avisar(i, m, f * 0.95))
             feitos.append((mov.origem, mov.destino))
             mov.status = "movido"
             for antigo, novo in mov.acompanhantes or []:
@@ -237,6 +248,7 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
                 feitos.append((antigo, novo))
         except OSError as erro:                               # sem permissão, disco cheio, arquivo em uso...
             mov.status, mov.detalhe = "erro", str(erro)
+            avisar(indice, mov, 1.0)
             continue
         for lixo in mov.apagar or []:
             try:
@@ -246,10 +258,52 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
                 pass
             except OSError as erro:                           # arquivo em uso: não impede o resto
                 mov.detalhe = f"não consegui apagar {lixo.name}: {erro}"
+        avisar(indice, mov, 1.0)
     if feitos or apagados:
         _gravar_log(pasta_filmes, feitos, apagados)
         _apagar_pastas_que_esvaziaram(pastas_de_onde_sairam, origem)
     return movimentos
+
+
+BLOCO_COPIA = 8 * 1024 * 1024
+
+
+def _mesmo_disco(arquivo: Path, pasta: Path) -> bool:
+    try:
+        return arquivo.stat().st_dev == pasta.stat().st_dev
+    except OSError:
+        return False
+
+
+def mover_com_progresso(de: Path, para: Path, ao_progresso=None) -> None:
+    """Move um arquivo avisando o andamento (0.0 a 1.0).
+    Mesmo disco: só troca o nome (instantâneo). Discos diferentes: copia em blocos de 8 MB
+    (para a porcentagem andar de verdade), confere o tamanho e só então apaga o original."""
+    avisar = ao_progresso or (lambda f: None)
+    if para.exists():
+        raise FileExistsError(f"já existe: {para}")       # nunca sobrescreve
+    if _mesmo_disco(de, para.parent):
+        os.rename(de, para)
+        avisar(1.0)
+        return
+    total = de.stat().st_size or 1
+    parcial = para.with_name(para.name + ".part")
+    copiado = 0
+    try:
+        with open(de, "rb") as origem, open(parcial, "wb") as destino:
+            while bloco := origem.read(BLOCO_COPIA):
+                destino.write(bloco)
+                copiado += len(bloco)
+                avisar(min(copiado / total, 0.999))
+        shutil.copystat(de, parcial)
+        if parcial.stat().st_size != de.stat().st_size:
+            raise OSError("a cópia ficou com tamanho diferente do original")
+        os.rename(parcial, para)
+    except BaseException:
+        parcial.unlink(missing_ok=True)                   # não deixa arquivo pela metade
+        raise
+    de.unlink()
+    avisar(1.0)
 
 
 def _planejar_lixo(movimentos: list[Movimento], origem: Path, modo: str, limite_mb: float) -> None:

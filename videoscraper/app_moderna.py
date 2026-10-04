@@ -258,6 +258,17 @@ class AppModerna(JanelaModerna):
                     self.atualizar_linha_jf(iid, *STATUS_LEGENDA.get(resultado.status, (resultado.status, None)))
                 elif tipo == "jf_limpar":
                     self.limpar_tabela_jf()
+                elif tipo == "jf_prog":
+                    iid, fracao, status = dado
+                    self.definir_progresso_linha_jf(iid, fracao)
+                    if fracao >= 1.0 and not status.startswith("_"):     # "_legenda": só o progresso
+                        self.atualizar_situacao_jf(iid, *STATUS_MOVIMENTO.get(status, (status, None)))
+                        if status == "erro":
+                            self.definir_progresso_linha_jf(iid, None, "erro")
+                elif tipo == "jf_atual":
+                    self._mostrar_detalhe(int(dado), "Agora")
+                elif tipo == "jf_total":
+                    self.definir_progresso_total(*dado)
                 elif tipo == "status_fim":
                     self._texto_fim = dado
                 elif tipo == "fim":
@@ -310,6 +321,8 @@ class AppModerna(JanelaModerna):
         self._salvar_config()
         assinatura = self._assinatura(o)
 
+        self.definir_progresso_total(None)
+
         def tarefa():
             print(f"\nPré-visualizando ({'séries' if o.modo == 'series' else 'filmes'}): {o.origem} -> {o.destino}")
             movimentos = organizar_pasta(o.origem, o.destino, self._catalogo(o), aplicar=False,
@@ -355,18 +368,41 @@ class AppModerna(JanelaModerna):
 
         def tarefa():
             print(f"\nOrganizando: {o.origem} -> {o.destino}")
+            etapas = 2 if o.legendas else 1
+            andamento = {"total": 0, "feitos": 0, "ultimo": {}}
+
+            def ao_planejar(movimentos):
+                andamento["total"] = sum(m.status == "simulado" for m in movimentos) or 1
+                self.fila.put(("jf_movimentos", movimentos))
+                self.fila.put(("jf_total", (0.0, f"Etapa 1/{etapas} – movendo: 0 de {andamento['total']}")))
+
+            def ao_progresso(i, m, fracao):
+                # avisa a janela só quando a porcentagem muda (milhares de avisos travariam a tela)
+                pct = int(fracao * 100)
+                if andamento["ultimo"].get(i) == pct and fracao not in (0.0, 1.0):
+                    return
+                andamento["ultimo"][i] = pct
+                if fracao == 0.0:
+                    self.fila.put(("jf_atual", i))
+                if fracao >= 1.0:
+                    andamento["feitos"] += 1
+                    print(m)
+                self.fila.put(("jf_prog", (str(i), fracao, m.status if fracao >= 1.0 else "simulado")))
+                feitos, total = andamento["feitos"], andamento["total"]
+                geral = (feitos + (0 if fracao >= 1.0 else fracao)) / total
+                self.fila.put(("jf_total", (geral, f"Etapa 1/{etapas} – movendo: {feitos} de {total} "
+                                                   f"({int(geral * 100)}%)")))
+
             movimentos = organizar_pasta(o.origem, o.destino, self._catalogo(o), aplicar=True,
                                          incluir_tmdbid=o.incluir_tmdbid, exigir_catalogo=o.exigir_catalogo,
-                                         modo=o.modo, limpar_lixo=o.limpar_lixo)
-            for m in movimentos:
-                print(m)
-            self.fila.put(("jf_movimentos", movimentos))
+                                         modo=o.modo, limpar_lixo=o.limpar_lixo,
+                                         ao_planejar=ao_planejar, ao_progresso=ao_progresso)
             movidos = [(i, m) for i, m in enumerate(movimentos) if m.status == "movido"]
             legendas = 0
             if o.legendas and movidos:
                 print("\nBaixando legendas...")
                 with self._provedores(o) as provedores:
-                    for i, m in movidos:
+                    for k, (i, m) in enumerate(movidos, 1):
                         if self.evento_parar.is_set():
                             print("Legendas interrompidas.")
                             break
@@ -374,7 +410,11 @@ class AppModerna(JanelaModerna):
                         print(resultado)
                         legendas += resultado.status == "baixada"
                         self.fila.put(("jf_legenda", (str(i), resultado)))
+                        self.fila.put(("jf_total", (k / len(movidos), f"Etapa 2/2 – legendas: {k} de "
+                                                                      f"{len(movidos)} ({k * 100 // len(movidos)}%)")))
             erros = sum(m.status == "erro" for m in movimentos)
+            self.fila.put(("jf_total", (1.0, f"Concluído: {len(movidos)} movido(s), {legendas} legenda(s), "
+                                             f"{erros} erro(s)")))
             self.fila.put(("status_fim", f"Organizado: {len(movidos)} movido(s), {legendas} legenda(s)."))
             self.fila.put(("msg", ("Organização concluída",
                                    f"Movidos: {len(movidos)}\nLegendas baixadas: {legendas}\nCom erro: {erros}\n\n"
@@ -409,10 +449,18 @@ class AppModerna(JanelaModerna):
                 funcao = baixar_legendas_biblioteca
             self.fila.put(("jf_alvos", linhas))
             print(f"\nProcurando legendas para {len(alvos)} item(ns) em {destino}")
+            total = len(alvos) or 1
+            self.fila.put(("jf_total", (0.0, f"Legendas: 0 de {len(alvos)}")))
+
+            def ao_terminar(i, r):
+                self.fila.put(("jf_legenda", (str(i), r)))
+                self.fila.put(("jf_prog", (str(i), 1.0, "_legenda")))
+                self.fila.put(("jf_total", ((i + 1) / total, f"Legendas: {i + 1} de {len(alvos)} "
+                                                             f"({(i + 1) * 100 // total}%)")))
+
             with self._provedores(o) as provedores:
                 resultados = funcao(destino, provedores, o.idioma, o.sobrescrever, catalogo=self._catalogo(o),
-                                    ao_terminar=lambda i, r: self.fila.put(("jf_legenda", (str(i), r))),
-                                    parar=self.evento_parar.is_set)
+                                    ao_terminar=ao_terminar, parar=self.evento_parar.is_set)
             baixadas = sum(r.status == "baixada" for r in resultados)
             self.fila.put(("status_fim", f"Legendas: {baixadas} baixada(s) de {len(alvos)} item(ns)."))
 
@@ -516,6 +564,25 @@ class AppModerna(JanelaModerna):
         except (ErroLegenda, ErroCatalogo) as erro:
             return ResultadoLegenda(m.destino.parent, "erro", detalhe=str(erro))
 
+    def ao_selecionar_jf(self) -> None:
+        ids = self.tabela_jf.selection()
+        if ids and self._movimentos_previa:
+            self._mostrar_detalhe(int(ids[0]), "Selecionado")
+
+    def _mostrar_detalhe(self, indice: int, titulo: str) -> None:
+        if not 0 <= indice < len(self._movimentos_previa):
+            return
+        m = self._movimentos_previa[indice]
+        junto = ", ".join(f"{a.name} → {b.name}" for a, b in (m.acompanhantes or []))
+        apagar = ", ".join(a.name for a in (m.apagar or []))
+        extras = "   |   ".join(t for t in (f"Vai junto: {junto}" if junto else "",
+                                            f"Apagar: {apagar}" if apagar else "",
+                                            m.detalhe if m.status != "simulado" else "") if t)
+        self.mostrar_detalhe_jf(
+            f"Antes → Depois  ({titulo}: #{indice + 1})", str(m.origem.parent), m.origem.name,
+            str(m.destino.parent) if m.destino else "", m.destino.name if m.destino else "(fica onde está)",
+            extras)
+
     def _mostrar_movimentos(self, movimentos) -> None:
         self._movimentos_previa = list(movimentos)
         self.limpar_tabela_jf()
@@ -527,7 +594,8 @@ class AppModerna(JanelaModerna):
             novo = m.destino.name if m.destino else f"({m.detalhe})"
             if m.destino and m.resumo_extras and m.status in ("simulado", "movido"):
                 novo += f"   ({m.resumo_extras})"
-            self.adicionar_linha_jf(str(i), i + 1, texto, cor, m.origem.name, novo)
+            progresso = "" if m.status == "simulado" else "—"      # "—": não vai mexer
+            self.adicionar_linha_jf(str(i), i + 1, texto, cor, m.origem.name, novo, "", progresso)
 
     # --- configurações (pastas e opções lembradas entre execuções)
     def _carregar_config(self) -> None:

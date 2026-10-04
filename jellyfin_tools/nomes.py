@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from functools import lru_cache
 from datetime import date
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -71,12 +72,15 @@ def sem_acentos(texto: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", texto) if unicodedata.category(c) != "Mn")
 
 
+# @lru_cache: o mesmo nome é lido muitas vezes (um por vídeo da pasta); a resposta fica guardada.
+@lru_cache(maxsize=65536)
 def normalizar(texto: str) -> str:
     """'O Poderoso Chefão!' -> 'o poderoso chefao' (para comparar textos)."""
     texto = sem_acentos(texto).lower()
     return " ".join(re.sub(r"[^a-z0-9]+", " ", texto).split())
 
 
+@lru_cache(maxsize=65536)
 def similaridade(a: str, b: str) -> float:
     """0.0 (nada a ver) a 1.0 (iguais), ignorando acentos, pontuação e maiúsculas."""
     return SequenceMatcher(None, normalizar(a), normalizar(b)).ratio()
@@ -86,6 +90,7 @@ def eh_video(caminho: Path) -> bool:
     return caminho.suffix.lower() in EXTENSOES_VIDEO
 
 
+@lru_cache(maxsize=65536)
 def extrair_titulo_e_ano(nome_arquivo: str) -> NomeExtraido:
     """'Matrix.1999.1080p.BluRay.x264-VERSAO.mp4' -> NomeExtraido('Matrix', 1999)
        'interestellar_filme_completo_dublado_2014.mkv' -> NomeExtraido('interestellar', 2014)
@@ -186,6 +191,7 @@ _PADROES_EPISODIO = [
 _PADRAO_SO_EPISODIO = re.compile(r"(?<![a-z0-9])(?:epis[oó]dio|episode|ep|e)[ ._-]*(\d{1,3})(?!\d)", re.I)
 
 
+@lru_cache(maxsize=65536)
 def extrair_episodio(nome_arquivo: str) -> EpisodioExtraido | None:
     """'Breaking.Bad.2008.S02E05.720p.mkv' -> EpisodioExtraido('Breaking Bad', 2, 5, 2008)
        'dark_episodio_03_dublado.mp4'     -> EpisodioExtraido('dark', 1, 3, None)

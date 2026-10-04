@@ -347,12 +347,12 @@ class JanelaModerna(ctk.CTk):
         corpo.grid_rowconfigure(1, weight=2)
         return corpo
 
-    def _lateral(self, corpo) -> ctk.CTkScrollableFrame:
+    def _lateral(self, corpo, linhas: int = 2) -> ctk.CTkScrollableFrame:
         lateral = ctk.CTkScrollableFrame(corpo, width=320, fg_color=Tema.CARTAO, corner_radius=Tema.RAIO,
                                          border_width=1, border_color=Tema.CARTAO_BORDA,
                                          scrollbar_button_color=Tema.CARTAO_BORDA,
                                          scrollbar_button_hover_color=Tema.CAMPO_BORDA)
-        lateral.grid(row=0, column=0, rowspan=2, sticky="nsw", padx=(0, 14))
+        lateral.grid(row=0, column=0, rowspan=linhas, sticky="nsw", padx=(0, 14))
         return lateral
 
     def _checkbox(self, master, texto, var, comando=None) -> ctk.CTkCheckBox:
@@ -482,9 +482,9 @@ class JanelaModerna(ctk.CTk):
         estilo.layout("Moderno.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])   # sem borda
 
     # 5. console de logs (um por aba; escrever_log escreve em todos)
-    def _criar_console(self, corpo) -> ctk.CTkTextbox:
+    def _criar_console(self, corpo, linha: int = 1) -> ctk.CTkTextbox:
         cartao = self._cartao(corpo)
-        cartao.grid(row=1, column=1, sticky="nsew")
+        cartao.grid(row=linha, column=1, sticky="nsew")
         cartao.grid_columnconfigure(0, weight=1)
         cartao.grid_rowconfigure(1, weight=1)
         topo = ctk.CTkFrame(cartao, fg_color="transparent")
@@ -493,6 +493,14 @@ class JanelaModerna(ctk.CTk):
             ctk.CTkFrame(topo, width=10, height=10, corner_radius=5, fg_color=cor).pack(side="left", padx=(0, 6))
         self._rotulo(topo, "O que está acontecendo", suave=False, fonte=self.f_secao).pack(side="left", padx=(8, 0))
         self._botao(topo, "Limpar", self.limpar_log, "fantasma", largura=70).pack(side="right")
+        # progresso total (aparece só durante tarefas longas)
+        barra = ctk.CTkProgressBar(topo, width=180, height=8, corner_radius=4, mode="determinate",
+                                   fg_color=Tema.SECUNDARIA, progress_color=Tema.SUCESSO)
+        rotulo = ctk.CTkLabel(topo, text="", font=self.f_rotulo, text_color=Tema.TEXTO_SUAVE)
+        rotulo.pack(side="right", padx=(0, 10))
+        if not hasattr(self, "_progresso_total"):
+            self._progresso_total = []
+        self._progresso_total.append((rotulo, barra))
 
         console = ctk.CTkTextbox(cartao, fg_color=Tema.CONSOLE, text_color="#c9d1e3", font=self.f_mono,
                                  corner_radius=Tema.RAIO_CONTROLE, border_width=1, border_color=Tema.CARTAO_BORDA,
@@ -510,7 +518,7 @@ class JanelaModerna(ctk.CTk):
     # ------------------------------------------------------------------ aba Jellyfin
     COLUNAS_JF = (("n", "#", 44, False), ("status", "Situação", 150, False),
                   ("atual", "Arquivo atual", 210, True), ("novo", "Novo nome (a pasta leva o mesmo nome)", 300, True),
-                  ("legenda", "Legenda", 140, False))
+                  ("legenda", "Legenda", 130, False), ("progresso", "Progresso", 150, False))
     FONTES_LEGENDA = ("Site de demonstração", "OpenSubtitles (API)", "Site de busca (URL)")
     ROTULOS_DESTINO = {"Filmes": "Biblioteca de Filmes do Jellyfin:", "Séries": "Biblioteca de Séries do Jellyfin:"}
 
@@ -527,7 +535,9 @@ class JanelaModerna(ctk.CTk):
         self.bt_parar_jf.pack(side="right")
 
         corpo = self._corpo(aba, linha=1)
-        lateral = self._lateral(corpo)
+        corpo.grid_rowconfigure(1, weight=0)          # painel Antes -> Depois: altura fixa
+        corpo.grid_rowconfigure(2, weight=2)
+        lateral = self._lateral(corpo, linhas=3)
         p = dict(padx=18)
 
         self._rotulo(lateral, "Tipo de conteúdo", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(12, 6), **p)
@@ -606,7 +616,42 @@ class JanelaModerna(ctk.CTk):
         self.bt_abrir_biblioteca = self._botao(faixa, "Abrir pasta da biblioteca", self.ao_abrir_biblioteca,
                                                "fantasma")
         self.bt_abrir_biblioteca.pack(side="left")
-        self._criar_console(corpo)
+        self.tabela_jf.bind("<<TreeviewSelect>>", lambda e: self.ao_selecionar_jf())
+        self._montar_detalhe_jf(corpo)
+        self._criar_console(corpo, linha=2)
+
+    def _montar_detalhe_jf(self, corpo) -> None:
+        """Cartão 'Antes -> Depois' com a pasta e o arquivo, como estão e como vão ficar."""
+        cartao = self._cartao(corpo)
+        cartao.grid(row=1, column=1, sticky="ew", pady=(0, 14))
+        cartao.grid_columnconfigure((1, 2), weight=1, uniform="d")
+        self.lb_detalhe_titulo = ctk.CTkLabel(cartao, text="Antes → Depois  (clique numa linha da tabela)",
+                                              font=self.f_secao, text_color=Tema.TEXTO, anchor="w")
+        self.lb_detalhe_titulo.grid(row=0, column=0, columnspan=3, sticky="w", padx=18, pady=(12, 6))
+        for coluna, texto in ((1, "Pasta"), (2, "Arquivo")):
+            self._rotulo(cartao, texto, fonte=ctk.CTkFont(Tema.FAMILIA, 11, "bold")).grid(
+                row=1, column=coluna, sticky="w", padx=(0, 8))
+        self.var_antes_pasta, self.var_antes_arquivo = tk.StringVar(), tk.StringVar()
+        self.var_depois_pasta, self.var_depois_arquivo = tk.StringVar(), tk.StringVar()
+        for linha, (rotulo, cor, var_p, var_a) in enumerate(
+                (("Antes", Tema.TEXTO_SUAVE, self.var_antes_pasta, self.var_antes_arquivo),
+                 ("Depois", Tema.SUCESSO, self.var_depois_pasta, self.var_depois_arquivo)), start=2):
+            ctk.CTkLabel(cartao, text=rotulo, font=self.f_botao, text_color=cor, width=60, anchor="w").grid(
+                row=linha, column=0, sticky="w", padx=(18, 8), pady=3)
+            for coluna, var in ((1, var_p), (2, var_a)):
+                self._campo_leitura(cartao, var).grid(row=linha, column=coluna, sticky="ew", padx=(0, 8), pady=3)
+        self.lb_detalhe_extras = ctk.CTkLabel(cartao, text="", font=self.f_rotulo, text_color=Tema.TEXTO_SUAVE,
+                                              anchor="w", justify="left", wraplength=900)
+        self.lb_detalhe_extras.grid(row=4, column=0, columnspan=3, sticky="w", padx=18, pady=(4, 12))
+
+    def _campo_leitura(self, master, var) -> ctk.CTkEntry:
+        """Campo só para ler (dá para selecionar e copiar, mas não editar)."""
+        campo = ctk.CTkEntry(master, textvariable=var, height=32, corner_radius=8, border_width=1,
+                             fg_color=Tema.CAMPO, border_color=Tema.CAMPO_BORDA, text_color=Tema.TEXTO,
+                             font=self.f_rotulo)
+        navegacao = ("Left", "Right", "Home", "End")
+        campo.bind("<Key>", lambda e: None if e.keysym in navegacao or (e.state & 0x4) else "break")  # 0x4 = Ctrl
+        return campo
 
     def _campo_pasta(self, master, rotulo: str, var: tk.StringVar, dica: str) -> ctk.CTkLabel:
         lb = self._rotulo(master, rotulo)
@@ -718,14 +763,15 @@ class JanelaModerna(ctk.CTk):
         self._atualizar_contador(self.tabela_jf)
 
     def adicionar_linha_jf(self, iid: str, numero: int, situacao: str, tipo: str | None,
-                           atual: str, novo: str, legenda: str = "") -> None:
+                           atual: str, novo: str, legenda: str = "", progresso: str = "") -> None:
         """tipo: 'ok', 'erro', 'pulado' ou None (linha neutra)."""
         if tipo:
             situacao = f"{self.SIMBOLO_SITUACAO[tipo]}  {situacao}"
             tags = (tipo,)
         else:
             tags = ("par" if len(self.tabela_jf.get_children()) % 2 == 0 else "impar",)
-        self.tabela_jf.insert("", "end", iid=iid, values=(numero, situacao, atual, novo, legenda), tags=tags)
+        self.tabela_jf.insert("", "end", iid=iid, values=(numero, situacao, atual, novo, legenda, progresso),
+                              tags=tags)
         self._atualizar_contador(self.tabela_jf)
 
     def atualizar_linha_jf(self, iid: str, legenda: str | None = None, legenda_tipo: str | None = None) -> None:
@@ -737,6 +783,51 @@ class JanelaModerna(ctk.CTk):
             valores[4] = f"{simbolo}  {legenda}" if simbolo else legenda
         self.tabela_jf.item(iid, values=valores)
         self.tabela_jf.see(iid)
+
+    @staticmethod
+    def barra_texto(fracao: float) -> str:
+        """0.4 -> '████░░░░░░  40%' (barrinha de texto: a tabela não aceita widgets dentro)."""
+        fracao = min(max(fracao, 0.0), 1.0)
+        cheios = int(round(fracao * 10))
+        return "█" * cheios + "░" * (10 - cheios) + f" {int(fracao * 100):3d}%"
+
+    def definir_progresso_linha_jf(self, iid: str, fracao: float | None, texto: str | None = None) -> None:
+        """Atualiza a coluna Progresso de uma linha (fracao None + texto = mostra só o texto)."""
+        if not self.tabela_jf.exists(iid):
+            return
+        valores = list(self.tabela_jf.item(iid, "values"))
+        valores[5] = texto if fracao is None else self.barra_texto(fracao)
+        self.tabela_jf.item(iid, values=valores)
+
+    def atualizar_situacao_jf(self, iid: str, texto: str, tipo: str | None) -> None:
+        if not self.tabela_jf.exists(iid):
+            return
+        valores = list(self.tabela_jf.item(iid, "values"))
+        valores[1] = f"{self.SIMBOLO_SITUACAO[tipo]}  {texto}" if tipo else texto
+        tags = (tipo,) if tipo else self.tabela_jf.item(iid, "tags")
+        self.tabela_jf.item(iid, values=valores, tags=tags)
+        self.tabela_jf.see(iid)
+
+    def definir_progresso_total(self, fracao: float | None, texto: str = "") -> None:
+        """Barra e texto de progresso TOTAL no topo dos consoles ('O que está acontecendo')."""
+        for rotulo, barra in self._progresso_total:
+            if fracao is None:
+                rotulo.configure(text="")
+                barra.pack_forget()
+            else:
+                rotulo.configure(text=texto)
+                if not barra.winfo_ismapped():
+                    barra.pack(side="right", padx=(0, 12))
+                barra.set(min(max(fracao, 0.0), 1.0))
+
+    def mostrar_detalhe_jf(self, titulo: str, antes_pasta: str = "", antes_arquivo: str = "",
+                           depois_pasta: str = "", depois_arquivo: str = "", extras: str = "") -> None:
+        """Painel 'Antes → Depois': pasta e arquivo como estão e como vão ficar."""
+        self.lb_detalhe_titulo.configure(text=titulo)
+        for var, valor in ((self.var_antes_pasta, antes_pasta), (self.var_antes_arquivo, antes_arquivo),
+                           (self.var_depois_pasta, depois_pasta), (self.var_depois_arquivo, depois_arquivo)):
+            var.set(valor)
+        self.lb_detalhe_extras.configure(text=extras)
 
     def liberar_organizar(self, sim: bool) -> None:
         """O botão Organizar só funciona depois de uma pré-visualização."""
@@ -910,6 +1001,9 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_abrir_biblioteca(self) -> None:
+        pass
+
+    def ao_selecionar_jf(self) -> None:
         pass
 
 

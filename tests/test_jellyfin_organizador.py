@@ -197,3 +197,36 @@ def test_series_dentro_da_propria_biblioteca(tmp_path):
     assert movs["Dark.S01E02.WEBRip.mkv"].status == "movido"
     assert (series / "Dark (2017)" / "Season 01" / "Dark S01E02.mkv").is_file()
     assert not (series / "baixados dark").exists()
+
+
+# ----------------------------------------------------------------- progresso
+def test_mover_entre_discos_copia_em_blocos_com_progresso(tmp_path, monkeypatch):
+    import jellyfin_tools.organizador as org
+    monkeypatch.setattr(org, "_mesmo_disco", lambda a, b: False)       # finge C: -> E:
+    monkeypatch.setattr(org, "BLOCO_COPIA", 1000)
+    origem = tmp_path / "filme.mkv"
+    dados = bytes(range(256)) * 40                                      # 10.240 bytes = 11 blocos
+    origem.write_bytes(dados)
+    destino = tmp_path / "Filme (2000)" / "Filme (2000).mkv"
+    destino.parent.mkdir()
+    fracoes = []
+    org.mover_com_progresso(origem, destino, fracoes.append)
+    assert destino.read_bytes() == dados and not origem.exists()
+    assert fracoes == sorted(fracoes) and fracoes[-1] == 1.0 and len(fracoes) >= 10
+    assert not list(destino.parent.glob("*.part"))                      # sem sobra de cópia parcial
+    origem.write_bytes(b"x")
+    with pytest.raises(FileExistsError):                                 # nunca sobrescreve
+        org.mover_com_progresso(origem, destino)
+
+
+def test_organizar_avisa_plano_e_andamento(tmp_path):
+    _criar(tmp_path / "o", ["Matrix.1999.mkv", "Cidade.de.Deus.2002.mkv", "sem_ano.mp4"])
+    planos, avisos = [], []
+    movs = organizar_pasta(tmp_path / "o", tmp_path / "F", CatalogoLocal.padrao(), aplicar=True,
+                           ao_planejar=planos.append, ao_progresso=lambda i, m, f: avisos.append((i, f)))
+    assert len(planos) == 1 and len(planos[0]) == 3
+    movidos = [i for i, m in enumerate(movs) if m.status == "movido"]
+    assert sorted({i for i, _ in avisos}) == movidos                   # só quem se move dá aviso
+    for i in movidos:
+        fr = [f for j, f in avisos if j == i]
+        assert fr[0] == 0.0 and fr[-1] == 1.0
