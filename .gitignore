@@ -1,0 +1,5 @@
+.venv/
+videos_baixados/
+__pycache__/
+.pytest_cache/
+*.part
