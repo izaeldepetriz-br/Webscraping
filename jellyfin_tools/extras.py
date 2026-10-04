@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
-from .nomes import eh_video, extrair_episodio, extrair_titulo_e_ano, normalizar, similaridade, tem_site
+from .nomes import eh_video, extrair_episodio, extrair_titulo_e_ano, normalizar, similaridade, sites_no_texto, tem_site
 
 EXTENSOES_LEGENDA = {".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt"}
 EXTENSOES_IMAGEM = {".jpg", ".jpeg", ".png", ".webp"}
@@ -64,8 +64,17 @@ def _palavras(arquivo: Path) -> set[str]:
 
 
 def parece_propaganda(arquivo: Path) -> bool:
-    """Nome com site (www., .tv, .com) ou palavras típicas ("Leia", "Visite", "trailer"...)."""
-    return tem_site(arquivo.stem) or bool(_palavras(arquivo) & PALAVRAS_PROPAGANDA)
+    """Nome com site (www., .tv, .com) ou palavras típicas ("Leia", "Visite", "trailer"...), ou só o
+    nome do site que aparece nos outros arquivos da pasta ('BLUDV.mp4' ao lado de '...WWW.BLUDV.COM (75).mkv')."""
+    return tem_site(arquivo.stem) or bool(_palavras(arquivo) & PALAVRAS_PROPAGANDA) or _nome_do_site_vizinho(arquivo)
+
+
+def _nome_do_site_vizinho(arquivo: Path) -> bool:
+    palavra = normalizar(arquivo.stem)
+    if len(palavra) < 4 or " " in palavra:
+        return False
+    return any(outro != arquivo and any(palavra in normalizar(site).split() for site in sites_no_texto(outro.name))
+               for outro in _arquivos(arquivo.parent))
 
 
 # ----------------------------------------------------------------- cache de pastas

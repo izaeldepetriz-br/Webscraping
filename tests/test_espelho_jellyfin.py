@@ -356,3 +356,16 @@ def test_script_lista_e_remove_espelhamento(tmp_path, monkeypatch):
     assert script.main(["--desfazer-remocao-espelhos"]) == 0
     assert (filmes / "Metropolis (1927)" / "Metropolis (1927).strm").exists()
     assert script.main(["--remover-espelhos", "não existe"]) == 1
+
+
+def test_bibliotecas_uma_dentro_da_outra_nao_repetem_o_espelho(tmp_path):
+    """Séries = 'Series_Organizadas' e Filmes = 'Series_Organizadas/Animes': o .strm aparecia 2 vezes."""
+    from jellyfin_tools.espelho import espelhos_da_biblioteca
+    series = tmp_path / "Series_Organizadas"
+    filmes = series / "Animes"
+    pasta = filmes / "ThunderCats - Exodus (1985)"
+    pasta.mkdir(parents=True)
+    (pasta / "ThunderCats - Exodus (1985).strm").write_text("https://archive.org/x.avi\n", encoding="utf-8")
+    achados = espelhos_da_biblioteca(filmes, series)
+    assert [(raiz, a.name) for raiz, a in achados] == [(filmes, "ThunderCats - Exodus (1985).strm")]
+    assert len(espelhos_da_biblioteca(series, filmes)) == 1

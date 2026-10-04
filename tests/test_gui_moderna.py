@@ -1200,3 +1200,54 @@ def test_anime_numerado_no_modo_filmes_oferece_series_na_pasta_certa(app, tmp_pa
     assert f"Biblioteca de Séries: {animes}" in texto and "pasta da própria série" in texto
     assert app._modo_atual == "Séries" and app.var_jf_destino.get() == str(animes)
     assert sorted(l[3] for l in _linhas_jf(app)) == [f"Samurai X S01E0{n}.avi" for n in (1, 2, 3)]
+
+
+def test_totais_nos_filtros_e_conferir_espelhos_com_filtro_desmarcado(app, tmp_path, api_falsa):
+    app.mostrar_aba("Jellyfin")
+    for i, categoria in enumerate(("mover", "nao_identificado", "nao_identificado", "ignorado")):
+        app.adicionar_linha_jf(str(i), i + 1, categoria, None, f"a{i}.mkv", "", categoria=categoria)
+    app.update()
+    time.sleep(0.2)
+    app.update()
+    textos = {c: app.checks_filtro_jf[c].cget("text") for c in ("mover", "nao_identificado", "movido")}
+    assert textos == {"mover": "Vai mover (1)", "nao_identificado": "Não identificado (2)", "movido": "Movido (0)"}
+    for chave in ("mover", "movido", "organizado"):                 # como na imagem: só pendências
+        app.vars_filtro_jf[chave].set(False)
+    app.aplicar_filtro_jf()
+    assert len(app.tabela_jf.get_children()) == 3
+
+    api_falsa.rotas["/ok.mp4"] = lambda q: (206, b"x", {"Content-Type": "video/mp4", "Accept-Ranges": "bytes"})
+    filmes = tmp_path / "Filmes"
+    (filmes / "Bom (2000)").mkdir(parents=True)
+    (filmes / "Bom (2000)" / "Bom (2000).strm").write_text(api_falsa.base + "/ok.mp4\n", encoding="utf-8")
+    app.var_jf_destino.set(str(filmes))
+    import jellyfin_tools.espelho as espelho
+    original = espelho.verificar_links
+    espelho.verificar_links = lambda urls, **k: original(urls, **{**k, "respeitar_robots": False})
+    try:
+        app.ao_conferir_espelhos()
+        esperar(app)
+    finally:
+        espelho.verificar_links = original
+    linhas = _linhas_jf(app)
+    assert len(linhas) == 1 and "funcionando" in linhas[0][1]        # antes: "0 de 1", tela vazia
+    assert all(v.get() for v in app.vars_filtro_jf.values())
+
+
+def test_selecionar_todos_e_so_filmes_e_series_na_aba_videos(app):
+    app.mostrar_aba("Vídeos")
+    for i, tipo in enumerate(("Filme", "—", "Série")):
+        app.adicionar_video(str(i), i + 1, "", f"Video {i}", "API", f"https://x/{i}.mp4", tipo)
+    app.selecionar_filmes_e_series()
+    app.update()
+    assert app.selecionados() == ["0", "2"] and app.lb_selecao.cget("text") == "2 de 3 selecionado(s)"
+    app.tabela.focus_force()
+    app.update()
+    app.tabela.event_generate("<Control-a>")                             # Ctrl+A na lista
+    app.update()
+    assert len(app.selecionados()) == 3
+    app.limpar_selecao()
+    app.update()
+    assert "Ctrl+clique" in app.lb_selecao.cget("text")
+    app.bt_selecionar_todos.invoke()
+    assert len(app.selecionados()) == 3

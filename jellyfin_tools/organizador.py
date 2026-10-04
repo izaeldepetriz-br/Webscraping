@@ -30,8 +30,9 @@ from pathlib import Path
 from .catalogo import Catalogo, ErroCatalogo, Filme
 from .extras import (ARTES, LIMITE_TRAILER_MB, _arquivos, eh_propaganda_pequena, eh_trailer, imagem_do_video, limpar_cache,
                      lixo_da_pasta, marcar_repetidos, planejar_extras, tipo_de_arte)
-from .nomes import (eh_video, eh_video_da_biblioteca, extrair_episodio, qualidade, extrair_titulo_e_ano, formatar_titulo, marca_de_episodio,
-                    nome_episodio_jellyfin, nome_jellyfin, normalizar, pasta_temporada)
+from .nomes import (EpisodioExtraido, eh_video, eh_video_da_biblioteca, extrair_episodio, qualidade, extrair_titulo_e_ano,
+                    formatar_titulo, marca_de_episodio, nome_episodio_jellyfin, nome_jellyfin, normalizar,
+                    numeros_sem_serie, pasta_temporada, serie_da_pasta)
 
 PASTA_LOGS = ".organizador"
 MODOS = ("filmes", "series")
@@ -142,6 +143,23 @@ def _finalizar(video: Path, pasta: Path, nome_arquivo: str, detalhe: str, filme,
     return mov
 
 
+def episodio_do_video(video: Path, raiz: Path | None = None) -> EpisodioExtraido | None:
+    """Episódio pelo nome do arquivo; se o arquivo não traz o nome da série ('Temp 01 - Epi 04 -
+    Socos Mortais.mkv', '04-01 Saída 9B.mkv'), a série vem da pasta ('Apenas um Show - 1a Temporada'
+    -> 'Apenas um Show') ou da de cima, sem passar da pasta de origem."""
+    if ep := extrair_episodio(video.name):
+        return ep
+    if not (numeros := numeros_sem_serie(video.name)):
+        return None
+    temporada, episodio, absoluto = numeros
+    for pasta in (video.parent, video.parent.parent):
+        if achado := serie_da_pasta(pasta.name):
+            return EpisodioExtraido(achado[0], temporada, episodio, achado[1], absoluto)
+        if raiz is not None and pasta.resolve() == Path(raiz).resolve():
+            break
+    return None
+
+
 def _episodio_em_sequencia(video: Path):
     """Só o número, sem ano ('Samurai X - 01 Dual Audio.avi') E outros arquivos da mesma pasta com o
     mesmo nome e outro número: é episódio de anime, não filme. Um 'Rocky 2.avi' sozinho não conta."""
@@ -170,6 +188,8 @@ def planejar(video: Path, pasta_filmes: Path, catalogo: Catalogo | None = None,
     'Dark S01E01 - Segredos.mkv'. Sem o nome, fica só o número ('Dark S01E01.mkv')."""
     if "sample" in normalizar(video.stem).split():
         return Movimento(video, None, "ignorado", "arquivo de amostra (sample)")
+    if eh_propaganda_pequena(video, limite_mb):          # 'BLUDV.mp4' junto dos episódios do site BLUDV
+        return Movimento(video, None, "ignorado", "propaganda do site (não é filme nem episódio)")
     if modo == "series":
         return _planejar_episodio(video, pasta_filmes, catalogo, incluir_tmdbid, exigir_catalogo, raiz, limite_mb,
                                   nomes_episodios)
@@ -200,7 +220,7 @@ def planejar(video: Path, pasta_filmes: Path, catalogo: Catalogo | None = None,
 def _planejar_episodio(video: Path, pasta_series: Path, catalogo: Catalogo | None,
                        incluir_tmdbid: bool, exigir_catalogo: bool, raiz: Path | None = None,
                        limite_mb: float = LIMITE_TRAILER_MB, nomes_episodios: bool = False) -> Movimento:
-    ep = extrair_episodio(video.name)
+    ep = episodio_do_video(video, raiz)
     if not ep:
         return Movimento(video, None, "nao_identificado",
                          "não achei temporada/episódio no nome (ex.: S01E02, 1x02, Episodio 3)")
@@ -253,7 +273,7 @@ def _consultas(videos: list[Path], modo: str) -> list[tuple[str, int | None, str
         if "sample" in normalizar(v.stem).split():
             continue
         if modo == "series":
-            ep = extrair_episodio(v.name)
+            ep = episodio_do_video(v)
             if ep:
                 if not ep.ano and (dica := _ano_da_pasta(v)):
                     consultas.append((ep.serie, dica, "serie"))           # a busca com a dica de ano
@@ -268,7 +288,7 @@ def _temporadas(videos: list[Path], catalogo: Catalogo) -> list[tuple[Filme, int
     """(série, temporada) de cada episódio, para buscar os nomes de uma temporada inteira de uma vez."""
     pedidos = []
     for v in videos:
-        ep = extrair_episodio(v.name)
+        ep = episodio_do_video(v)
         if ep:
             serie, _ = _achar_serie(catalogo, ep, v)                          # já está no cache
             if serie:
@@ -481,7 +501,7 @@ def eh_episodio_de_serie(video: Path) -> bool:
     desde que não tenha ano de filme ('Rocky.II.1979' continua filme)."""
     if marca_de_episodio(video.name):
         return True
-    return extrair_episodio(video.name) is not None and extrair_titulo_e_ano(video.name).ano is None
+    return episodio_do_video(video) is not None and extrair_titulo_e_ano(video.name).ano is None
 
 
 def organizar_misto(origem: str | Path, pasta_filmes: str | Path | None, pasta_series: str | Path | None,

@@ -204,6 +204,15 @@ Outras opções da aba Jellyfin:
 - **Desfazer o espelho:** "Desfazer última" também vale para o espelho: apaga os `.strm` criados (com a
   legenda/miniatura de mesmo nome e as pastas que o espelho criou, se não tiverem vídeo) e recoloca
   os `.strm` que o "Conferir espelhos" removeu.
+- **Mais padrões de nome de episódio:** número entre parênteses (`Pica-Pau.WEB.DUB-WWW.BLUDV.COM (75).mkv` →
+  `Pica Pau S01E75`), temporada.episódio com pontos (`Regular.Show.03.15-by-fulano.avi` → S03E15),
+  `S012E20` (→ S12E20) e arquivo sem o nome da série (`Temp 01 - Epi 04 - Socos Mortais.mkv`,
+  `04-01 Saída 9B.mkv`): a série vem da pasta (`Apenas um Show - 1a Temporada` → "Apenas um Show"; pastas
+  como "Desenhos", "Animes" e "Season 01" não contam). Um `BLUDV.mp4` pequeno ao lado de arquivos
+  `...WWW.BLUDV.COM...` fica como "ignorado: propaganda do site".
+- **Totais nos filtros:** cada caixa de "Mostrar" diz quantos arquivos tem ("Não identificado (540)"), e
+  "Mostrar todos" marca todas de novo. Os resultados de "Conferir espelhos", "Relatório" e "Completar
+  biblioteca" sempre aparecem inteiros (a lista não fica vazia por causa de um filtro da prévia).
 - **Porcentagem na pré-visualização:** o rodapé mostra "Pré-visualizando... 45% · Consultando o
   TMDB: 75 de 166" e a barra acompanha.
 
@@ -226,7 +235,9 @@ primeira falha (antes esperava o tempo limite em cada filme).
 
 Na aba **Vídeos**, a tabela mostra o **Tipo** de cada link (Filme, Série ou "—") e a **Licença**
 informada pelo site (no archive.org: "Domínio público", "CC BY 4.0"...; "—" = não informada).
-O botão **Espelhar no Jellyfin (.strm)...** (nos selecionados; sem seleção, em todos):
+O botão **Espelhar no Jellyfin (.strm)...** (nos selecionados; sem seleção, em todos). Para escolher, use
+**Selecionar todos**, **Só filmes e séries** (o que dá para espelhar) ou **Limpar seleção**, no topo da lista,
+ou Ctrl+clique / Shift+clique / Ctrl+A; o topo mostra "3 de 273 selecionado(s)":
 
 1. separa filmes (título com ano) de episódios (S01E02, 1x02...); o que não tem nenhum dos dois fica de fora;
 2. cria um arquivo `.strm` com o link, com o mesmo nome que o organizador daria (catálogo/TMDB):

@@ -1,4 +1,6 @@
 """Modo séries: Séries/Nome (Ano)/Season 01/Nome S01E02.ext e legendas por episódio."""
+from pathlib import Path
+
 import pytest
 
 from jellyfin_tools import (CatalogoLocal, CatalogoTMDB, ConfigSite, ProvedorOpenSubtitles, ProvedorSiteHTML,
@@ -290,3 +292,31 @@ def test_anime_com_numeracao_continua_no_modo_filmes_avisa_que_e_serie(tmp_path)
         f"{DETALHE_EPISODIO} (episódio {n:02d}, numeração contínua): use o modo Séries" for n in (1, 2, 3)]
     rocky = organizar_pasta(sozinho, tmp_path / "Filmes", CatalogoLocal.padrao())
     assert rocky[0].status == "nao_identificado" and not rocky[0].detalhe.startswith(DETALHE_EPISODIO)
+
+
+def test_padroes_reais_pica_pau_apenas_um_show_supernatural(tmp_path):
+    """Nomes reais de uma biblioteca: número entre parênteses, temporada.episódio com pontos,
+    série só na pasta, S012E20 e um 'BLUDV.mp4' de propaganda."""
+    raiz = tmp_path / "Series_Organizadas"
+    arquivos = {
+        "Desenhos/Pica-Pau/Pica-Pau.WEB.DUB-WWW.BLUDV.COM (75).mkv": "Pica Pau/Season 01/Pica Pau S01E75.mkv",
+        "Desenhos/Pica-Pau/Pica-Pau.WEB.DUB-WWW.BLUDV.COM (8).mkv": "Pica Pau/Season 01/Pica Pau S01E08.mkv",
+        "Desenhos/Apenas um Show/Apenas um show s03e1-19/Regular.Show.03.15-by-Rogerio_ruts.avi":
+            "Regular Show/Season 03/Regular Show S03E15.avi",
+        "Desenhos/Apenas um Show/Apenas um Show - 1a Temporada/Temp 01 - Epi 04 - Socos Mortais.mkv":
+            "Apenas Um Show/Season 01/Apenas Um Show S01E04.mkv",
+        "Desenhos/Apenas um Show/Temporada 4/04-01 Saida 9B - HD 720p.mkv":
+            "Apenas Um Show/Season 04/Apenas Um Show S04E01.mkv",
+        "Supernatural/Supernatural S012E20 - Galhos e Fios e Tasha Banes Dublado.mkv":
+            "Supernatural/Season 12/Supernatural S12E20.mkv",
+    }
+    for relativo in arquivos:
+        (raiz / relativo).parent.mkdir(parents=True, exist_ok=True)
+        (raiz / relativo).write_bytes(b"v")
+    (raiz / "Desenhos/Pica-Pau/BLUDV.mp4").write_bytes(b"propaganda")
+    movs = {m.origem.name: m for m in organizar_pasta(raiz, raiz, None, modo="series")}
+    for relativo, esperado in arquivos.items():
+        m = movs[Path(relativo).name]
+        assert m.destino is not None, (relativo, m.detalhe)
+        assert m.destino.relative_to(raiz).as_posix().lower() == esperado.lower(), relativo
+    assert movs["BLUDV.mp4"].status == "ignorado" and "propaganda" in movs["BLUDV.mp4"].detalhe

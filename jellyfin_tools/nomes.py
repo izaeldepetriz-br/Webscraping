@@ -43,6 +43,11 @@ _RE_SITE = re.compile(
 _RE_AUDIO = re.compile(r"(?<![\d.])(?:ddp?|e?ac3|aac|dts)?[ ._-]?[257][ .][01](?![\d])", re.IGNORECASE)
 
 
+def sites_no_texto(texto: str) -> list[str]:
+    """'Pica-Pau.WEB.DUB-WWW.BLUDV.COM (75)' -> ['WWW.BLUDV.COM']."""
+    return [m.group() for m in _RE_SITE.finditer(texto)]
+
+
 def tem_site(texto: str) -> bool:
     """True se o texto tem cara de propaganda de site (www., .com, .tv...)."""
     return bool(_RE_SITE.search(texto))
@@ -189,14 +194,20 @@ class EpisodioExtraido(NamedTuple):
 
 # Do mais confiável para o menos confiável. Cada um devolve (temporada, episódio).
 _PADROES_EPISODIO = [
-    re.compile(r"(?<![a-z0-9])s(\d{1,2})[ ._-]*e(\d{1,3})(?!\d)", re.I),                  # S01E02, s1.e2
+    re.compile(r"(?<![a-z0-9])s0?(\d{1,2})[ ._-]*e(\d{1,3})(?!\d)", re.I),                 # S01E02, s1.e2, S012E20
     re.compile(r"(?<![a-z0-9])(\d{1,2})x(\d{1,3})(?!\d)", re.I),                          # 1x02
     re.compile(r"(?<![a-z0-9])(\d{1,2})x[ ._-]*\([ ._-]*(\d{1,3})[ ._-]*\)", re.I),          # 1x (11)
     re.compile(r"(?:temporada|season|temp)[ ._-]*(\d{1,2})[ ._-]*(?:-[ ._-]*)?"
-               r"(?:epis[oó]dio|episode|ep|e)[ ._-]*(\d{1,3})(?!\d)", re.I),               # Temporada 2 Episodio 4
+               r"(?:epis[oó]dio|episode|epi|ep|e)[ ._-]*(\d{1,3})(?!\d)", re.I),           # Temporada 2 Episodio 4, Temp 01 - Epi 04
 ]
 # Só o número do episódio (temporada 1): "episodio 03", "Ep 3", "E03"
-_PADRAO_SO_EPISODIO = re.compile(r"(?<![a-z0-9])(?:epis[oó]dio|episode|ep|e)[ ._-]*(\d{1,3})(?!\d)", re.I)
+_PADRAO_SO_EPISODIO = re.compile(r"(?<![a-z0-9])(?:epis[oó]dio|episode|epi|ep|e)[ ._-]*(\d{1,3})(?!\d)", re.I)
+# Fracos (só depois dos outros): "Regular.Show.03.15-by-fulano" (temporada.episódio com 2 dígitos, depois
+# do nome) e, sem o nome da série, "04-01 Saída 9B" (no começo do arquivo; a série vem da pasta).
+_PADRAO_PONTO = re.compile(r"(?<=[a-z][ ._])(\d{2})\.(\d{2})(?![\d.])", re.I)
+_PADRAO_INICIO = re.compile(r"^\s*(\d{1,2})[-x](\d{2})(?!\d)(?=[ ._-]+[^\d\s])", re.I)
+# Número entre parênteses no fim: "Pica-Pau.WEB.DUB-WWW.BLUDV.COM (75)"
+_PADRAO_PARENTESES = re.compile(r"\((\d{1,4})\)\s*$")
 
 
 @lru_cache(maxsize=65536)
@@ -227,25 +238,71 @@ def extrair_episodio(nome_arquivo: str) -> EpisodioExtraido | None:
             break
     else:
         m = _PADRAO_SO_EPISODIO.search(base)
-        if not m:
-            return _episodio_absoluto(base)
-        return _montar_episodio(base[:m.start()], 1, int(m.group(1)), absoluto=True)
+        if m:
+            return _montar_episodio(base[:m.start()], 1, int(m.group(1)), absoluto=True)
+        if (m := _PADRAO_PONTO.search(base)) and 1 <= int(m.group(1)) <= 40 and int(m.group(2)) >= 1:
+            return _montar_episodio(base[:m.start()], int(m.group(1)), int(m.group(2)))
+        if (m := _PADRAO_PARENTESES.search(base)) and not 1900 <= int(m.group(1)) <= 2099 and int(m.group(1)):
+            return _montar_episodio(_cortar_qualidade(base[:m.start()]), 1, int(m.group(1)), absoluto=True)
+        return _episodio_absoluto(base)
     return _montar_episodio(base[:m.start()], temporada, episodio)
+
+
+# Pastas que não são nome de série (para não chamar a série de "Desenhos" ou "Season 01").
+PASTAS_GENERICAS = {"series", "serie", "series organizadas", "desenhos", "desenho", "animes", "anime", "downloads",
+                    "download", "torrent", "torrents", "videos", "filmes", "tv", "shows", "novos", "organizadas",
+                    "completo", "completa", "dublado", "legendado", "temporadas", "especiais", "extras"}
+_RE_TEMPORADA_PASTA = re.compile(
+    r"\b\d{1,2}\s*(?:a|ª|º|°)?\s*(?:temporada|temp)\b|\b(?:temporada|season|temp)\s*\d{1,2}\b"
+    r"|\bs\d{1,2}(?:\s*e\d{1,3}(?:\s*-\s*\d{1,3})?)?\b|\bcompleta?\b", re.IGNORECASE)
+
+
+def serie_da_pasta(nome_pasta: str) -> tuple[str, int | None] | None:
+    """'Apenas um Show - 1a Temporada' -> ('Apenas um Show', None); 'Dark (2017)' -> ('Dark', 2017);
+    'Apenas um show s03e1-19' -> ('Apenas um show', None); 'Season 01', 'Desenhos' -> None."""
+    texto = _RE_TEMPORADA_PASTA.sub(" ", _sem_propaganda(nome_pasta))
+    ano = None
+    if m := _RE_ANO.search(texto):
+        ano, texto = int(m.group(1)), texto[:m.start()]
+    nome = _limpar_palavras(texto, True).strip(" -")
+    if not nome or normalizar(nome) in PASTAS_GENERICAS or not re.search(r"[a-zA-Z]", nome):
+        return None
+    return nome, ano
+
+
+def numeros_sem_serie(nome_arquivo: str) -> tuple[int, int, bool] | None:
+    """Temporada e episódio de um arquivo SEM o nome da série: 'Temp 01 - Epi 04 - Socos Mortais.mkv'
+    -> (1, 4, False); '04-01 Saída 9B - HD 720p.mkv' -> (4, 1, False); 'Episodio 05.mkv' -> (1, 5, True).
+    O nome da série vem da pasta (organizador.episodio_do_video)."""
+    base = _RE_SITE.sub(" ", Path(nome_arquivo).stem)
+    for padrao in _PADROES_EPISODIO:
+        if m := padrao.search(base):
+            return int(m.group(1)), int(m.group(2)), False
+    if m := _PADRAO_INICIO.match(base):
+        return int(m.group(1)), int(m.group(2)), False
+    if m := _PADRAO_SO_EPISODIO.match(base.strip(" ._-")):
+        return 1, int(m.group(1)), True
+    return None
 
 
 # Anime: nome + só o número do episódio ("HunterXHunter 01", "Hunter x Hunter - 01 (1080p) [A1B2]",
 # "One.Piece.1071.1080p"). A temporada fica 1 (numeração absoluta, como os animes costumam vir).
-_RE_QUALIDADE = re.compile(r"(?i)[ ._-](?:\d{3,4}p|\d{3,4}x\d{3,4}|x26[45]|h\.?26[45]|hevc|web-?dl|webrip|blu-?ray|bdrip|dvdrip|"
-                           r"hdtv|dual|dublado|legendado|multi)(?![a-z0-9])")
+_RE_QUALIDADE = re.compile(r"(?i)[ ._-](?:\d{3,4}p|\d{3,4}x\d{3,4}|x26[45]|h\.?26[45]|hevc|web-?dl|webrip|web[ ._-]?(?:dub|leg)|blu-?ray|"
+                           r"bdrip|dvdrip|hdtv|dual|dublado|dub|legendado|leg|multi)(?![a-z0-9])")
 _RE_ABSOLUTO = re.compile(r"^(?P<antes>.*[a-zA-Z].*?)[ ._-]+(?:-[ ._-]*)?(?:ep[ ._-]*)?(?P<ep>\d{1,4})(?:v\d)?$",
                           re.IGNORECASE)
+
+
+def _cortar_qualidade(texto: str) -> str:
+    """'Pica-Pau.WEB.DUB-' -> 'Pica-Pau' (tudo depois da 1ª etiqueta de release sai)."""
+    q = _RE_QUALIDADE.search(texto)
+    return texto[:q.start()] if q else texto
 
 
 def _episodio_absoluto(base: str) -> EpisodioExtraido | None:
     limpo = _RE_GRUPO_INICIAL.sub("", base)
     limpo = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", limpo)          # [grupo] (1080p) [CRC]
-    if q := _RE_QUALIDADE.search(limpo):
-        limpo = limpo[:q.start()]
+    limpo = _cortar_qualidade(limpo)
     m = _RE_ABSOLUTO.match(limpo.strip(" ._-"))
     if not m:
         return None

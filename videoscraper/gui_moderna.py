@@ -618,6 +618,24 @@ class JanelaModerna(ctk.CTk):
         self.lb_contador, self.lb_vazio = self._extras_tabela[str(self.tabela)]
         self.tabela.configure(displaycolumns=self.ORDEM_TELA)
         self.tabela.bind("<Double-1>", lambda e: self.ao_abrir_link())
+        # Seleção: um clique = um vídeo; Ctrl+clique = vários; Shift+clique = um intervalo; Ctrl+A = todos
+        topo = self._topos_tabela[str(self.tabela)]
+        estilo = dict(height=26, corner_radius=6, fg_color="transparent", hover_color=Tema.SECUNDARIA_HOVER,
+                      text_color=Tema.PRIMARIA, font=ctk.CTkFont(Tema.FAMILIA, 12))
+        self.bt_limpar_selecao = ctk.CTkButton(topo, text="Limpar seleção", command=self.limpar_selecao,
+                                               width=110, **estilo)
+        self.bt_selecionar_espelhaveis = ctk.CTkButton(topo, text="Só filmes e séries",
+                                                       command=self.selecionar_filmes_e_series, width=130, **estilo)
+        self.bt_selecionar_todos = ctk.CTkButton(topo, text="Selecionar todos", command=self.selecionar_todos,
+                                                 width=120, **estilo)
+        for b in (self.bt_limpar_selecao, self.bt_selecionar_espelhaveis, self.bt_selecionar_todos):
+            b.pack(side="right", padx=(4, 0))
+        self.lb_selecao = ctk.CTkLabel(topo, text="Ctrl+clique ou Shift+clique para escolher vários",
+                                       font=self.f_rotulo, text_color=Tema.TEXTO_FRACO)
+        self.lb_selecao.pack(side="right", padx=(0, 10))
+        self.tabela.bind("<<TreeviewSelect>>", lambda e: self._atualizar_selecao())
+        self.tabela.bind("<Control-a>", lambda e: (self.selecionar_todos(), "break")[1])
+        self.tabela.bind("<Control-A>", lambda e: (self.selecionar_todos(), "break")[1])
         self.bt_abrir_link = self._botao(acoes, "Abrir link", self.ao_abrir_link, "fantasma")
         self.bt_copiar_link = self._botao(acoes, "Copiar link", self.ao_copiar_link, "fantasma")
         self.bt_salvar_lista = self._botao(acoes, "Salvar lista (CSV/JSON/TXT)...", self.ao_salvar_lista, "fantasma")
@@ -929,11 +947,44 @@ class JanelaModerna(ctk.CTk):
         # before=: empacotada ANTES do título, ganha a largura toda embaixo (senão iria para o lado)
         linha.pack(side="bottom", fill="x", pady=(8, 0), before=topo.winfo_children()[0])
         self._rotulo(linha, "Mostrar:", fonte=ctk.CTkFont(Tema.FAMILIA, 11, "bold")).pack(side="left", padx=(0, 8))
+        self.checks_filtro_jf: dict[str, ctk.CTkCheckBox] = {}
+        self._totais_jf: dict[str, int] = {}
+        self._totais_agendados = None
         for chave, texto in self.FILTROS_JF:
-            ctk.CTkCheckBox(linha, text=texto, variable=self.vars_filtro_jf[chave], command=self.aplicar_filtro_jf,
-                            font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_SUAVE, fg_color=Tema.PRIMARIA,
-                            hover_color=Tema.PRIMARIA_HOVER, border_color=Tema.CAMPO_BORDA, checkbox_width=16,
-                            checkbox_height=16, corner_radius=4, border_width=2).pack(side="left", padx=(0, 10))
+            self.checks_filtro_jf[chave] = ctk.CTkCheckBox(
+                linha, text=f"{texto} (0)", variable=self.vars_filtro_jf[chave], command=self.aplicar_filtro_jf,
+                font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_SUAVE, fg_color=Tema.PRIMARIA,
+                hover_color=Tema.PRIMARIA_HOVER, border_color=Tema.CAMPO_BORDA, checkbox_width=16,
+                checkbox_height=16, corner_radius=4, border_width=2)
+            self.checks_filtro_jf[chave].pack(side="left", padx=(0, 10))
+        self.bt_mostrar_todos_jf = ctk.CTkButton(
+            linha, text="Mostrar todos", command=self.mostrar_todos_jf, width=96, height=22, corner_radius=6,
+            fg_color="transparent", hover_color=Tema.SECUNDARIA_HOVER, text_color=Tema.PRIMARIA,
+            font=ctk.CTkFont(Tema.FAMILIA, 11, underline=True))
+        self.bt_mostrar_todos_jf.pack(side="left")
+
+    def mostrar_todos_jf(self) -> None:
+        """Marca todas as caixas do filtro (nada fica escondido)."""
+        for var in self.vars_filtro_jf.values():
+            var.set(True)
+        self.aplicar_filtro_jf()
+
+    def _agendar_totais_jf(self) -> None:
+        """Os totais ao lado de cada filtro ("Não identificado (540)"): recontados uma vez a cada
+        pouco, e não a cada linha (com milhares de linhas, seria lento)."""
+        if self._totais_agendados is None:
+            self._totais_agendados = self.after(120, self._atualizar_totais_jf)
+
+    def _atualizar_totais_jf(self) -> None:
+        self._totais_agendados = None
+        totais = {chave: 0 for chave, _ in self.FILTROS_JF}
+        for categoria in self._categoria_jf.values():
+            if categoria in totais:
+                totais[categoria] += 1
+        for chave, texto in self.FILTROS_JF:
+            if self._totais_jf.get(chave) != totais[chave]:
+                self.checks_filtro_jf[chave].configure(text=f"{texto} ({totais[chave]})")
+        self._totais_jf = totais
 
     def _visivel_jf(self, iid: str) -> bool:
         categoria = self._categoria_jf.get(iid)
@@ -1163,6 +1214,7 @@ class JanelaModerna(ctk.CTk):
         self._ordem_jf.clear()
         self._categoria_jf.clear()
         self._atualizar_contador(self.tabela_jf)
+        self._agendar_totais_jf()
 
     def adicionar_linha_jf(self, iid: str, numero: int, situacao: str, tipo: str | None,
                            atual: str, novo: str, legenda: str = "", progresso: str = "",
@@ -1181,6 +1233,8 @@ class JanelaModerna(ctk.CTk):
         if not self._visivel_jf(iid):
             self.tabela_jf.detach(iid)                 # escondida pelo filtro (continua existindo)
         self._atualizar_contador(self.tabela_jf)
+        if categoria is not None:
+            self._agendar_totais_jf()
 
     def atualizar_linha_jf(self, iid: str, legenda: str | None = None, legenda_tipo: str | None = None) -> None:
         if not self.tabela_jf.exists(iid):
@@ -1218,6 +1272,7 @@ class JanelaModerna(ctk.CTk):
         if categoria is not None and categoria != self._categoria_jf.get(iid):
             estava_visivel = self._visivel_jf(iid)
             self._categoria_jf[iid] = categoria        # ex.: "vai mover" virou "movido"
+            self._agendar_totais_jf()
             if estava_visivel and not self._visivel_jf(iid):
                 self.tabela_jf.detach(iid)             # só esta linha (rápido)
                 self._atualizar_contador(self.tabela_jf)
@@ -1306,6 +1361,7 @@ class JanelaModerna(ctk.CTk):
     def limpar_tabela(self) -> None:
         self.tabela.delete(*self.tabela.get_children())
         self._atualizar_contador(self.tabela)
+        self._atualizar_selecao()
 
     def adicionar_video(self, iid: str, numero: int, situacao: str, titulo: str, origem: str, link: str,
                         conteudo: str = "", licenca: str = "") -> None:
@@ -1324,6 +1380,24 @@ class JanelaModerna(ctk.CTk):
         valores[1] = f"{simbolo}  {texto}" if simbolo else texto
         self.tabela.item(iid, values=valores, tags=(tipo,))
         self.tabela.see(iid)
+
+    def selecionar_todos(self) -> None:
+        self.tabela.selection_set(self.tabela.get_children())
+
+    def selecionar_filmes_e_series(self) -> None:
+        """Só o que dá para espelhar no Jellyfin (Tipo = Filme ou Série; o "—" fica de fora)."""
+        self.tabela.selection_set([i for i in self.tabela.get_children()
+                                   if self.tabela.set(i, "conteudo") in ("Filme", "Série")])
+
+    def limpar_selecao(self) -> None:
+        self.tabela.selection_remove(self.tabela.selection())
+
+    def _atualizar_selecao(self) -> None:
+        quantos = len(self.tabela.selection())
+        self.lb_selecao.configure(
+            text=f"{quantos} de {len(self.tabela.get_children())} selecionado(s)" if quantos
+            else "Ctrl+clique ou Shift+clique para escolher vários",
+            text_color=Tema.TEXTO if quantos else Tema.TEXTO_FRACO)
 
     def selecionados(self) -> list[str]:
         """iids das linhas selecionadas (ou a linha em foco)."""

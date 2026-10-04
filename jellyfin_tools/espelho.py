@@ -310,12 +310,18 @@ def ler_strm(arquivo: Path) -> str:
 
 
 def espelhos_da_biblioteca(*pastas) -> list[tuple[Path, Path]]:
-    """[(raiz da biblioteca, .strm)] de todas as bibliotecas (sem entrar em .organizador)."""
-    achados = []
-    for raiz in dict.fromkeys(Path(p) for p in pastas if p):
-        if raiz.is_dir():
-            achados += [(raiz, a) for a in sorted(raiz.rglob("*.strm")) if PASTA_LOGS not in a.parts]
-    return achados
+    """[(raiz da biblioteca, .strm)] de todas as bibliotecas (sem entrar em .organizador). Se uma
+    biblioteca está dentro da outra (ex.: Séries = 'E:\\Series' e Filmes = 'E:\\Series\\Animes'), cada
+    .strm aparece uma vez só, com a biblioteca mais de dentro."""
+    raizes = [r for r in dict.fromkeys(Path(p) for p in pastas if p) if r.is_dir()]
+    vistos, achados = set(), []
+    for raiz in sorted(raizes, key=lambda r: len(r.resolve().parts), reverse=True):
+        for a in sorted(raiz.rglob("*.strm")):
+            if PASTA_LOGS not in a.parts and (chave := os.path.normcase(str(a.resolve()))) not in vistos:
+                vistos.add(chave)
+                achados.append((raiz, a))
+    ordem = {r: n for n, r in enumerate(raizes)}
+    return sorted(achados, key=lambda ra: (ordem[ra[0]], str(ra[1]).lower()))
 
 
 def conferir_espelhos(*pastas, ao_progresso=None, respeitar_robots: bool = True) -> list[tuple]:

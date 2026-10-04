@@ -358,6 +358,7 @@ class AppModerna(JanelaModerna):
             self.liberar_organizar(quantos > 0)
         elif tipo == "jf_alvos":
             self.limpar_tabela_jf()
+            self.mostrar_todos_jf()                    # lista nova: nada escondido por um filtro antigo
             for i, (atual, novo) in enumerate(dado):
                 self.adicionar_linha_jf(str(i), i + 1, "na biblioteca", None, atual, novo)
         elif tipo == "jf_legenda":
@@ -413,10 +414,12 @@ class AppModerna(JanelaModerna):
                 self._preencher_espelhos()
         elif tipo == "jf_relatorio":                   # o que falta na biblioteca
             self.limpar_tabela_jf()
+            self.mostrar_todos_jf()
             for i, (item, falta, detalhe) in enumerate(dado):
                 self.adicionar_linha_jf(str(i), i + 1, f"falta {falta}", "pulado", item, detalhe)
         elif tipo == "jf_espelhos":                    # resultado do "Conferir espelhos"
             self.limpar_tabela_jf()
+            self.mostrar_todos_jf()                    # "funcionando" não pode sumir num filtro da prévia
             for i, (nome, ok, texto) in enumerate(dado):
                 self.adicionar_linha_jf(str(i), i + 1, "funcionando" if ok else "quebrado", "ok" if ok else "erro",
                                         nome, texto, categoria="organizado" if ok else "erro")
