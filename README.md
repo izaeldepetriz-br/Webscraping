@@ -6,13 +6,16 @@ que **exigem login** ou que mostram **verificações** que você resolve na jane
 
 ## Programa pronto para Windows (.exe, sem instalar o Python)
 
-- **Baixar pronto:** no GitHub, aba **Actions** → "Gerar o .exe (Windows)" → a execução mais recente
-  → **Artifacts** → `videoscraper-windows`. Descompacte e abra `videoscraper\videoscraper.exe`.
-  (Ao criar uma tag `v1.0`, o `.zip` também aparece em **Releases**.)
+- **Baixar pronto:** página **Releases** do repositório → a versão mais nova → **Assets** →
+  `videoscraper-windows.zip`. Descompacte e abra `videoscraper\videoscraper.exe`. (Também em **Actions** →
+  "Gerar o .exe (Windows)" → a execução mais recente → **Artifacts**, que expiram depois de um tempo.)
+- **Publicar uma versão nova:** Actions → "Gerar o .exe (Windows)" → **Run workflow** → `versao` = `v1.1`.
 - **Gerar no seu PC:** dê duplo clique em `gerar_exe.bat` (precisa do Python só para gerar).
   O programa fica em `dist\videoscraper\` — para levar para outro computador, copie a pasta inteira.
-- O modo navegador baixa o Chromium sozinho na primeira vez (~150 MB), também no `.exe`.
-- Autoteste do pacote: `videoscraper.exe --verificar` (o robô do GitHub roda isso a cada versão).
+- O modo navegador baixa o Chromium sozinho na primeira vez (~150 MB), também no `.exe`. Ele fica em
+  `C:\Users\<você>\AppData\Local\ms-playwright` (fora da pasta do programa: trocar de versão não baixa de novo).
+- Autoteste do pacote: `videoscraper.exe --verificar` e `--verificar-navegador` (baixa o Chromium e abre uma
+  página); o robô do GitHub roda os dois a cada versão.
 
 ## Rodar no seu computador
 

@@ -69,9 +69,23 @@ def _verificar() -> int:
     return 1 if faltando else 0
 
 
+def _verificar_navegador() -> int:
+    """Autoteste do modo navegador (usado ao gerar o .exe): baixa o Chromium, se faltar, e abre uma página."""
+    import tempfile
+    from videoscraper.navegador import Navegador
+    with tempfile.TemporaryDirectory() as perfil, Navegador(perfil=perfil, timeout=120) as nav:
+        pagina = nav.contexto.new_page()
+        pagina.set_content("<title>navegador ok</title>")
+        titulo = pagina.title()
+    print(f"ok: {titulo}")
+    return 0 if titulo == "navegador ok" else 1
+
+
 if __name__ == "__main__":
     if "--verificar" in sys.argv:
         raise SystemExit(_verificar())
+    if "--verificar-navegador" in sys.argv:
+        raise SystemExit(_verificar_navegador())
     if "--texto" in sys.argv:
         raise SystemExit(_menu_texto())
     try:

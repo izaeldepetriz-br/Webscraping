@@ -37,6 +37,13 @@ jobs:
         run: |
           $p = Start-Process -FilePath dist\videoscraper\videoscraper.exe -ArgumentList "--verificar" -Wait -PassThru
           if ($p.ExitCode -ne 0) { Write-Error "autoteste falhou ($($p.ExitCode))"; exit 1 }
+      - name: Autoteste do navegador no .exe (baixa o Chromium e abre uma página)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\videoscraper\videoscraper.exe -ArgumentList "--verificar-navegador" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Write-Error "o modo navegador não abriu ($($p.ExitCode))"; exit 1 }
+          if (-not $env:PLAYWRIGHT_BROWSERS_PATH -and -not (Test-Path "$env:LOCALAPPDATA\ms-playwright")) { Write-Error "Chromium fora da pasta do usuário"; exit 1 }
+          Get-ChildItem "$env:LOCALAPPDATA\ms-playwright" -ErrorAction SilentlyContinue | Select-Object Name
       - name: Compactar
         shell: pwsh
         run: Compress-Archive -Path dist\videoscraper -DestinationPath videoscraper-windows.zip

@@ -74,3 +74,4 @@ def test_busca_com_shadow_dom_e_profundidade(servidor, tmp_path):
         fonte.fechar()
     assert so_busca == []                                   # nível 0: a busca em si não tem vídeo
     assert sorted(l.url for l in com_itens) == [servidor.base + "/m/item1.mp4", servidor.base + "/m/item2.mp4"]
+

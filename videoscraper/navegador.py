@@ -40,11 +40,31 @@ def aguardar_no_terminal(mensagem: str) -> None:
     input()
 
 
+def pasta_dos_navegadores() -> str:
+    """Onde o Playwright guarda o Chromium: o mesmo lugar do "playwright install" de sempre."""
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return str(Path(base) / "ms-playwright")
+    if sys.platform == "darwin":
+        return str(Path.home() / "Library" / "Caches" / "ms-playwright")
+    return str(Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "ms-playwright")
+
+
+def fixar_pasta_dos_navegadores() -> None:
+    """No .exe, o Playwright procura o Chromium DENTRO da pasta do programa (PLAYWRIGHT_BROWSERS_PATH=0),
+    mas o instalador baixa na pasta do usuário: um não achava o outro ("Executable doesn't exist").
+    Aqui os dois passam a usar a pasta do usuário, que ainda sobrevive à troca de versão do programa
+    (não precisa baixar os ~150 MB de novo a cada versão nova)."""
+    if getattr(sys, "frozen", False) and not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = pasta_dos_navegadores()
+
+
 def comando_instalar_chromium() -> tuple[list[str], dict | None]:
     """O comando que baixa o Chromium do Playwright. No programa empacotado (.exe), sys.executable é
     o PRÓPRIO programa ('python -m playwright' abriria outra janela): usa o instalador do Playwright
     (node + cli.js, que vêm dentro do .exe)."""
     if getattr(sys, "frozen", False):
+        fixar_pasta_dos_navegadores()
         from playwright._impl._driver import compute_driver_executable, get_driver_env
         driver = compute_driver_executable()
         partes = list(driver) if isinstance(driver, (tuple, list)) else [driver]
@@ -96,6 +116,7 @@ class Navegador:
                 "O modo navegador precisa do Playwright. Instale com:\n"
                 f"   {sys.executable} -m pip install playwright\n"
                 f"   {sys.executable} -m playwright install chromium") from None
+        fixar_pasta_dos_navegadores()
         self._pw = sync_playwright().start()
         try:
             self.contexto = self._lancar()
@@ -104,9 +125,19 @@ class Navegador:
                 self.fechar()
                 raise
             # Primeira vez: o Chromium do Playwright ainda não foi baixado. Baixa e tenta de novo.
-            print("⏬ Baixando o navegador Chromium (só na primeira vez, ~150 MB)...", file=sys.stderr)
-            instalar_chromium()
-            self.contexto = self._lancar()
+            print("⏬ Baixando o navegador Chromium (só na primeira vez, ~150 MB, pode levar alguns "
+                  "minutos)...", file=sys.stderr)
+            try:
+                instalar_chromium()
+                self.contexto = self._lancar()
+            except Exception as erro2:
+                self.fechar()
+                raise PlaywrightAusente(
+                    "Não consegui baixar/abrir o navegador Chromium (usado no modo navegador).\n"
+                    f"Pasta esperada: {os.environ.get('PLAYWRIGHT_BROWSERS_PATH') or pasta_dos_navegadores()}\n"
+                    "Confira a internet e o espaço em disco e tente de novo. Enquanto isso, desmarque "
+                    "\"Usar navegador\": o archive.org funciona sem ele.\n\n"
+                    f"Detalhe: {str(erro2).splitlines()[0][:300]}") from erro2
 
     def _lancar(self):
         Path(self.perfil).mkdir(parents=True, exist_ok=True)
