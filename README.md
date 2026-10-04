@@ -256,7 +256,9 @@ primeira falha (antes esperava o tempo limite em cada filme).
   Gerenciador de Tarefas > Inicializar (dá para desligar por lá também). Opção de linha de comando: `--minimizado`.
 - **TV ao vivo...** (barra de cima): canais ao vivo no Jellyfin (Painel > TV ao vivo), sem outro programa:
   1. adicione canais (nome + link do sinal `.m3u8`) ou importe uma lista `.m3u` (arquivo ou endereço);
-  2. **Conferir os links**: no ar / fora do ar / pede login / link temporário (com token, que expira);
+  2. **Conferir os links**: no ar / fora do ar / pede login / link temporário (com token, que expira).
+     **Selecionar os fora do ar** + **Remover selecionados** limpa a lista; **Remover todos** zera. Importar um
+     link que é uma PÁGINA de site (não uma lista `.m3u`) é recusado com um aviso;
   3. **Salvar e enviar ao Jellyfin**: grava `canais.m3u` e cadastra pela API o sintonizador M3U, o **guia de
      programação** (XMLTV, opcional: sem ele os canais aparecem sem a grade de horários) e uma **antena
      HDHomeRun** (IP, opcional: TV aberta digital pela antena, de graça e legal).

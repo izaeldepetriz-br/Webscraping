@@ -404,7 +404,7 @@ class JanelaCanais(ctk.CTkToplevel):
     def __init__(self, master, acoes: dict):
         super().__init__(master, fg_color=Tema.CARTAO)
         self.title("TV ao vivo no Jellyfin")
-        self.geometry("1080x700")
+        self.geometry("1080x760")
         self.minsize(820, 560)
         self.transient(master)
         m = master
@@ -429,6 +429,9 @@ class JanelaCanais(ctk.CTkToplevel):
             b = m._botao(linha, texto, acoes[chave], tipo)
             b.configure(height=34)
             b.pack(side="left", padx=(0, 6))
+        self._dica(topo, "Adicionar: um canal (nome + link do SINAL, ex.: https://.../index.m3u8).  Importar do link: o "
+                   "link de uma LISTA de canais (.m3u), não de uma página de site.  Importar arquivo: uma lista .m3u "
+                   "salva no PC.")
 
         quadro = ctk.CTkFrame(self, fg_color=Tema.CARTAO)
         quadro.pack(fill="both", expand=True, padx=24, pady=6)
@@ -453,24 +456,45 @@ class JanelaCanais(ctk.CTkToplevel):
         faixa.pack(fill="x", padx=24)
         self.lb_resumo = ctk.CTkLabel(faixa, text="", font=m.f_rotulo, text_color=Tema.TEXTO_SUAVE)
         self.lb_resumo.pack(side="left")
+        estilo = dict(height=30, corner_radius=6, fg_color="transparent", hover_color=Tema.SECUNDARIA_HOVER,
+                      text_color=Tema.PRIMARIA, font=ctk.CTkFont(Tema.FAMILIA, 12))
+        self.bt_selecionar_todos = ctk.CTkButton(faixa, text="Selecionar todos", width=120,
+                                                 command=self.selecionar_todos, **estilo)
+        self.bt_selecionar_fora = ctk.CTkButton(faixa, text="Selecionar os fora do ar", width=170,
+                                                command=self.selecionar_fora_do_ar, **estilo)
+        self.bt_selecionar_todos.pack(side="left", padx=(14, 0))
+        self.bt_selecionar_fora.pack(side="left", padx=(4, 0))
         m._botao(faixa, "Conferir os links", acoes["conferir"], "secundario").pack(side="right")
-        m._botao(faixa, "Remover selecionados", acoes["remover"], "perigo").pack(side="right", padx=(0, 6))
+        self.bt_remover_todos = m._botao(faixa, "Remover todos", acoes["remover_todos"], "perigo")
+        self.bt_remover_todos.pack(side="right", padx=(0, 6))
+        self.bt_remover = m._botao(faixa, "Remover selecionados", acoes["remover"], "perigo")
+        self.bt_remover.pack(side="right", padx=(0, 6))
+        self.tabela.bind("<Control-a>", lambda e: (self.selecionar_todos(), "break")[1])
 
         campos = ctk.CTkFrame(self, fg_color="transparent")
         campos.pack(fill="x", padx=24, pady=(10, 0))
         campos.grid_columnconfigure((1, 3), weight=1)
         self.var_guia, self.var_antena = tk.StringVar(), tk.StringVar()
         self.var_pasta, self.var_no_servidor = tk.StringVar(), tk.StringVar()
-        for n, (rotulo, var, dica) in enumerate((
-                ("Guia de programação (XMLTV, opcional):", self.var_guia, "link ou arquivo .xml/.xml.gz"),
-                ("Antena HDHomeRun (IP, opcional):", self.var_antena, "ex.: 192.168.0.50"),
-                ("Salvar a lista (canais.m3u) em:", self.var_pasta, "uma pasta que o servidor do Jellyfin enxergue"),
-                ("Como o servidor enxerga o arquivo:", self.var_no_servidor, "só se for outro PC, ex.: E:\\TV\\canais.m3u"))):
+        for n, (rotulo, var, dica, explicacao) in enumerate((
+                ("Guia de programação (XMLTV, opcional):", self.var_guia, "link ou arquivo .xml/.xml.gz",
+                 "A grade de horários (\"o que está passando\"). Sem ele, os canais aparecem, mas sem a programação."),
+                ("Antena HDHomeRun (IP, opcional):", self.var_antena, "ex.: 192.168.0.50",
+                 "Só se você tem um sintonizador de antena na rede: a TV aberta digital entra no Jellyfin."),
+                ("Salvar a lista (canais.m3u) em:", self.var_pasta, "uma pasta que o servidor do Jellyfin enxergue",
+                 "Onde o programa grava o canais.m3u. O SERVIDOR do Jellyfin precisa conseguir abrir essa pasta."),
+                ("Como o servidor enxerga o arquivo:", self.var_no_servidor, "só se for outro PC, ex.: E:\\TV\\canais.m3u",
+                 "Vazio se o Jellyfin roda NESTE PC. Se roda em outro, o caminho como ELE vê: salvou em "
+                 "\\\\Depetriz\\e\\TV aqui = E:\\TV\\canais.m3u lá."))):
             linha, coluna = divmod(n, 2)
-            m._rotulo(campos, rotulo).grid(row=linha * 2, column=coluna * 2, columnspan=2, sticky="w",
-                                           padx=(0 if coluna == 0 else 12, 0))
-            m._entrada(campos, var, dica, altura=32).grid(row=linha * 2 + 1, column=coluna * 2, columnspan=2,
-                                                         sticky="ew", padx=(0 if coluna == 0 else 12, 0), pady=(2, 6))
+            margem = (0 if coluna == 0 else 12, 0)
+            m._rotulo(campos, rotulo).grid(row=linha * 3, column=coluna * 2, columnspan=2, sticky="w", padx=margem)
+            m._entrada(campos, var, dica, altura=32).grid(row=linha * 3 + 1, column=coluna * 2, columnspan=2,
+                                                         sticky="ew", padx=margem, pady=(2, 0))
+            ctk.CTkLabel(campos, text=explicacao, font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_FRACO,
+                         anchor="w", justify="left", wraplength=500).grid(row=linha * 3 + 2, column=coluna * 2,
+                                                                          columnspan=2, sticky="w", padx=margem,
+                                                                          pady=(0, 6))
         rodape = ctk.CTkFrame(self, fg_color="transparent")
         rodape.pack(fill="x", padx=24, pady=(4, 16))
         ctk.CTkLabel(rodape, text="O Jellyfin recebe a lista, o guia e a antena pela API (endereço e chave da aba "
@@ -478,6 +502,9 @@ class JanelaCanais(ctk.CTkToplevel):
                      anchor="w").pack(side="left")
         m._botao(rodape, "Fechar", self.destroy, "fantasma", largura=90).pack(side="right")
         m._botao(rodape, "Salvar e enviar ao Jellyfin", acoes["publicar"], "primario").pack(side="right", padx=(0, 8))
+        # Os botões e os campos ficam presos embaixo; a lista de canais é que encolhe numa tela pequena
+        for parte in (rodape, campos, faixa):
+            parte.pack_configure(side="bottom", before=quadro)
         self.bind("<Escape>", lambda e: self.destroy())
 
     def preencher(self, linhas: list[tuple[str, str, str, str, str, bool | None]]) -> None:
@@ -491,6 +518,17 @@ class JanelaCanais(ctk.CTkToplevel):
 
     def selecionados(self) -> list[str]:
         return list(self.tabela.selection())
+
+    def selecionar_todos(self) -> None:
+        self.tabela.selection_set(self.tabela.get_children())
+
+    def selecionar_fora_do_ar(self) -> None:
+        """Os que a conferência marcou em vermelho (fora do ar, página, pede login...)."""
+        self.tabela.selection_set([i for i in self.tabela.get_children() if "erro" in self.tabela.item(i, "tags")])
+
+    def _dica(self, master, texto: str) -> None:
+        ctk.CTkLabel(master, text=texto, font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_FRACO, anchor="w",
+                     justify="left", wraplength=1020).pack(fill="x", pady=(4, 0))
 
     def valores(self) -> dict:
         return {"guia": self.var_guia.get().strip(), "antena": self.var_antena.get().strip(),

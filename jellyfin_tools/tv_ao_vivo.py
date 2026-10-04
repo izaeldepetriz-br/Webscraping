@@ -47,6 +47,19 @@ class Canal:
 
 # ----------------------------------------------------------------- a lista (.m3u)
 _RE_ATRIBUTO = re.compile(r'([\w-]+)="([^"]*)"')
+# Só isto vira canal: um link de verdade (o resto de uma página HTML, por exemplo, é ignorado)
+_RE_LINK = re.compile(r"^(?:https?|rtsps?|rtmps?|rtp|udp|mms)://\S+$", re.IGNORECASE)
+
+
+class NaoEhLista(ValueError):
+    """O endereço/arquivo não é uma lista de canais (.m3u): é uma página, por exemplo."""
+
+
+def parece_lista(texto: str) -> bool:
+    inicio = texto.lstrip("\ufeff \r\n\t")[:4096].lower()
+    if inicio.startswith(("<!doctype", "<html")) or "<head" in inicio[:600]:
+        return False
+    return "#extinf" in texto.lower() or inicio.startswith("#extm3u")
 
 
 def ler_m3u(texto: str) -> list[Canal]:
@@ -60,6 +73,9 @@ def ler_m3u(texto: str) -> list[Canal]:
             info = Canal(nome or atributos.get("tvg-name", ""), "", atributos.get("group-title", ""),
                          atributos.get("tvg-logo", ""), atributos.get("tvg-id", ""))
         elif linha and not linha.startswith("#"):
+            if not _RE_LINK.match(linha):            # HTML, texto solto...: não é canal
+                info = None
+                continue
             canal = info or Canal("", "")
             canal.url = linha
             canal.nome = canal.nome or linha.rsplit("/", 1)[-1]
@@ -92,12 +108,21 @@ def salvar_canais(arquivo: str | Path, canais: list[Canal]) -> None:
 
 
 def importar(origem: str, timeout: float = 20) -> list[Canal]:
-    """Lista .m3u de um arquivo do PC ou de um endereço (http...)."""
+    """Lista .m3u de um arquivo do PC ou de um endereço (http...). Lança NaoEhLista se o conteúdo
+    não for uma lista de canais (ex.: o endereço é uma página de site)."""
     if origem.lower().startswith(("http://", "https://")):
         r = requests.get(origem, timeout=timeout)
         r.raise_for_status()
-        return ler_m3u(r.text)
-    return ler_m3u(Path(origem).read_text(encoding="utf-8", errors="replace"))
+        texto = r.text
+    else:
+        texto = Path(origem).read_text(encoding="utf-8", errors="replace")
+    if not parece_lista(texto):
+        raise NaoEhLista("isso não é uma lista de canais (.m3u): parece uma página de site. Use o link "
+                         "que termina em .m3u (a lista) ou o link do sinal de um canal (.m3u8).")
+    canais = ler_m3u(texto)
+    if not canais:
+        raise NaoEhLista("a lista .m3u não tem nenhum canal com link")
+    return canais
 
 
 # ----------------------------------------------------------------- conferir (o canal está no ar?)

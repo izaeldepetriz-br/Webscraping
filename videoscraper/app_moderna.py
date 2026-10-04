@@ -37,7 +37,7 @@ from jellyfin_tools.espelho import (aplicar_espelho, classificar, conferir_e_avi
                                     lotes_de_espelhos, nome_do_link, planejar_espelho, remover_espelhos,
                                     remover_espelhos_escolhidos, verificar_links)
 from jellyfin_tools.conflitos import aplicar as aplicar_conflitos, decidir as decidir_conflitos
-from jellyfin_tools.tv_ao_vivo import (Canal, ClienteTV, carregar_canais, conferir_canais, importar as importar_canais,
+from jellyfin_tools.tv_ao_vivo import (Canal, ClienteTV, NaoEhLista, carregar_canais, conferir_canais, importar as importar_canais,
                                        mensagem_fora_do_ar, publicar as publicar_canais, salvar_canais)
 from jellyfin_tools.regras import RegraNome, adicionar_regra, carregar_regras, regra_para, salvar_regras
 from jellyfin_tools.organizador import (DETALHE_EPISODIO, episodio_do_video, protegido, organizar_misto, problema_no_caminho, sugestao_de_caminho,
@@ -1633,6 +1633,7 @@ class AppModerna(JanelaModerna):
             self.janela_canais = JanelaCanais(self, {
                 "adicionar": self._adicionar_canal, "importar_arquivo": self._importar_canais_arquivo,
                 "importar_endereco": self._importar_canais_endereco, "remover": self._remover_canais,
+                "remover_todos": self._remover_todos_canais,
                 "conferir": self._conferir_canais, "publicar": self._publicar_canais})
             dados = config.carregar().get("tv", {})
             dados.setdefault("pasta", str(config.ARQUIVO.parent / "tv"))
@@ -1684,7 +1685,11 @@ class AppModerna(JanelaModerna):
         arquivo = filedialog.askopenfilename(title="Lista de canais (.m3u)",
                                              filetypes=[("Lista de canais", "*.m3u *.m3u8"), ("Todos", "*.*")])
         if arquivo:
-            somados = self._juntar_canais(importar_canais(arquivo))
+            try:
+                somados = self._juntar_canais(importar_canais(arquivo))
+            except (NaoEhLista, OSError) as erro:
+                self.mostrar_mensagem("TV ao vivo", f"Não importei: {erro}", "aviso")
+                return
             self._log.info("TV ao vivo: %d canal(is) importado(s) de %s", somados, arquivo)
 
     def _importar_canais_endereco(self) -> None:
@@ -1694,15 +1699,30 @@ class AppModerna(JanelaModerna):
             return
 
         def tarefa():
-            novos = importar_canais(link)
+            try:
+                novos = importar_canais(link)
+            except (NaoEhLista, OSError) as erro:          # página de site, endereço fora do ar...
+                self._log.warning("TV ao vivo: %s: %s", link, erro)
+                self.fila.put(("msg", ("TV ao vivo", f"Não importei: {erro}", "aviso")))
+                return
             self._log.info("TV ao vivo: %d canal(is) na lista %s", len(novos), link)
             self.fila.put(("canais_importados", novos))
 
         self._rodar("Importando a lista de canais...", tarefa)
 
+    def _remover_todos_canais(self) -> None:
+        if self._canais and self.perguntar("TV ao vivo", f"Tirar TODOS os {len(self._canais)} canal(is) da lista?\n\n"
+                                           "(O que já foi enviado ao Jellyfin muda só no próximo \"Salvar e enviar\".)"):
+            self._canais, self._situacao_canais = [], {}
+            self._guardar_canais()
+
     def _remover_canais(self) -> None:
         tirar = {int(i) for i in self.janela_canais.selecionados()}
-        if tirar and self.perguntar("TV ao vivo", f"Tirar {len(tirar)} canal(is) da lista?"):
+        if not tirar:
+            self.mostrar_mensagem("TV ao vivo", "Selecione os canais (clique; Ctrl+clique para vários), ou use "
+                                  "\"Selecionar os fora do ar\" / \"Remover todos\".", "aviso")
+            return
+        if self.perguntar("TV ao vivo", f"Tirar {len(tirar)} canal(is) da lista?"):
             self._canais = [c for i, c in enumerate(self._canais) if i not in tirar]
             self._guardar_canais()
 

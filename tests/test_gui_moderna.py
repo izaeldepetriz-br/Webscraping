@@ -1470,3 +1470,29 @@ def test_tv_ao_vivo_pela_janela(app, tmp_path, api_falsa):
     assert "sintonizador M3U" in app.caixas[-1][2]
     from jellyfin_tools.tv_ao_vivo import carregar_canais
     assert len(carregar_canais(app.arquivo_canais)) == 2                    # a lista fica guardada
+
+
+def test_tv_ao_vivo_selecionar_fora_do_ar_e_remover_todos(app, api_falsa):
+    from jellyfin_tools.tv_ao_vivo import Canal
+    api_falsa.rotas["/ok.m3u8"] = lambda q: (200, b"#EXTM3U\n", {"Content-Type": "application/x-mpegURL"})
+    api_falsa.rotas["/pagina"] = lambda q: (200, b"<!DOCTYPE html><html><head></head></html>", {"Content-Type": "text/html"})
+    app.mostrar_aba("Jellyfin")
+    app.bt_tv_ao_vivo.invoke()
+    janela = app.janela_canais
+    janela.var_link.set(api_falsa.base + "/pagina")                    # uma página, não uma lista
+    app._importar_canais_endereco()
+    esperar(app)
+    assert "não é uma lista de canais" in app.caixas[-1][2] and not app._canais
+    app._juntar_canais([Canal("Bom", api_falsa.base + "/ok.m3u8"), Canal("Ruim 1", api_falsa.base + "/sumiu.m3u8"),
+                        Canal("Ruim 2", api_falsa.base + "/pagina")])
+    app._conferir_canais()
+    esperar(app)
+    janela.selecionar_fora_do_ar()
+    assert [janela.tabela.item(i, "text") for i in janela.selecionados()] == ["Ruim 1", "Ruim 2"]
+    app.perguntar = lambda t, m: True
+    janela.bt_remover.invoke()
+    assert [c.nome for c in app._canais] == ["Bom"]
+    janela.selecionar_todos()
+    assert len(janela.selecionados()) == 1
+    janela.bt_remover_todos.invoke()
+    assert app._canais == [] and janela.tabela.get_children() == ()

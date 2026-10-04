@@ -87,3 +87,19 @@ def test_script_confere_canais_e_avisa(tmp_path, monkeypatch, api_falsa):
     assert script.main(["--conferir-espelhos"]) == 0
     avisos = [json.loads(p["corpo"])["content"] for p in api_falsa.pedidos if p["caminho"] == "/discord"]
     assert len(avisos) == 1 and "Canal Sumido" in avisos[0]
+
+
+def test_pagina_de_site_nao_vira_lista_de_canais(api_falsa, tmp_path):
+    """Caso real: 'Importar do link' com https://github.io (uma página) virou 256 "canais" de HTML."""
+    import pytest
+    from jellyfin_tools.tv_ao_vivo import NaoEhLista, importar
+    pagina = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8"/>\n<title>GitHub Pages</title>\n'
+    api_falsa.rotas["/pagina"] = lambda q: (200, pagina.encode(), {"Content-Type": "text/html"})
+    with pytest.raises(NaoEhLista, match="página de site"):
+        importar(api_falsa.base + "/pagina")
+    assert ler_m3u(pagina) == []                                       # nenhuma linha de HTML vira canal
+    misturado = LISTA + "<html>lixo</html>\nhttps://ok.org/a.m3u8\n"
+    assert [c.url for c in ler_m3u(misturado)][-1] == "https://ok.org/a.m3u8"
+    (tmp_path / "vazia.m3u").write_text("#EXTM3U\n", encoding="utf-8")
+    with pytest.raises(NaoEhLista, match="nenhum canal"):
+        importar(str(tmp_path / "vazia.m3u"))
