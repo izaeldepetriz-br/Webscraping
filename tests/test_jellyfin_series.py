@@ -320,3 +320,34 @@ def test_padroes_reais_pica_pau_apenas_um_show_supernatural(tmp_path):
         assert m.destino is not None, (relativo, m.detalhe)
         assert m.destino.relative_to(raiz).as_posix().lower() == esperado.lower(), relativo
     assert movs["BLUDV.mp4"].status == "ignorado" and "propaganda" in movs["BLUDV.mp4"].detalhe
+
+
+def test_padroes_reais_mentalista_breaking_bad_jackie_chan_hunter_x_hunter(tmp_path):
+    """'01-21' depois do nome; só o número no começo (série e temporada pela pasta); nome + número +
+    saga ('HunterXHunter 66_York Shin', aceito porque há outros números da série na pasta)."""
+    raiz = tmp_path / "Series_Organizadas"
+    saga = "Animes/hunter-x-hunter-1999/1999 - Hunter x Hunter/63-75 York Shin"
+    arquivos = {
+        "Series/O Mentalista/The Mentalist - O Mentalista HD S01/O Mentalista HDTV 01-21.mkv":
+            "O Mentalista/Season 01/O Mentalista S01E21.mkv",
+        "Series/Breaking Bad/Breaking Bad 5 Temporada Parte 2 - Final/13 - To'hajiilee.mp4":
+            "Breaking Bad (2008)/Season 05/Breaking Bad S05E13.mp4",
+        "Series/Breaking Bad/Breaking Bad 5 Temporada Parte 2 - Final/9 - Blood Money.mp4":
+            "Breaking Bad (2008)/Season 05/Breaking Bad S05E09.mp4",
+        "Desenhos/As Aventuras De Jackie Chan/61 Ninguém Pega Esse Coelho!.avi":
+            "As Aventuras De Jackie Chan/Season 01/As Aventuras De Jackie Chan S01E61.avi",
+        f"{saga}/HunterXHunter 66_York Shin.mp4": "Hunter X Hunter (1999)/Season 01/Hunter X Hunter S01E66.mp4",
+        f"{saga}/HunterXHunter 67_York Shin.mp4": "Hunter X Hunter (1999)/Season 01/Hunter X Hunter S01E67.mp4",
+    }
+    for relativo in arquivos:
+        (raiz / relativo).parent.mkdir(parents=True, exist_ok=True)
+        (raiz / relativo).write_bytes(b"v")
+    sozinho = raiz / "Avulsos"
+    sozinho.mkdir()
+    (sozinho / "Naruto 12_Exame Chunin.mp4").write_bytes(b"v")       # um só, sem sequência: não arrisca
+    movs = {m.origem.name: m for m in organizar_pasta(raiz, raiz, CatalogoLocal.padrao(), modo="series")}
+    for relativo, esperado in arquivos.items():
+        m = movs[Path(relativo).name]
+        assert m.destino is not None, (relativo, m.detalhe)
+        assert m.destino.relative_to(raiz).as_posix().lower() == esperado.lower(), (relativo, m.destino)
+    assert movs["Naruto 12_Exame Chunin.mp4"].status == "nao_identificado"

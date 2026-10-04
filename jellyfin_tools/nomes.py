@@ -205,6 +205,12 @@ _PADRAO_SO_EPISODIO = re.compile(r"(?<![a-z0-9])(?:epis[oó]dio|episode|epi|ep|e
 # Fracos (só depois dos outros): "Regular.Show.03.15-by-fulano" (temporada.episódio com 2 dígitos, depois
 # do nome) e, sem o nome da série, "04-01 Saída 9B" (no começo do arquivo; a série vem da pasta).
 _PADRAO_PONTO = re.compile(r"(?<=[a-z][ ._])(\d{2})\.(\d{2})(?![\d.])", re.I)
+# "O Mentalista HDTV 01-21" (temporada-episódio com hífen, depois do nome)
+_PADRAO_HIFEN = re.compile(r"(?<=[a-z][ ._])(\d{1,2})-(\d{2})(?![\d])", re.I)
+# Só o número do episódio no começo: "13 - To'hajiilee", "61 Ninguém Pega Esse Coelho!" (série/temporada da pasta)
+_PADRAO_NUMERO_INICIO = re.compile(r"^\s*(\d{1,3})(?:\s*[-._]\s*|\s+)(?=[^\W\d_])")
+# Nome + número + título do episódio/saga: "HunterXHunter 66_York Shin"
+_RE_NUMERO_NO_MEIO = re.compile(r"^(?P<antes>[^\d]*[a-zA-Z][^\d]*?)[ ._-]+(?P<ep>\d{1,4})[ ._-]+(?P<resto>[^\W\d_].*)$")
 _PADRAO_INICIO = re.compile(r"^\s*(\d{1,2})[-x](\d{2})(?!\d)(?=[ ._-]+[^\d\s])", re.I)
 # Número entre parênteses no fim: "Pica-Pau.WEB.DUB-WWW.BLUDV.COM (75)"
 _PADRAO_PARENTESES = re.compile(r"\((\d{1,4})\)\s*$")
@@ -240,11 +246,14 @@ def extrair_episodio(nome_arquivo: str) -> EpisodioExtraido | None:
         m = _PADRAO_SO_EPISODIO.search(base)
         if m:
             return _montar_episodio(base[:m.start()], 1, int(m.group(1)), absoluto=True)
-        if (m := _PADRAO_PONTO.search(base)) and 1 <= int(m.group(1)) <= 40 and int(m.group(2)) >= 1:
-            return _montar_episodio(base[:m.start()], int(m.group(1)), int(m.group(2)))
+        for padrao in (_PADRAO_PONTO, _PADRAO_HIFEN):
+            if (m := padrao.search(base)) and 1 <= int(m.group(1)) <= 40 and int(m.group(2)) >= 1:
+                return _montar_episodio(base[:m.start()], int(m.group(1)), int(m.group(2)))
+        if absoluto := _episodio_absoluto(base):           # "Ashita no Joe 2 - 42 [...] (2)": o (2) é cópia repetida
+            return absoluto
         if (m := _PADRAO_PARENTESES.search(base)) and not 1900 <= int(m.group(1)) <= 2099 and int(m.group(1)):
             return _montar_episodio(_cortar_qualidade(base[:m.start()]), 1, int(m.group(1)), absoluto=True)
-        return _episodio_absoluto(base)
+        return None
     return _montar_episodio(base[:m.start()], temporada, episodio)
 
 
@@ -260,7 +269,10 @@ _RE_TEMPORADA_PASTA = re.compile(
 def serie_da_pasta(nome_pasta: str) -> tuple[str, int | None] | None:
     """'Apenas um Show - 1a Temporada' -> ('Apenas um Show', None); 'Dark (2017)' -> ('Dark', 2017);
     'Apenas um show s03e1-19' -> ('Apenas um show', None); 'Season 01', 'Desenhos' -> None."""
-    texto = _RE_TEMPORADA_PASTA.sub(" ", _sem_propaganda(nome_pasta))
+    texto = _sem_propaganda(nome_pasta)
+    if (m := _RE_TEMPORADA_PASTA.search(texto)) and texto[:m.start()].strip(" -_."):
+        texto = texto[:m.start()]           # 'Breaking Bad 5 Temporada Parte 2 - Final' -> 'Breaking Bad'
+    texto = _RE_TEMPORADA_PASTA.sub(" ", texto)
     ano = None
     if m := _RE_ANO.search(texto):
         ano, texto = int(m.group(1)), texto[:m.start()]
@@ -282,6 +294,33 @@ def numeros_sem_serie(nome_arquivo: str) -> tuple[int, int, bool] | None:
         return int(m.group(1)), int(m.group(2)), False
     if m := _PADRAO_SO_EPISODIO.match(base.strip(" ._-")):
         return 1, int(m.group(1)), True
+    if (m := _PADRAO_NUMERO_INICIO.match(base)) and int(m.group(1)) > 0:
+        return 1, int(m.group(1)), True
+    return None
+
+
+def episodio_no_meio(nome_arquivo: str) -> EpisodioExtraido | None:
+    """'HunterXHunter 66_York Shin.mp4' -> ('Hunter X Hunter', 1, 66): nome, número e o título da saga.
+    Fraco (um filme 'Rocky 2 Dublado' também casaria): o organizador só aceita com outros números da
+    mesma série na pasta."""
+    base = _cortar_qualidade(_RE_GRUPO_INICIAL.sub("", _RE_SITE.sub(" ", Path(nome_arquivo).stem)))
+    if not (m := _RE_NUMERO_NO_MEIO.match(base.strip(" ._-"))):
+        return None
+    episodio = int(m.group("ep"))
+    if episodio == 0 or 1900 <= episodio <= 2099:
+        return None
+    return _montar_episodio(m.group("antes"), 1, episodio, absoluto=True)
+
+
+_RE_NUMERO_TEMPORADA = re.compile(
+    r"\b(\d{1,2})\s*(?:a|ª|º|°)?\s*(?:temporada|temp)\b|\b(?:temporada|season|temp)\s*(\d{1,2})\b|\bs(\d{1,2})\b",
+    re.IGNORECASE)
+
+
+def temporada_da_pasta(nome_pasta: str) -> int | None:
+    """'Breaking Bad 5 Temporada Parte 2' -> 5; 'Season 03', 'S01', '2ª Temporada' -> o número."""
+    if m := _RE_NUMERO_TEMPORADA.search(nome_pasta):
+        return int(next(g for g in m.groups() if g))
     return None
 
 

@@ -788,7 +788,8 @@ class AppModerna(JanelaModerna):
             self.fila.put(("status_fim", f"Relatório: {len(pendencias)} pendência(s)."))
             self.fila.put(("msg", ("Relatório da biblioteca",
                                    f"{texto.replace('; ', chr(10))}\n\nA lista completa está na tabela e na "
-                                   f"planilha:\n{arquivo}" + ("" if o.tmdb else "\n\nCom o TMDB marcado, o "
+                                   f"planilha (botão \"Abrir relatório\", em cima da lista):\n{arquivo}"
+                                   + ("" if o.tmdb else "\n\nCom o TMDB marcado, o "
                                    "relatório também confere o fim das temporadas e temporadas inteiras."),
                                    "info" if pendencias else "sucesso")))
 
@@ -1257,6 +1258,22 @@ class AppModerna(JanelaModerna):
                 self.fila.put(("msg", ("Avisos", "Não consegui enviar. Veja o motivo em 'Abrir log'.", "erro")))
 
         self._rodar("Enviando aviso de teste...", tarefa)
+
+    def ultimo_relatorio(self) -> Path | None:
+        """A planilha do relatório mais recente (C:\\Users\\<você>\\.videoscraper\\relatorios)."""
+        planilhas = list((config.ARQUIVO.parent / "relatorios").glob("relatorio-*.csv"))
+        return max(planilhas, key=lambda p: p.stat().st_mtime) if planilhas else None
+
+    def ao_abrir_relatorio(self) -> None:
+        """Abre a planilha do último relatório (no Excel ou no programa de planilhas padrão)."""
+        planilha = self.ultimo_relatorio()
+        if planilha is None:
+            if self.perguntar("Relatório", "Ainda não há relatório gerado.\n\nGerar agora? (lista o que falta: "
+                              "legendas, pôsteres e episódios)"):
+                self.ao_relatorio()
+            return
+        self._log.info("Abrindo o relatório: %s", planilha)
+        self._abrir_no_sistema(str(planilha))
 
     def ao_abrir_log(self) -> None:
         """Abre o log SÓ da ação escolhida no seletor do console (antes abria o log geral, com tudo)."""

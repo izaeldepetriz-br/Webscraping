@@ -31,8 +31,8 @@ from .catalogo import Catalogo, ErroCatalogo, Filme
 from .extras import (ARTES, LIMITE_TRAILER_MB, _arquivos, eh_propaganda_pequena, eh_trailer, imagem_do_video, limpar_cache,
                      lixo_da_pasta, marcar_repetidos, planejar_extras, tipo_de_arte)
 from .nomes import (EpisodioExtraido, eh_video, eh_video_da_biblioteca, extrair_episodio, qualidade, extrair_titulo_e_ano,
-                    formatar_titulo, marca_de_episodio, nome_episodio_jellyfin, nome_jellyfin, normalizar,
-                    numeros_sem_serie, pasta_temporada, serie_da_pasta)
+                    episodio_no_meio, formatar_titulo, marca_de_episodio, nome_episodio_jellyfin, nome_jellyfin,
+                    normalizar, numeros_sem_serie, pasta_temporada, serie_da_pasta, temporada_da_pasta)
 
 PASTA_LOGS = ".organizador"
 MODOS = ("filmes", "series")
@@ -149,9 +149,13 @@ def episodio_do_video(video: Path, raiz: Path | None = None) -> EpisodioExtraido
     -> 'Apenas um Show') ou da de cima, sem passar da pasta de origem."""
     if ep := extrair_episodio(video.name):
         return ep
+    if (ep := episodio_no_meio(video.name)) and _tem_irmao(video, ep, episodio_no_meio):
+        return ep                                          # 'HunterXHunter 66_York Shin' (com 67, 68... ao lado)
     if not (numeros := numeros_sem_serie(video.name)):
         return None
     temporada, episodio, absoluto = numeros
+    if absoluto and (da_pasta := temporada_da_pasta(video.parent.name)):
+        temporada, absoluto = da_pasta, False              # 'Breaking Bad 5 Temporada/13 - To'hajiilee'
     for pasta in (video.parent, video.parent.parent):
         if achado := serie_da_pasta(pasta.name):
             return EpisodioExtraido(achado[0], temporada, episodio, achado[1], absoluto)
@@ -166,16 +170,21 @@ def _episodio_em_sequencia(video: Path):
     ep = extrair_episodio(video.name)
     if ep is None or not ep.absoluto or ep.ano is not None:
         return None
+    return ep if _tem_irmao(video, ep, extrair_episodio) else None
+
+
+def _tem_irmao(video: Path, ep, extrator) -> bool:
+    """Outro vídeo da mesma pasta com o mesmo nome de série e OUTRO número (uma sequência)."""
     try:
         vizinhos = [a for a in video.parent.iterdir() if a != video and a.is_file() and eh_video(a)]
     except OSError:
-        return None
+        return False
     serie = normalizar(ep.serie)
     for vizinho in vizinhos:
-        outro = extrair_episodio(vizinho.name)
+        outro = extrator(vizinho.name)
         if outro and outro.absoluto and outro.episodio != ep.episodio and normalizar(outro.serie) == serie:
-            return ep
-    return None
+            return True
+    return False
 
 
 def planejar(video: Path, pasta_filmes: Path, catalogo: Catalogo | None = None,

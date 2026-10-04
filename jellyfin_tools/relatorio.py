@@ -16,7 +16,8 @@ from datetime import datetime
 from pathlib import Path
 
 from .extras import EXTENSOES_LEGENDA
-from .nomes import eh_video_da_biblioteca, extrair_episodio, ler_nome_jellyfin
+from .nomes import eh_video_da_biblioteca, ler_nome_jellyfin, normalizar, serie_da_pasta
+from .organizador import PASTA_LOGS, episodio_do_video
 from .registro import obter_logger
 
 IMAGENS_POSTER = ("poster", "folder", "cover")
@@ -75,18 +76,38 @@ def relatorio_filmes(pasta_filmes: str | Path, idiomas: list[str]) -> list[Pende
     return pendencias
 
 
+def pasta_da_serie(video: Path, raiz: Path) -> Path | None:
+    """A pasta DA série, abaixo da biblioteca: sobe de 'Season 14' e de pastas de categoria
+    ('Series', 'Animes', 'Desenhos'). 'Series/Supernatural/Season 14/x.mkv' -> 'Series/Supernatural';
+    'Breaking Bad/Breaking Bad 5 Temporada Parte 2/13 - X.mp4' -> 'Breaking Bad' (a de cima, mesmo nome)."""
+    raiz = Path(raiz)
+    pasta = video.parent
+    while pasta != raiz and raiz in pasta.parents:
+        if serie_da_pasta(pasta.name) is not None:
+            break
+        pasta = pasta.parent
+    else:
+        return None
+    acima = pasta.parent
+    if acima != raiz and raiz in acima.parents and (nome := serie_da_pasta(pasta.name)) \
+            and (outro := serie_da_pasta(acima.name)) and normalizar(nome[0]) == normalizar(outro[0]):
+        return acima
+    return pasta
+
+
 def relatorio_series(pasta_series: str | Path, idiomas: list[str], catalogo=None) -> list[Pendencia]:
     """Buracos na numeração de cada temporada e episódios sem legenda. Com `catalogo` (TMDB), compara
     com a quantidade de episódios de cada temporada (o fim da temporada e temporadas inteiras)."""
     log = obter_logger()
     pendencias = []
-    for pasta_serie in sorted(p for p in Path(pasta_series).iterdir() if p.is_dir() and not p.name.startswith(".")):
-        episodios: dict[int, dict[int, Path]] = {}
-        for video in pasta_serie.rglob("*"):
-            if video.is_file() and eh_video_da_biblioteca(video) and (ep := extrair_episodio(video.name)):
-                episodios.setdefault(ep.temporada, {})[ep.episodio] = video
-        if not episodios:
+    raiz = Path(pasta_series)
+    por_serie: dict[Path, dict[int, dict[int, Path]]] = {}
+    for video in sorted(raiz.rglob("*")):
+        if PASTA_LOGS in video.parts or not (video.is_file() and eh_video_da_biblioteca(video)):
             continue
+        if (ep := episodio_do_video(video, raiz)) and (pasta_serie := pasta_da_serie(video, raiz)):
+            por_serie.setdefault(pasta_serie, {}).setdefault(ep.temporada, {})[ep.episodio] = video
+    for pasta_serie, episodios in sorted(por_serie.items()):
         esperados: dict[int, int] = {}
         lido = ler_nome_jellyfin(pasta_serie.name)
         if catalogo is not None and lido:

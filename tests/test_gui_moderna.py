@@ -1251,3 +1251,21 @@ def test_selecionar_todos_e_so_filmes_e_series_na_aba_videos(app):
     assert "Ctrl+clique" in app.lb_selecao.cget("text")
     app.bt_selecionar_todos.invoke()
     assert len(app.selecionados()) == 3
+
+
+def test_botao_abrir_relatorio(app, tmp_path):
+    abertos, perguntas = [], []
+    app._abrir_no_sistema = abertos.append
+    app.perguntar = lambda t, m: perguntas.append(m) or True              # "Gerar agora?" -> sim
+    series = tmp_path / "Series"
+    (series / "Dark (2017)" / "Season 01").mkdir(parents=True)
+    (series / "Dark (2017)" / "Season 01" / "Dark S01E02.mkv").write_bytes(b"v")
+    app.mostrar_aba("Jellyfin")
+    app._destinos.update({"Séries": str(series)})
+    app.var_jf_destino.set(str(series))
+    app.bt_abrir_relatorio.invoke()                                      # nenhum ainda: oferece gerar
+    esperar(app)
+    assert "Ainda não há relatório" in perguntas[0] and not abertos
+    assert "Abrir relatório" in app.caixas[-1][2]
+    app.bt_abrir_relatorio.invoke()                                      # agora abre a planilha
+    assert len(abertos) == 1 and abertos[0].endswith(".csv") and abertos[0] == str(app.ultimo_relatorio())

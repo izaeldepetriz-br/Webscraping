@@ -924,6 +924,9 @@ class JanelaModerna(ctk.CTk):
         self.bt_ampliar_jf.pack(side="right")
         self.bt_abrir_log = self._botao(topo, "Abrir log", self.ao_abrir_log, "fantasma", largura=90)
         self.bt_abrir_log.pack(side="right", padx=(0, 4))
+        self.bt_abrir_relatorio = self._botao(topo, "Abrir relatório", self.ao_abrir_relatorio, "fantasma",
+                                              largura=120)
+        self.bt_abrir_relatorio.pack(side="right", padx=(0, 4))
         self.bt_abrir_biblioteca = self._botao(topo, "Abrir pasta da biblioteca", self.ao_abrir_biblioteca,
                                                "fantasma")
         self.bt_abrir_biblioteca.pack(side="right", padx=(0, 4))
@@ -1625,6 +1628,9 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_gerenciar_espelhos(self) -> None:
+        pass
+
+    def ao_abrir_relatorio(self) -> None:
         pass
 
     def ao_relatorio(self) -> None:

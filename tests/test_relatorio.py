@@ -82,3 +82,23 @@ def test_script_relatorio(tmp_path, monkeypatch):
     [planilha] = (tmp_path / "log" / "relatorios").glob("relatorio-*.csv")
     assert "legenda pt-BR" in planilha.read_text(encoding="utf-8-sig")
     assert "[falta pôster] Matrix (1999)" in (tmp_path / "log" / "j.log").read_text(encoding="utf-8")
+
+
+def test_series_dentro_de_pastas_de_categoria(tmp_path):
+    """Biblioteca com 'Series', 'Animes', 'Desenhos' dentro: o item é a série ('Supernatural (2005) S14'),
+    e não a categoria ('Series S14'). Arquivos ainda fora do padrão também contam."""
+    from jellyfin_tools.relatorio import relatorio_series
+    raiz = tmp_path / "Series_Organizadas"
+    for relativo in ("Series/Supernatural (2005)/Season 14/Supernatural S14E01.mkv",
+                     "Series/Supernatural (2005)/Season 14/Supernatural S14E03.mkv",
+                     "Series/Breaking Bad/Breaking Bad 5 Temporada Parte 2/9 - Blood Money.mp4",
+                     "Series/Breaking Bad/Breaking Bad 5 Temporada Parte 2/11 - Confessions.mp4",
+                     "Animes/Ashita no Joe 2/[Erai-raws] Ashita no Joe 2 - 41 [720p] (2).mkv",
+                     "Animes/Ashita no Joe 2/[Erai-raws] Ashita no Joe 2 - 43 [720p].mkv"):
+        (raiz / relativo).parent.mkdir(parents=True, exist_ok=True)
+        (raiz / relativo).write_bytes(b"v")
+    faltas = {(p.item, p.detalhe) for p in relatorio_series(raiz, []) if p.falta == "episódios"}
+    assert ("Supernatural (2005) S14", "E02") in faltas
+    assert ("Breaking Bad S05", "E01–E08, E10") in faltas
+    assert ("Ashita no Joe 2 S01", "E01–E40, E42") in faltas
+    assert not any(item.startswith(("Series", "Animes")) for item, _ in faltas)

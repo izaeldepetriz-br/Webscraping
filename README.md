@@ -183,7 +183,8 @@ Outras opções da aba Jellyfin:
   ele também apaga esses `.strm` (o "Desfazer última" os recoloca). A data da última conferência
   aparece embaixo. No script: `CONFERIR_ESPELHOS_A_CADA = "7d"` (ou `"12h"`, `"30min"`), que roda junto com o
   `--vigiar`, `REMOVER_ESPELHOS_QUEBRADOS` e `--conferir-espelhos` para conferir uma vez agora.
-- **Relatório da biblioteca** (botão "Relatório"): lista o que falta, sem mexer em nada:
+- **Relatório da biblioteca** (botão "Relatório"; **"Abrir relatório"**, em cima da lista, abre a planilha mais
+  recente, e oferece gerar uma se ainda não houver): lista o que falta, sem mexer em nada:
   filmes **sem legenda** (em cada idioma escolhido; legenda "forced" não conta), filmes **sem
   pôster** e **episódios faltando** numa temporada ("Dark — S02: falta E05, E07–E09"; com o TMDB
   também o fim da temporada e temporadas inteiras) e episódios sem legenda. Aparece na tabela e é
@@ -208,7 +209,11 @@ Outras opções da aba Jellyfin:
   `Pica Pau S01E75`), temporada.episódio com pontos (`Regular.Show.03.15-by-fulano.avi` → S03E15),
   `S012E20` (→ S12E20) e arquivo sem o nome da série (`Temp 01 - Epi 04 - Socos Mortais.mkv`,
   `04-01 Saída 9B.mkv`): a série vem da pasta (`Apenas um Show - 1a Temporada` → "Apenas um Show"; pastas
-  como "Desenhos", "Animes" e "Season 01" não contam). Um `BLUDV.mp4` pequeno ao lado de arquivos
+  como "Desenhos", "Animes" e "Season 01" não contam). Também: `O Mentalista HDTV 01-21.mkv` (→ S01E21),
+  só o número no começo (`13 - To'hajiilee.mp4` em `Breaking Bad 5 Temporada Parte 2` → Breaking Bad S05E13;
+  `61 Ninguém Pega Esse Coelho!.avi` em `As Aventuras De Jackie Chan` → episódio 61, que o TMDB põe na
+  temporada certa) e nome + número + saga (`HunterXHunter 66_York Shin.mp4`, aceito quando há outros
+  números da mesma série na pasta; o ano 1999 vem da pasta `1999 - Hunter x Hunter`). Um `BLUDV.mp4` pequeno ao lado de arquivos
   `...WWW.BLUDV.COM...` fica como "ignorado: propaganda do site".
 - **Totais nos filtros:** cada caixa de "Mostrar" diz quantos arquivos tem ("Não identificado (540)"), e
   "Mostrar todos" marca todas de novo. Os resultados de "Conferir espelhos", "Relatório" e "Completar
