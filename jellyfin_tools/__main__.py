@@ -89,8 +89,9 @@ def _organizar(args) -> int:
         provedores = _criar_provedores(args, desligar)
         for m in movimentos:
             if m.status == "movido" and provedores:
+                originais = [m.filme.titulo_original] if m.filme and m.filme.titulo_original else []
                 print(baixar_legenda(m.destino.parent, provedores, idioma=args.idioma,
-                                     sobrescrever=args.sobrescrever))
+                                     sobrescrever=args.sobrescrever, titulos_alternativos=originais))
         return 1 if any(m.status == "erro" for m in movimentos) else 0
     finally:
         for s in desligar:
@@ -104,7 +105,8 @@ def _legendas(args) -> int:
         if not provedores:
             print("Escolha uma fonte: --legendas-demo, --site-legendas URL ou --opensubtitles")
             return 1
-        resultados = baixar_legendas_biblioteca(args.pasta_filmes, provedores, args.idioma, args.sobrescrever)
+        resultados = baixar_legendas_biblioteca(args.pasta_filmes, provedores, args.idioma,
+                                                args.sobrescrever, catalogo=CatalogoLocal.padrao())
         return 1 if any(r.status == "erro" for r in resultados) else 0
     finally:
         for s in desligar:
@@ -147,8 +149,7 @@ def _demo(args) -> int:
     try:
         provedor = ProvedorSiteHTML(ConfigSite(f"{base}/busca?q={{consulta}}", nome="site demo"))
         provedor.cliente.espera = 0.2
-        for r in baixar_legendas_biblioteca(filmes, [provedor]):
-            pass
+        baixar_legendas_biblioteca(filmes, [provedor], catalogo=CatalogoLocal.padrao())
     finally:
         servidor.shutdown()
     print("\nDEPOIS:\n" + raiz.name + "/\n" + arvore(raiz))

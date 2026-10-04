@@ -1,7 +1,6 @@
 [
   {"titulo": "Matrix", "ano": 1999, "titulo_original": "The Matrix", "tmdb_id": 603},
-  {"titulo": "Interstellar", "ano": 2014, "titulo_original": "Interstellar", "tmdb_id": 157336,
-   "alternativos": ["Interestelar"]},
+  {"titulo": "Interestelar", "ano": 2014, "titulo_original": "Interstellar", "tmdb_id": 157336},
   {"titulo": "O Poderoso Chefão", "ano": 1972, "titulo_original": "The Godfather", "tmdb_id": 238},
   {"titulo": "O Poderoso Chefão: Parte II", "ano": 1974, "titulo_original": "The Godfather Part II", "tmdb_id": 240},
   {"titulo": "Cidade de Deus", "ano": 2002, "titulo_original": "Cidade de Deus", "tmdb_id": 598},

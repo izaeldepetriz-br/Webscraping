@@ -130,11 +130,14 @@ padrão do Jellyfin.
 | Arquivo bagunçado | Vira |
 |---|---|
 | `Matrix.1999.1080p.BluRay.x264-VERSAO.mp4` | `Filmes/Matrix (1999)/Matrix (1999).mp4` |
-| `interestellar_filme_completo_dublado_2014.mkv` | `Filmes/Interstellar (2014)/Interstellar (2014).mkv` |
+| `interestellar_filme_completo_dublado_2014.mkv` | `Filmes/Interestelar (2014)/Interestelar (2014).mkv` |
 | `O.Poderoso.Chefao.1972.Bluray.mkv` | `Filmes/O Poderoso Chefão (1972)/O Poderoso Chefão (1972).mkv` |
+
+Os nomes usam o **título brasileiro** (como o Jellyfin mostra com o idioma em português).
 
 **Parte 2, legendas:** busca a legenda pt-BR e salva ao lado do vídeo com o mesmo nome:
 `Matrix (1999).pt-BR.srt` (sempre em UTF-8; aceita `.srt`, `.zip` e codificação antiga do Windows).
+Se o site de legendas não achar pelo título brasileiro, tenta o original (Interestelar → Interstellar).
 
 ### Experimente (sem mexer nos seus arquivos)
 

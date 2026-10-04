@@ -245,8 +245,11 @@ class ProvedorOpenSubtitles:
 # --------------------------------------------------------------------------- orquestração
 def baixar_legenda(pasta_filme: str | Path, provedores: list, titulo: str | None = None,
                    ano: int | None = None, idioma: str = IDIOMA_PADRAO,
-                   sobrescrever: bool = False) -> ResultadoLegenda:
-    """Baixa a legenda para UMA pasta de filme. Título/ano saem do nome da pasta se não informados."""
+                   sobrescrever: bool = False,
+                   titulos_alternativos: list[str] | None = None) -> ResultadoLegenda:
+    """Baixa a legenda para UMA pasta de filme. Título/ano saem do nome da pasta se não informados.
+    `titulos_alternativos`: outros nomes para tentar se o principal não achar nada (ex.: o título
+    original "Interstellar" quando a pasta está com o brasileiro "Interestelar")."""
     pasta = Path(pasta_filme)
     if not pasta.is_dir():
         return ResultadoLegenda(pasta, "erro", detalhe="pasta não existe")
@@ -260,12 +263,17 @@ def baixar_legenda(pasta_filme: str | Path, provedores: list, titulo: str | None
     if destino.exists() and not sobrescrever:
         return ResultadoLegenda(pasta, "ja_existe", destino)
 
+    titulos = list(dict.fromkeys(t for t in [titulo, *(titulos_alternativos or [])] if t))  # sem repetir
     problemas = []
     for provedor in provedores:
         try:
-            escolhido = escolher_melhor(provedor.buscar(titulo, ano, idioma), titulo, ano, idioma)
+            escolhido = None
+            for tentativa in titulos:
+                escolhido = escolher_melhor(provedor.buscar(tentativa, ano, idioma), tentativa, ano, idioma)
+                if escolhido:
+                    break
             if not escolhido:
-                problemas.append(f"{provedor.nome}: nada compatível")
+                problemas.append(f"{provedor.nome}: nada compatível com {' / '.join(titulos)}")
                 continue
             texto = extrair_srt(provedor.baixar(escolhido))
             temporario = destino.with_name(destino.name + ".part")
@@ -279,15 +287,29 @@ def baixar_legenda(pasta_filme: str | Path, provedores: list, titulo: str | None
     return ResultadoLegenda(pasta, "nao_encontrada", detalhe="; ".join(problemas))
 
 
+def _titulo_original(catalogo, pasta: Path) -> list[str]:
+    """Consulta o catálogo para descobrir o título original (ex.: Interestelar -> Interstellar)."""
+    lido = ler_nome_jellyfin(pasta.name)
+    if not catalogo or not lido:
+        return []
+    try:
+        filme = catalogo.buscar(lido.titulo, lido.ano)
+    except Exception:                 # catálogo fora do ar não impede a legenda pelo título da pasta
+        return []
+    return [filme.titulo_original] if filme and filme.titulo_original else []
+
+
 def baixar_legendas_biblioteca(pasta_filmes: str | Path, provedores: list, idioma: str = IDIOMA_PADRAO,
-                               sobrescrever: bool = False) -> list[ResultadoLegenda]:
-    """Passa por todas as pastas 'Nome (Ano)' da biblioteca e baixa o que estiver faltando."""
+                               sobrescrever: bool = False, catalogo=None) -> list[ResultadoLegenda]:
+    """Passa por todas as pastas 'Nome (Ano)' da biblioteca e baixa o que estiver faltando.
+    Com `catalogo`, também tenta o título original de cada filme."""
     resultados = []
     for pasta in sorted(p for p in Path(pasta_filmes).iterdir() if p.is_dir() and not p.name.startswith(".")):
         if not any(eh_video(p) for p in pasta.iterdir() if p.is_file()):
             resultados.append(ResultadoLegenda(pasta, "sem_video"))
             continue
-        resultado = baixar_legenda(pasta, provedores, idioma=idioma, sobrescrever=sobrescrever)
+        resultado = baixar_legenda(pasta, provedores, idioma=idioma, sobrescrever=sobrescrever,
+                                   titulos_alternativos=_titulo_original(catalogo, pasta))
         print(resultado, file=sys.stderr)
         resultados.append(resultado)
     return resultados

@@ -10,7 +10,7 @@ from jellyfin_tools.organizador import ultimo_log
 # Os 3 casos do enunciado: arquivo -> pasta/arquivo esperados
 CASOS = {
     "Matrix.1999.1080p.BluRay.x264-VERSAO.mp4": "Matrix (1999)/Matrix (1999).mp4",
-    "interestellar_filme_completo_dublado_2014.mkv": "Interstellar (2014)/Interstellar (2014).mkv",
+    "interestellar_filme_completo_dublado_2014.mkv": "Interestelar (2014)/Interestelar (2014).mkv",
     "O.Poderoso.Chefao.1972.Bluray.mkv": "O Poderoso Chefão (1972)/O Poderoso Chefão (1972).mkv",
 }
 
@@ -40,7 +40,8 @@ def test_nomes_no_padrao_jellyfin():
 
 def test_catalogo_corrige_digitacao_acentos_e_respeita_o_ano():
     c = CatalogoLocal.padrao()
-    assert c.buscar("interestellar", 2014).titulo == "Interstellar"
+    assert c.buscar("interestellar", 2014).titulo == "Interestelar"      # título brasileiro
+    assert c.buscar("Interstellar", 2014).titulo == "Interestelar"       # achado pelo original
     assert c.buscar("O Poderoso Chefao", 1972).titulo == "O Poderoso Chefão"
     assert c.buscar("The Godfather", 1972).titulo == "O Poderoso Chefão"    # pelo título original
     assert c.buscar("Matrix", 2021) is None                                 # outro filme

@@ -51,7 +51,6 @@ def test_escolhe_idioma_ano_e_mais_baixado():
 
 @pytest.mark.parametrize("nome, trecho", [
     ("Matrix (1999)", "Matrix (1999) BluRay 1080p"),                  # o mais baixado em pt-BR
-    ("Interstellar (2014)", "Interstellar"),                           # veio dentro de .zip
     ("O Poderoso Chefão (1972)", "O Poderoso Chefão (1972) Remastered"),  # veio em Windows-1252
 ])
 def test_baixa_legenda_com_o_nome_do_video(tmp_path, site_legendas, nome, trecho):
@@ -61,6 +60,15 @@ def test_baixa_legenda_com_o_nome_do_video(tmp_path, site_legendas, nome, trecho
     assert r.caminho == pasta / f"{nome}.pt-BR.srt"
     texto = r.caminho.read_text(encoding="utf-8")
     assert trecho in texto and "Ação" in texto
+
+
+def test_titulo_brasileiro_usa_o_original_como_reserva(tmp_path, site_legendas):
+    # O site simulado só tem "Interstellar"; a pasta está com o título brasileiro.
+    pasta = _pasta_filme(tmp_path, "Interestelar (2014)")
+    assert baixar_legenda(pasta, [_provedor(site_legendas)]).status == "nao_encontrada"
+    r = baixar_legenda(pasta, [_provedor(site_legendas)], titulos_alternativos=["Interstellar"])
+    assert r.status == "baixada" and r.caminho.name == "Interestelar (2014).pt-BR.srt"
+    assert "Interstellar" in r.caminho.read_text(encoding="utf-8")   # veio de dentro do .zip
 
 
 def test_nao_sobrescreve_e_nao_encontrada(tmp_path, site_legendas):
@@ -91,9 +99,9 @@ def test_parte1_mais_parte2_juntas(tmp_path, site_legendas):
               "O.Poderoso.Chefao.1972.Bluray.mkv"):
         (origem / n).write_bytes(b"video")
     organizar_pasta(origem, filmes, CatalogoLocal.padrao(), aplicar=True)
-    resultados = baixar_legendas_biblioteca(filmes, [_provedor(site_legendas)])
+    resultados = baixar_legendas_biblioteca(filmes, [_provedor(site_legendas)], catalogo=CatalogoLocal.padrao())
     assert [r.status for r in resultados] == ["baixada"] * 3
-    for nome in ("Matrix (1999)", "Interstellar (2014)", "O Poderoso Chefão (1972)"):
+    for nome in ("Matrix (1999)", "Interestelar (2014)", "O Poderoso Chefão (1972)"):
         assert (filmes / nome / f"{nome}.pt-BR.srt").is_file()
 
 

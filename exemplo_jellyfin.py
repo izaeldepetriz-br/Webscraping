@@ -41,7 +41,9 @@ def main():
     if APLICAR and provedores:
         for m in movimentos:
             if m.status == "movido":
-                print(baixar_legenda(m.destino.parent, provedores))
+                # Pasta com título brasileiro; se o site só tiver o original, tenta ele também.
+                originais = [m.filme.titulo_original] if m.filme and m.filme.titulo_original else []
+                print(baixar_legenda(m.destino.parent, provedores, titulos_alternativos=originais))
 
 
 if __name__ == "__main__":
