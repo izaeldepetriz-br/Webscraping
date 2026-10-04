@@ -42,4 +42,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          name: Versão ${{ github.ref_name }}
+          body_path: .github/notas-da-versao.md
           files: videoscraper-windows.zip
