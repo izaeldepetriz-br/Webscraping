@@ -184,11 +184,23 @@ class EpisodioExtraido(NamedTuple):
 _PADROES_EPISODIO = [
     re.compile(r"(?<![a-z0-9])s(\d{1,2})[ ._-]*e(\d{1,3})(?!\d)", re.I),                  # S01E02, s1.e2
     re.compile(r"(?<![a-z0-9])(\d{1,2})x(\d{1,3})(?!\d)", re.I),                          # 1x02
+    re.compile(r"(?<![a-z0-9])(\d{1,2})x[ ._-]*\([ ._-]*(\d{1,3})[ ._-]*\)", re.I),          # 1x (11)
     re.compile(r"(?:temporada|season|temp)[ ._-]*(\d{1,2})[ ._-]*(?:-[ ._-]*)?"
                r"(?:epis[oó]dio|episode|ep|e)[ ._-]*(\d{1,3})(?!\d)", re.I),               # Temporada 2 Episodio 4
 ]
 # Só o número do episódio (temporada 1): "episodio 03", "Ep 3", "E03"
 _PADRAO_SO_EPISODIO = re.compile(r"(?<![a-z0-9])(?:epis[oó]dio|episode|ep|e)[ ._-]*(\d{1,3})(?!\d)", re.I)
+
+
+@lru_cache(maxsize=65536)
+def marca_de_episodio(nome_arquivo: str) -> str | None:
+    """'The.Big.Bang.Theory.S05E19.720p.mkv' -> 'S05E19'. Só marcas FORTES (S05E19, 5x19,
+    'Temporada 5 Episódio 19'): 'Star.Wars.Episode.4.1977' é filme e não conta."""
+    base = _RE_SITE.sub(" ", Path(nome_arquivo).stem)
+    for padrao in _PADROES_EPISODIO:
+        if m := padrao.search(base):
+            return f"S{int(m.group(1)):02d}E{int(m.group(2)):02d}"
+    return None
 
 
 @lru_cache(maxsize=65536)

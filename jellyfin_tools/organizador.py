@@ -30,11 +30,12 @@ from pathlib import Path
 from .catalogo import Catalogo, ErroCatalogo, Filme
 from .extras import (ARTES, LIMITE_TRAILER_MB, _arquivos, eh_propaganda_pequena, eh_trailer, imagem_do_video, limpar_cache,
                      lixo_da_pasta, marcar_repetidos, planejar_extras, tipo_de_arte)
-from .nomes import (eh_video, extrair_episodio, extrair_titulo_e_ano, formatar_titulo, nome_episodio_jellyfin,
-                    nome_jellyfin, normalizar, pasta_temporada)
+from .nomes import (eh_video, extrair_episodio, extrair_titulo_e_ano, formatar_titulo, marca_de_episodio,
+                    nome_episodio_jellyfin, nome_jellyfin, normalizar, pasta_temporada)
 
 PASTA_LOGS = ".organizador"
 MODOS = ("filmes", "series")
+DETALHE_EPISODIO = "é episódio de série"     # modo Filmes: a janela oferece trocar para Séries
 WINDOWS = os.name == "nt"                  # as regras de nome de pasta abaixo são as do Windows
 _RE_UNIDADE = re.compile(r"[A-Za-z]:[\\/]")
 _PROIBIDOS_WINDOWS = set('<>"|?*')
@@ -152,6 +153,8 @@ def planejar(video: Path, pasta_filmes: Path, catalogo: Catalogo | None = None,
         return _planejar_episodio(video, pasta_filmes, catalogo, incluir_tmdbid, exigir_catalogo, raiz, limite_mb,
                                   nomes_episodios)
 
+    if marca := marca_de_episodio(video.name):          # modo Filmes com episódio: avisa, não chuta
+        return Movimento(video, None, "nao_identificado", f"{DETALHE_EPISODIO} ({marca}): use o modo Séries")
     extraido = extrair_titulo_e_ano(video.name)
     filme, detalhe = _consultar(catalogo, extraido.titulo, extraido.ano, "filme")
     if filme:
@@ -208,7 +211,7 @@ def _consultas(videos: list[Path], modo: str) -> list[tuple[str, int | None, str
             ep = extrair_episodio(v.name)
             if ep:
                 consultas.append((ep.serie, ep.ano, "serie"))
-        else:
+        elif not marca_de_episodio(v.name):               # episódio no modo Filmes: nem consulta
             extraido = extrair_titulo_e_ano(v.name)
             consultas.append((extraido.titulo, extraido.ano, "filme"))
     return consultas

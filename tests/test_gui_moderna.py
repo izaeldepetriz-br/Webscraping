@@ -2,6 +2,7 @@
 Precisa de customtkinter e de uma tela (no Linux sem monitor: xvfb-run python -m pytest)."""
 import os
 import time
+from pathlib import Path
 
 import pytest
 
@@ -807,3 +808,51 @@ def test_registro_por_acao_no_console(app, tmp_path):
     assert console.get("1.0", "end").strip() == "" and app._registros[1]["partes"]
     log = app.arquivo_log.read_text(encoding="utf-8")
     assert "===== Pré-visualizando =====" in log and "===== Organizando =====" in log
+
+
+def test_previa_em_filmes_com_episodios_oferece_modo_series(app, tmp_path):
+    from test_jellyfin_series import BIG_BANG
+    origem, destino = _preparar(app, tmp_path, BIG_BANG)                 # modo Filmes (o padrão)
+    perguntas = []
+    app.perguntar = lambda t, m: (perguntas.append((t, m)), False)[1]     # "Cancelar"
+    app.bt_previa.invoke()
+    esperar(app)
+    assert perguntas and perguntas[-1][0] == "Parece série" and "3 de 3" in perguntas[-1][1]
+    assert app._modo_atual == "Filmes"
+    assert all("use o modo Séries" in l[3] for l in _linhas_jf(app))
+
+    app.perguntar = lambda t, m: (perguntas.append((t, m)), True)[1]      # "Continuar"
+    app.bt_previa.invoke()
+    esperar(app)
+    esperar(app)                                                         # a 2ª prévia, já em Séries
+    assert app._modo_atual == "Séries" and app.var_jf_destino.get() == str(destino)
+    assert sorted(l[3] for l in _linhas_jf(app)) == ["Big Bang - A Teoria S01E02.mkv",
+                                                     "Big Bang - A Teoria S05E19.mkv",
+                                                     "Big Bang - A Teoria S11E24.mkv"]
+    assert app.bt_organizar.cget("state") == "normal"
+
+
+def test_abrir_log_abre_so_a_acao_escolhida(app, tmp_path):
+    _preparar(app, tmp_path, ["Matrix.1999.mkv"])
+    app.var_jf_legendas.set(False)
+    abertos = []
+    app._abrir_no_sistema = abertos.append
+    app.bt_previa.invoke()
+    esperar(app)
+    app.bt_organizar.invoke()
+    esperar(app)
+    app.bt_abrir_log.invoke()                                            # à mostra: o Organizar
+    organizar = Path(abertos[-1]).read_text(encoding="utf-8")
+    assert Path(abertos[-1]).parent == app.pasta_logs and abertos[-1].endswith("_Organizando.log")
+    assert "===== Organizando =====" in organizar and "Pré-visualizando (" not in organizar
+    assert "[movido] Matrix.1999.mkv" in organizar
+
+    app._ao_escolher_registro(app._menus_registro[1].cget("values")[1])  # escolhe a prévia
+    app.bt_abrir_log.invoke()
+    previa = Path(abertos[-1]).read_text(encoding="utf-8")
+    assert abertos[-1].endswith("_Pré-visualizando.log") and "Pré-visualizando (filmes)" in previa
+    assert "===== Organizando" not in previa
+
+    app._ao_escolher_registro(app._menus_registro[1].cget("values")[-1])  # "Início": sem arquivo próprio
+    app.bt_abrir_log.invoke()
+    assert abertos[-1] == str(app.arquivo_log) and app.caixas[-1][1] == "Log"

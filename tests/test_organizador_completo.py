@@ -115,6 +115,8 @@ def test_fluxo_completo(servicos, tmp_path):
     for trecho in ("| INFO     | [movido] " + CREED, "apagado: Leia.txt", "Jellyfin: escaneamento",
                    "Processado: Velhos Bandidos (2026)", "=== Fim: 2 movido(s), 0 com erro, 2 processado(s)"):
         assert trecho in log
+    [so_esta] = (tmp_path / "logs" / "logs").glob("*_Organizar.log")    # um arquivo só desta execução
+    assert "Processado: Velhos Bandidos (2026)" in so_esta.read_text(encoding="utf-8")
 
 
 def test_erro_em_um_filme_nao_para_os_outros(servicos, tmp_path):

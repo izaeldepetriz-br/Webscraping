@@ -72,7 +72,7 @@ from jellyfin_tools.metadados import ClienteTMDB  # noqa: E402
 from jellyfin_tools.notificacoes import Notificador  # noqa: E402
 from jellyfin_tools.pos_processamento import (ConfigPos, itens_da_biblioteca, itens_de_series,  # noqa: E402
                                               pos_processar)
-from jellyfin_tools.registro import configurar_log  # noqa: E402
+from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao  # noqa: E402
 from jellyfin_tools.site_demo import iniciar_site_demo  # noqa: E402
 
 NIVEL_POR_STATUS = {"movido": "info", "simulado": "info", "organizado": "info", "ignorado": "info",
@@ -207,7 +207,16 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["PASTA_FILMES"] = args.filmes
 
     log = configurar_log(cfg("ARQUIVO_LOG"))
+    acao = "Completar biblioteca" if args.completar_biblioteca else (
+        "Organizar" if args.aplicar or cfg("APLICAR") else "Simulacao")
+    handler, arquivo_acao = None, None
+    try:                                            # além do log geral, um arquivo só desta execução
+        handler, arquivo_acao = iniciar_log_da_acao(acao, Path(cfg("ARQUIVO_LOG")).expanduser().resolve().parent / "logs")
+    except OSError as erro:
+        log.warning("Não consegui criar o log desta execução: %s", erro)
     try:
+        if arquivo_acao:
+            log.info("Log desta execução: %s", arquivo_acao)
         if args.completar_biblioteca:
             return completar_biblioteca(log)
         return organizar(args.aplicar or cfg("APLICAR"), log)
@@ -217,6 +226,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as erro:                       # último recurso: registra e sai com código de erro
         log.critical("Erro inesperado: %s", erro, exc_info=True)
         return 1
+    finally:
+        encerrar_log_da_acao(handler)
 
 
 if __name__ == "__main__":

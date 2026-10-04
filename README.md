@@ -109,12 +109,22 @@ Outras opções da aba Jellyfin:
   para séries (antes, nas séries, o Completar só baixava legendas e não pedia o scan).
 - **Registro por ação:** o console "O que está acontecendo" guarda um registro para cada ação
   (Pré-visualizar, Organizar, Completar, testes). O seletor no topo do console mostra a atual ou
-  uma anterior (até 30). No `jellyfin_organizer.log`, cada ação começa com `===== Organizando =====`.
+  uma anterior (até 30). Cada ação também grava um arquivo só dela em `~/.videoscraper/logs/`
+  (ex.: `2026-10-04_13-24-05_Organizando.log`); **Abrir log** abre o arquivo da ação escolhida no
+  seletor (antes abria o log geral, com tudo do dia). O `jellyfin_organizer.log` continua com tudo,
+  cada ação começando com `===== Organizando =====`. O script faz o mesmo em `logs/`, ao lado do
+  `ARQUIVO_LOG`. Ficam os 200 arquivos mais recentes.
 - **Legendas de séries:** a busca não usa mais o ano da série (o OpenSubtitles guarda o ano do
   EPISÓDIO: a 2ª temporada de The Last of Us é de 2025, a série é de 2023), que descartava todas as
   legendas das temporadas mais novas.
 - **Propaganda repetida:** vídeo pequeno, que não é episódio, com o MESMO nome em 3 ou mais pastas
   (ex.: `BAIXAR PROXIMO EPISÓDIO.mp4` em cada pasta de episódio) é tratado como propaganda.
+- **Formatos de episódio aceitos:** `S01E02`, `1x02`, `1x (11)` (número entre parênteses, como em
+  "Um maluco no pedaço 1x (11).avi"), "Temporada 2 Episódio 4" e "Episódio 3" (temporada 1).
+- **Episódio no modo Filmes:** arquivo com `S05E19`, `5x19` ou "Temporada 5 Episódio 19" aparece
+  como "é episódio de série (S05E19): use o modo Séries" (e não é consultado no TMDB como filme).
+  Se a maioria da prévia for episódio, a janela pergunta se deve trocar para **Séries** e
+  pré-visualizar de novo. ("Star.Wars.Episode.4.1977" continua sendo filme.)
 - **Porcentagem na pré-visualização:** o rodapé mostra "Pré-visualizando... 45% · Consultando o
   TMDB: 75 de 166" e a barra acompanha.
 

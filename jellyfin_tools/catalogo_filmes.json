@@ -13,5 +13,8 @@
   {"tipo": "serie", "titulo": "Dark", "ano": 2017, "titulo_original": "Dark", "tmdb_id": 70523},
   {"tipo": "serie", "titulo": "The Office", "ano": 2005, "titulo_original": "The Office", "tmdb_id": 2316},
   {"tipo": "serie", "titulo": "Cidade dos Homens", "ano": 2002, "titulo_original": "Cidade dos Homens"},
-  {"tipo": "serie", "titulo": "The Expanse", "ano": 2015, "titulo_original": "The Expanse", "tmdb_id": 63639}
+  {"tipo": "serie", "titulo": "The Expanse", "ano": 2015, "titulo_original": "The Expanse", "tmdb_id": 63639},
+  {"tipo": "serie", "titulo": "Big Bang: A Teoria", "ano": 2007, "titulo_original": "The Big Bang Theory",
+   "tmdb_id": 1418, "alternativos": ["Big Bang Theory", "Big Bang A Teoria"]},
+  {"tipo": "serie", "titulo": "Um Maluco no Pedaço", "ano": 1990, "titulo_original": "The Fresh Prince of Bel-Air"}
 ]

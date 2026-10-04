@@ -146,3 +146,55 @@ def test_completar_series_usa_o_mesmo_motor_do_organizar(tmp_path, site_legendas
     resultados = pos_processar(itens, ConfigPos(provedores=[_provedor(site_legendas)], idioma="pt-BR"))
     assert [r.legenda.status for r in resultados] == ["baixada", "baixada"]
     assert (temporada / "Dark S01E01 - Segredos.pt-BR.srt").is_file()
+
+
+BIG_BANG = ["The.Big.Bang.Theory.S01E02.720p.BluRay.x264.DUAL-WWW.BLUDV.TV.mkv",
+            "The.Big.Bang.Theory.S05E19.720p.BluRay.x264.DUAL-WWW.BLUDV.TV.mkv",
+            "Big.Bang.Theory.S11E24.720p.WEB-DL.x264.DUAL-WWW.BLUDV.COM.mkv"]
+
+
+def test_modo_filmes_reconhece_episodio_e_nao_consulta_como_filme(tmp_path):
+    from jellyfin_tools import organizar_pasta
+    from jellyfin_tools.nomes import marca_de_episodio
+    assert marca_de_episodio(BIG_BANG[1]) == "S05E19"
+    assert marca_de_episodio("Star.Wars.Episode.4.1977.mkv") is None            # filme, não episódio
+    origem = tmp_path / "o"
+    origem.mkdir()
+    for nome in BIG_BANG + ["Matrix.1999.mkv"]:
+        (origem / nome).write_bytes(b"v")
+    consultas = []
+
+    class Espiao(CatalogoLocal):
+        def buscar(self, titulo, ano, tipo="filme"):
+            consultas.append(titulo)
+            return super().buscar(titulo, ano, tipo)
+    movs = {m.origem.name: m for m in organizar_pasta(origem, tmp_path / "F", Espiao(CatalogoLocal.padrao().filmes))}
+    assert movs[BIG_BANG[1]].status == "nao_identificado"
+    assert movs[BIG_BANG[1]].detalhe == "é episódio de série (S05E19): use o modo Séries"
+    assert movs["Matrix.1999.mkv"].status == "simulado" and consultas == ["Matrix"]
+
+
+def test_big_bang_no_modo_series_vira_uma_serie_so(tmp_path):
+    from jellyfin_tools import organizar_pasta
+    origem = tmp_path / "The Big Bang a Teoria" / "Big Bang - A Teoria 2006 - 1ª Temporada WWW.BLUDV.TV"
+    origem.mkdir(parents=True)
+    for nome in BIG_BANG:
+        (origem / nome).write_bytes(b"v")
+    movs = organizar_pasta(tmp_path, tmp_path / "Series", CatalogoLocal.padrao(), modo="series")
+    assert sorted(m.destino_curto for m in movs) == [
+        "Big Bang - A Teoria (2007)/Season 01/Big Bang - A Teoria S01E02.mkv",
+        "Big Bang - A Teoria (2007)/Season 05/Big Bang - A Teoria S05E19.mkv",
+        "Big Bang - A Teoria (2007)/Season 11/Big Bang - A Teoria S11E24.mkv"]   # "The ..." e sem "The": a mesma
+
+
+def test_um_maluco_no_pedaco_1x_entre_parenteses(tmp_path):
+    from jellyfin_tools import organizar_pasta
+    pasta = tmp_path / "Um Maluco no Pedaço" / "Um Maluco no pedaço 1ª Temporada"
+    pasta.mkdir(parents=True)
+    for nome in ("Um maluco no pedaço 1x (1).avi", "Um maluco no pedaço 1x (11).avi", "Um Maluco no Pedaço 6x (9).avi"):
+        (pasta / nome).write_bytes(b"v")
+    movs = organizar_pasta(tmp_path, tmp_path / "Series", CatalogoLocal.padrao(), modo="series")
+    assert sorted(m.destino_curto for m in movs) == [
+        "Um Maluco no Pedaço (1990)/Season 01/Um Maluco no Pedaço S01E01.avi",
+        "Um Maluco no Pedaço (1990)/Season 01/Um Maluco no Pedaço S01E11.avi",
+        "Um Maluco no Pedaço (1990)/Season 06/Um Maluco no Pedaço S06E09.avi"]

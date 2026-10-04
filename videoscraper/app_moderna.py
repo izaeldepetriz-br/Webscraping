@@ -30,9 +30,9 @@ from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, Confi
 from jellyfin_tools.legendas import normalizar_idiomas
 from jellyfin_tools.metadados import ClienteTMDB
 from jellyfin_tools.notificacoes import Notificador
-from jellyfin_tools.organizador import problema_no_caminho, sugestao_de_caminho, ultimo_log
+from jellyfin_tools.organizador import DETALHE_EPISODIO, problema_no_caminho, sugestao_de_caminho, ultimo_log
 from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, itens_de_series, pos_processar
-from jellyfin_tools.registro import configurar_log
+from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, testar_conexao
 from jellyfin_tools.site_demo import iniciar_site_demo
 
@@ -87,11 +87,14 @@ class AppModerna(JanelaModerna):
         self.trabalhando = False
         self._texto_fim: str | None = None      # texto do rodapé quando a tarefa acabar
         # Melhoria 4: log em arquivo (na pasta do usuário, junto das configurações) + console da janela
-        self.arquivo_log = config.ARQUIVO.parent / "jellyfin_organizer.log"
+        self.arquivo_log = config.ARQUIVO.parent / "jellyfin_organizer.log"       # log geral (tudo)
+        self.pasta_logs = config.ARQUIVO.parent / "logs"                          # um arquivo por ação
+        self._log_acao = None
         self._log = configurar_log(self.arquivo_log, no_terminal=False)
         self._log.addHandler(_LogParaFila(self.fila))
         self._previa = None                     # "assinatura" das opções da última pré-visualização
         self._tmdb_ativo = False                # o TMDB estava marcado na última análise?
+        self._sugestao_series = None            # prévia em Filmes com episódios: (episódios, total)
         self._movimentos_previa: list = []      # o que a última pré-visualização mostrou
         self._carregar_config()
         self._stdout, self._stderr = sys.stdout, sys.stderr
@@ -219,7 +222,13 @@ class AppModerna(JanelaModerna):
         self.definir_status(status, ocupado=True)
         acao = status.rstrip(". ")
         self.iniciar_registro(acao)                  # cada ação com o seu registro no console
-        self._log.info("===== %s =====", acao)       # e um separador no arquivo de log
+        encerrar_log_da_acao(self._log_acao)         # (segurança: a anterior já foi fechada no "fim")
+        try:                                         # ... e o seu próprio arquivo de log
+            self._log_acao, self._registros[-1]["arquivo"] = iniciar_log_da_acao(acao, self.pasta_logs)
+        except OSError as erro:
+            self._log_acao = None
+            self._log.warning("Não consegui criar o log desta ação: %s", erro)
+        self._log.info("===== %s =====", acao)       # e um separador no log geral
 
         def alvo():
             try:
@@ -358,11 +367,18 @@ class AppModerna(JanelaModerna):
             self.definir_estado_tmdb(*dado)
         elif tipo == "status_fim":
             self._texto_fim = dado
+        elif tipo == "sugerir_series":
+            self._sugestao_series = dado
         elif tipo == "fim":
             self.trabalhando = False
+            encerrar_log_da_acao(self._log_acao)       # o arquivo desta ação está completo
+            self._log_acao = None
             self.definir_status(self._texto_fim or f"Pronto. {len(self.links)} vídeo(s) na lista.",
                                 ocupado=False)
             self._texto_fim = None
+            if self._sugestao_series:                  # só agora: a janela já está livre para outra prévia
+                sugestao, self._sugestao_series = self._sugestao_series, None
+                self.after(50, lambda: self._oferecer_series(*sugestao))
 
 
     # ================================================================== auxiliares
@@ -431,8 +447,27 @@ class AppModerna(JanelaModerna):
                                          f"{resumo_sobras}{resumo_tmdb} Nada foi movido."))
             if not movimentos:
                 self.fila.put(("msg", ("Nenhum vídeo", f"Não achei vídeos em:\n{o.origem}", "aviso")))
+            episodios = sum(m.detalhe.startswith(DETALHE_EPISODIO) for m in movimentos)
+            if o.modo == "filmes" and episodios and episodios * 2 >= len(movimentos):
+                self.fila.put(("sugerir_series", (episodios, len(movimentos))))   # pergunta depois do "fim"
 
         self._rodar("Pré-visualizando...", tarefa)
+
+    def _oferecer_series(self, episodios: int, total: int) -> None:
+        """Prévia no modo Filmes com (quase) só episódios: oferece trocar para Séries e refazer."""
+        destino_atual = self.var_jf_destino.get()
+        destino_series = self._destinos.get("Séries") or destino_atual
+        if not self.perguntar("Parece série",
+                              f"{episodios} de {total} arquivo(s) têm temporada e episódio no nome (ex.: S05E19).\n"
+                              "São episódios de série, e o modo Filmes procura título + ano de filme.\n\n"
+                              f"Trocar para o modo Séries e pré-visualizar de novo?\n"
+                              f"Biblioteca de Séries: {destino_series}"):
+            return
+        self.seletor_modo.set("Séries")
+        self._ao_trocar_modo("Séries")
+        if not self.var_jf_destino.get():
+            self.var_jf_destino.set(destino_atual)
+        self.ao_previsualizar()
 
     def ao_organizar(self) -> None:
         o = self._validar_jellyfin()
@@ -691,10 +726,17 @@ class AppModerna(JanelaModerna):
         self._rodar("Enviando aviso de teste...", tarefa)
 
     def ao_abrir_log(self) -> None:
-        if not self.arquivo_log.exists():
+        """Abre o log SÓ da ação escolhida no seletor do console (antes abria o log geral, com tudo)."""
+        registro = self._registros[self._registro_visivel]
+        arquivo = registro.get("arquivo")
+        if arquivo and Path(arquivo).exists():
+            self._abrir_no_sistema(str(arquivo))
+        elif self.arquivo_log.exists():
+            self.mostrar_mensagem("Log", "Esta ação não tem log próprio; abrindo o log geral "
+                                  f"(todas as ações):\n{self.arquivo_log}", "info")
+            self._abrir_no_sistema(str(self.arquivo_log))
+        else:
             self.mostrar_mensagem("Log", "O log ainda está vazio.", "info")
-            return
-        self._abrir_no_sistema(str(self.arquivo_log))
 
     def ao_desfazer(self) -> None:
         o = self._validar_jellyfin(precisa_origem=False)
@@ -885,6 +927,8 @@ class AppModerna(JanelaModerna):
             return
         self._salvar_config()
         self.evento_parar.set()
+        encerrar_log_da_acao(self._log_acao)
+        self._log_acao = None
         sys.stdout, sys.stderr = self._stdout, self._stderr
         self.destroy()
 
