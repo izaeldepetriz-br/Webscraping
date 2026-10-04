@@ -157,9 +157,49 @@ jellyfin_tools/
   organizador.py move/renomeia no padrão do Jellyfin, com simulação e desfazer
   legendas.py    busca/baixa legendas (site HTML ou API do OpenSubtitles)
   site_demo.py   site de legendas simulado, para demonstração e testes
+  metadados.py   pôster/backdrop pt-BR e .nfo pela API do TMDB
+  servidor_jellyfin.py  scan da biblioteca (POST /Library/Refresh)
+  notificacoes.py       avisos no Discord/Telegram
+  registro.py           log em arquivo (logging)
+organizar_jellyfin.py  script completo, com as configurações no topo
 exemplo_jellyfin.py  como integrar no seu arquivo principal
 tests/          testes com servidores locais (sem internet)
 ```
+
+## Script completo: `organizar_jellyfin.py`
+
+Um arquivo só, com **as configurações no topo**, que faz tudo em sequência:
+
+| Etapa | O que faz |
+|---|---|
+| Organização | Limpa nomes de torrent e cria `Filmes/Nome (Ano)/Nome (Ano).ext` |
+| Legendas e artes locais | `.pt-BR.srt`, `.pt-BR.forced.srt`, `poster.jpg`, `backdrop.jpg`, `landscape.jpg`, `logo.png` |
+| Limpeza | Apaga `.url`, `.txt` de propaganda e trailers < 100 MB (com as travas de segurança) |
+| Legenda faltante | OpenSubtitles (API) e/ou um site de busca (`SITE_LEGENDAS_URL`) |
+| **Scan do Jellyfin** | `POST /Library/Refresh` uma vez no fim do lote (`JELLYFIN_URL`, `JELLYFIN_API_KEY`) |
+| **Pôster e backdrop pt-BR** | Pela API do TMDB, só se o torrent não trouxe imagens |
+| **Arquivo .nfo** | `Nome (Ano).nfo` com título, ano, sinopse em português, duração, gêneros e IDs |
+| **Log e avisos** | `jellyfin_organizer.log` + Discord (webhook) e/ou Telegram (bot) |
+
+```bash
+python organizar_jellyfin.py                         # SIMULAÇÃO: só mostra e registra no log
+python organizar_jellyfin.py --aplicar               # de verdade
+python organizar_jellyfin.py --completar-biblioteca  # filmes JÁ organizados: baixa só o que falta
+```
+
+**Chaves e tokens:** em vez de escrevê-los no arquivo, crie variáveis de ambiente com o mesmo nome
+(ex.: no Windows, `setx TMDB_API_KEY "sua-chave"`). A variável de ambiente vence o valor do topo,
+e assim seus segredos não vão parar no GitHub.
+
+- **TMDB:** chave gratuita em <https://www.themoviedb.org/settings/api>. Usamos a API oficial (não
+  raspagem do site, que os termos proíbem). Imagens que vieram no torrent têm prioridade.
+- **Jellyfin:** Painel → Avançado → Chaves de API. O scan roda **uma vez no fim do lote**:
+  `/Library/Refresh` varre a biblioteca inteira, então um scan por filme seria desperdício.
+- **Para o .nfo ser lido:** na biblioteca do Jellyfin, deixe "Nfo" marcado em "Leitores de metadados".
+- **Discord:** canal → Editar → Integrações → Webhooks. **Telegram:** crie o bot com @BotFather.
+  Com mais de `NOTIFICAR_CADA_FILME_ATE` filmes no lote, o resto vai num aviso de resumo.
+- **Robustez:** cada filme é processado num `try/except` próprio; um erro (TMDB fora do ar, legenda
+  não encontrada) vai para o log e o próximo filme segue.
 
 ## Jellyfin: organizar filmes e baixar legendas (`jellyfin_tools`)
 

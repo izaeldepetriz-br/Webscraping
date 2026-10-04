@@ -6,3 +6,4 @@ __pycache__/
 *.part
 demo_jellyfin/
 demo_torrent/
+jellyfin_organizer.log*
