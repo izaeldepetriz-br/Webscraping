@@ -75,7 +75,7 @@ def app(monkeypatch, tmp_path):
     a.caixas = []
     a.mostrar_mensagem = lambda t, m, tipo="info": a.caixas.append((tipo, t, m))   # responde OK sozinho
     a.perguntar = lambda t, m: True
-    a.escolher = lambda t, m, opcoes: opcoes[0]             # escolhe o botão principal sozinho
+    a.escolher = lambda t, m, opcoes, **k: opcoes[0]        # escolhe o botão principal sozinho
     a.campo_espera.set(0.5)
     a.var_pasta.set(str(tmp_path / "videos"))
     yield a
@@ -1348,7 +1348,7 @@ def test_aviso_de_versao_nova_uma_vez_por_versao(app, monkeypatch):
     monkeypatch.setattr(atualizacao, "verificar", lambda *a, **k: nova)
     abertos, escolhas = [], []
     monkeypatch.setattr(app_moderna.webbrowser, "open", abertos.append)
-    app.escolher = lambda t, m, opcoes: (escolhas.append(m), opcoes[0])[1]
+    app.escolher = lambda t, m, opcoes, **k: (escolhas.append(m), opcoes[0])[1]
     app.verificar_versao_nova()
     for _ in range(40):
         app.update()

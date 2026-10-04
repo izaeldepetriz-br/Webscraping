@@ -1808,7 +1808,7 @@ class AppModerna(JanelaModerna):
         if self.escolher("Versão nova", f"Saiu a versão {nova.versao} do programa (esta é a "
                          f"{atualizacao.versao_atual()}).\n\nPara atualizar: baixe o .zip na página, extraia e troque "
                          f"a pasta do programa. Suas configurações continuam valendo.{notas}",
-                         ("Abrir a página de download", "Depois")) == "Abrir a página de download":
+                         ("Abrir a página de download",), cancelar="Agora não") == "Abrir a página de download":
             webbrowser.open(nova.url)
 
     def _salvar_config(self) -> None:

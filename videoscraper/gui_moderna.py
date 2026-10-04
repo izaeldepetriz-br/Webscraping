@@ -170,7 +170,7 @@ class DialogoModerno(ctk.CTkToplevel):
     CORES = {"info": Tema.PRIMARIA, "aviso": Tema.AVISO, "erro": Tema.PERIGO, "sucesso": Tema.SUCESSO}
 
     def __init__(self, master, titulo: str, mensagem: str, tipo: str = "info", pergunta: bool = False,
-                 opcoes: tuple[str, ...] = ()):
+                 opcoes: tuple[str, ...] = (), cancelar: str = "Cancelar"):
         """opcoes: botões de escolha (o 1º é o principal); `resposta` vira o texto do botão clicado
         (None = Cancelar)."""
         super().__init__(master, fg_color=Tema.CARTAO)
@@ -191,7 +191,7 @@ class DialogoModerno(ctk.CTkToplevel):
         botoes = ctk.CTkFrame(self, fg_color="transparent")
         botoes.pack(fill="x", padx=28, pady=(8, 22))
         if opcoes:
-            ctk.CTkButton(botoes, text="Cancelar", width=100, height=38, corner_radius=Tema.RAIO_CONTROLE,
+            ctk.CTkButton(botoes, text=cancelar, width=100, height=38, corner_radius=Tema.RAIO_CONTROLE,
                           fg_color=Tema.SECUNDARIA, hover_color=Tema.SECUNDARIA_HOVER,
                           font=ctk.CTkFont(Tema.FAMILIA, 13), command=self.destroy).pack(side="left")
             for n, texto in reversed(list(enumerate(opcoes))):
@@ -1756,9 +1756,9 @@ class JanelaModerna(ctk.CTk):
         self.wait_window(janela)
         return janela.resposta
 
-    def escolher(self, titulo: str, mensagem: str, opcoes: tuple[str, ...]) -> str | None:
+    def escolher(self, titulo: str, mensagem: str, opcoes: tuple[str, ...], cancelar: str = "Cancelar") -> str | None:
         """Pergunta com vários botões; devolve o texto do escolhido (None = Cancelar)."""
-        dialogo = DialogoModerno(self, titulo, mensagem, "info", opcoes=opcoes)
+        dialogo = DialogoModerno(self, titulo, mensagem, "info", opcoes=opcoes, cancelar=cancelar)
         self.wait_window(dialogo)
         return dialogo.resposta
 
