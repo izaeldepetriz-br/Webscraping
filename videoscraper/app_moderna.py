@@ -10,6 +10,7 @@ conversa com a janela por uma fila, para a tela nunca travar.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import queue
 import subprocess
@@ -24,12 +25,15 @@ from urllib.parse import unquote, urlparse
 import tkinter as tk
 from tkinter import filedialog
 
-from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, ConfigSite, ErroCatalogo, ErroLegenda,
-                            ProvedorOpenSubtitles, ProvedorSiteHTML, ResultadoLegenda, baixar_legenda,
-                            baixar_legenda_episodio,
-                            baixar_legendas_biblioteca, baixar_legendas_series, desfazer, organizar_pasta)
-from jellyfin_tools.legendas import episodios_da_biblioteca, pastas_de_filmes
+from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, ConfigSite, ProvedorOpenSubtitles,
+                            ProvedorSiteHTML, baixar_legendas_series, desfazer, organizar_pasta)
+from jellyfin_tools.legendas import episodios_da_biblioteca
+from jellyfin_tools.metadados import ClienteTMDB
+from jellyfin_tools.notificacoes import Notificador
 from jellyfin_tools.organizador import ultimo_log
+from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, pos_processar
+from jellyfin_tools.registro import configurar_log
+from jellyfin_tools.servidor_jellyfin import ErroJellyfin, testar_conexao
 from jellyfin_tools.site_demo import iniciar_site_demo
 
 from . import config
@@ -42,6 +46,20 @@ from .servico import MENSAGEM_ROBOTS, Trabalho, fazer_login
 
 PASTA_PADRAO = os.path.abspath("videos_baixados")
 TEXTOS_SITUACAO = {"ok": "baixado", "pulado": "pulado", "erro": "erro"}
+# Chaves e tokens: só vão para o config.json se o usuário marcar "Lembrar as chaves".
+SEGREDOS = ("chave_tmdb", "chave_opensubtitles", "jellyfin_api_key", "discord_webhook", "telegram_token")
+
+
+class _LogParaFila(logging.Handler):
+    """Manda as mensagens do log (que também vão para o arquivo) para o console da janela."""
+
+    def __init__(self, fila: queue.Queue):
+        super().__init__(logging.INFO)
+        self.fila = fila
+        self.setFormatter(logging.Formatter("%(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.fila.put(("log", self.format(record) + "\n"))
 
 # Aba Jellyfin: status do organizador / da legenda -> (texto, cor da linha)
 STATUS_MOVIMENTO = {"simulado": ("vai mover", None), "movido": ("movido", "ok"),
@@ -61,6 +79,10 @@ class AppModerna(JanelaModerna):
         self.links: list[LinkVideo] = []
         self.trabalhando = False
         self._texto_fim: str | None = None      # texto do rodapé quando a tarefa acabar
+        # Melhoria 4: log em arquivo (na pasta do usuário, junto das configurações) + console da janela
+        self.arquivo_log = config.ARQUIVO.parent / "jellyfin_organizer.log"
+        self._log = configurar_log(self.arquivo_log, no_terminal=False)
+        self._log.addHandler(_LogParaFila(self.fila))
         self._previa = None                     # "assinatura" das opções da última pré-visualização
         self._movimentos_previa: list = []      # o que a última pré-visualização mostrou
         self._carregar_config()
@@ -227,60 +249,98 @@ class AppModerna(JanelaModerna):
                                    "seletor CSS.", "info")))
 
     def _processar_fila(self) -> None:
-        try:
-            while True:
-                tipo, dado = self.fila.get_nowait()
-                if tipo == "log":
-                    self.escrever_log(_so_caracteres_basicos(dado))
-                elif tipo == "links":
-                    self._mostrar_links(dado)
-                elif tipo == "item":
-                    self._marcar_item(*dado)
-                elif tipo == "aguardar":
-                    mensagem, ok = dado
-                    self.mostrar_mensagem("Sua vez", mensagem + "\n\nClique em OK quando terminar.")
-                    ok.set()
-                elif tipo == "msg":
-                    self.mostrar_mensagem(*dado)
-                elif tipo == "marcar_navegador":
-                    self.marcar_navegador()
-                elif tipo == "jf_movimentos":
-                    self._mostrar_movimentos(dado)
-                elif tipo == "jf_previa":
-                    self._previa, quantos = dado
-                    self.liberar_organizar(quantos > 0)
-                elif tipo == "jf_alvos":
-                    self.limpar_tabela_jf()
-                    for i, (atual, novo) in enumerate(dado):
-                        self.adicionar_linha_jf(str(i), i + 1, "na biblioteca", None, atual, novo)
-                elif tipo == "jf_legenda":
-                    iid, resultado = dado
-                    self.atualizar_linha_jf(iid, *STATUS_LEGENDA.get(resultado.status, (resultado.status, None)))
-                elif tipo == "jf_limpar":
-                    self.limpar_tabela_jf()
-                elif tipo == "jf_prog":
-                    iid, fracao, status = dado
-                    self.definir_progresso_linha_jf(iid, fracao)
-                    if fracao >= 1.0 and not status.startswith("_"):     # "_legenda": só o progresso
-                        self.atualizar_situacao_jf(iid, *STATUS_MOVIMENTO.get(status, (status, None)))
-                        if status == "erro":
-                            self.definir_progresso_linha_jf(iid, None, "erro")
-                elif tipo == "jf_atual":
-                    self._mostrar_detalhe(int(dado), "Agora")
-                elif tipo == "jf_total":
-                    self.definir_progresso_total(*dado)
-                elif tipo == "status_fim":
-                    self._texto_fim = dado
-                elif tipo == "fim":
+        """Lê a fila e atualiza a tela. Um erro numa mensagem vai para o log e o ciclo CONTINUA
+        (antes, uma exceção aqui parava a fila e a janela ficava "trabalhando" para sempre)."""
+        mensagens = []
+        while True:
+            try:
+                mensagens.append(self.fila.get_nowait())
+            except queue.Empty:
+                break
+        # Velocidade: linhas de log seguidas viram UMA escrita no console (antes eram centenas,
+        # cada uma rolando a tela até o fim).
+        # Avisos de progresso: só o ÚLTIMO de cada tipo (e de cada linha) importa neste ciclo.
+        ultimo: dict = {}
+        for posicao, (tipo, dado) in enumerate(mensagens):
+            if tipo in ("jf_total", "jf_atual"):
+                ultimo[tipo] = posicao
+            elif tipo == "jf_prog":
+                ultimo[("jf_prog", dado[0])] = posicao
+        manter = set(ultimo.values())
+        agrupadas: list = []
+        for posicao, (tipo, dado) in enumerate(mensagens):
+            chave = ("jf_prog", dado[0]) if tipo == "jf_prog" else tipo
+            if chave in ultimo and posicao not in manter:
+                continue                             # substituído por um aviso mais novo
+            if tipo == "log" and agrupadas and agrupadas[-1][0] == "log":
+                agrupadas[-1] = ("log", agrupadas[-1][1] + dado)
+            else:
+                agrupadas.append((tipo, dado))
+        for tipo, dado in agrupadas:
+            try:
+                self._tratar_mensagem(tipo, dado)
+            except tk.TclError:          # a janela foi fechada no meio do processamento
+                return
+            except Exception:
+                self._log.error("Erro interno ao atualizar a tela (%s):\n%s", tipo, traceback.format_exc())
+                if tipo == "fim":        # mesmo com erro, libera os botões
                     self.trabalhando = False
-                    self.definir_status(self._texto_fim or f"Pronto. {len(self.links)} vídeo(s) na lista.",
-                                        ocupado=False)
-                    self._texto_fim = None
-        except queue.Empty:
-            pass
-        except tk.TclError:          # a janela foi fechada no meio do processamento
-            return
+                    self.definir_ocupado(False)
         self.after(100, self._processar_fila)
+
+    def report_callback_exception(self, tipo, valor, rastro) -> None:
+        """Erros em cliques/temporizadores do Tk: registra no log em vez de sumir."""
+        self._log.error("Erro interno na janela:\n%s", "".join(traceback.format_exception(tipo, valor, rastro)))
+
+    def _tratar_mensagem(self, tipo: str, dado) -> None:
+        """Atualiza a tela conforme a mensagem que a thread de trabalho mandou."""
+        if tipo == "log":
+            self.escrever_log(_so_caracteres_basicos(dado))
+        elif tipo == "links":
+            self._mostrar_links(dado)
+        elif tipo == "item":
+            self._marcar_item(*dado)
+        elif tipo == "aguardar":
+            mensagem, ok = dado
+            self.mostrar_mensagem("Sua vez", mensagem + "\n\nClique em OK quando terminar.")
+            ok.set()
+        elif tipo == "msg":
+            self.mostrar_mensagem(*dado)
+        elif tipo == "marcar_navegador":
+            self.marcar_navegador()
+        elif tipo == "jf_movimentos":
+            self._mostrar_movimentos(dado)
+        elif tipo == "jf_previa":
+            self._previa, quantos = dado
+            self.liberar_organizar(quantos > 0)
+        elif tipo == "jf_alvos":
+            self.limpar_tabela_jf()
+            for i, (atual, novo) in enumerate(dado):
+                self.adicionar_linha_jf(str(i), i + 1, "na biblioteca", None, atual, novo)
+        elif tipo == "jf_legenda":
+            iid, resultado = dado
+            self.atualizar_linha_jf(iid, *STATUS_LEGENDA.get(resultado.status, (resultado.status, None)))
+        elif tipo == "jf_limpar":
+            self.limpar_tabela_jf()
+        elif tipo == "jf_prog":
+            iid, fracao, status = dado
+            self.definir_progresso_linha_jf(iid, fracao)
+            if fracao >= 1.0 and not status.startswith("_"):     # "_legenda": só o progresso
+                self.atualizar_situacao_jf(iid, *STATUS_MOVIMENTO.get(status, (status, None)))
+                if status == "erro":
+                    self.definir_progresso_linha_jf(iid, None, "erro")
+        elif tipo == "jf_atual":
+            self._mostrar_detalhe(int(dado), "Agora")
+        elif tipo == "jf_total":
+            self.definir_progresso_total(*dado)
+        elif tipo == "status_fim":
+            self._texto_fim = dado
+        elif tipo == "fim":
+            self.trabalhando = False
+            self.definir_status(self._texto_fim or f"Pronto. {len(self.links)} vídeo(s) na lista.",
+                                ocupado=False)
+            self._texto_fim = None
+
 
     # ================================================================== auxiliares
     def _validar(self, exigir_url: bool = True):
@@ -368,7 +428,7 @@ class AppModerna(JanelaModerna):
 
         def tarefa():
             print(f"\nOrganizando: {o.origem} -> {o.destino}")
-            etapas = 2 if o.legendas else 1
+            etapas = 2                       # 1: mover   2: legendas/metadados/avisos/scan
             andamento = {"total": 0, "feitos": 0, "ultimo": {}}
 
             def ao_planejar(movimentos):
@@ -386,7 +446,8 @@ class AppModerna(JanelaModerna):
                     self.fila.put(("jf_atual", i))
                 if fracao >= 1.0:
                     andamento["feitos"] += 1
-                    print(m)
+                    nivel = {"erro": self._log.error, "movido": self._log.info}.get(m.status, self._log.warning)
+                    nivel("%s", m)
                 self.fila.put(("jf_prog", (str(i), fracao, m.status if fracao >= 1.0 else "simulado")))
                 feitos, total = andamento["feitos"], andamento["total"]
                 geral = (feitos + (0 if fracao >= 1.0 else fracao)) / total
@@ -398,27 +459,23 @@ class AppModerna(JanelaModerna):
                                          modo=o.modo, limpar_lixo=o.limpar_lixo,
                                          ao_planejar=ao_planejar, ao_progresso=ao_progresso)
             movidos = [(i, m) for i, m in enumerate(movimentos) if m.status == "movido"]
-            legendas = 0
-            if o.legendas and movidos:
-                print("\nBaixando legendas...")
-                with self._provedores(o) as provedores:
-                    for k, (i, m) in enumerate(movidos, 1):
-                        if self.evento_parar.is_set():
-                            print("Legendas interrompidas.")
-                            break
-                        resultado = self._legenda_do_movimento(m, provedores, o)
-                        print(resultado)
-                        legendas += resultado.status == "baixada"
-                        self.fila.put(("jf_legenda", (str(i), resultado)))
-                        self.fila.put(("jf_total", (k / len(movidos), f"Etapa 2/2 – legendas: {k} de "
-                                                                      f"{len(movidos)} ({k * 100 // len(movidos)}%)")))
+            resultados = []
+            if movidos:
+                self._log.info("Etapa 2/%d: legendas, pôster, .nfo, avisos e scan do Jellyfin", etapas)
+                resultados = self._pos_processar(o, [(m, m.destino.stem) for _, m in movidos],
+                                                 [i for i, _ in movidos], f"Etapa 2/{etapas}",
+                                                 legendas=o.legendas, notificar=True)
+            legendas = sum(1 for r in resultados if r.legenda and r.legenda.status == "baixada")
+            metadados = sum(1 for r in resultados if r.metadados and r.metadados.criados)
             erros = sum(m.status == "erro" for m in movimentos)
             self.fila.put(("jf_total", (1.0, f"Concluído: {len(movidos)} movido(s), {legendas} legenda(s), "
-                                             f"{erros} erro(s)")))
+                                             f"{metadados} com pôster/.nfo, {erros} erro(s)")))
             self.fila.put(("status_fim", f"Organizado: {len(movidos)} movido(s), {legendas} legenda(s)."))
             self.fila.put(("msg", ("Organização concluída",
-                                   f"Movidos: {len(movidos)}\nLegendas baixadas: {legendas}\nCom erro: {erros}\n\n"
-                                   "Para voltar atrás, use 'Desfazer última'.", "erro" if erros else "sucesso")))
+                                   f"Movidos: {len(movidos)}\nLegendas baixadas: {legendas}\n"
+                                   f"Pôster/backdrop/.nfo: {metadados}\nCom erro: {erros}\n\n"
+                                   "Para voltar atrás, use 'Desfazer última'.\nDetalhes em 'Abrir log'.",
+                                   "erro" if erros else "sucesso")))
 
         self._rodar("Organizando...", tarefa)
 
@@ -437,16 +494,14 @@ class AppModerna(JanelaModerna):
         self._previa = None
         self.liberar_organizar(False)
         destino = Path(o.destino)
+        if o.modo == "filmes":
+            self._completar_filmes(o, destino)
+            return
 
-        def tarefa():
-            if o.modo == "series":
-                alvos = episodios_da_biblioteca(destino)
-                linhas = [("/".join(v.relative_to(destino).parts), f"{v.stem}.{o.idioma}.srt") for v in alvos]
-                funcao = baixar_legendas_series
-            else:
-                alvos = pastas_de_filmes(destino)
-                linhas = [(p.name, f"{p.name}.{o.idioma}.srt") for p in alvos]
-                funcao = baixar_legendas_biblioteca
+        def tarefa():                            # séries: só legendas (metadados ficam com o Jellyfin)
+            alvos = episodios_da_biblioteca(destino)
+            linhas = [("/".join(v.relative_to(destino).parts), f"{v.stem}.{o.idioma}.srt") for v in alvos]
+            funcao = baixar_legendas_series
             self.fila.put(("jf_alvos", linhas))
             print(f"\nProcurando legendas para {len(alvos)} item(ns) em {destino}")
             total = len(alvos) or 1
@@ -465,6 +520,85 @@ class AppModerna(JanelaModerna):
             self.fila.put(("status_fim", f"Legendas: {baixadas} baixada(s) de {len(alvos)} item(ns)."))
 
         self._rodar("Baixando legendas...", tarefa)
+
+    def _completar_filmes(self, o, destino: Path) -> None:
+        """Filmes já organizados: legenda + pôster/backdrop + .nfo do que faltar (sem avisos)."""
+        def tarefa():
+            itens = itens_da_biblioteca(destino, self._log)
+            self.fila.put(("jf_alvos", [(nome, f"{nome}.{o.idioma}.srt") for _, nome in itens]))
+            self._log.info("Completar biblioteca: %d filme(s) em %s", len(itens), destino)
+            resultados = self._pos_processar(o, itens, list(range(len(itens))), "Completando",
+                                             legendas=True, notificar=False)
+            baixadas = sum(1 for r in resultados if r.legenda and r.legenda.status == "baixada")
+            metadados = sum(1 for r in resultados if r.metadados and r.metadados.criados)
+            self.fila.put(("jf_total", (1.0, f"Concluído: {baixadas} legenda(s), {metadados} com pôster/.nfo")))
+            self.fila.put(("status_fim", f"Biblioteca completada: {baixadas} legenda(s), "
+                                         f"{metadados} filme(s) com pôster/.nfo novos."))
+
+        self._rodar("Completando a biblioteca...", tarefa)
+
+    def _pos_processar(self, o, itens: list, iids: list[int], etapa: str, legendas: bool, notificar: bool):
+        """Monta o ConfigPos com as opções da tela e roda o pós-processamento (na thread de trabalho)."""
+        tmdb = ClienteTMDB(o.chave_tmdb) if o.chave_tmdb and (o.imagens_tmdb or o.gerar_nfo) else None
+        if tmdb is None and (o.imagens_tmdb or o.gerar_nfo):
+            self._log.info("Sem chave do TMDB: pôster, backdrop e .nfo não serão baixados")
+        total = len(itens) or 1
+        self.fila.put(("jf_total", (0.0, f"{etapa} – legendas e metadados: 0 de {len(itens)}")))
+
+        def ao_item(k, resultado):
+            iid = str(iids[k])
+            if resultado.legenda:
+                self.fila.put(("jf_legenda", (iid, resultado.legenda)))
+            self.fila.put(("jf_prog", (iid, 1.0, "_pos")))
+            self.fila.put(("jf_total", ((k + 1) / total, f"{etapa} – legendas e metadados: {k + 1} de "
+                                                         f"{len(itens)} ({(k + 1) * 100 // total}%)")))
+
+        with contextlib.ExitStack() as pilha:
+            provedores = pilha.enter_context(self._provedores(o)) if legendas else []
+            cfg = ConfigPos(provedores=provedores, idioma=o.idioma, tmdb=tmdb, imagens=o.imagens_tmdb,
+                            nfo=o.gerar_nfo, notificar=notificar,
+                            notificador=Notificador(o.discord_webhook, o.telegram_token, o.telegram_chat_id),
+                            jellyfin_url=o.jellyfin_url,
+                            jellyfin_api_key=o.jellyfin_api_key if o.atualizar_jellyfin else "")
+            return pos_processar(itens, cfg, self._log, ao_item=ao_item, parar=self.evento_parar.is_set)
+
+    def ao_testar_jellyfin(self) -> None:
+        o = self.obter_opcoes_jellyfin()
+
+        def tarefa():
+            try:
+                servidor = testar_conexao(o.jellyfin_url, o.jellyfin_api_key)
+                self._log.info("Jellyfin: conectado a %s", servidor)
+                self.fila.put(("msg", ("Jellyfin conectado", f"Tudo certo: {servidor}.", "sucesso")))
+            except ErroJellyfin as erro:
+                self._log.warning("Jellyfin: %s", erro)
+                self.fila.put(("msg", ("Jellyfin", str(erro).capitalize() + ".", "erro")))
+
+        self._rodar("Testando o Jellyfin...", tarefa)
+
+    def ao_testar_avisos(self) -> None:
+        o = self.obter_opcoes_jellyfin()
+        notificador = Notificador(o.discord_webhook, o.telegram_token, o.telegram_chat_id)
+        if not notificador.ativo:
+            self.mostrar_mensagem("Avisos", "Preencha o webhook do Discord e/ou o token e o Chat ID do Telegram.",
+                                  "aviso")
+            return
+
+        def tarefa():
+            ok = notificador.enviar(discord="✅ **Teste do videoscraper:** os avisos estão funcionando.",
+                                    telegram="✅ <b>Teste do videoscraper:</b> os avisos estão funcionando.")
+            if ok:
+                self.fila.put(("msg", ("Avisos", "Aviso de teste enviado. Confira o Discord/Telegram.", "sucesso")))
+            else:
+                self.fila.put(("msg", ("Avisos", "Não consegui enviar. Veja o motivo em 'Abrir log'.", "erro")))
+
+        self._rodar("Enviando aviso de teste...", tarefa)
+
+    def ao_abrir_log(self) -> None:
+        if not self.arquivo_log.exists():
+            self.mostrar_mensagem("Log", "O log ainda está vazio.", "info")
+            return
+        self._abrir_no_sistema(str(self.arquivo_log))
 
     def ao_desfazer(self) -> None:
         o = self._validar_jellyfin(precisa_origem=False)
@@ -552,18 +686,6 @@ class AppModerna(JanelaModerna):
             if servidor:
                 servidor.shutdown()
 
-    @staticmethod
-    def _legenda_do_movimento(m, provedores, o):
-        originais = [m.filme.titulo_original] if m.filme and m.filme.titulo_original else []
-        try:
-            if m.episodio:
-                return baixar_legenda_episodio(m.destino, provedores, idioma=o.idioma, sobrescrever=o.sobrescrever,
-                                               titulos_alternativos=originais)
-            return baixar_legenda(m.destino.parent, provedores, idioma=o.idioma, sobrescrever=o.sobrescrever,
-                                  titulos_alternativos=originais)
-        except (ErroLegenda, ErroCatalogo) as erro:
-            return ResultadoLegenda(m.destino.parent, "erro", detalhe=str(erro))
-
     def ao_selecionar_jf(self) -> None:
         ids = self.tabela_jf.selection()
         if ids and self._movimentos_previa:
@@ -602,6 +724,10 @@ class AppModerna(JanelaModerna):
         dados = config.carregar().get("jellyfin", {})
         dados.setdefault("chave_tmdb", os.environ.get("TMDB_API_KEY", ""))
         dados.setdefault("chave_opensubtitles", os.environ.get("OPENSUBTITLES_API_KEY", ""))
+        for chave, variavel in (("jellyfin_url", "JELLYFIN_URL"), ("jellyfin_api_key", "JELLYFIN_API_KEY"),
+                                ("discord_webhook", "DISCORD_WEBHOOK_URL"), ("telegram_token", "TELEGRAM_BOT_TOKEN"),
+                                ("telegram_chat_id", "TELEGRAM_CHAT_ID")):
+            dados.setdefault(chave, os.environ.get(variavel, ""))
         dados.setdefault("origem", PASTA_PADRAO)
         self.definir_opcoes_jellyfin(dados)
 
@@ -613,8 +739,8 @@ class AppModerna(JanelaModerna):
         destinos = self.destinos_jellyfin()
         dados["destino_filmes"], dados["destino_series"] = destinos["Filmes"], destinos["Séries"]
         if not o.lembrar_chaves:                     # chaves de API só se o usuário pedir
-            dados.pop("chave_tmdb")
-            dados.pop("chave_opensubtitles")
+            for segredo in SEGREDOS:
+                dados.pop(segredo)
         tudo = config.carregar()
         tudo["jellyfin"] = dados
         config.salvar(tudo)

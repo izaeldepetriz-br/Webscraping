@@ -40,3 +40,24 @@ def atualizar_biblioteca(jellyfin_url: str, api_key: str, timeout: float = 20,
     if not r.ok:
         raise ErroJellyfin(f"o Jellyfin respondeu HTTP {r.status_code}")
     log.info("Jellyfin: escaneamento da biblioteca iniciado (%s)", jellyfin_url)
+
+
+def testar_conexao(jellyfin_url: str, api_key: str, timeout: float = 10,
+                   sessao: requests.Session | None = None) -> str:
+    """Confere endereço e chave (GET /System/Info). Devolve 'Nome do servidor (versão)'."""
+    if not jellyfin_url or not api_key:
+        raise ErroJellyfin("preencha o endereço e a chave de API do Jellyfin")
+    url = jellyfin_url.rstrip("/") + "/System/Info"
+    try:
+        r = (sessao or requests).get(url, headers=_cabecalhos(api_key), timeout=timeout)
+    except requests.RequestException as erro:
+        raise ErroJellyfin(f"não consegui falar com o Jellyfin em {jellyfin_url}: {erro}") from erro
+    if r.status_code in (401, 403):
+        raise ErroJellyfin("o Jellyfin recusou a chave de API")
+    if not r.ok:
+        raise ErroJellyfin(f"o Jellyfin respondeu HTTP {r.status_code} (o endereço está certo?)")
+    try:
+        info = r.json()
+    except ValueError as erro:
+        raise ErroJellyfin("esse endereço respondeu, mas não parece um servidor Jellyfin") from erro
+    return f"{info.get('ServerName', 'Jellyfin')} (versão {info.get('Version', '?')})"

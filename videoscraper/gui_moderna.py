@@ -92,6 +92,14 @@ class OpcoesJellyfin:
     idioma: str
     sobrescrever: bool
     lembrar_chaves: bool
+    imagens_tmdb: bool = True        # baixar poster.jpg/backdrop.jpg do TMDB se faltarem
+    gerar_nfo: bool = True           # criar Nome (Ano).nfo
+    jellyfin_url: str = ""
+    jellyfin_api_key: str = ""
+    atualizar_jellyfin: bool = True  # pedir o scan da biblioteca no fim
+    discord_webhook: str = ""
+    telegram_token: str = ""
+    telegram_chat_id: str = ""
 
 
 # =============================================================================== componentes
@@ -263,7 +271,7 @@ class JanelaModerna(ctk.CTk):
         return e
 
     def _rotulo(self, master, texto, suave=True, fonte=None) -> ctk.CTkLabel:
-        return ctk.CTkLabel(master, text=texto, anchor="w", font=fonte or self.f_rotulo,
+        return ctk.CTkLabel(master, text=texto, anchor="w", justify="left", font=fonte or self.f_rotulo,
                             text_color=Tema.TEXTO_SUAVE if suave else Tema.TEXTO)
 
     # ------------------------------------------------------------------ 1. cabeçalho e endereço
@@ -527,7 +535,7 @@ class JanelaModerna(ctk.CTk):
         barra.grid(row=0, column=0, sticky="ew", padx=28, pady=(14, 12))
         self.bt_previa = self._botao(barra, "Pré-visualizar", self.ao_previsualizar, "primario", largura=170)
         self.bt_organizar = self._botao(barra, "Organizar", self.ao_organizar, largura=130)
-        self.bt_legendas = self._botao(barra, "Baixar legendas que faltam", self.ao_baixar_legendas, largura=210)
+        self.bt_legendas = self._botao(barra, "Completar biblioteca", self.ao_baixar_legendas, largura=190)
         self.bt_desfazer = self._botao(barra, "Desfazer última", self.ao_desfazer, largura=140)
         self.bt_parar_jf = self._botao(barra, "Parar", self.ao_parar, "perigo", largura=100)
         for b in (self.bt_previa, self.bt_organizar, self.bt_legendas, self.bt_desfazer):
@@ -538,6 +546,7 @@ class JanelaModerna(ctk.CTk):
         corpo.grid_rowconfigure(1, weight=0)          # painel Antes -> Depois: altura fixa
         corpo.grid_rowconfigure(2, weight=2)
         lateral = self._lateral(corpo, linhas=3)
+        self.lateral_jf = lateral
         p = dict(padx=18)
 
         self._rotulo(lateral, "Tipo de conteúdo", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(12, 6), **p)
@@ -560,11 +569,19 @@ class JanelaModerna(ctk.CTk):
                                             "ex.: D:/Jellyfin/Filmes")
 
         self._separador(lateral)
-        self._rotulo(lateral, "Nomes", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
+        self._rotulo(lateral, "Nomes e metadados (TMDB)", suave=False, fonte=self.f_secao).pack(
+            anchor="w", pady=(0, 6), **p)
         self.var_jf_tmdb = tk.BooleanVar(value=False)
         self.var_jf_chave_tmdb = tk.StringVar()
-        self.cb_tmdb = self._checkbox(lateral, "Consultar também o TMDB", self.var_jf_tmdb, self._mostrar_campos_jf)
-        self.campo_chave_tmdb = self._entrada(lateral, self.var_jf_chave_tmdb, "Chave da API do TMDB", show="•")
+        self.var_jf_imagens = tk.BooleanVar(value=True)
+        self.var_jf_nfo = tk.BooleanVar(value=True)
+        self._rotulo(lateral, "Chave da API do TMDB:").pack(anchor="w", **p)
+        self.campo_chave_tmdb = self._entrada(lateral, self.var_jf_chave_tmdb, "themoviedb.org > Configurações > API",
+                                              show="•")
+        self.campo_chave_tmdb.pack(fill="x", pady=(2, 6), **p)
+        self.cb_tmdb = self._checkbox(lateral, "Consultar o TMDB para confirmar nomes", self.var_jf_tmdb)
+        self._checkbox(lateral, "Baixar pôster e backdrop (se faltarem)", self.var_jf_imagens)
+        self._checkbox(lateral, "Criar arquivo .nfo (sinopse, duração...)", self.var_jf_nfo)
         self.var_jf_tmdbid = tk.BooleanVar(value=False)
         self.var_jf_exigir = tk.BooleanVar(value=False)
         self.cb_tmdbid = self._checkbox(lateral, "Incluir [tmdbid] no nome da pasta", self.var_jf_tmdbid)
@@ -590,7 +607,8 @@ class JanelaModerna(ctk.CTk):
                           button_color=Tema.SECUNDARIA, button_hover_color=Tema.SECUNDARIA_HOVER,
                           dropdown_fg_color=Tema.CARTAO, dropdown_hover_color=Tema.SECUNDARIA_HOVER,
                           dropdown_font=self.f_normal, text_color=Tema.TEXTO).pack(fill="x", **p)
-        self.quadro_fonte = ctk.CTkFrame(lateral, fg_color="transparent")
+        # height=1: vazio, um CTkFrame ocuparia 200 px (o padrão); assim só cresce com um campo dentro
+        self.quadro_fonte = ctk.CTkFrame(lateral, fg_color="transparent", height=1)
         self.quadro_fonte.pack(fill="x")
         self.var_jf_chave_os = tk.StringVar()
         self.var_jf_url_site = tk.StringVar()
@@ -604,9 +622,41 @@ class JanelaModerna(ctk.CTk):
         self._entrada(linha, self.var_jf_idioma, width=90).pack(side="right")
         self._rotulo(linha, "Idioma da legenda:").pack(side="left")
         self.var_jf_sobrescrever = tk.BooleanVar(value=False)
-        self.var_jf_lembrar = tk.BooleanVar(value=False)
         self._checkbox(lateral, "Trocar legendas que já existem", self.var_jf_sobrescrever)
+
+        self._separador(lateral)
+        self._rotulo(lateral, "Servidor Jellyfin", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
+        self.var_jf_url = tk.StringVar(value="http://localhost:8096")
+        self.var_jf_chave_jellyfin = tk.StringVar()
+        self.var_jf_atualizar = tk.BooleanVar(value=True)
+        self._rotulo(lateral, "Endereço do servidor:").pack(anchor="w", **p)
+        self._entrada(lateral, self.var_jf_url, "http://localhost:8096").pack(fill="x", pady=(2, 6), **p)
+        self._rotulo(lateral, "Chave de API do Jellyfin:").pack(anchor="w", **p)
+        self._entrada(lateral, self.var_jf_chave_jellyfin, "Painel > Avançado > Chaves de API",
+                      show="•").pack(fill="x", pady=(2, 6), **p)
+        self._checkbox(lateral, "Atualizar a biblioteca no fim (scan)", self.var_jf_atualizar)
+        self.bt_testar_jellyfin = self._botao(lateral, "Testar conexão", self.ao_testar_jellyfin)
+        self.bt_testar_jellyfin.pack(fill="x", pady=(6, 0), **p)
+
+        self._separador(lateral)
+        self._rotulo(lateral, "Avisos (opcional)", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
+        self.var_jf_discord = tk.StringVar()
+        self.var_jf_telegram_token = tk.StringVar()
+        self.var_jf_telegram_chat = tk.StringVar()
+        for rotulo, var, dica, secreto in (
+                ("Webhook do Discord:", self.var_jf_discord, "Canal > Integrações > Webhooks", True),
+                ("Token do bot do Telegram:", self.var_jf_telegram_token, "criado com o @BotFather", True),
+                ("Chat ID do Telegram:", self.var_jf_telegram_chat, "ex.: 123456789", False)):
+            self._rotulo(lateral, rotulo).pack(anchor="w", **p)
+            self._entrada(lateral, var, dica, **({"show": "•"} if secreto else {})).pack(fill="x", pady=(2, 6), **p)
+        self.bt_testar_avisos = self._botao(lateral, "Enviar aviso de teste", self.ao_testar_avisos)
+        self.bt_testar_avisos.pack(fill="x", pady=(0, 0), **p)
+
+        self._separador(lateral)
+        self.var_jf_lembrar = tk.BooleanVar(value=False)
         self._checkbox(lateral, "Lembrar as chaves neste computador", self.var_jf_lembrar)
+        self._rotulo(lateral, "Sem marcar, chaves e tokens valem só até\nfechar o programa.",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(2, 0), **p)
         ctk.CTkFrame(lateral, height=12, fg_color="transparent").pack()
         self._mostrar_campos_jf()
 
@@ -616,6 +666,8 @@ class JanelaModerna(ctk.CTk):
         self.bt_abrir_biblioteca = self._botao(faixa, "Abrir pasta da biblioteca", self.ao_abrir_biblioteca,
                                                "fantasma")
         self.bt_abrir_biblioteca.pack(side="left")
+        self.bt_abrir_log = self._botao(faixa, "Abrir log", self.ao_abrir_log, "fantasma")
+        self.bt_abrir_log.pack(side="left", padx=(6, 0))
         self.tabela_jf.bind("<<TreeviewSelect>>", lambda e: self.ao_selecionar_jf())
         self._montar_detalhe_jf(corpo)
         self._criar_console(corpo, linha=2)
@@ -669,10 +721,6 @@ class JanelaModerna(ctk.CTk):
 
     def _mostrar_campos_jf(self) -> None:
         """Mostra só os campos que fazem sentido para as escolhas atuais."""
-        if self.var_jf_tmdb.get():
-            self.campo_chave_tmdb.pack(fill="x", padx=18, pady=(0, 6), after=self.cb_tmdb)
-        else:
-            self.campo_chave_tmdb.pack_forget()
         fonte = self.var_jf_fonte.get()
         self.campo_chave_os.pack_forget()
         self.campo_url_site.pack_forget()
@@ -729,7 +777,11 @@ class JanelaModerna(ctk.CTk):
             limpar_lixo=self.var_jf_lixo.get(), legendas=self.var_jf_legendas.get(), fonte_legenda=self.var_jf_fonte.get(),
             chave_opensubtitles=self.var_jf_chave_os.get().strip(), url_site=self.var_jf_url_site.get().strip(),
             idioma=self.var_jf_idioma.get().strip() or "pt-BR", sobrescrever=self.var_jf_sobrescrever.get(),
-            lembrar_chaves=self.var_jf_lembrar.get())
+            lembrar_chaves=self.var_jf_lembrar.get(), imagens_tmdb=self.var_jf_imagens.get(),
+            gerar_nfo=self.var_jf_nfo.get(), jellyfin_url=self.var_jf_url.get().strip(),
+            jellyfin_api_key=self.var_jf_chave_jellyfin.get().strip(), atualizar_jellyfin=self.var_jf_atualizar.get(),
+            discord_webhook=self.var_jf_discord.get().strip(), telegram_token=self.var_jf_telegram_token.get().strip(),
+            telegram_chat_id=self.var_jf_telegram_chat.get().strip())
 
     def destinos_jellyfin(self) -> dict:
         """Pasta de Filmes e de Séries (cada modo tem a sua)."""
@@ -740,10 +792,13 @@ class JanelaModerna(ctk.CTk):
         """Preenche a aba com valores salvos (chaves que não existirem ficam como estão)."""
         textos = {"origem": self.var_jf_origem, "chave_tmdb": self.var_jf_chave_tmdb,
                   "chave_opensubtitles": self.var_jf_chave_os, "url_site": self.var_jf_url_site,
-                  "idioma": self.var_jf_idioma}
+                  "idioma": self.var_jf_idioma, "jellyfin_url": self.var_jf_url,
+                  "jellyfin_api_key": self.var_jf_chave_jellyfin, "discord_webhook": self.var_jf_discord,
+                  "telegram_token": self.var_jf_telegram_token, "telegram_chat_id": self.var_jf_telegram_chat}
         marcas = {"tmdb": self.var_jf_tmdb, "incluir_tmdbid": self.var_jf_tmdbid,
                   "exigir_catalogo": self.var_jf_exigir, "legendas": self.var_jf_legendas,
-                  "limpar_lixo": self.var_jf_lixo,
+                  "limpar_lixo": self.var_jf_lixo, "imagens_tmdb": self.var_jf_imagens,
+                  "gerar_nfo": self.var_jf_nfo, "atualizar_jellyfin": self.var_jf_atualizar,
                   "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar}
         for chave, var in textos.items():
             if dados.get(chave):
@@ -906,7 +961,8 @@ class JanelaModerna(ctk.CTk):
         self._ocupado = ocupado
         estado = "disabled" if ocupado else "normal"
         for b in (self.bt_buscar, self.bt_baixar_sel, self.bt_baixar_todos, self.bt_login,
-                  self.bt_previa, self.bt_legendas, self.bt_desfazer):
+                  self.bt_previa, self.bt_legendas, self.bt_desfazer, self.bt_testar_jellyfin,
+                  self.bt_testar_avisos):
             b.configure(state=estado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
         for parar in (self.bt_parar, self.bt_parar_jf):
@@ -1004,6 +1060,15 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_selecionar_jf(self) -> None:
+        pass
+
+    def ao_testar_jellyfin(self) -> None:
+        pass
+
+    def ao_testar_avisos(self) -> None:
+        pass
+
+    def ao_abrir_log(self) -> None:
         pass
 
 

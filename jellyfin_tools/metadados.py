@@ -15,6 +15,7 @@ Imagens que já vieram no torrent têm prioridade: nada é sobrescrito (a não s
 
 from __future__ import annotations
 
+import threading
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,12 +50,23 @@ class ClienteTMDB:
         self.base_url = base_url.rstrip("/")
         self.base_imagens = base_imagens.rstrip("/")
         self.timeout = timeout
-        self.sessao = sessao or requests.Session()
+        self._sessao_fixa = sessao
+        self._local = threading.local()                    # uma sessão por thread (vários filmes juntos)
+        self._cabecalhos: dict = {}
         self.params_auth: dict = {}
         if chave.startswith("eyJ"):                        # "Token de leitura" (v4)
-            self.sessao.headers["Authorization"] = f"Bearer {chave}"
+            self._cabecalhos["Authorization"] = f"Bearer {chave}"
         else:                                              # "Chave da API" (v3)
             self.params_auth = {"api_key": chave}
+
+    @property
+    def sessao(self) -> requests.Session:
+        if self._sessao_fixa is not None:
+            return self._sessao_fixa
+        if not hasattr(self._local, "sessao"):
+            self._local.sessao = requests.Session()
+            self._local.sessao.headers.update(self._cabecalhos)
+        return self._local.sessao
 
     def _get(self, caminho: str, **params) -> dict:
         try:

@@ -193,3 +193,40 @@ def test_atualizar_biblioteca_erros(api_falsa):
         atualizar_biblioteca(api_falsa.base + "/caminho-errado", "k")
     with pytest.raises(ErroJellyfin, match="não consegui falar"):
         atualizar_biblioteca("http://127.0.0.1:1", "k", timeout=2)
+
+
+def test_varios_filmes_ao_mesmo_tempo_mas_uma_legenda_por_vez(tmp_path):
+    """Pós-processamento paralelo: resultados na ordem dos filmes e legendas nunca simultâneas."""
+    import threading
+    import time
+    from jellyfin_tools.legendas import ResultadoLegenda
+    from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, pos_processar
+
+    for i in range(8):
+        pasta = tmp_path / f"Filme {i} ({2000 + i})"
+        pasta.mkdir()
+        (pasta / f"{pasta.name}.mkv").write_bytes(b"v")
+
+    agora, maximo, trava = [0], [0], threading.Lock()
+
+    class ProvedorLento:                      # conta quantas buscas de legenda acontecem juntas
+        nome = "lento"
+
+        def buscar(self, titulo, ano, idioma, **kw):
+            with trava:
+                agora[0] += 1
+                maximo[0] = max(maximo[0], agora[0])
+            time.sleep(0.05)
+            with trava:
+                agora[0] -= 1
+            return []
+
+    vistos = []
+    t = time.perf_counter()
+    resultados = pos_processar(itens_da_biblioteca(tmp_path), ConfigPos(provedores=[ProvedorLento()], trabalhadores=4),
+                               ao_item=lambda i, r: vistos.append(i))
+    assert [r.nome for r in resultados] == [f"Filme {i} ({2000 + i})" for i in range(8)]
+    assert vistos == list(range(8))                                     # andamento na ordem
+    assert maximo[0] == 1                                               # uma legenda por vez
+    assert all(isinstance(r.legenda, ResultadoLegenda) for r in resultados)
+    assert time.perf_counter() - t < 5

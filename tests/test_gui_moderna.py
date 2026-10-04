@@ -353,3 +353,106 @@ def test_jellyfin_progresso_por_pasta_total_e_antes_depois(app, tmp_path):
     app.bt_previa.invoke()                                              # nova prévia esconde o total
     esperar(app)
     assert rotulo.cget("text") == ""
+
+
+# ------------------------------------------------------------------ melhorias: TMDB, Jellyfin, avisos, log
+@pytest.fixture
+def servicos_gui(app, api_falsa, monkeypatch):
+    from test_organizador_completo import IMG_FUNDO, IMG_POSTER, detalhes_tmdb
+    from jellyfin_tools.metadados import ClienteTMDB
+    from jellyfin_tools.notificacoes import Notificador
+    base = api_falsa.base
+    api_falsa.rotas["/3/search/movie"] = lambda q: (200, {"results": [{"id": 999}]})
+    api_falsa.rotas["/3/movie/999"] = lambda q: (200, detalhes_tmdb(999, "Velhos Bandidos", 2026))
+    api_falsa.rotas["/img/poster_pt.jpg"] = lambda q: (200, IMG_POSTER)
+    api_falsa.rotas["/img/fundo_hd.jpg"] = lambda q: (200, IMG_FUNDO)
+    api_falsa.rotas["/Library/Refresh"] = lambda q: (204, b"")
+    api_falsa.rotas["/System/Info"] = lambda q: (200, {"ServerName": "Casa", "Version": "10.10.0"})
+    api_falsa.rotas["/discord"] = lambda q: (204, b"")
+    monkeypatch.setattr(app_moderna, "ClienteTMDB",
+                        lambda chave: ClienteTMDB(chave, base_url=base + "/3", base_imagens=base + "/img"))
+    monkeypatch.setattr(app_moderna, "Notificador", lambda d, t, c: Notificador(d, t, c, telegram_base=base))
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_chave_tmdb.set("chave-tmdb")
+    app.var_jf_url.set(base)
+    app.var_jf_chave_jellyfin.set("chave-jellyfin")
+    app.var_jf_discord.set(base + "/discord")
+    return api_falsa
+
+
+def _corpos(api, caminho):
+    import json
+    return [json.loads(p["corpo"]) if p["corpo"] else None for p in api.pedidos if p["caminho"] == caminho]
+
+
+def test_melhorias_ao_organizar(app, servicos_gui, tmp_path):
+    origem, filmes = tmp_path / "Downloads", tmp_path / "Filmes"
+    origem.mkdir()
+    with open(origem / "Velhos.Bandidos.2026.1080p.WEB-DL.NACIONAL.5.1.mkv", "wb") as f:
+        f.truncate(101 * 1024 * 1024)
+    app.var_jf_origem.set(str(origem))
+    app.var_jf_destino.set(str(filmes))
+    app.bt_previa.invoke()
+    esperar(app)
+    app.bt_organizar.invoke()
+    esperar(app)
+    pasta = filmes / "Velhos Bandidos (2026)"
+    assert sorted(p.name for p in pasta.iterdir()) == [
+        "Velhos Bandidos (2026).mkv", "Velhos Bandidos (2026).nfo", "Velhos Bandidos (2026).pt-BR.srt",
+        "backdrop.jpg", "poster.jpg"]
+    assert [c["content"] for c in _corpos(servicos_gui, "/discord")] == [
+        "\U0001F37F **Novo filme adicionado ao Jellyfin:** Velhos Bandidos (2026)"]
+    assert len(_corpos(servicos_gui, "/Library/Refresh")) == 1
+    assert "Pôster/backdrop/.nfo: 1" in app.caixas[-1][2]
+    log = app.arquivo_log.read_text(encoding="utf-8")
+    assert "Processado: Velhos Bandidos (2026)" in log and "Jellyfin: escaneamento" in log
+    assert "Processado: Velhos Bandidos (2026)" in app.logs[1].get("1.0", "end")   # também no console
+
+
+def test_botoes_de_teste_e_completar_biblioteca(app, servicos_gui, tmp_path):
+    app.bt_testar_jellyfin.invoke()
+    esperar(app)
+    assert app.caixas[-1] == ("sucesso", "Jellyfin conectado", "Tudo certo: Casa (versão 10.10.0).")
+    app.var_jf_chave_jellyfin.set("")
+    app.bt_testar_jellyfin.invoke()
+    esperar(app)
+    assert app.caixas[-1][0] == "erro"
+    app.var_jf_chave_jellyfin.set("chave-jellyfin")
+
+    app.bt_testar_avisos.invoke()
+    esperar(app)
+    assert app.caixas[-1][1:] == ("Avisos", "Aviso de teste enviado. Confira o Discord/Telegram.")
+
+    pasta = tmp_path / "Filmes" / "Velhos Bandidos (2026)"
+    pasta.mkdir(parents=True)
+    (pasta / "Velhos Bandidos (2026).mkv").write_bytes(b"v")
+    app.var_jf_destino.set(str(tmp_path / "Filmes"))
+    avisos_antes = len(_corpos(servicos_gui, "/discord"))
+    app.bt_legendas.invoke()                                            # "Completar biblioteca"
+    esperar(app)
+    assert {"poster.jpg", "backdrop.jpg", "Velhos Bandidos (2026).nfo",
+            "Velhos Bandidos (2026).pt-BR.srt"} <= {p.name for p in pasta.iterdir()}
+    assert len(_corpos(servicos_gui, "/discord")) == avisos_antes      # completar não avisa
+    assert _linhas_jf(app)[0][4].endswith("baixada")
+
+
+def test_segredos_so_sao_salvos_se_pedir(app, servicos_gui):
+    from videoscraper import config
+    app._salvar_config()
+    salvo = config.carregar()["jellyfin"]
+    for segredo in app_moderna.SEGREDOS:
+        assert segredo not in salvo
+    assert salvo["jellyfin_url"] == servicos_gui.base                 # o endereço não é segredo
+    app.var_jf_lembrar.set(True)
+    app._salvar_config()
+    assert config.carregar()["jellyfin"]["jellyfin_api_key"] == "chave-jellyfin"
+
+
+def test_erro_interno_nao_congela_a_janela(app):
+    def quebrado(*a):
+        raise RuntimeError("bug de teste")
+    app.adicionar_linha_jf = quebrado
+    app.fila.put(("jf_alvos", [("a", "b")]))                           # vai dar erro ao tratar
+    app._rodar("Testando...", lambda: None)                             # e a tarefa termina normalmente
+    esperar(app)
+    assert "bug de teste" in app.arquivo_log.read_text(encoding="utf-8")

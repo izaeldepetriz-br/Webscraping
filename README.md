@@ -50,6 +50,17 @@ No topo da janela, troque de **Vídeos** para **Jellyfin**:
 As pastas e opções ficam salvas em `~/.videoscraper/config.json` (fora do projeto). As chaves de
 API só são salvas se você marcar "Lembrar as chaves neste computador".
 
+### Melhorias na aba Jellyfin (as mesmas do script)
+
+O painel lateral tem as seções **Nomes e metadados (TMDB)**, **Servidor Jellyfin** (com "Testar
+conexão") e **Avisos** (com "Enviar aviso de teste"). Ao **Organizar**, depois de mover, o programa
+baixa legenda, pôster/backdrop e `.nfo`, avisa no Discord/Telegram e pede **um** scan ao Jellyfin.
+**Completar biblioteca** faz o mesmo (sem avisos) nos filmes que já estão organizados. **Abrir log**
+mostra o `jellyfin_organizer.log` (fica em `~/.videoscraper/`).
+
+Velocidade: os filmes são processados **4 ao mesmo tempo** (a internet é o gargalo); as legendas
+continuam uma por vez, para não ser bloqueado pelos sites de legenda.
+
 ### Como a janela moderna é organizada (para quem quer mexer)
 
 - `videoscraper/gui_moderna.py`: **só a aparência** (`JanelaModerna`). Cores e fontes ficam na
