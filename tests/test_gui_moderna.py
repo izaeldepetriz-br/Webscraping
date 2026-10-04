@@ -74,6 +74,7 @@ def app(monkeypatch, tmp_path):
     a.caixas = []
     a.mostrar_mensagem = lambda t, m, tipo="info": a.caixas.append((tipo, t, m))   # responde OK sozinho
     a.perguntar = lambda t, m: True
+    a.escolher = lambda t, m, opcoes: opcoes[0]             # escolhe o botão principal sozinho
     a.campo_espera.set(0.5)
     a.var_pasta.set(str(tmp_path / "videos"))
     yield a
@@ -650,3 +651,94 @@ def test_series_com_nome_do_episodio_pela_janela(app, tmdb_gui, tmp_path):
     app.bt_previa.invoke()
     esperar(app)
     assert [l[3] for l in _linhas_jf(app) if l[2] == "Dark.S01E03.mkv"] == ["Dark S01E03.mkv"]
+
+
+# ------------------------------------------------------------------ Completar com "substituir", lista ampliada
+def test_completar_biblioteca_pergunta_se_substitui(app, servicos_gui, tmp_path):
+    pasta = tmp_path / "Filmes" / "Velhos Bandidos (2026)"
+    pasta.mkdir(parents=True)
+    (pasta / "Velhos Bandidos (2026).mkv").write_bytes(b"v")
+    (pasta / "Velhos Bandidos (2026).pt-BR.srt").write_text("antiga", encoding="utf-8")
+    (pasta / "poster.png").write_bytes(b"antigo")
+    app.var_jf_destino.set(str(tmp_path / "Filmes"))
+    perguntas = []
+
+    def responder(resposta):
+        app.escolher = lambda t, m, opcoes: (perguntas.append(opcoes), resposta)[1]
+
+    responder(None)                                                      # Cancelar: nada acontece
+    app.bt_legendas.invoke()
+    esperar(app)
+    assert (pasta / "poster.png").read_bytes() == b"antigo" and not (pasta / "poster.jpg").exists()
+    assert perguntas[-1] == ("Só o que falta", "Substituir o que já existe")
+
+    responder("Só o que falta")
+    app.bt_legendas.invoke()
+    esperar(app)
+    assert (pasta / "Velhos Bandidos (2026).pt-BR.srt").read_text(encoding="utf-8") == "antiga"
+    assert (pasta / "poster.png").exists() and not (pasta / "poster.jpg").exists()
+    assert _linhas_jf(app)[0][4].endswith("já existia")
+
+    responder("Substituir o que já existe")
+    app.bt_legendas.invoke()
+    esperar(app)
+    assert (pasta / "Velhos Bandidos (2026).pt-BR.srt").read_text(encoding="utf-8") != "antiga"
+    assert (pasta / "poster.jpg").is_file() and not (pasta / "poster.png").exists()   # trocou, sem duplicar
+    assert _linhas_jf(app)[0][4].endswith("baixada")
+    assert app.var_jf_sobrescrever.get()                                  # a caixa acompanha a escolha
+    app.bt_legendas.invoke()
+    esperar(app)
+    assert perguntas[-1][0] == "Substituir o que já existe"              # e vira a opção principal
+
+
+def test_ampliar_lista_esconde_painel_e_console(app):
+    app.mostrar_aba("Jellyfin")
+    app.update()
+    for i in range(40):
+        app.adicionar_linha_jf(str(i), i + 1, "vai mover", None, f"a{i}.mkv", f"A {i}.mkv")
+    app.update()
+    altura = app.tabela_jf.winfo_height()
+    assert app._cartao_console_jf.winfo_ismapped() and app._cartao_detalhe_jf.winfo_ismapped()
+    app.bt_ampliar_jf.invoke()
+    app.update()
+    assert not app._cartao_console_jf.winfo_ismapped() and not app._cartao_detalhe_jf.winfo_ismapped()
+    assert app.tabela_jf.winfo_height() > altura and app.bt_ampliar_jf.cget("text").endswith("Reduzir lista")
+    app.bt_ampliar_jf.invoke()
+    app.update()
+    assert app._cartao_console_jf.winfo_ismapped() and app.bt_ampliar_jf.cget("text").endswith("Ampliar lista")
+
+
+def test_sobras_de_antes_aparecem_e_sao_apagadas_pela_janela(app, tmp_path):
+    import json
+    raiz = tmp_path / "The Office"
+    sobra = raiz / "Vida de Escritorio 2005 - 1a Temporada WWW.BLUDV.TV"
+    sobra.mkdir(parents=True)
+    with open(sobra / "BLUDV.TV.mp4", "wb") as f:
+        f.truncate(52 * 1024 * 1024)
+    (sobra / "The.Office.S01E01.720p-poster.jpg").write_bytes(b"jpg")
+    novo = raiz / "The Office (2005)" / "Season 01" / "The Office S01E01 - Piloto.mkv"
+    novo.parent.mkdir(parents=True)
+    novo.write_bytes(b"v")
+    (raiz / ".organizador").mkdir()
+    (raiz / ".organizador" / "log-1.json").write_text(json.dumps({"raiz": str(raiz), "itens": [
+        {"de": str(sobra / "The.Office.S01E01.720p.mkv"), "para": str(novo)}]}), encoding="utf-8")
+    app.mostrar_aba("Jellyfin")
+    app.seletor_modo.set("Séries")
+    app._ao_trocar_modo("Séries")
+    app.var_jf_origem.set(str(raiz))
+    app.var_jf_destino.set(str(raiz))
+    app.var_jf_apagar_pasta.set(True)
+    app.var_jf_legendas.set(False)
+    app.bt_previa.invoke()
+    esperar(app)
+    linha = next(l for l in _linhas_jf(app) if l[2] == sobra.name)
+    assert linha[1] == "vai apagar a pasta" and "1 imagem(ns)" in linha[3]
+    assert app.bt_organizar.cget("state") == "normal"                    # só limpeza já libera
+    assert "1 pasta(s) que sobraram de antes" in app.var_status.get()
+    app.bt_organizar.invoke()
+    esperar(app)
+    assert not sobra.exists()
+    assert (novo.parent / "The Office S01E01 - Piloto-thumb.jpg").is_file()
+    linha = next(l for l in _linhas_jf(app) if l[2] == sobra.name)
+    assert linha[1].endswith("pasta apagada")
+    assert "Pastas de torrent apagadas: 1" in app.caixas[-1][2]

@@ -49,7 +49,8 @@ PASTA_PADRAO = os.path.abspath("videos_baixados")
 TEXTOS_SITUACAO = {"ok": "baixado", "pulado": "pulado", "erro": "erro"}
 # Status do organizador -> categoria do filtro "Mostrar" da tabela
 CATEGORIA = {"simulado": "mover", "movido": "movido", "organizado": "organizado", "conflito": "conflito",
-             "nao_identificado": "nao_identificado", "ignorado": "ignorado", "erro": "erro"}
+             "nao_identificado": "nao_identificado", "ignorado": "ignorado", "erro": "erro",
+             "limpeza": "mover", "pasta_apagada": "movido"}
 OK_LEGENDA = ("baixada", "ja_existe")
 
 # Chaves e tokens: só vão para o config.json se o usuário marcar "Lembrar as chaves".
@@ -71,7 +72,8 @@ class _LogParaFila(logging.Handler):
 STATUS_MOVIMENTO = {"simulado": ("vai mover", None), "movido": ("movido", "ok"),
                     "organizado": ("já organizado", "ok"), "conflito": ("conflito", "pulado"),
                     "nao_identificado": ("não identificado", "pulado"), "ignorado": ("ignorado", None),
-                    "erro": ("erro", "erro")}
+                    "erro": ("erro", "erro"),
+                    "limpeza": ("vai apagar a pasta", None), "pasta_apagada": ("pasta apagada", "ok")}
 STATUS_LEGENDA = {"baixada": ("baixada", "ok"), "ja_existe": ("já existia", None),
                   "nao_encontrada": ("não encontrada", "pulado"), "erro": ("erro", "erro"),
                   "sem_video": ("sem vídeo", None)}
@@ -416,12 +418,14 @@ class AppModerna(JanelaModerna):
                 print(m)
             quantos = sum(m.status == "simulado" for m in movimentos)
             prontos = sum(m.status == "organizado" for m in movimentos)
+            sobras = sum(m.status == "limpeza" for m in movimentos)
             self.fila.put(("jf_movimentos", movimentos))
-            self.fila.put(("jf_previa", (assinatura, quantos)))
+            self.fila.put(("jf_previa", (assinatura, quantos + sobras)))      # só limpeza também libera
             resumo_tmdb = self._resumo_tmdb(catalogo, movimentos) if o.tmdb else ""
+            resumo_sobras = f" {sobras} pasta(s) que sobraram de antes para apagar." if sobras else ""
             self.fila.put(("status_fim", f"Pré-visualização: {quantos} para mover, {prontos} já organizado(s), "
-                                         f"{len(movimentos) - quantos - prontos} com pendência.{resumo_tmdb} "
-                                         "Nada foi movido."))
+                                         f"{len(movimentos) - quantos - prontos - sobras} com pendência."
+                                         f"{resumo_sobras}{resumo_tmdb} Nada foi movido."))
             if not movimentos:
                 self.fila.put(("msg", ("Nenhum vídeo", f"Não achei vídeos em:\n{o.origem}", "aviso")))
 
@@ -451,9 +455,11 @@ class AppModerna(JanelaModerna):
         ocultos = self.linhas_ocultas_jf("mover")
         if ocultos:
             aviso_lixo += f"\n\nAtenção: {ocultos} deles estão escondidos pelo filtro \"Mostrar\" e também serão movidos."
+        substituir = ("\n\n\"Substituir o que já existe\" está marcado: legendas, pôster, backdrop e .nfo "
+                      "dos itens movidos serão baixados de novo e trocados." if o.sobrescrever else "")
         if not self.perguntar("Organizar", f"Mover {quantos} arquivo(s) para:\n{o.destino}\n\n"
-                              "Nada é sobrescrito, e você pode voltar atrás com 'Desfazer última'."
-                              + aviso_lixo):
+                              "Nenhum vídeo é sobrescrito, e você pode voltar atrás com 'Desfazer última'."
+                              + substituir + aviso_lixo):
             return
         self._salvar_config()
         self._previa = None
@@ -504,13 +510,19 @@ class AppModerna(JanelaModerna):
                                                  legendas=o.legendas, notificar=True)
             legendas = sum(1 for r in resultados if r.legenda and r.legenda.status == "baixada")
             metadados = sum(1 for r in resultados if r.metadados and r.metadados.criados)
+            for i, m in enumerate(movimentos):                 # sobras de antes: "pasta apagada" ou erro
+                if m.pasta_apagar and m.status in ("pasta_apagada", "erro") and not m.destino:
+                    self.fila.put(("jf_prog", (str(i), 1.0, m.status)))
             erros = sum(m.status == "erro" for m in movimentos)
+            pastas_apagadas = sum(1 for m in movimentos if m.pasta_apagar and not m.pasta_apagar.exists())
             self.fila.put(("jf_total", (1.0, f"Concluído: {len(movidos)} movido(s), {legendas} legenda(s), "
                                              f"{metadados} com pôster/.nfo, {erros} erro(s)")))
             self.fila.put(("status_fim", f"Organizado: {len(movidos)} movido(s), {legendas} legenda(s)."))
             self.fila.put(("msg", ("Organização concluída",
                                    f"Movidos: {len(movidos)}\nLegendas baixadas: {legendas}\n"
-                                   f"Pôster/backdrop/.nfo: {metadados}\nCom erro: {erros}\n\n"
+                                   f"Pôster/backdrop/.nfo: {metadados}\nCom erro: {erros}\n"
+                                   + (f"Pastas de torrent apagadas: {pastas_apagadas}\n" if pastas_apagadas else "")
+                                   + "\n"
                                    "Para voltar atrás, use 'Desfazer última'.\nDetalhes em 'Abrir log'.",
                                    "erro" if erros else "sucesso")))
 
@@ -527,6 +539,17 @@ class AppModerna(JanelaModerna):
         if problema:
             self.mostrar_mensagem("Legendas", problema, "aviso")
             return
+        escolha = self.escolher(
+            "Completar biblioteca",
+            f"Procurar o que falta em:\n{o.destino}\n\n"
+            "• Só o que falta: baixa legenda, pôster, backdrop e .nfo apenas onde ainda não existem.\n"
+            "• Substituir o que já existe: baixa de novo e TROCA os que já estão lá "
+            "(ex.: legenda fora de sincronia, pôster em inglês). Os vídeos não são mexidos.",
+            self.OPCOES_COMPLETAR if not o.sobrescrever else self.OPCOES_COMPLETAR[::-1])
+        if escolha is None:
+            return
+        o.sobrescrever = escolha == self.OPCOES_COMPLETAR[1]
+        self.var_jf_sobrescrever.set(o.sobrescrever)          # a caixa acompanha a escolha
         self._salvar_config()
         self._previa = None
         self.liberar_organizar(False)
@@ -570,6 +593,8 @@ class AppModerna(JanelaModerna):
 
         self._rodar("Baixando legendas...", tarefa)
 
+    OPCOES_COMPLETAR = ("Só o que falta", "Substituir o que já existe")
+
     def _completar_filmes(self, o, destino: Path) -> None:
         """Filmes já organizados: legenda + pôster/backdrop + .nfo do que faltar (sem avisos)."""
         def tarefa():
@@ -609,7 +634,7 @@ class AppModerna(JanelaModerna):
         with contextlib.ExitStack() as pilha:
             provedores = pilha.enter_context(self._provedores(o)) if legendas else []
             cfg = ConfigPos(provedores=provedores, idioma=o.idioma, tmdb=tmdb, imagens=o.imagens_tmdb,
-                            nfo=o.gerar_nfo, notificar=notificar,
+                            nfo=o.gerar_nfo, notificar=notificar, sobrescrever=o.sobrescrever,
                             notificador=Notificador(o.discord_webhook, o.telegram_token, o.telegram_chat_id),
                             jellyfin_url=o.jellyfin_url,
                             jellyfin_api_key=o.jellyfin_api_key if o.atualizar_jellyfin else "")
@@ -813,9 +838,13 @@ class AppModerna(JanelaModerna):
                 texto = "vai mover (confira)"       # nome não confirmado no catálogo
             # Só o nome do arquivo: a pasta tem o mesmo nome (Filmes/Nome (Ano)/Nome (Ano).mkv)
             novo = m.destino.name if m.destino else f"({m.detalhe})"
+            if m.status in ("limpeza", "pasta_apagada"):          # sobra de uma organização anterior
+                artes = len(m.acompanhantes or [])
+                novo = ("(apagar a pasta inteira" + (f"; {artes} imagem(ns) vão para junto dos episódios/filmes"
+                                                     if artes else "") + ")")
             if m.destino and m.resumo_extras and m.status in ("simulado", "movido"):
                 novo += f"   ({m.resumo_extras})"
-            progresso = "" if m.status == "simulado" else "—"      # "—": não vai mexer
+            progresso = "" if m.status in ("simulado", "limpeza") else "—"      # "—": não vai mexer
             self.adicionar_linha_jf(str(i), i + 1, texto, cor, m.origem.name, novo, "", progresso,
                                     categoria=CATEGORIA.get(m.status), fonte=self._texto_fonte(m))
 

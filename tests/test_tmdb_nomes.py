@@ -144,10 +144,15 @@ def test_aviso_vem_de_outra_thread_sem_travar(api_falsa, tmp_path):
 def _series_falsas(api):
     api.rotas["/3/search/tv"] = lambda q: (200, {"results": [
         {"id": 70523, "name": "Dark", "original_name": "Dark", "first_air_date": "2017-12-01"}]})
-    api.rotas["/3/tv/70523/season/1"] = lambda q: (200, {"episodes": [
+    portugues = {"episodes": [
         {"episode_number": 1, "name": "Segredos"},
         {"episode_number": 2, "name": "Mentiras: parte 1/2"},     # ':' e '/' não podem ir no nome do arquivo
-        {"episode_number": 3, "name": "Episódio 3"}]})            # ainda sem tradução: fica só o número
+        {"episode_number": 3, "name": "Episódio 3"},              # sem tradução: vale o nome em inglês
+        {"episode_number": 4, "name": "Episódio 4"}]}             # sem nome nenhum: fica só o número
+    ingles = {"episodes": [
+        {"episode_number": 1, "name": "Secrets"}, {"episode_number": 2, "name": "Lies"},
+        {"episode_number": 3, "name": "Past and Present"}, {"episode_number": 4, "name": "Episode 4"}]}
+    api.rotas["/3/tv/70523/season/1"] = lambda q: (200, ingles if q.get("language") == ["en-US"] else portugues)
     api.rotas["/3/tv/70523/season/2"] = lambda q: (404, {"status_message": "not found"})
 
 
@@ -161,19 +166,22 @@ def test_series_ganham_o_nome_do_episodio(api_falsa, tmp_path):
     _series_falsas(api_falsa)
     origem, series = tmp_path / "Downloads", tmp_path / "Series"
     origem.mkdir()
-    for nome in ("Dark.S01E01.1080p.mkv", "Dark.S01E01.1080p.srt", "Dark.S01E02.mkv", "Dark.S01E03.mkv",
-                 "Dark.S02E01.mkv"):
+    for nome in ("Dark.S01E01.1080p.mkv", "Dark.S01E01.1080p.srt", "Dark.S01E01.1080p-poster.jpg",
+                 "Dark.S01E02.mkv", "Dark.S01E03.mkv", "Dark.S01E04.mkv", "Dark.S02E01.mkv"):
         (origem / nome).write_bytes(b"v")
     movimentos = organizar_pasta(origem, series, _tmdb(api_falsa), modo="series", nomes_episodios=True)
     novos = {m.origem.name: m.destino_curto for m in movimentos}
     assert novos == {
         "Dark.S01E01.1080p.mkv": "Dark (2017)/Season 01/Dark S01E01 - Segredos.mkv",
         "Dark.S01E02.mkv": "Dark (2017)/Season 01/Dark S01E02 - Mentiras - parte 12.mkv",
-        "Dark.S01E03.mkv": "Dark (2017)/Season 01/Dark S01E03.mkv",              # nome genérico: só o número
+        "Dark.S01E03.mkv": "Dark (2017)/Season 01/Dark S01E03 - Past and Present.mkv",   # inglês
+        "Dark.S01E04.mkv": "Dark (2017)/Season 01/Dark S01E04.mkv",              # nome genérico: só o número
         "Dark.S02E01.mkv": "Dark (2017)/Season 02/Dark S02E01.mkv"}              # temporada sem dados
     m1 = next(m for m in movimentos if m.origem.name == "Dark.S01E01.1080p.mkv")
-    assert [novo.name for _, novo in m1.acompanhantes] == ["Dark S01E01 - Segredos.pt-BR.srt"]
-    assert len(_pedidos(api_falsa, "/3/tv/70523/season/1")) == 1                # UM pedido por temporada
+    assert sorted(novo.name for _, novo in m1.acompanhantes) == [                # legenda e miniatura juntas
+        "Dark S01E01 - Segredos-thumb.jpg", "Dark S01E01 - Segredos.pt-BR.srt"]
+    idiomas = [p["query"]["language"][0] for p in _pedidos(api_falsa, "/3/tv/70523/season/1")]
+    assert idiomas == ["pt-BR", "en-US"]                # por temporada: pt-BR e, se faltar nome, inglês
     assert len(_pedidos(api_falsa, "/3/search/tv")) == 1                         # a série, uma vez
 
     sem = organizar_pasta(origem, series, _tmdb(api_falsa), modo="series", nomes_episodios=False)
@@ -186,13 +194,13 @@ def test_episodios_ja_organizados_sao_renomeados_e_titulo_nao_some(api_falsa, tm
     temporada.mkdir(parents=True)
     (temporada / "Dark S01E01.mkv").write_bytes(b"v")                 # só o número: ganha o nome
     (temporada / "Dark S01E02 - Mentira.mkv").write_bytes(b"v")       # nome diferente: vale o do TMDB
-    (temporada / "Dark S01E03 - Meu Titulo.mkv").write_bytes(b"v")    # TMDB sem nome: mantém o que tem
+    (temporada / "Dark S01E04 - Meu Titulo.mkv").write_bytes(b"v")    # TMDB sem nome: mantém o que tem
     series = tmp_path / "Series"
     movimentos = organizar_pasta(series, series, _tmdb(api_falsa), modo="series", nomes_episodios=True,
                                  aplicar=True)
     assert sorted(p.name for p in temporada.iterdir()) == ["Dark S01E01 - Segredos.mkv",
                                                            "Dark S01E02 - Mentiras - parte 12.mkv",
-                                                           "Dark S01E03 - Meu Titulo.mkv"]
+                                                           "Dark S01E04 - Meu Titulo.mkv"]
     assert sorted(m.status for m in movimentos) == ["movido", "movido", "organizado"]
 
     # TMDB fora do ar depois: o nome que o arquivo já tem continua (não volta para 'S01E01')

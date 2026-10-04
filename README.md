@@ -81,6 +81,22 @@ Outras opções da aba Jellyfin:
   `Dark S01E01 - Segredos.mkv` (o número continua; as legendas acompanham o novo nome). Episódios já
   organizados só com o número também são renomeados. Se o TMDB ainda não tem o nome traduzido
   ("Episódio 3"), fica só o número; um nome que o arquivo já tinha nunca é apagado.
+- **Séries de torrent** (ex.: uma pasta por temporada com `BLUDV.TV.mp4`): o vídeo pequeno com
+  cara de propaganda que NÃO é episódio vira lixo (episódios curtos continuam a salvo), e a imagem de
+  cada episódio (`The.Office.S01E01...-poster.jpg`) vira a miniatura dele no padrão do Jellyfin:
+  `The Office S01E01 - Piloto-thumb.jpg`. Sem a propaganda, a pasta da temporada pode ser apagada.
+- **Sobras de uma organização anterior:** com "Apagar a pasta do torrent" marcado, a prévia lê os
+  logs em `.organizador` e mostra as pastas que o próprio organizador já esvaziou antes e onde só
+  sobrou propaganda/imagens ("vai apagar a pasta"). Ao organizar, as imagens dos episódios vão para
+  junto deles e a pasta é apagada. Pastas que não estão no log, ou que ainda têm vídeo de verdade,
+  nunca são mexidas.
+- **Completar biblioteca** pergunta antes de começar: **Só o que falta** ou **Substituir o que já
+  existe** (baixa de novo e troca legenda, pôster, backdrop e `.nfo`; os vídeos não são mexidos).
+  A caixa "Substituir o que já existe" vale também para o Organizar.
+- **Ampliar lista:** esconde o painel "Antes → Depois" e o console; a tabela ocupa a altura toda
+  (o andamento continua no rodapé). Clique de novo em "Reduzir lista" para voltar.
+- **Nome do episódio sem tradução:** se o TMDB não tem o nome em português ("Episódio 25"), usa o
+  nome original em inglês; sem nenhum dos dois, fica só o número.
 - **Porcentagem na pré-visualização:** o rodapé mostra "Pré-visualizando... 45% · Consultando o
   TMDB: 75 de 166" e a barra acompanha.
 

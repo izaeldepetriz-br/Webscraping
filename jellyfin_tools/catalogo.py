@@ -126,6 +126,24 @@ def _segundos(texto: str | None, maximo: float = 3) -> float:
 _RE_EPISODIO_GENERICO = re.compile(r"^\s*(epis[oó]dio|episode|ep\.?|cap[ií]tulo)\s*\d+\s*$", re.IGNORECASE)
 
 
+def _nomes_dos_episodios(r: requests.Response) -> tuple[dict[int, str], set[int]]:
+    """({número: nome} só com nomes de verdade, {todos os números da temporada})."""
+    nomes, numeros = {}, set()
+    if not r.ok:
+        return nomes, numeros
+    try:
+        for ep in r.json().get("episodes") or []:
+            if ep.get("episode_number") is None:
+                continue
+            numero, nome = int(ep["episode_number"]), (ep.get("name") or "").strip()
+            numeros.add(numero)
+            if nome and not _RE_EPISODIO_GENERICO.match(nome):
+                nomes[numero] = nome
+    except (ValueError, TypeError, AttributeError):
+        return {}, set()
+    return nomes, numeros
+
+
 class CatalogoTMDB(Catalogo):
     # Respostas guardadas para a sessão inteira do programa (todas as instâncias):
     # (endereço, chave, idioma, título, ano, tipo) -> Filme ou None
@@ -274,17 +292,14 @@ class CatalogoTMDB(Catalogo):
             return {}
         try:
             r = self._get(f"/tv/{tmdb_id}/season/{temporada}", {"language": self.idioma})
+            nomes, numeros = _nomes_dos_episodios(r)
+            if r.ok and len(nomes) < len(numeros) and self.idioma != "en-US":
+                # sem tradução ("Episódio 25"): usa o nome original em inglês no lugar de nada
+                ingles, _ = _nomes_dos_episodios(self._get(f"/tv/{tmdb_id}/season/{temporada}",
+                                                           {"language": "en-US"}))
+                nomes = {**ingles, **nomes}
         except ErroCatalogo:
             return {}                                      # sem nome: o arquivo fica só com o número
-        nomes = {}
-        if r.ok:
-            try:
-                for ep in r.json().get("episodes") or []:
-                    nome = (ep.get("name") or "").strip()
-                    if ep.get("episode_number") is not None and nome and not _RE_EPISODIO_GENERICO.match(nome):
-                        nomes[int(ep["episode_number"])] = nome
-            except (ValueError, TypeError, AttributeError):
-                nomes = {}
         if r.ok or r.status_code == 404:                   # 404 = temporada que o TMDB não tem
             with self._trava_cache:
                 self._cache[chave] = nomes

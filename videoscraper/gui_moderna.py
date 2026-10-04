@@ -151,9 +151,12 @@ class DialogoModerno(ctk.CTkToplevel):
 
     CORES = {"info": Tema.PRIMARIA, "aviso": Tema.AVISO, "erro": Tema.PERIGO, "sucesso": Tema.SUCESSO}
 
-    def __init__(self, master, titulo: str, mensagem: str, tipo: str = "info", pergunta: bool = False):
+    def __init__(self, master, titulo: str, mensagem: str, tipo: str = "info", pergunta: bool = False,
+                 opcoes: tuple[str, ...] = ()):
+        """opcoes: botões de escolha (o 1º é o principal); `resposta` vira o texto do botão clicado
+        (None = Cancelar)."""
         super().__init__(master, fg_color=Tema.CARTAO)
-        self.resposta = False
+        self.resposta = None if opcoes else False
         self.title(titulo)
         self.resizable(False, False)
         self.transient(master)
@@ -169,14 +172,26 @@ class DialogoModerno(ctk.CTkToplevel):
 
         botoes = ctk.CTkFrame(self, fg_color="transparent")
         botoes.pack(fill="x", padx=28, pady=(8, 22))
-        ctk.CTkButton(botoes, text="OK" if not pergunta else "Continuar", width=110, height=38,
-                      corner_radius=Tema.RAIO_CONTROLE, fg_color=Tema.PRIMARIA, hover_color=Tema.PRIMARIA_HOVER,
-                      font=ctk.CTkFont(Tema.FAMILIA, 13, "bold"), command=self._sim).pack(side="right")
-        if pergunta:
+        if opcoes:
+            ctk.CTkButton(botoes, text="Cancelar", width=100, height=38, corner_radius=Tema.RAIO_CONTROLE,
+                          fg_color=Tema.SECUNDARIA, hover_color=Tema.SECUNDARIA_HOVER,
+                          font=ctk.CTkFont(Tema.FAMILIA, 13), command=self.destroy).pack(side="left")
+            for n, texto in reversed(list(enumerate(opcoes))):
+                ctk.CTkButton(botoes, text=texto, height=38, corner_radius=Tema.RAIO_CONTROLE,
+                              fg_color=Tema.PRIMARIA if n == 0 else Tema.SECUNDARIA,
+                              hover_color=Tema.PRIMARIA_HOVER if n == 0 else Tema.SECUNDARIA_HOVER,
+                              font=ctk.CTkFont(Tema.FAMILIA, 13, "bold" if n == 0 else "normal"),
+                              command=lambda t=texto: self._escolher(t)).pack(side="right", padx=(10, 0))
+            self.bind("<Return>", lambda e: self._escolher(opcoes[0]))
+        else:
+            ctk.CTkButton(botoes, text="OK" if not pergunta else "Continuar", width=110, height=38,
+                          corner_radius=Tema.RAIO_CONTROLE, fg_color=Tema.PRIMARIA, hover_color=Tema.PRIMARIA_HOVER,
+                          font=ctk.CTkFont(Tema.FAMILIA, 13, "bold"), command=self._sim).pack(side="right")
+            self.bind("<Return>", lambda e: self._sim())
+        if pergunta and not opcoes:
             ctk.CTkButton(botoes, text="Cancelar", width=110, height=38, corner_radius=Tema.RAIO_CONTROLE,
                           fg_color=Tema.SECUNDARIA, hover_color=Tema.SECUNDARIA_HOVER,
                           font=ctk.CTkFont(Tema.FAMILIA, 13), command=self.destroy).pack(side="right", padx=(0, 10))
-        self.bind("<Return>", lambda e: self._sim())
         self.bind("<Escape>", lambda e: self.destroy())
 
         self.update_idletasks()     # centraliza sobre a janela principal
@@ -190,6 +205,10 @@ class DialogoModerno(ctk.CTkToplevel):
 
     def _sim(self) -> None:
         self.resposta = True
+        self.destroy()
+
+    def _escolher(self, texto: str) -> None:
+        self.resposta = texto
         self.destroy()
 
 
@@ -498,7 +517,7 @@ class JanelaModerna(ctk.CTk):
         estilo.layout("Moderno.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])   # sem borda
 
     # 5. console de logs (um por aba; escrever_log escreve em todos)
-    def _criar_console(self, corpo, linha: int = 1) -> ctk.CTkTextbox:
+    def _criar_console(self, corpo, linha: int = 1, altura: int = 200) -> ctk.CTkTextbox:
         cartao = self._cartao(corpo)
         cartao.grid(row=linha, column=1, sticky="nsew")
         cartao.grid_columnconfigure(0, weight=1)
@@ -518,7 +537,7 @@ class JanelaModerna(ctk.CTk):
             self._progresso_total = []
         self._progresso_total.append((rotulo, barra))
 
-        console = ctk.CTkTextbox(cartao, fg_color=Tema.CONSOLE, text_color="#c9d1e3", font=self.f_mono,
+        console = ctk.CTkTextbox(cartao, fg_color=Tema.CONSOLE, text_color="#c9d1e3", font=self.f_mono, height=altura,
                                  corner_radius=Tema.RAIO_CONTROLE, border_width=1, border_color=Tema.CARTAO_BORDA,
                                  scrollbar_button_color=Tema.CARTAO_BORDA, wrap="word")
         console.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 16))
@@ -556,7 +575,6 @@ class JanelaModerna(ctk.CTk):
 
         corpo = self._corpo(aba, linha=1)
         corpo.grid_rowconfigure(1, weight=0)          # painel Antes -> Depois: altura fixa
-        corpo.grid_rowconfigure(2, weight=2)
         lateral = self._lateral(corpo, linhas=3)
         self.lateral_jf = lateral
         p = dict(padx=18)
@@ -646,7 +664,8 @@ class JanelaModerna(ctk.CTk):
         self.var_jf_outros_idiomas = tk.StringVar()
         self._entrada(lateral, self.var_jf_outros_idiomas, "ex.: fr, it, de").pack(fill="x", pady=(2, 4), **p)
         self.var_jf_sobrescrever = tk.BooleanVar(value=False)
-        self._checkbox(lateral, "Trocar legendas que já existem", self.var_jf_sobrescrever)
+        self._checkbox(lateral, "Substituir o que já existe (legendas,\npôster, backdrop e .nfo)",
+                       self.var_jf_sobrescrever)
 
         self._separador(lateral)
         self._rotulo(lateral, "Servidor Jellyfin", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
@@ -688,15 +707,24 @@ class JanelaModerna(ctk.CTk):
             corpo, "Arquivos", self.COLUNAS_JF,
             "Escolha as pastas e clique em Pré-visualizar. Nada é movido sem você confirmar.")
         self.tabela_jf.configure(displaycolumns=self.ORDEM_TELA_JF)
-        self.bt_abrir_biblioteca = self._botao(faixa, "Abrir pasta da biblioteca", self.ao_abrir_biblioteca,
-                                               "fantasma")
-        self.bt_abrir_biblioteca.pack(side="left")
-        self.bt_abrir_log = self._botao(faixa, "Abrir log", self.ao_abrir_log, "fantasma")
-        self.bt_abrir_log.pack(side="left", padx=(6, 0))
         self.tabela_jf.bind("<<TreeviewSelect>>", lambda e: self.ao_selecionar_jf())
-        self._montar_filtros_jf(self._topos_tabela[str(self.tabela_jf)])
-        self._montar_detalhe_jf(corpo)
-        self._criar_console(corpo, linha=2)
+        topo = self._topos_tabela[str(self.tabela_jf)]
+        self._montar_filtros_jf(topo)
+        # Botões no topo (ao lado do título), e não numa faixa embaixo: sobra mais altura para a lista
+        faixa.grid_remove()
+        self.bt_ampliar_jf = self._botao(topo, "⤢  Ampliar lista", self.alternar_lista_jf, "fantasma", largura=130)
+        self.bt_ampliar_jf.pack(side="right")
+        self.bt_abrir_log = self._botao(topo, "Abrir log", self.ao_abrir_log, "fantasma", largura=90)
+        self.bt_abrir_log.pack(side="right", padx=(0, 4))
+        self.bt_abrir_biblioteca = self._botao(topo, "Abrir pasta da biblioteca", self.ao_abrir_biblioteca,
+                                               "fantasma")
+        self.bt_abrir_biblioteca.pack(side="right", padx=(0, 4))
+        self._lista_ampliada = False
+        self._cartao_detalhe_jf = self._montar_detalhe_jf(corpo)
+        self._cartao_console_jf = self._criar_console(corpo, linha=2, altura=70).master
+        # A lista fica com a maior parte da altura (antes dividia com o console e mostrava ~3 linhas)
+        corpo.grid_rowconfigure(0, weight=5, minsize=340)
+        corpo.grid_rowconfigure(2, weight=1)
 
     # Situações que dá para esconder/mostrar na tabela (o filtro é só visual).
     FILTROS_JF = (("mover", "Vai mover"), ("movido", "Movido"), ("organizado", "Já organizado"),
@@ -740,7 +768,7 @@ class JanelaModerna(ctk.CTk):
         cartao.grid_columnconfigure((1, 2), weight=1, uniform="d")
         self.lb_detalhe_titulo = ctk.CTkLabel(cartao, text="Antes → Depois  (clique numa linha da tabela)",
                                               font=self.f_secao, text_color=Tema.TEXTO, anchor="w")
-        self.lb_detalhe_titulo.grid(row=0, column=0, columnspan=3, sticky="w", padx=18, pady=(12, 6))
+        self.lb_detalhe_titulo.grid(row=0, column=0, columnspan=3, sticky="w", padx=18, pady=(10, 4))
         for coluna, texto in ((1, "Pasta"), (2, "Arquivo")):
             self._rotulo(cartao, texto, fonte=ctk.CTkFont(Tema.FAMILIA, 11, "bold")).grid(
                 row=1, column=coluna, sticky="w", padx=(0, 8))
@@ -755,7 +783,19 @@ class JanelaModerna(ctk.CTk):
                 self._campo_leitura(cartao, var).grid(row=linha, column=coluna, sticky="ew", padx=(0, 8), pady=3)
         self.lb_detalhe_extras = ctk.CTkLabel(cartao, text="", font=self.f_rotulo, text_color=Tema.TEXTO_SUAVE,
                                               anchor="w", justify="left", wraplength=900)
-        self.lb_detalhe_extras.grid(row=4, column=0, columnspan=3, sticky="w", padx=18, pady=(4, 12))
+        self.lb_detalhe_extras.grid(row=4, column=0, columnspan=3, sticky="w", padx=18, pady=(2, 8))
+        return cartao
+
+    def alternar_lista_jf(self) -> None:
+        """'Ampliar lista': esconde o painel Antes → Depois e o console; a tabela ocupa tudo.
+        O andamento continua no rodapé (porcentagem e barra)."""
+        self._lista_ampliada = not self._lista_ampliada
+        for cartao in (self._cartao_detalhe_jf, self._cartao_console_jf):
+            if self._lista_ampliada:
+                cartao.grid_remove()
+            else:
+                cartao.grid()
+        self.bt_ampliar_jf.configure(text="⤡  Reduzir lista" if self._lista_ampliada else "⤢  Ampliar lista")
 
     def _campo_leitura(self, master, var) -> ctk.CTkEntry:
         """Campo só para ler (dá para selecionar e copiar, mas não editar)."""
@@ -1110,6 +1150,12 @@ class JanelaModerna(ctk.CTk):
 
     def perguntar(self, titulo: str, mensagem: str) -> bool:
         dialogo = DialogoModerno(self, titulo, mensagem, "info", pergunta=True)
+        self.wait_window(dialogo)
+        return dialogo.resposta
+
+    def escolher(self, titulo: str, mensagem: str, opcoes: tuple[str, ...]) -> str | None:
+        """Pergunta com vários botões; devolve o texto do escolhido (None = Cancelar)."""
+        dialogo = DialogoModerno(self, titulo, mensagem, "info", opcoes=opcoes)
         self.wait_window(dialogo)
         return dialogo.resposta
 

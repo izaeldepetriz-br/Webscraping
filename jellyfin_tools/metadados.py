@@ -196,6 +196,8 @@ def enriquecer_filme(pasta: Path, nome_base: str, cliente: ClienteTMDB, titulo: 
             destino = pasta / f"{nome}.jpg"
             cliente.baixar_imagem(caminho_tmdb, destino)
             resultado.criados.append(destino)
+            if existente and existente != destino:             # trocou poster.png por poster.jpg:
+                existente.unlink(missing_ok=True)              # sem duas imagens disputando o lugar
 
     if nfo:
         destino = pasta / f"{nome_base}.nfo"

@@ -45,6 +45,7 @@ class ConfigPos:
     jellyfin_url: str = ""
     jellyfin_api_key: str = ""                             # vazio = não pede o scan
     trabalhadores: int = 4                                 # filmes processados ao mesmo tempo
+    sobrescrever: bool = False                             # trocar legenda/pôster/backdrop/.nfo que já existem
 
 
     @property
@@ -112,7 +113,7 @@ def processar_item(m, cfg: ConfigPos, log=None, trava_legendas=None) -> Resultad
             titulo, ano, tmdb_id = (lido.titulo, lido.ano, None) if lido else (nome_base, None, None)
         try:
             resultado.metadados = enriquecer_filme(pasta, nome_base, cfg.tmdb, titulo, ano, tmdb_id,
-                                                   imagens=cfg.imagens, nfo=cfg.nfo)
+                                                   imagens=cfg.imagens, nfo=cfg.nfo, sobrescrever=cfg.sobrescrever)
         except Exception as erro:
             log.error("Metadados de %s falharam: %s", nome_base, erro, exc_info=True)
             resultado.erro = str(erro)
@@ -121,8 +122,10 @@ def processar_item(m, cfg: ConfigPos, log=None, trava_legendas=None) -> Resultad
 
 def _legenda(m, cfg: ConfigPos, pasta: Path, originais: list[str], idioma: str) -> ResultadoLegenda:
     if m.episodio:
-        return baixar_legenda_episodio(m.destino, cfg.provedores, idioma=idioma, titulos_alternativos=originais)
-    return baixar_legenda(pasta, cfg.provedores, idioma=idioma, titulos_alternativos=originais)
+        return baixar_legenda_episodio(m.destino, cfg.provedores, idioma=idioma, sobrescrever=cfg.sobrescrever,
+                                       titulos_alternativos=originais)
+    return baixar_legenda(pasta, cfg.provedores, idioma=idioma, sobrescrever=cfg.sobrescrever,
+                          titulos_alternativos=originais)
 
 
 def pos_processar(itens: list, cfg: ConfigPos, log=None, ao_item=None, parar=None) -> list[ResultadoItem]:

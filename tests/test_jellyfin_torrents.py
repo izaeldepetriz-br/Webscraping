@@ -208,3 +208,133 @@ def test_midia_solta_ganha_pasta_propria(tmp_path):
     assert sorted(m.status for m in movs) == ["movido", "movido"]
     assert (biblioteca / "Matrix (1999)" / "Matrix (1999).mkv").exists()
     assert (biblioteca / "Cidade de Deus (2002)" / "Cidade de Deus (2002).mkv").exists()
+
+
+# ------------------------------------------------------------------ séries de torrent (caso "The Office")
+TEMPORADA = "Vida de Escritório (The Office) {ano} - {t}ª Temporada Completa Acesse o ORIGINAL WWW.BLUDV.TV"
+
+
+def _the_office(raiz, temporadas=(1, 2), episodios=(1, 2, 3)):
+    """Como o torrent chega: uma pasta por temporada com episódios, a imagem de cada episódio,
+    a propaganda BLUDV.TV.mp4 (pequena) e o pôster da propaganda."""
+    pastas = []
+    for t in temporadas:
+        pasta = raiz / TEMPORADA.format(ano=2004 + t, t=t)
+        for e in episodios:
+            base = f"The.Office.S{t:02d}E{e:02d}.720p.BluRay.x264.DUAL-WWW.BLUDV.TV"
+            _video(pasta / f"{base}.mkv", 3 * MB)
+            _arquivo(pasta / f"{base}-poster.jpg")
+            _arquivo(pasta / f"{base}.srt")
+        _video(pasta / "BLUDV.TV.mp4", MB // 2)
+        _arquivo(pasta / "BLUDV.TV-poster.jpg")
+        _arquivo(pasta / "Leia.txt")
+        pastas.append(pasta)
+    return pastas
+
+
+def test_serie_de_torrent_apaga_propaganda_pastas_e_leva_as_imagens(tmp_path):
+    from jellyfin_tools import organizar_pasta
+    raiz = tmp_path / "Series" / "The Office"                    # origem e biblioteca: a mesma pasta
+    pastas = _the_office(raiz)
+    previa = organizar_pasta(raiz, raiz, CatalogoLocal.padrao(), modo="series", limite_trailer_mb=LIMITE,
+                             apagar_pasta_origem=True)
+    assert {m.status for m in previa} == {"simulado"}           # BLUDV.TV.mp4 não é mais "não identificado"
+    assert sum(1 for m in previa if m.pasta_apagar) == 2
+    assert all(p.exists() for p in pastas)                      # prévia não apaga nada
+
+    organizar_pasta(raiz, raiz, CatalogoLocal.padrao(), modo="series", limite_trailer_mb=LIMITE,
+                    apagar_pasta_origem=True, aplicar=True)
+    assert not any(p.exists() for p in pastas)                  # pastas do torrent apagadas
+    season = raiz / "The Office (2005)" / "Season 01"
+    assert sorted(p.name for p in season.iterdir()) == [
+        "The Office S01E01-thumb.jpg", "The Office S01E01.mkv", "The Office S01E01.pt-BR.srt",
+        "The Office S01E02-thumb.jpg", "The Office S01E02.mkv", "The Office S01E02.pt-BR.srt",
+        "The Office S01E03-thumb.jpg", "The Office S01E03.mkv", "The Office S01E03.pt-BR.srt"]
+    assert sorted(p.name for p in raiz.iterdir()) == [".organizador", "The Office (2005)"]
+
+
+def test_sobras_de_uma_organizacao_anterior_sao_limpas(tmp_path):
+    """O que aconteceu de verdade: uma versão anterior moveu os episódios e deixou para trás
+    BLUDV.TV.mp4, as imagens dos episódios e as pastas das temporadas."""
+    import json
+    from jellyfin_tools import organizar_pasta
+    from jellyfin_tools.organizador import PASTA_LOGS
+    raiz = tmp_path / "Series" / "The Office"
+    pastas = _the_office(raiz, temporadas=(1, 2), episodios=(1, 2))
+    itens = []
+    for pasta in pastas:                                         # "move" como a versão antiga fazia
+        for video in sorted(pasta.glob("*.mkv")):
+            t, e = int(video.name[12:14]), int(video.name[15:17])
+            novo = raiz / "The Office (2005)" / f"Season {t:02d}" / f"The Office S{t:02d}E{e:02d} - Ep {e}.mkv"
+            novo.parent.mkdir(parents=True, exist_ok=True)
+            video.rename(novo)
+            itens.append({"de": str(video), "para": str(novo)})
+        (pasta / "Leia.txt").unlink()
+    (raiz / PASTA_LOGS).mkdir()
+    (raiz / PASTA_LOGS / "log-20261004-121747-947836.json").write_text(json.dumps(
+        {"raiz": str(raiz), "itens": itens, "apagados": [], "pastas_apagadas": []}), encoding="utf-8")
+
+    previa = organizar_pasta(raiz, raiz, CatalogoLocal.padrao(), modo="series", limite_trailer_mb=LIMITE,
+                             apagar_pasta_origem=True)
+    limpezas = [m for m in previa if m.status == "limpeza"]
+    assert sorted(m.origem for m in limpezas) == sorted(pastas)
+    assert not any(m.status == "nao_identificado" for m in previa)      # BLUDV.TV.mp4 não aparece como pendência
+    s01 = next(m for m in limpezas if "1ª" in m.origem.name)
+    assert sorted(n.name for _, n in s01.acompanhantes) == ["The Office S01E01 - Ep 1-thumb.jpg",
+                                                            "The Office S01E02 - Ep 2-thumb.jpg"]
+    assert [a.name for a in s01.apagar] == ["BLUDV.TV.mp4"]
+
+    feitos = organizar_pasta(raiz, raiz, CatalogoLocal.padrao(), modo="series", limite_trailer_mb=LIMITE,
+                             apagar_pasta_origem=True, aplicar=True)
+    assert {m.status for m in feitos if m.pasta_apagar} == {"pasta_apagada"}
+    assert not any(p.exists() for p in pastas)
+    s01_pasta = raiz / "The Office (2005)" / "Season 01"
+    assert (s01_pasta / "The Office S01E01 - Ep 1-thumb.jpg").is_file()
+    # sem o log anterior, nada mais a limpar; a nova organização tem o próprio log (desfaz as imagens)
+    assert not [m for m in organizar_pasta(raiz, raiz, CatalogoLocal.padrao(), modo="series",
+                                           limite_trailer_mb=LIMITE, apagar_pasta_origem=True)
+                if m.status == "limpeza"]
+    desfazer(ultimo_log(raiz))
+    assert (pastas[0] / "The.Office.S01E01.720p.BluRay.x264.DUAL-WWW.BLUDV.TV-poster.jpg").is_file()
+
+
+def test_sobras_travas_de_seguranca(tmp_path):
+    import json
+    from jellyfin_tools import organizar_pasta
+    from jellyfin_tools.organizador import PASTA_LOGS
+    raiz = tmp_path / "Series"
+    biblioteca = raiz / "Dark (2017)" / "Season 01"
+    # pasta A: o log diz que o episódio saiu, mas ainda tem um vídeo DE VERDADE -> fica
+    _video(raiz / "Torrent A" / "Dark.S01E02.mkv", 3 * MB)
+    _video(raiz / "Torrent A" / "BLUDV.TV.mp4", MB // 2)
+    # pasta B: nunca passou pelo organizador (não está no log) -> fica, mesmo só com propaganda
+    _video(raiz / "Fotos e propagandas" / "www.site.com.mp4", MB // 2)
+    _video(biblioteca / "Dark S01E01.mkv", 3 * MB)
+    (raiz / PASTA_LOGS).mkdir()
+    (raiz / PASTA_LOGS / "log-1.json").write_text(json.dumps({"raiz": str(raiz), "itens": [
+        {"de": str(raiz / "Torrent A" / "Dark.S01E01.mkv"), "para": str(biblioteca / "Dark S01E01.mkv")}]}),
+        encoding="utf-8")
+    (raiz / PASTA_LOGS / "log-0.desfeito.json").write_text(json.dumps({"raiz": str(raiz), "itens": [
+        {"de": str(raiz / "Fotos e propagandas" / "x.mkv"), "para": str(biblioteca / "Dark S01E01.mkv")}]}),
+        encoding="utf-8")                                          # desfeito: não conta
+    for apagar in (True, False):
+        movs = organizar_pasta(raiz, raiz, CatalogoLocal.padrao(), modo="series", limite_trailer_mb=LIMITE,
+                               apagar_pasta_origem=apagar)
+        assert not [m for m in movs if m.status == "limpeza"]
+    movs = organizar_pasta(raiz, raiz, CatalogoLocal.padrao(), modo="series", limite_trailer_mb=LIMITE,
+                           apagar_pasta_origem=True, aplicar=True)
+    assert (raiz / "Fotos e propagandas" / "www.site.com.mp4").exists()
+    assert ultimo_log(raiz).name != "log-0.desfeito.json"
+
+
+def test_episodio_curto_continua_nao_sendo_apagado(tmp_path):
+    """Modo séries: vídeo pequeno que É episódio (ou não tem cara de propaganda) nunca vira lixo."""
+    from jellyfin_tools import organizar_pasta
+    pasta = tmp_path / "o" / "Serie"
+    _video(pasta / "Dark.S01E01.mkv", 3 * MB)
+    _video(pasta / "Dark.S01E02.WWW.BLUDV.TV.mkv", MB // 2)        # curto, com site, mas é episódio
+    _video(pasta / "Making of.mkv", MB // 2)                       # extra sem cara de propaganda
+    movs = organizar_pasta(tmp_path / "o", tmp_path / "S", CatalogoLocal.padrao(), modo="series",
+                           limite_trailer_mb=LIMITE)
+    assert not any(m.apagar for m in movs)
+    assert sorted(m.status for m in movs) == ["nao_identificado", "simulado", "simulado"]

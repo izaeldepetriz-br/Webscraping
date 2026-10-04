@@ -27,7 +27,8 @@ from datetime import datetime
 from pathlib import Path
 
 from .catalogo import Catalogo, ErroCatalogo, Filme
-from .extras import LIMITE_TRAILER_MB, eh_trailer, limpar_cache, lixo_da_pasta, planejar_extras
+from .extras import (ARTES, LIMITE_TRAILER_MB, _arquivos, eh_propaganda_pequena, eh_trailer, imagem_do_video, limpar_cache,
+                     lixo_da_pasta, planejar_extras, tipo_de_arte)
 from .nomes import (eh_video, extrair_episodio, extrair_titulo_e_ano, formatar_titulo, nome_episodio_jellyfin,
                     nome_jellyfin, normalizar, pasta_temporada)
 
@@ -40,6 +41,7 @@ class Movimento:
     origem: Path
     destino: Path | None
     status: str          # simulado | movido | organizado | conflito | nao_identificado | ignorado | erro
+    #                      limpeza | pasta_apagada  (sobra de uma organização anterior; ver _planejar_sobras)
     detalhe: str = ""
     filme: Filme | None = None
     acompanhantes: list[tuple[Path, Path]] | None = None   # legendas/nfo que vão junto
@@ -272,7 +274,10 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
 
     videos = _listar_videos(origem, pasta_filmes, recursivo)
     # Trailers/propagandas pequenos não são filmes: ficam fora do planejamento (e viram lixo).
-    trailers = {v for v in videos if modo == "filmes" and eh_trailer(v, origem, limite_trailer_mb)}
+    trailers = {v for v in videos if eh_trailer(v, origem, limite_trailer_mb, modo)}
+    # Pastas de torrent que uma organização ANTERIOR já esvaziou (só sobrou propaganda/imagens):
+    sobras = _planejar_sobras(origem, pasta_filmes, videos, limite_trailer_mb) if apagar_pasta_origem else []
+    trailers |= {v for s in sobras for v in s.apagar or []}
     analisar = [v for v in videos if v not in trailers]
     avisar_analise = ao_analisar or (lambda *a: None)
     # Com o TMDB, as consultas pela internet são quase todo o tempo da análise: são feitas antes,
@@ -303,6 +308,9 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
         _planejar_lixo(movimentos, origem, modo, limite_trailer_mb)
     if apagar_pasta_origem:
         _planejar_pastas_a_apagar(movimentos, origem, pasta_filmes, trailers)
+        destinos = [m.destino.resolve() for m in movimentos if m.destino]
+        movimentos += [s for s in sobras                  # nenhum destino novo dentro dela
+                       if not any(s.origem.resolve() in d.parents for d in destinos)]
     if not aplicar:
         return movimentos
     if ao_planejar:
@@ -313,6 +321,15 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
     apagados: list[Path] = []
     pastas_de_onde_sairam: set[Path] = set()
     for indice, mov in enumerate(movimentos):
+        if mov.status == "limpeza":                          # artes de episódios/filmes já movidos
+            for antigo, novo in mov.acompanhantes or []:
+                if antigo.exists() and novo.parent.is_dir() and not novo.exists():
+                    try:
+                        shutil.move(str(antigo), str(novo))
+                        feitos.append((antigo, novo))
+                    except OSError as erro:
+                        mov.detalhe = f"não consegui mover {antigo.name}: {erro}"
+            continue
         if mov.status != "simulado":
             continue
         pastas_de_onde_sairam.add(mov.origem.parent)
@@ -411,6 +428,9 @@ def _apagar_pastas_de_origem(movimentos: list[Movimento], trailers: set[Path], o
         pasta = mov.pasta_apagar
         if not pasta or not pasta.exists():
             continue
+        limpeza = mov.status == "limpeza"
+        if limpeza:
+            mov.status = "erro"                              # vira "pasta_apagada" se der certo
         da_pasta = por_pasta.get(pasta, [])
         if any(m.status != "movido" for m in da_pasta):
             mov.detalhe = "pasta de origem mantida: um filme dela não foi movido"
@@ -424,9 +444,85 @@ def _apagar_pastas_de_origem(movimentos: list[Movimento], trailers: set[Path], o
             else:
                 shutil.rmtree(pasta, onerror=_tirar_somente_leitura)
             apagadas.append(pasta)
+            if limpeza:
+                mov.status = "pasta_apagada"
         except OSError as erro:
             mov.detalhe = f"não consegui apagar a pasta {pasta.name}: {erro}"
     return apagadas
+
+
+# ----------------------------------------------------------------- sobras de organizações anteriores
+def _historico(pasta_filmes: Path) -> list[tuple[Path, Path]]:
+    """(de, para) de todas as organizações registradas em <biblioteca>/.organizador (menos as desfeitas)."""
+    itens = []
+    for log in sorted((pasta_filmes / PASTA_LOGS).glob("log-*.json")):
+        if log.name.endswith(".desfeito.json"):
+            continue
+        try:
+            dados = json.loads(log.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for item in dados if isinstance(dados, list) else dados.get("itens", []):
+            try:
+                itens.append((Path(item["de"]), Path(item["para"])))
+            except (KeyError, TypeError):
+                continue
+    return itens
+
+
+def _planejar_sobras(origem: Path, pasta_filmes: Path, videos: list[Path],
+                     limite_mb: float = LIMITE_TRAILER_MB) -> list[Movimento]:
+    """Pastas de torrent de onde uma organização ANTERIOR (registrada no log) já tirou os vídeos e
+    onde só sobrou propaganda ('BLUDV.TV.mp4'), imagens e afins. Cada uma vira um Movimento
+    'limpeza' que apaga a pasta; as imagens dos episódios/filmes que saíram dela ('...-poster.jpg')
+    vão antes para junto deles. Seguro: só pastas que o próprio organizador esvaziou (log), dentro
+    da origem, sem a biblioteca dentro e sem nenhum vídeo de verdade."""
+    historico = [(de, para) for de, para in _historico(pasta_filmes) if para.exists() and not de.exists()]
+    if not historico:
+        return []
+    bib = pasta_filmes.resolve()
+    destinos = [para.resolve() for _, para in historico]
+    por_pasta: dict[Path, list[tuple[Path, Path]]] = {}
+    for de, para in historico:
+        pasta = _pasta_do_torrent(de, origem)
+        if pasta is not None and pasta.is_dir():
+            por_pasta.setdefault(pasta, []).append((de, para))
+    resolvidos = [(v, v.resolve()) for v in videos]          # uma vez só (pasta de rede é lenta)
+    sobras = []
+    for pasta, itens in sorted(por_pasta.items()):
+        p = pasta.resolve()
+        if p == bib or p in bib.parents or any(d == p or p in d.parents for d in destinos):
+            continue                                         # a biblioteca (ou um filme) está aqui dentro
+        restantes = [v for v, r in resolvidos if p in r.parents]
+        propaganda = [v for v in restantes if eh_propaganda_pequena(v, limite_mb)]
+        if len(propaganda) != len(restantes):
+            continue                                         # ainda tem vídeo de verdade: não mexe
+        sobras.append(Movimento(pasta, None, "limpeza", "sobra de uma organização anterior",
+                                acompanhantes=_artes_dos_que_sairam(itens), apagar=propaganda,
+                                pasta_apagar=pasta))
+    return sobras
+
+
+def _artes_dos_que_sairam(itens: list[tuple[Path, Path]]) -> list[tuple[Path, Path]]:
+    """Imagens que ficaram para trás: 'X.S01E01.720p-poster.jpg' -> 'Série S01E01 - Nome-thumb.jpg'
+    (miniatura do episódio); 'Filme.2019-poster.jpg' -> 'poster.jpg' na pasta do filme."""
+    junto = []
+    for de, para in itens:
+        if not eh_video(de):
+            continue
+        for imagem in _arquivos(de.parent):                  # pasta lida uma vez (cache)
+            if not imagem_do_video(imagem, de.stem):
+                continue
+            ext = ".jpg" if imagem.suffix.lower() == ".jpeg" else imagem.suffix.lower()
+            if extrair_episodio(para.name):
+                novo = para.with_name(f"{para.stem}-thumb{ext}")
+            elif arte := tipo_de_arte(imagem):
+                novo = para.parent / f"{ARTES[arte]}{ext}"
+            else:
+                continue
+            if not novo.exists() and all(n != novo for _, n in junto):
+                junto.append((imagem, novo))
+    return junto
 
 
 def _tirar_somente_leitura(funcao, caminho, _excecao) -> None:
@@ -514,7 +610,8 @@ def _gravar_log(pasta_filmes: Path, feitos: list[tuple[Path, Path]], apagados: l
 
 
 def ultimo_log(pasta_filmes: str | Path) -> Path | None:
-    logs = sorted((Path(pasta_filmes) / PASTA_LOGS).glob("log-*.json"))
+    logs = sorted(p for p in (Path(pasta_filmes) / PASTA_LOGS).glob("log-*.json")
+                  if not p.name.endswith(".desfeito.json"))           # o desfeito não se desfaz de novo
     return logs[-1] if logs else None
 
 

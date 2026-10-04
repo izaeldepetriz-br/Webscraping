@@ -11,7 +11,11 @@ Regras de segurança para APAGAR (é irreversível):
   - Pasta raiz (ex.: Downloads/ com vários filmes soltos): só o que TEM CARA de propaganda
     (nome com site, "Leia", "Visite", "trailer"...). Um "minhas_notas.txt" nunca é apagado.
   - Vídeo pequeno só é "trailer" se houver um vídeo MAIOR (o filme) na mesma pasta.
-  - Modo séries: vídeos nunca são apagados (episódios curtos são normais).
+  - Modo séries: episódios curtos são normais, então só é apagado o vídeo pequeno com CARA de
+    propaganda (ex.: 'BLUDV.TV.mp4') que NÃO é episódio, e só se houver episódio maior na pasta.
+
+Séries: a imagem de cada episódio ('The.Office.S01E01...-poster.jpg') vira a miniatura do episódio
+no padrão do Jellyfin: 'The Office S01E01 - Piloto-thumb.jpg', ao lado do vídeo.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
-from .nomes import eh_video, extrair_titulo_e_ano, normalizar, similaridade, tem_site
+from .nomes import eh_video, extrair_episodio, extrair_titulo_e_ano, normalizar, similaridade, tem_site
 
 EXTENSOES_LEGENDA = {".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt"}
 EXTENSOES_IMAGEM = {".jpg", ".jpeg", ".png", ".webp"}
@@ -105,8 +109,8 @@ def _tamanho(arquivo: Path) -> int:
     return tamanho
 
 
-def eh_trailer(video: Path, raiz: Path, limite_mb: float = LIMITE_TRAILER_MB) -> bool:
-    """Vídeo pequeno de propaganda/trailer que acompanha um filme maior na mesma pasta."""
+def eh_trailer(video: Path, raiz: Path, limite_mb: float = LIMITE_TRAILER_MB, modo: str = "filmes") -> bool:
+    """Vídeo pequeno de propaganda/trailer que acompanha um filme (ou episódio) maior na mesma pasta."""
     limite = limite_mb * 1024 * 1024
     if _tamanho(video) >= limite:
         return False
@@ -114,9 +118,30 @@ def eh_trailer(video: Path, raiz: Path, limite_mb: float = LIMITE_TRAILER_MB) ->
                           for v, tamanho in _arquivos(video.parent).items())
     if not tem_filme_maior:
         return False
+    if modo == "series":                                   # episódio curto é normal: só propaganda
+        return eh_propaganda(video)
     if _resolver(video.parent) == _resolver(raiz):         # pasta raiz: só com cara de propaganda
         return parece_propaganda(video)
     return parece_propaganda(video) or extrair_titulo_e_ano(video.name).ano is None
+
+
+def eh_propaganda(video: Path) -> bool:
+    """'BLUDV.TV.mp4', 'www.site.com.mp4', 'Trailer.mp4': cara de propaganda e NÃO é episódio."""
+    return parece_propaganda(video) and extrair_episodio(video.name) is None
+
+
+def eh_propaganda_pequena(video: Path, limite_mb: float = LIMITE_TRAILER_MB) -> bool:
+    """Propaganda pequena mesmo SOZINHA na pasta (usado nas sobras de uma organização anterior,
+    quando os filmes/episódios já saíram dali)."""
+    return _tamanho(video) < limite_mb * 1024 * 1024 and eh_propaganda(video)
+
+
+def imagem_do_video(imagem: Path, video_stem: str) -> bool:
+    """'X.S01E01.720p-poster.jpg' é a imagem do vídeo 'X.S01E01.720p.mkv'? (mesmo começo + separador)"""
+    if imagem.suffix.lower() not in EXTENSOES_IMAGEM:
+        return False
+    nome, base = imagem.stem.lower(), video_stem.lower()
+    return nome.startswith(base) and (len(nome) == len(base) or nome[len(base)] in "-._ ")
 
 
 def eh_lixo(arquivo: Path, raiz: Path) -> bool:
@@ -170,8 +195,7 @@ def planejar_extras(video: Path, nome_base: str, pasta_destino: Path, raiz: Path
     # "Pasta exclusiva": subpasta (não a raiz) com um único filme -> tudo nela é deste filme.
     exclusiva = False
     if raiz is not None and _resolver(pasta) != _resolver(raiz):
-        videos_da_pasta = [v for v in arquivos if eh_video(v)
-                           and not (modo == "filmes" and eh_trailer(v, raiz, limite_mb))]
+        videos_da_pasta = [v for v in arquivos if eh_video(v) and not eh_trailer(v, raiz, limite_mb, modo)]
         exclusiva = len(videos_da_pasta) == 1
     usados: set[str] = set()
 
@@ -190,6 +214,8 @@ def planejar_extras(video: Path, nome_base: str, pasta_destino: Path, raiz: Path
                 adicionar(extra, nome_da_legenda(extra, nome_base))
         elif ext == ".nfo" and mesmo_prefixo:
             adicionar(extra, f"{nome_base}{extra.name[len(video.stem):]}")
+        elif modo == "series" and imagem_do_video(extra, video.stem):      # miniatura do episódio
+            adicionar(extra, f"{nome_base}-thumb{'.jpg' if ext == '.jpeg' else ext}")
         elif modo == "filmes" and (arte := tipo_de_arte(extra)):
             prefixo = extra.stem[: len(extra.stem) - len(arte)].rstrip("-._ ")
             if exclusiva or (prefixo and _mesmo_filme(extra, titulo_video, prefixo)):
@@ -203,6 +229,6 @@ def lixo_da_pasta(pasta: Path, raiz: Path, modo: str = "filmes",
     """Arquivos a apagar numa pasta de onde um filme está saindo."""
     lixo = []
     for arquivo in _arquivos(pasta):
-        if eh_lixo(arquivo, raiz) or (modo == "filmes" and eh_video(arquivo) and eh_trailer(arquivo, raiz, limite_mb)):
+        if eh_lixo(arquivo, raiz) or (eh_video(arquivo) and eh_trailer(arquivo, raiz, limite_mb, modo)):
             lixo.append(arquivo)
     return lixo
