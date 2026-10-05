@@ -233,6 +233,14 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v1.6.2
+
+- **Conferir só os selecionados:** selecione uma faixa de canais e o botão vira "Conferir N selecionado(s)"
+  (sem seleção: "Conferir todos"). Os outros canais mantêm a situação de antes.
+- **Menos "fora do ar" falso:** vale o conteúdo da resposta (#EXTM3U), mesmo que o servidor diga que é
+  "text/html"/"text/plain" ou mande a marca BOM; pedidos com cabeçalhos de navegador; espera de até 10 s pela
+  resposta; desiste de um servidor só depois de 3 falhas e nunca ao conferir poucos canais (até 30).
+
 ### Novidades da v1.6.1 (TV ao vivo mais rápida)
 
 - **Conferir canais sem travar:** servidor que conecta e fica mudo conta como "fora do ar" (depois de 2 canais
@@ -287,7 +295,8 @@ primeira falha (antes esperava o tempo limite em cada filme).
   Gerenciador de Tarefas > Inicializar (dá para desligar por lá também). Opção de linha de comando: `--minimizado`.
 - **TV ao vivo...** (barra de cima): canais ao vivo no Jellyfin (Painel > TV ao vivo), sem outro programa:
   1. adicione canais (nome + link do sinal `.m3u8`) ou importe uma lista `.m3u` (arquivo ou endereço);
-  2. **Conferir os links**: no ar / fora do ar / pede login / link temporário (com token, que expira).
+  2. **Conferir**: só os canais **selecionados** (sem seleção, todos): no ar / fora do ar / pede login / link
+     temporário (com token, que expira).
      **Selecionar os fora do ar** + **Remover selecionados** limpa a lista; **Remover todos** zera. Clique no
      **título de uma coluna** (Canal, Grupo, Situação, Link) para marcar um ou vários valores dela: a lista mostra
      e seleciona só esses (o Link conta pelo site); "Tirar os filtros" volta tudo. Listas grandes: 32 canais

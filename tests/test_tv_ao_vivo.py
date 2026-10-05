@@ -189,7 +189,7 @@ def test_servidor_mudo_e_desistido_logo():
         canais = [Canal(f"C{n}", f"http://127.0.0.1:{porta}/c{n}.m3u8") for n in range(40)]
         inicio = time.monotonic()
         situacoes = conferir_canais(canais)
-        assert time.monotonic() - inicio < 20                      # antes: 40 x 8 s / 6 = ~53 s
+        assert time.monotonic() - inicio < 25                      # 1 ou 2 rodadas de 10 s; antes: 40 x 8 s / 6 = ~53 s
         assert not any(s.ok for _, s in situacoes)
         assert sum("não responde (outros canais dele já falharam)" in s.detalhe for _, s in situacoes) >= 25
     finally:
@@ -247,3 +247,25 @@ def test_exportar_tabela(tmp_path):
     assert texto[1].split("\t") == ["TV Cultura", "Abertos", "no ar", "sim", "https://a.org/1.m3u8"]
     with pytest.raises(ValueError):
         exportar_tabela(linhas, tmp_path / "c.xls")
+
+
+def test_playlist_que_o_servidor_manda_como_pagina_ou_com_bom_esta_no_ar(api_falsa):
+    """Caso real: o canal toca no navegador, mas o servidor diz que a playlist é "text/html" ou
+    "text/plain" (ou começa com a marca BOM). O que vale é o conteúdo (#EXTM3U)."""
+    api_falsa.rotas["/a/index.m3u8"] = lambda q: (200, b"#EXTM3U\n#EXT-X-VERSION:3\n", {"Content-Type": "text/html"})
+    api_falsa.rotas["/b/index.m3u8"] = lambda q: (200, b"\xef\xbb\xbf\r\n#EXTM3U\n", {"Content-Type": "text/plain"})
+    api_falsa.rotas["/c/live"] = lambda q: (200, b"#EXTM3U\n", {"Content-Type": "text/html; charset=utf-8"})
+    api_falsa.rotas["/d/live"] = lambda q: (200, b"<html>login</html>", {"Content-Type": "text/html"})
+    b = api_falsa.base
+    situacoes = {c.nome: s for c, s in conferir_canais([Canal("A", b + "/a/index.m3u8"), Canal("B", b + "/b/index.m3u8"),
+                                                        Canal("C", b + "/c/live"), Canal("D", b + "/d/live")])}
+    assert [n for n, s in situacoes.items() if s.ok] == ["A", "B", "C"]
+    assert "é uma página" in situacoes["D"].detalhe
+    assert "Chrome" in api_falsa.pedidos[-1]["headers"].get("User-Agent", "")      # parece um navegador
+
+
+def test_poucos_canais_sao_todos_tentados_mesmo_com_o_servidor_falhando():
+    """Conferindo poucos (ex.: os selecionados), não desiste do servidor: cada canal é tentado."""
+    canais = [Canal(f"C{n}", f"http://127.0.0.1:9/canal{n}.m3u8") for n in range(8)]   # porta fechada
+    situacoes = conferir_canais(canais)
+    assert not any("outros canais dele já falharam" in s.detalhe for _, s in situacoes)

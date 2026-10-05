@@ -1686,3 +1686,26 @@ def test_conferencia_grande_nao_enche_o_console(app):
     linhas.clear()
     app._registrar_canais(poucos * 200)                                  # 600 canais: um resumo só no console
     assert len(linhas) == 1 and "600 canais conferidos" in linhas[0].getMessage()
+
+
+def test_conferir_so_os_canais_selecionados(app, api_falsa):
+    """Antes "Conferir" lia a lista inteira mesmo com uma faixa selecionada."""
+    from jellyfin_tools.tv_ao_vivo import Canal, Situacao
+    api_falsa.rotas["/ok.m3u8"] = lambda q: (200, b"#EXTM3U\n", {"Content-Type": "text/html"})
+    app.mostrar_aba("Jellyfin")
+    app.bt_tv_ao_vivo.invoke()
+    janela = app.janela_canais
+    app._canais = [Canal(f"C{n}", f"{api_falsa.base}/ok.m3u8?n={n}") for n in range(10)]
+    app._situacao_canais = {app._canais[0].url: Situacao(False, "fora do ar (HTTP 404)")}
+    app._mostrar_canais()
+    assert janela.bt_conferir.cget("text") == "Conferir todos"
+    janela.tabela.selection_set(["3", "4", "5"])
+    app.update()
+    assert janela.bt_conferir.cget("text") == "Conferir 3 selecionado(s)"
+    antes = len(api_falsa.pedidos)
+    janela.bt_conferir.invoke()
+    esperar(app)
+    assert len(api_falsa.pedidos) - antes == 3                          # só os 3 selecionados
+    assert {c.nome for c in app._canais if app._situacao_canais.get(c.url, Situacao(False)).ok} == {"C3", "C4", "C5"}
+    assert app._situacao_canais[app._canais[0].url].detalhe == "fora do ar (HTTP 404)"   # os outros ficam como estavam
+    assert set(janela.selecionados()) == {"3", "4", "5"}                # a seleção continua

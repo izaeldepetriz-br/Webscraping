@@ -432,7 +432,8 @@ class JanelaCanais(ctk.CTkToplevel):
             b.pack(side="left", padx=(0, 6))
         self._dica(topo, "Adicionar: um canal (nome + link do SINAL, ex.: https://.../index.m3u8).  Importar do link: o "
                    "link de uma LISTA de canais (.m3u), não de uma página de site.  Importar arquivo: uma lista .m3u "
-                   "salva no PC.  Clique no TÍTULO de uma coluna para filtrar: digite e/ou marque um ou vários valores.")
+                   "salva no PC.  Clique no TÍTULO de uma coluna para filtrar: digite e/ou marque um ou vários valores.  Conferir: só os "
+                   "canais SELECIONADOS (sem seleção, todos).")
 
         quadro = ctk.CTkFrame(self, fg_color=Tema.CARTAO)
         quadro.pack(fill="both", expand=True, padx=24, pady=6)
@@ -471,7 +472,10 @@ class JanelaCanais(ctk.CTkToplevel):
         self.bt_selecionar_todos.pack(side="left", padx=(8, 0))
         self.bt_selecionar_fora.pack(side="left", padx=(0, 0))
         self.bt_tirar_filtros.pack(side="left", padx=(0, 0))
-        m._botao(faixa, "Conferir os links", acoes["conferir"], "secundario").pack(side="right")
+        self.bt_conferir = m._botao(faixa, "Conferir todos", acoes["conferir"], "secundario")
+        self.bt_conferir.configure(width=170)
+        self.bt_conferir.pack(side="right")
+        self.tabela.bind("<<TreeviewSelect>>", lambda e: self._texto_conferir())
         self.bt_remover_todos = m._botao(faixa, "Remover todos", acoes["remover_todos"], "perigo")
         self.bt_remover_todos.pack(side="right", padx=(0, 6))
         self.bt_remover = m._botao(faixa, "Remover selecionados", acoes["remover"], "perigo")
@@ -518,10 +522,16 @@ class JanelaCanais(ctk.CTkToplevel):
 
     TITULOS = {"#0": "Canal", "grupo": "Grupo", "situacao": "Situação", "url": "Link"}
 
-    def preencher(self, linhas: list[tuple[str, str, str, str, str, bool | None]]) -> None:
-        """linhas: [(iid, nome, grupo, situação, link, ok)] (ok None = não conferido)."""
+    def preencher(self, linhas: list[tuple[str, str, str, str, str, bool | None]], manter_selecao: bool = False) -> None:
+        """linhas: [(iid, nome, grupo, situação, link, ok)] (ok None = não conferido).
+        manter_selecao: depois de conferir, os mesmos canais continuam selecionados (a lista não mudou)."""
+        antes = self.selecionados() if manter_selecao else []
         self._linhas = list(linhas)
         self._mostrar()
+        if antes:
+            existem = set(self.tabela.get_children())
+            self.tabela.selection_set([i for i in antes if i in existem])
+            self._texto_conferir()
 
     @staticmethod
     def valor_na_coluna(coluna: str, linha) -> str:
@@ -549,6 +559,7 @@ class JanelaCanais(ctk.CTkToplevel):
         self.lb_resumo.configure(text=f"{quantos} canal(is)" + (f" · {fora} fora do ar" if fora else "")
                                  + (" · filtro ligado" if self._filtros else ""))
         self._titulos_colunas()
+        self._texto_conferir()
 
     def _titulos_colunas(self) -> None:
         for coluna, texto in self.TITULOS.items():
@@ -713,8 +724,19 @@ class JanelaCanais(ctk.CTkToplevel):
     def selecionados(self) -> list[str]:
         return list(self.tabela.selection())
 
+    def a_conferir(self) -> list[str] | None:
+        """Os canais que "Conferir" vai consultar: os selecionados; None = todos (sem seleção ou tudo selecionado)."""
+        escolhidos = self.selecionados()
+        return escolhidos if escolhidos and len(escolhidos) < len(self._linhas) else None
+
+    def _texto_conferir(self) -> None:
+        quantos = len(self.selecionados())
+        parte = 0 < quantos < len(self._linhas)
+        self.bt_conferir.configure(text=f"Conferir {quantos} selecionado(s)" if parte else "Conferir todos")
+
     def selecionar_todos(self) -> None:
         self.tabela.selection_set(self.tabela.get_children())
+        self._texto_conferir()
 
     def selecionar_fora_do_ar(self) -> None:
         """Os que a conferência marcou em vermelho (fora do ar, página, pede login...)."""

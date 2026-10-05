@@ -429,7 +429,7 @@ class AppModerna(JanelaModerna):
             self._juntar_canais(dado)
         elif tipo == "canais_conferidos":
             self._situacao_canais.update({c.url: sit for c, sit in dado})
-            self._mostrar_canais()
+            self._mostrar_canais(manter_selecao=True)
         elif tipo == "bandeja":                        # clique no ícone perto do relógio
             if dado == "abrir":
                 self.mostrar_janela()
@@ -1661,7 +1661,7 @@ class AppModerna(JanelaModerna):
         self._mostrar_canais()
         self.janela_canais.lift()
 
-    def _mostrar_canais(self) -> None:
+    def _mostrar_canais(self, manter_selecao: bool = False) -> None:
         if self.janela_canais is None or not self.janela_canais.winfo_exists():
             return
         linhas = []
@@ -1669,7 +1669,7 @@ class AppModerna(JanelaModerna):
             situacao = self._situacao_canais.get(c.url)            # None = ainda não conferido
             linhas.append((str(i), c.nome, c.grupo, situacao.detalhe if situacao else "—", c.url,
                            situacao.ok if situacao else None))
-        self.janela_canais.preencher(linhas)
+        self.janela_canais.preencher(linhas, manter_selecao)
 
     def _guardar_canais(self) -> None:
         salvar_canais(self.arquivo_canais, self._canais)
@@ -1773,13 +1773,18 @@ class AppModerna(JanelaModerna):
         return avisar
 
     def _conferir_canais(self) -> None:
-        canais = list(self._canais)
+        """Confere os canais SELECIONADOS na tabela (sem seleção, todos). Os outros mantêm a situação de antes."""
+        janela = self.janela_canais
+        escolhidos = janela.a_conferir() if janela is not None and janela.winfo_exists() else None
+        canais = list(self._canais) if escolhidos is None else \
+            [self._canais[int(i)] for i in escolhidos if 0 <= int(i) < len(self._canais)]
         if not canais:
             return
+        rotulo = "Conferindo canais" if len(canais) == len(self._canais) else f"Conferindo {len(canais)} selecionado(s)"
 
         def tarefa():
             situacoes = conferir_canais(canais, parar=self.evento_parar.is_set,
-                                        ao_progresso=self._progresso_com_velocidade("Conferindo canais"))
+                                        ao_progresso=self._progresso_com_velocidade(rotulo))
             self._registrar_canais(situacoes)
             fora = sum(1 for _, sit in situacoes if not sit.ok)
             self.fila.put(("canais_conferidos", situacoes))

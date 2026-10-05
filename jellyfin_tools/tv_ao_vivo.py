@@ -133,8 +133,11 @@ class Situacao:
     servidor_caiu: bool = False     # nem conectou (o servidor inteiro, não só este canal)
 
 
-TEMPO_CONECTAR, TEMPO_RESPOSTA = 3, 6     # segundos: conectar / esperar cada pedaço da resposta
-PRAZO_POR_CANAL = 12                      # nenhum canal segura a fila mais que isso (somando tudo)
+TEMPO_CONECTAR, TEMPO_RESPOSTA = 4, 10    # segundos: conectar / esperar cada pedaço da resposta
+PRAZO_POR_CANAL = 15                      # nenhum canal segura a fila mais que isso (somando tudo)
+# Cabeçalhos de um navegador comum: alguns servidores de transmissão recusam pedidos "de programa"
+CABECALHOS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/124.0 Safari/537.36", "Accept": "*/*", "Accept-Language": "pt-BR,pt;q=0.9"}
 
 
 def _primeiros_bytes(resposta, quantos: int, prazo: float = TEMPO_RESPOSTA) -> bytes:
@@ -156,17 +159,18 @@ def _primeiros_bytes(resposta, quantos: int, prazo: float = TEMPO_RESPOSTA) -> b
 
 def conferir_canal(url: str, timeout=(TEMPO_CONECTAR, TEMPO_RESPOSTA),
                    sessao: requests.Session | None = None) -> Situacao:
-    """timeout: (conectar, esperar a resposta). Um canal que nem conecta em 3 s está fora do ar."""
+    """timeout: (conectar, esperar a resposta). Um canal que nem conecta em 4 s está fora do ar."""
     sessao = sessao or requests
     aviso = "; link temporário (token/expires): deve parar de funcionar" if _RE_TEMPORARIO.search(url) else ""
     try:
-        with sessao.get(url, timeout=timeout, stream=True, headers={"User-Agent": "Mozilla/5.0"}) as r:
+        with sessao.get(url, timeout=timeout, stream=True, headers=CABECALHOS) as r:
             if r.status_code in (401, 403):
                 return Situacao(False, f"o canal pede login (HTTP {r.status_code})")
             if not r.ok:
                 return Situacao(False, f"fora do ar (HTTP {r.status_code})")
             tipo = r.headers.get("Content-Type", "").lower()
-            inicio = _primeiros_bytes(r, 7 if ".m3u8" in url.lower() or "mpegurl" in tipo else 1)
+            texto = ".m3u8" in url.lower() or "mpegurl" in tipo or tipo.startswith("text/") or not tipo
+            inicio = _primeiros_bytes(r, 16 if texto else 1)
     except (requests.ConnectionError, requests.Timeout) as erro:
         # não conectou, ou conectou e ficou mudo: conta como falha do SERVIDOR (os outros canais dele
         # provavelmente estão iguais)
@@ -174,10 +178,12 @@ def conferir_canal(url: str, timeout=(TEMPO_CONECTAR, TEMPO_RESPOSTA),
         return Situacao(False, f"{nome} ({type(erro).__name__})", servidor_caiu=True)
     except requests.RequestException as erro:
         return Situacao(False, f"sem resposta ({type(erro).__name__})")
-    if ".m3u8" in url.lower() or "mpegurl" in tipo:
-        if not inicio.lstrip().startswith(b"#EXTM3U"):
-            return Situacao(False, "o endereço respondeu, mas não é uma transmissão (.m3u8 sem #EXTM3U)")
+    # O que vale é o CONTEÚDO: muitos servidores mandam a playlist como "text/html" ou "text/plain" (o
+    # navegador toca assim mesmo). O começo pode ter a marca BOM e espaços.
+    if inicio.lstrip(b"\xef\xbb\xbf \t\r\n").startswith(b"#EXTM3U"):
         return Situacao(True, "no ar" + aviso)
+    if ".m3u8" in url.lower() or "mpegurl" in tipo:
+        return Situacao(False, "o endereço respondeu, mas não é uma transmissão (.m3u8 sem #EXTM3U)")
     if tipo.startswith("text/html"):
         return Situacao(False, "é uma página, não o sinal do canal")
     if tipo and not tipo.startswith(_TIPOS_FLUXO):
@@ -185,7 +191,8 @@ def conferir_canal(url: str, timeout=(TEMPO_CONECTAR, TEMPO_RESPOSTA),
     return Situacao(True, "no ar" + aviso)
 
 
-FALHAS_PARA_DESISTIR = 2      # 2 canais do mesmo servidor sem resposta (e nenhum que respondeu): desiste dele
+FALHAS_PARA_DESISTIR = 3      # 3 canais do mesmo servidor sem resposta (e nenhum que respondeu): desiste dele
+POUCOS_CANAIS = 30            # conferindo até 30 (ex.: os selecionados), cada canal é tentado de verdade
 POR_SERVIDOR = 6              # no máximo 6 consultas ao MESMO servidor ao mesmo tempo (não sobrecarrega nem é bloqueado)
 
 
@@ -225,8 +232,9 @@ def conferir_canais(canais: list[Canal], trabalhadores: int = 32, ao_progresso=N
       - servidores que não existem (DNS) são descobertos de uma vez, antes de tudo;
       - os canais são intercalados por servidor (vários servidores trabalhando juntos);
       - no máximo POR_SERVIDOR consultas ao mesmo servidor ao mesmo tempo;
-      - servidor que nunca respondeu e já falhou em 2 canais (não conectou OU ficou mudo): os outros
-        canais dele saem "fora do ar" sem esperar;
+      - servidor que nunca respondeu e já falhou em 3 canais (não conectou OU ficou mudo): os outros
+        canais dele saem "fora do ar" sem esperar (só em listas com mais de POUCOS_CANAIS: conferindo
+        poucos, por exemplo os selecionados, cada um é tentado de verdade);
       - nenhum canal demora mais que PRAZO_POR_CANAL segundos.
     Com parar() verdadeiro, para NA HORA e devolve só os conferidos."""
     import threading
@@ -240,8 +248,10 @@ def conferir_canais(canais: list[Canal], trabalhadores: int = 32, ao_progresso=N
     if parar and parar():
         return []
 
+    pode_desistir = len(canais) > POUCOS_CANAIS
+
     def desistiu(servidor: str) -> Situacao | None:
-        if servidor not in responderam and falhas.get(servidor, 0) >= FALHAS_PARA_DESISTIR:
+        if pode_desistir and servidor not in responderam and falhas.get(servidor, 0) >= FALHAS_PARA_DESISTIR:
             return Situacao(False, f"o servidor {servidor} não responde (outros canais dele já falharam)", True)
         return None
 
@@ -266,11 +276,12 @@ def conferir_canais(canais: list[Canal], trabalhadores: int = 32, ao_progresso=N
                 if parou := desistiu(servidor):
                     return parou
             situacao = conferir_canal(canal.url, sessao=local.sessao)
-        if situacao.servidor_caiu:
-            falhou(servidor)
-        else:
-            with trava:
-                responderam.add(servidor)
+            # anota ANTES de liberar a vaga: quem estava esperando já vê a falha (senão entra mais um em vão)
+            if situacao.servidor_caiu:
+                falhou(servidor)
+            else:
+                with trava:
+                    responderam.add(servidor)
         return situacao
 
     def estourou(canal: Canal) -> Situacao:
