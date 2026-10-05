@@ -101,7 +101,12 @@ if __name__ == "__main__":
         relatorio = Path(tempfile.gettempdir()) / "videoscraper-teste-atualizacao.txt"
         try:
             script = atualizacao.instalar_ao_fechar(zip_, reabrir=False)
-            relatorio.write_text(f"script iniciado: {script}\n", encoding="utf-8")
+            import time
+            time.sleep(3)                           # o PowerShell continua vivo (esperando este fechar)?
+            codigo = atualizacao.ultimo_processo.poll() if atualizacao.ultimo_processo else "?"
+            relatorio.write_text(f"script iniciado: {script}\n"
+                                 f"PowerShell depois de 3 s: {'rodando' if codigo is None else f'saiu com {codigo}'}\n",
+                                 encoding="utf-8")
         except Exception:                           # sem console: o motivo vai para um arquivo
             relatorio.write_text(traceback.format_exc(), encoding="utf-8")
             raise SystemExit(1)

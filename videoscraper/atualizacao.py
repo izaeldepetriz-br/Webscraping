@@ -171,6 +171,9 @@ try {{
 """
 
 
+ultimo_processo = None        # o PowerShell da última chamada (para o autoteste)
+
+
 def instalar_ao_fechar(zip_: Path, reabrir: bool = True, pasta: Path | None = None, pid: int | None = None) -> Path:
     """Deixa o script rodando em segundo plano (escondido): ele espera ESTE programa fechar e troca os
     arquivos. Devolve o caminho do script. Chame logo antes de fechar o programa."""
@@ -182,11 +185,26 @@ def instalar_ao_fechar(zip_: Path, reabrir: bool = True, pasta: Path | None = No
     script = Path(tempfile.gettempdir()) / "videoscraper-atualizar.ps1"
     script.write_text(script_de_instalacao(Path(zip_), pasta, pid or os.getpid(), executavel), encoding="utf-8-sig")
     # O .exe não tem console (nem stdin/stdout): o processo novo NÃO pode herdar essas saídas (o Windows
-    # recusa com "identificador inválido"), por isso todas vão para DEVNULL.
-    opcoes = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
-    if sys.platform == "win32":
-        opcoes["creationflags"] = 0x00000008 | 0x00000200      # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    # recusa com "identificador inválido"). A entrada vem de DEVNULL e as saídas vão para um arquivo de
+    # texto (se o PowerShell reclamar de algo, o motivo fica registrado ali).
+    global ultimo_processo
+    saida = open(Path(tempfile.gettempdir()) / "videoscraper-atualizar-saida.txt", "w", encoding="utf-8")
+    opcoes = dict(stdin=subprocess.DEVNULL, stdout=saida, stderr=subprocess.STDOUT, close_fds=True)
     powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
-    subprocess.Popen([str(powershell) if powershell.exists() else "powershell", "-NoProfile", "-ExecutionPolicy",
-                      "Bypass", "-WindowStyle", "Hidden", "-File", str(script)], **opcoes)
+    comando = [str(powershell) if powershell.exists() else "powershell", "-NoProfile", "-NonInteractive",
+               "-ExecutionPolicy", "Bypass", "-File", str(script)]
+    try:
+        if sys.platform == "win32":
+            # Sem janela (CREATE_NO_WINDOW: o PowerShell ganha um console invisível, coisa que ele precisa) e
+            # fora do "grupo" deste programa, para continuar vivo depois que ele fechar. Se o Windows não
+            # deixar sair do "job" (BREAKAWAY), tenta de novo sem isso.
+            base = 0x08000000 | 0x00000200          # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+            try:
+                ultimo_processo = subprocess.Popen(comando, creationflags=base | 0x01000000, **opcoes)
+            except OSError:
+                ultimo_processo = subprocess.Popen(comando, creationflags=base, **opcoes)
+        else:
+            ultimo_processo = subprocess.Popen(comando, start_new_session=True, **opcoes)
+    finally:
+        saida.close()                               # o processo novo já tem a cópia dele
     return script
