@@ -412,7 +412,8 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
                     limite_trailer_mb: float = LIMITE_TRAILER_MB,
                     ao_planejar=None, ao_progresso=None,
                     apagar_pasta_origem: bool = False, ao_analisar=None,
-                    nomes_episodios: bool = False, filtro=None, protegidas=(), regras=()) -> list[Movimento]:
+                    nomes_episodios: bool = False, filtro=None, protegidas=(), regras=(),
+                    parar=None) -> list[Movimento]:
     """Organiza todos os vídeos de `origem` na biblioteca `pasta_filmes` (no modo "series",
     a pasta de séries do Jellyfin). Devolve o que fez (ou faria).
     limpar_lixo: ao aplicar, apaga .url/.txt de propaganda e trailers pequenos (< limite_trailer_mb).
@@ -425,7 +426,9 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
     episódios já organizados só com o número também são renomeados.
     filtro(video) -> bool: só os vídeos aprovados entram (ex.: vigia.filtro_prontos(), só o que
     terminou de baixar); os outros ficam onde estão, sem aparecer no resultado.
-    protegidas: pastas que o organizador NUNCA mexe (ex.: as do Sonarr/Radarr), nem entra nelas."""
+    protegidas: pastas que o organizador NUNCA mexe (ex.: as do Sonarr/Radarr), nem entra nelas.
+    parar() verdadeiro: para NA HORA. Na análise, devolve só o que já analisou; ao mover, termina o arquivo
+    atual (uma cópia entre discos é interrompida e o original fica onde estava) e grava o log do que moveu."""
     if modo not in MODOS:
         raise ValueError(f"modo deve ser um de {MODOS}")
     limpar_cache()                       # os arquivos podem ter mudado desde a última execução
@@ -454,15 +457,19 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
         peso_nomes = peso_tmdb / 2 if com_episodios else peso_tmdb       # séries: metade busca a série,
         catalogo.pre_buscar(_consultas(analisar, modo),                   # metade os nomes dos episódios
                             lambda feitas, total: avisar_analise(peso_nomes * feitas / total,
-                                                                 f"Consultando o TMDB: {feitas} de {total}"))
+                                                                 f"Consultando o TMDB: {feitas} de {total}"),
+                            parar=parar)
         if com_episodios:
             catalogo.pre_buscar_episodios(
                 _temporadas(analisar, catalogo),
                 lambda feitas, total: avisar_analise(peso_nomes + (peso_tmdb - peso_nomes) * feitas / total,
-                                                     f"Nomes dos episódios: temporada {feitas} de {total}"))
+                                                     f"Nomes dos episódios: temporada {feitas} de {total}"),
+                parar=parar)
     movimentos = []
     passo = max(1, len(analisar) // 100)                 # no máximo ~100 avisos (não trava a janela)
     for n, v in enumerate(analisar, 1):
+        if parar and parar():                              # "Parar": devolve o que já analisou
+            break
         movimentos.append(planejar(v, pasta_filmes, catalogo, incluir_tmdbid, exigir_catalogo, modo,
                                    origem, limite_trailer_mb, nomes_episodios, regras))
         if n % passo == 0 or n == len(analisar):
@@ -491,7 +498,11 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
     feitos = []
     apagados: list[Path] = []
     pastas_de_onde_sairam: set[Path] = set()
+    parado = False
     for indice, mov in enumerate(movimentos):
+        if parar and parar():                                # "Parar": não começa o próximo
+            parado = True
+            break
         if mov.status == "limpeza":                          # artes de episódios/filmes já movidos
             for antigo, novo in mov.acompanhantes or []:
                 if antigo.exists() and novo.parent.is_dir() and not novo.exists():
@@ -508,7 +519,7 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
         try:
             mov.destino.parent.mkdir(parents=True, exist_ok=True)
             # o vídeo é 95% do trabalho; legendas, imagens e lixo são o resto
-            mover_com_progresso(mov.origem, mov.destino, lambda f, i=indice, m=mov: avisar(i, m, f * 0.95))
+            mover_com_progresso(mov.origem, mov.destino, lambda f, i=indice, m=mov: avisar(i, m, f * 0.95), parar)
             feitos.append((mov.origem, mov.destino))
             mov.status = "movido"
             for antigo, novo in mov.acompanhantes or []:
@@ -516,6 +527,10 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
                     continue
                 shutil.move(str(antigo), str(novo))
                 feitos.append((antigo, novo))
+        except InterruptedError:                              # "Parar" no meio de uma cópia grande
+            mov.detalhe = "parado no meio da cópia: o original continua onde estava"
+            parado = True
+            break
         except OSError as erro:                               # sem permissão, disco cheio, arquivo em uso...
             mov.status, mov.detalhe = "erro", str(erro)
             avisar(indice, mov, 1.0)
@@ -529,7 +544,8 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
             except OSError as erro:                           # arquivo em uso: não impede o resto
                 mov.detalhe = f"não consegui apagar {lixo.name}: {erro}"
         avisar(indice, mov, 1.0)
-    pastas_apagadas = _apagar_pastas_de_origem(movimentos, trailers, origem) if apagar_pasta_origem else []
+    pastas_apagadas = (_apagar_pastas_de_origem(movimentos, trailers, origem)
+                       if apagar_pasta_origem and not parado else [])   # parado: não apaga pasta nenhuma
     if feitos or apagados or pastas_apagadas:
         _gravar_log(pasta_filmes, feitos, apagados, pastas_apagadas)
         _apagar_pastas_que_esvaziaram(pastas_de_onde_sairam, origem)
@@ -743,10 +759,11 @@ def _mesmo_disco(arquivo: Path, pasta: Path) -> bool:
         return False
 
 
-def mover_com_progresso(de: Path, para: Path, ao_progresso=None) -> None:
+def mover_com_progresso(de: Path, para: Path, ao_progresso=None, parar=None) -> None:
     """Move um arquivo avisando o andamento (0.0 a 1.0).
     Mesmo disco: só troca o nome (instantâneo). Discos diferentes: copia em blocos de 8 MB
-    (para a porcentagem andar de verdade), confere o tamanho e só então apaga o original."""
+    (para a porcentagem andar de verdade), confere o tamanho e só então apaga o original.
+    parar() verdadeiro no meio da cópia: apaga a cópia pela metade e lança InterruptedError."""
     avisar = ao_progresso or (lambda f: None)
     if para.exists():
         raise FileExistsError(f"já existe: {para}")       # nunca sobrescreve
@@ -760,6 +777,8 @@ def mover_com_progresso(de: Path, para: Path, ao_progresso=None) -> None:
     try:
         with open(de, "rb") as origem, open(parcial, "wb") as destino:
             while bloco := origem.read(BLOCO_COPIA):
+                if parar and parar():
+                    raise InterruptedError("cópia interrompida")
                 destino.write(bloco)
                 copiado += len(bloco)
                 avisar(min(copiado / total, 0.999))

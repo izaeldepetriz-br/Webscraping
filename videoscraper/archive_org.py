@@ -56,6 +56,8 @@ def _json(cliente: ClienteHTTP, url: str, params: dict | None = None) -> dict | 
         print(f"  ⛔ robots.txt não permite: {url}", file=sys.stderr)
         return None
     cliente.pausar()
+    if cliente.parar and cliente.parar():
+        return None
     try:
         r = cliente.sessao.get(url, params=params, timeout=cliente.timeout)
         r.raise_for_status()
@@ -129,6 +131,9 @@ def buscar(cliente: ClienteHTTP, url: str, limite: int = 100, parar=None,
     itens: list[tuple[str, str]] = []
     pagina = 1
     while len(itens) < limite:
+        if parar and parar():                        # "Parar" também na fase de listar as páginas
+            print("⏹  Busca interrompida.", file=sys.stderr)
+            return []
         dados = _json(cliente, f"{base}/advancedsearch.php",
                       {"q": consulta, "fl[]": ["identifier", "title"], "rows": POR_PAGINA,
                        "page": pagina, "output": "json"})

@@ -233,6 +233,19 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v1.6
+
+- **Verificar atualizações** (no topo): consulta na hora, sem fechar o programa; **Baixar agora** em segundo
+  plano; para instalar, avisa que o programa **precisa fechar** e faz a troca sozinho (detalhes em "Aviso de
+  versão nova", abaixo).
+- **TV ao vivo**: filtro em cada coluna (clique no título: um ou vários valores), "Remover todos",
+  "Selecionar os fora do ar" e conferência bem mais rápida em listas grandes.
+- **Parar vale na hora** em tudo que demora: conferir canais/espelhos, buscar vídeos (inclusive ao listar as
+  páginas e nas pausas entre pedidos), pré-visualizar (a prévia parada não libera o Organizar), organizar
+  (termina o arquivo atual; uma cópia grande entre discos é interrompida e o original fica onde estava; o
+  "Desfazer última" vale para o que já foi movido), relatório e espelhar (nada é criado pela metade).
+  Velocidade e tempo restante no rodapé: "526 de 11393 · 40/s · faltam ~5 min".
+
 ### Novidades da v1.5
 
 - **Corrigir nome** (painel "Antes → Depois"): clique num arquivo não identificado (ou com o nome errado),

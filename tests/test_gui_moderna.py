@@ -1612,3 +1612,27 @@ def test_parar_a_conferencia_de_canais_e_imediato(app, api_falsa):
     esperar(app)
     assert time.time() - parou_em < 2.5                                 # antes: ~400 x 0,5 s / 8 = 25 s
     assert "Parado:" in app.var_status.get() and " de 400 conferidos" in app.var_status.get()
+
+
+def test_parar_a_previsualizacao_e_imediato(app, tmp_path, monkeypatch):
+    from jellyfin_tools import organizador
+    origem = tmp_path / "Downloads"
+    origem.mkdir()
+    for n in range(300):
+        (origem / f"Filme Numero {n} ({1900 + n % 120}).mkv").write_bytes(b"v")
+    original = organizador.planejar
+    monkeypatch.setattr(organizador, "planejar", lambda *a, **k: (time.sleep(0.02), original(*a, **k))[1])
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_origem.set(str(origem))
+    app.var_jf_destino.set(str(tmp_path / "Filmes"))
+    app.bt_previa.invoke()
+    fim = time.time() + 0.6
+    while time.time() < fim:
+        app.update()
+        time.sleep(0.05)
+    parou_em = time.time()
+    app.ao_parar()
+    esperar(app)
+    assert time.time() - parou_em < 2                                   # antes: os 300 arquivos (~6 s)
+    assert "Pré-visualização parada" in app.var_status.get()
+    assert 0 < len(_linhas_jf(app)) < 300 and app.bt_organizar.cget("state") == "disabled"

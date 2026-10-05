@@ -541,9 +541,15 @@ class AppModerna(JanelaModerna):
                                          modo=o.modo, limpar_lixo=o.limpar_lixo,
                                          apagar_pasta_origem=o.apagar_pasta_origem,
                                          nomes_episodios=o.nomes_episodios, protegidas=o.pastas_protegidas,
-                                         regras=self.regras_de_nome(), ao_analisar=self._avisar_analise)
+                                         regras=self.regras_de_nome(), ao_analisar=self._avisar_analise,
+                                         parar=self.evento_parar.is_set)
             for m in movimentos:
                 self._log.info("%s", m)
+            if self.evento_parar.is_set():               # "Parar": mostra o que analisou, mas não libera o Organizar
+                self.fila.put(("jf_movimentos", movimentos))
+                self.fila.put(("status_fim", f"Pré-visualização parada: {len(movimentos)} arquivo(s) analisados. "
+                                             "Pré-visualize de novo para organizar."))
+                return
             quantos = sum(m.status == "simulado" for m in movimentos)
             prontos = sum(m.status == "organizado" for m in movimentos)
             sobras = sum(m.status == "limpeza" for m in movimentos)
@@ -609,8 +615,12 @@ class AppModerna(JanelaModerna):
             candidatos = [l.url for l, t in zip(links, tipos) if t != "outro"
                           and (not so_abertos or licenca_aberta(getattr(l, "licenca", "")))]
             self._log.info("Conferindo %d link(s) (direto, permanente, público?)", len(candidatos))
-            verificacoes = verificar_links(candidatos, ao_progresso=lambda f, t: self._avisar_analise(
-                f / t, f"Conferindo links: {f} de {t}"))
+            verificacoes = verificar_links(candidatos, parar=self.evento_parar.is_set,
+                                           ao_progresso=self._progresso_com_velocidade("Conferindo links"))
+            if self.evento_parar.is_set():             # "Parar": não cria nenhum .strm pela metade
+                self.fila.put(("status_fim", f"Espelhar parado: {len(verificacoes)} de {len(candidatos)} links "
+                                             "conferidos, nada foi criado."))
+                return
             tempos = [v.tempo for v in verificacoes.values() if v.ok and v.tempo is not None]
             if tempos:
                 self._log.info("Tempo de resposta dos servidores: médio %.1f s, mais lento %.1f s",
@@ -847,7 +857,7 @@ class AppModerna(JanelaModerna):
 
         def tarefa():
             catalogo = self._catalogo(o) if o.tmdb else None      # com o TMDB: confere o fim das temporadas
-            pendencias = gerar_relatorio(filmes, series, idiomas, catalogo)
+            pendencias = gerar_relatorio(filmes, series, idiomas, catalogo, parar=self.evento_parar.is_set)
             for p in pendencias:
                 self._log.info("[falta %s] %s: %s", p.falta, p.item, p.detalhe)
             arquivo = salvar_csv(pendencias, config.ARQUIVO.parent / "relatorios")
@@ -1104,7 +1114,7 @@ class AppModerna(JanelaModerna):
                                          incluir_tmdbid=o.incluir_tmdbid, exigir_catalogo=o.exigir_catalogo,
                                          modo=o.modo, limpar_lixo=o.limpar_lixo,
                                          apagar_pasta_origem=o.apagar_pasta_origem,
-                                         nomes_episodios=o.nomes_episodios, filtro=filtro,
+                                         nomes_episodios=o.nomes_episodios, filtro=filtro, parar=self.evento_parar.is_set,
                                          protegidas=o.pastas_protegidas, regras=self.regras_de_nome(),
                                          ao_planejar=ao_planejar, ao_progresso=ao_progresso,
                                          ao_analisar=self._avisar_analise)

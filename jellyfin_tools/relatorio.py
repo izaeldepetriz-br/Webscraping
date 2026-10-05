@@ -95,7 +95,7 @@ def pasta_da_serie(video: Path, raiz: Path) -> Path | None:
     return pasta
 
 
-def relatorio_series(pasta_series: str | Path, idiomas: list[str], catalogo=None) -> list[Pendencia]:
+def relatorio_series(pasta_series: str | Path, idiomas: list[str], catalogo=None, parar=None) -> list[Pendencia]:
     """Buracos na numeração de cada temporada e episódios sem legenda. Com `catalogo` (TMDB), compara
     com a quantidade de episódios de cada temporada (o fim da temporada e temporadas inteiras)."""
     log = obter_logger()
@@ -108,6 +108,8 @@ def relatorio_series(pasta_series: str | Path, idiomas: list[str], catalogo=None
         if (ep := episodio_do_video(video, raiz)) and (pasta_serie := pasta_da_serie(video, raiz)):
             por_serie.setdefault(pasta_serie, {}).setdefault(ep.temporada, {})[ep.episodio] = video
     for pasta_serie, episodios in sorted(por_serie.items()):
+        if parar and parar():
+            break
         esperados: dict[int, int] = {}
         lido = ler_nome_jellyfin(pasta_serie.name)
         if catalogo is not None and lido:
@@ -136,12 +138,13 @@ def relatorio_series(pasta_series: str | Path, idiomas: list[str], catalogo=None
     return pendencias
 
 
-def gerar_relatorio(pasta_filmes=None, pasta_series=None, idiomas=("pt-BR",), catalogo=None) -> list[Pendencia]:
+def gerar_relatorio(pasta_filmes=None, pasta_series=None, idiomas=("pt-BR",), catalogo=None,
+                    parar=None) -> list[Pendencia]:
     pendencias = []
     if pasta_filmes and Path(pasta_filmes).is_dir():
         pendencias += relatorio_filmes(pasta_filmes, list(idiomas))
     if pasta_series and Path(pasta_series).is_dir():
-        pendencias += relatorio_series(pasta_series, list(idiomas), catalogo)
+        pendencias += relatorio_series(pasta_series, list(idiomas), catalogo, parar)
     return pendencias
 
 

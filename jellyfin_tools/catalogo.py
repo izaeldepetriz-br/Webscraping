@@ -18,13 +18,13 @@ import json
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import requests
 
 from .nomes import similaridade
+from .paralelo import em_paralelo
 
 ARQUIVO_PADRAO = Path(__file__).with_name("catalogo_filmes.json")
 SIMILARIDADE_MINIMA = 0.75
@@ -54,8 +54,9 @@ class Catalogo:
     def buscar(self, titulo: str, ano: int | None, tipo: str = "filme") -> Filme | None:
         raise NotImplementedError
 
-    def pre_buscar(self, consultas, ao_progresso=None) -> None:
-        """Adianta as buscas [(titulo, ano, tipo)] de uma vez (só faz algo em catálogos online)."""
+    def pre_buscar(self, consultas, ao_progresso=None, parar=None) -> None:
+        """Adianta as buscas [(titulo, ano, tipo)] de uma vez (só faz algo em catálogos online).
+        parar() verdadeiro: para na hora (o que faltou é buscado depois, um por um, se for preciso)."""
 
     @property
     def usa_tmdb(self) -> bool:
@@ -65,7 +66,7 @@ class Catalogo:
         """Título do episódio (ex.: 'Segredos'), ou None se o catálogo não souber."""
         return None
 
-    def pre_buscar_episodios(self, pedidos, ao_progresso=None) -> None:
+    def pre_buscar_episodios(self, pedidos, ao_progresso=None, parar=None) -> None:
         """Adianta nome_episodio() de várias temporadas: pedidos [(serie, temporada)]."""
 
     def temporadas(self, serie: Filme) -> list[tuple[int, int]] | None:
@@ -260,7 +261,7 @@ class CatalogoTMDB(Catalogo):
             self._cache[chave] = filme
         return filme
 
-    def pre_buscar(self, consultas, ao_progresso=None) -> None:
+    def pre_buscar(self, consultas, ao_progresso=None, parar=None) -> None:
         """Faz as buscas em paralelo e guarda as respostas. ao_progresso(feitas, total).
         Erros não interrompem: o planejar() mostra o motivo no item."""
         unicas = list(dict.fromkeys((t, a, tp) for t, a, tp in consultas if t))
@@ -277,10 +278,7 @@ class CatalogoTMDB(Catalogo):
             except ErroCatalogo:
                 pass
 
-        with ThreadPoolExecutor(max_workers=min(self.TRABALHADORES, len(faltam))) as executor:
-            for feitas, _ in enumerate(executor.map(uma, faltam), 1):
-                if ao_progresso:
-                    ao_progresso(feitas, len(faltam))
+        em_paralelo(faltam, uma, self.TRABALHADORES, ao_progresso, parar)
 
     # ------------------------------------------------------------- nomes dos episódios
     def _chave_temporada(self, tmdb_id: int, temporada: int) -> tuple:
@@ -336,17 +334,14 @@ class CatalogoTMDB(Catalogo):
                 self._cache[chave] = lista
         return lista
 
-    def pre_buscar_episodios(self, pedidos, ao_progresso=None) -> None:
+    def pre_buscar_episodios(self, pedidos, ao_progresso=None, parar=None) -> None:
         temporadas = list(dict.fromkeys((serie.tmdb_id, temporada) for serie, temporada in pedidos
                                         if serie and serie.tmdb_id))
         with self._trava_cache:
             faltam = [t for t in temporadas if self._chave_temporada(*t) not in self._cache]
         if not faltam:
             return
-        with ThreadPoolExecutor(max_workers=min(self.TRABALHADORES, len(faltam))) as executor:
-            for feitas, _ in enumerate(executor.map(lambda t: self._episodios_da_temporada(*t), faltam), 1):
-                if ao_progresso:
-                    ao_progresso(feitas, len(faltam))
+        em_paralelo(faltam, lambda t: self._episodios_da_temporada(*t), self.TRABALHADORES, ao_progresso, parar)
 
     def _buscar_sem_cache(self, titulo: str, ano: int | None, tipo: str) -> Filme | None:
         resultados = self._pesquisar(titulo, ano, tipo)
@@ -395,9 +390,9 @@ class CatalogoEmCadeia(Catalogo):
                 return nome
         return None
 
-    def pre_buscar_episodios(self, pedidos, ao_progresso=None) -> None:
+    def pre_buscar_episodios(self, pedidos, ao_progresso=None, parar=None) -> None:
         for catalogo in self.catalogos:
-            catalogo.pre_buscar_episodios(pedidos, ao_progresso)
+            catalogo.pre_buscar_episodios(pedidos, ao_progresso, parar)
 
     def temporadas(self, serie: Filme) -> list[tuple[int, int]] | None:
         for catalogo in self.catalogos:
@@ -405,11 +400,11 @@ class CatalogoEmCadeia(Catalogo):
                 return lista
         return None
 
-    def pre_buscar(self, consultas, ao_progresso=None) -> None:
+    def pre_buscar(self, consultas, ao_progresso=None, parar=None) -> None:
         """Cada catálogo só adianta o que os anteriores não acharam (o local é instantâneo)."""
         restantes = list(consultas)
         for n, catalogo in enumerate(self.catalogos):
-            catalogo.pre_buscar(restantes, ao_progresso)
+            catalogo.pre_buscar(restantes, ao_progresso, parar)
             if n < len(self.catalogos) - 1:
                 restantes = [c for c in restantes if not _achou(catalogo, c)]
 

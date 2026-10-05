@@ -33,6 +33,7 @@ class Trabalho:
                  aguardar_usuario=aguardar_no_terminal, parar=None):
         self.cliente = ClienteHTTP(espera=espera, respeitar_robots=not ignorar_robots)
         self.parar = parar or (lambda: False)
+        self.cliente.parar = self.parar              # as pausas entre pedidos também param na hora
         if navegador or visivel or pausar:
             nav = Navegador(perfil=perfil, visivel=visivel, pausar=pausar, executavel=chrome,
                             aguardar_usuario=aguardar_usuario)

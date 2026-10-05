@@ -25,6 +25,16 @@ class ClienteHTTP:
                                     "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8"})
         self._robots: dict[str, robotparser.RobotFileParser | None] = {}
         self._ultimo = 0.0
+        self.parar = None              # função: True quando o usuário apertou "Parar" (as pausas param na hora)
+
+    def _dormir(self, segundos: float) -> bool:
+        """Espera em pedacinhos de 0,1 s; devolve True se o "Parar" foi apertado no meio."""
+        fim = time.monotonic() + segundos
+        while (falta := fim - time.monotonic()) > 0:
+            if self.parar and self.parar():
+                return True
+            time.sleep(min(0.1, falta))
+        return bool(self.parar and self.parar())
 
     # --- regras do site -------------------------------------------------------
     def permitido(self, url: str) -> bool:
@@ -51,7 +61,7 @@ class ClienteHTTP:
         """Garante pelo menos `espera` segundos entre um pedido e outro."""
         sobra = self.espera - (time.monotonic() - self._ultimo)
         if sobra > 0:
-            time.sleep(sobra)
+            self._dormir(sobra)
         self._ultimo = time.monotonic()
 
     # --- pedidos ----------------------------------------------------------------
@@ -59,6 +69,8 @@ class ClienteHTTP:
         """Devolve (bytes do HTML, url final após redirecionamentos) ou None."""
         for tentativa in range(1, self.tentativas + 1):
             self.pausar()
+            if self.parar and self.parar():
+                return None
             try:
                 r = self.sessao.get(url, timeout=self.timeout)
                 if r.status_code in (429, 500, 502, 503, 504):
@@ -69,8 +81,8 @@ class ClienteHTTP:
                 return r.content, r.url      # bytes: o BeautifulSoup detecta a codificação
             except requests.RequestException as erro:
                 print(f"  [tentativa {tentativa}/{self.tentativas}] {url}: {erro}", file=sys.stderr)
-                if tentativa < self.tentativas:
-                    time.sleep(2 ** tentativa)
+                if tentativa < self.tentativas and self._dormir(2 ** tentativa):
+                    return None                       # "Parar" durante a espera para tentar de novo
         return None
 
     def importar_cookies(self, cookies: list[dict]) -> None:
