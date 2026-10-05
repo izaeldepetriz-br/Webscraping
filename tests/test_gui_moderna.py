@@ -2010,3 +2010,110 @@ def test_vigia_sem_biblioteca_de_filmes_avisa_em_vez_de_ignorar_calada(app, tmp_
     app.ao_alternar_vigia()
     assert "Filmes: biblioteca não escolhida, ficaram onde estão" in app.var_status.get()
     assert (filmes / "Interestelar.2014.1080p.BluRay.x264.mkv").is_file()             # parado, mas avisado
+
+
+def test_vigia_pede_o_scan_do_jellyfin_no_fim(app, tmp_path, api_falsa):
+    api_falsa.rotas["/Library/Refresh"] = lambda q: (204, b"")
+    app.var_jf_url.set(api_falsa.base)
+    app.var_jf_chave_jellyfin.set("chave")
+    app.var_jf_atualizar.set(True)
+    _vigia_nas_bibliotecas(app, tmp_path)
+    assert [p["caminho"] for p in api_falsa.pedidos].count("/Library/Refresh") == 1
+    assert "Jellyfin: biblioteca atualizando (scan pedido)" in app.var_status.get()
+
+
+def test_vigia_sem_chave_avisa_que_o_jellyfin_nao_foi_atualizado(app, tmp_path):
+    """Caso real: sem "Lembrar as chaves", a chave some ao reiniciar e o scan deixava de ser pedido calado."""
+    app.var_jf_url.set("http://localhost:8096")
+    app.var_jf_chave_jellyfin.set("")
+    app.var_jf_atualizar.set(True)
+    estados = []
+    original = app.definir_estado_vigia
+    app.definir_estado_vigia = lambda texto, ligada: (estados.append(texto), original(texto, ligada))
+    _vigia_nas_bibliotecas(app, tmp_path)
+    assert "scan NÃO pedido (falta a chave de API" in app.var_status.get()
+    assert any("o Jellyfin NÃO é avisado para atualizar a biblioteca" in e for e in estados)
+
+
+def test_botao_atualizar_a_biblioteca_agora(app, api_falsa):
+    api_falsa.rotas["/Library/Refresh"] = lambda q: (204, b"")
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_url.set("")
+    app.bt_scan_jellyfin.invoke()
+    assert "Preencha o endereço e a chave" in app.caixas[-1][2]
+    app.var_jf_url.set(api_falsa.base)
+    app.var_jf_chave_jellyfin.set("chave")
+    app.bt_scan_jellyfin.invoke()
+    esperar(app)
+    assert any(p["caminho"] == "/Library/Refresh" for p in api_falsa.pedidos)
+    assert "está escaneando as bibliotecas" in app.caixas[-1][2]
+
+
+def _programa_falso(pasta):
+    (pasta / "_internal").mkdir(parents=True)
+    (pasta / "videoscraper.exe").write_bytes(b"exe")
+    (pasta / "_internal" / "base_library.zip").write_bytes(b"lib")
+    return pasta
+
+
+def test_instalar_no_lugar_fixo_copia_cria_atalhos_e_reabre_de_la(app, monkeypatch, tmp_path):
+    from videoscraper import atualizacao, inicializacao, instalacao
+    downloads = _programa_falso(tmp_path / "Downloads" / "videoscraper")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
+    monkeypatch.setattr(atualizacao, "pode_instalar_sozinho", lambda: True)
+    monkeypatch.setattr(atualizacao, "pasta_do_programa", lambda: downloads)
+    atalhos, abertos, saiu, registro = [], [], [], []
+    monkeypatch.setattr(instalacao, "criar_atalhos", lambda exe: atalhos.append(Path(exe)))
+    monkeypatch.setattr(instalacao, "abrir", lambda exe: abertos.append(Path(exe)))
+    monkeypatch.setattr(inicializacao, "ativo", lambda: True)
+    monkeypatch.setattr(inicializacao, "ativar", lambda ligar, executavel=None: registro.append(executavel))
+    monkeypatch.setattr(app, "sair_de_vez", lambda: saiu.append(True))
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append(m), opcoes[0])[1]
+    app._mostrar_pasta_programa()
+    assert str(downloads) in app.lb_pasta_programa.cget("text") and app.bt_instalar_fixo.winfo_manager()
+    app._conferir_instalacao()                                          # ao abrir: oferece
+    assert "Instalar num lugar FIXO" in perguntas[0] and str(tmp_path / "Local" / "Programs" / "videoscraper") in perguntas[0]
+    esperar(app)
+    for _ in range(20):
+        app.update()
+        time.sleep(0.03)
+    fixo = tmp_path / "Local" / "Programs" / "videoscraper" / "videoscraper.exe"
+    assert fixo.is_file() and (fixo.parent / "_internal" / "base_library.zip").is_file()
+    assert atalhos == [fixo] and registro == [fixo] and abertos == [fixo] and saiu
+    assert "Use o atalho" in app.caixas[-1][2]
+
+
+def test_no_lugar_fixo_nao_pergunta_e_refaz_atalhos_uma_vez_por_versao(app, monkeypatch, tmp_path):
+    from videoscraper import atualizacao, config, instalacao
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
+    fixo = _programa_falso(tmp_path / "Local" / "Programs" / "videoscraper")
+    monkeypatch.setattr(atualizacao, "pode_instalar_sozinho", lambda: True)
+    monkeypatch.setattr(atualizacao, "pasta_do_programa", lambda: fixo)
+    atalhos = []
+    monkeypatch.setattr(instalacao, "criar_atalhos", lambda exe: atalhos.append(exe))
+    app.escolher = lambda *a, **k: pytest.fail("no lugar fixo não pergunta nada")
+    app._mostrar_pasta_programa()
+    assert "(lugar fixo ✓)" in app.lb_pasta_programa.cget("text") and not app.bt_instalar_fixo.winfo_manager()
+    for _ in range(2):                                                  # 2ª vez na mesma versão: não refaz
+        app._conferir_instalacao()
+        fim = time.time() + 3
+        while time.time() < fim and len(atalhos) < 1:
+            app.update()
+            time.sleep(0.03)
+        for _ in range(10):
+            app.update()
+            time.sleep(0.02)
+    assert len(atalhos) == 1
+    assert config.carregar()["instalacao"]["atalhos_versao"] == atualizacao.versao_atual()
+
+
+def test_nao_perguntar_de_novo(app, monkeypatch, tmp_path):
+    from videoscraper import atualizacao, config
+    monkeypatch.setattr(atualizacao, "pode_instalar_sozinho", lambda: True)
+    monkeypatch.setattr(atualizacao, "pasta_do_programa", lambda: tmp_path / "Downloads")
+    app.escolher = lambda t, m, opcoes, **k: "Não perguntar de novo"
+    app._conferir_instalacao()
+    assert config.carregar()["instalacao"]["nao_perguntar"] is True
+    app.escolher = lambda *a, **k: pytest.fail("não pergunta mais")
+    app._conferir_instalacao()

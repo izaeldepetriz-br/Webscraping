@@ -54,7 +54,7 @@ from . import config
 from .cli import salvar
 from .extracao import LinkVideo
 from .gui import ORIGENS, _SaidaParaFila, _so_caracteres_basicos
-from . import atualizacao, bandeja, inicializacao
+from . import atualizacao, instalacao, bandeja, inicializacao
 from .gui_moderna import JanelaEspelhos, JanelaModerna, OpcoesInterface, Tema
 from .tv_moderna import TVAoVivo
 from .navegador import PERFIL_PADRAO, PlaywrightAusente
@@ -437,6 +437,12 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 self.sair_de_vez()
         elif tipo == "versao_consultada":
             self._mostrar_versao_consultada(*dado)
+        elif tipo == "atalhos_feitos":                 # atalhos refeitos para esta versão (não refaz de novo)
+            tudo = config.carregar()
+            tudo.setdefault("instalacao", {})["atalhos_versao"] = dado
+            config.salvar(tudo)
+        elif tipo == "instalado_fixo":
+            self._instalado_fixo_pendente = dado           # depois do "fim"
         elif tipo == "tv_outros_sintonizadores":
             self._tv_outros_pendente = dado                # pergunta depois do "fim"
         elif tipo == "atualizacao_baixada":
@@ -480,6 +486,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
             if self._conflitos_pendentes:
                 pendentes, self._conflitos_pendentes = self._conflitos_pendentes, None
                 self.after(50, lambda: self._confirmar_conflitos(*pendentes))
+            if getattr(self, "_instalado_fixo_pendente", None):
+                instalado, self._instalado_fixo_pendente = self._instalado_fixo_pendente, None
+                self.after(50, lambda: self._instalado_fixo(*instalado))
             if self._tv_outros_pendente:
                 outros, self._tv_outros_pendente = self._tv_outros_pendente, None
                 self.after(50, lambda: self._oferecer_tirar_sintonizadores(*outros))
@@ -705,10 +714,14 @@ class AppModerna(TVAoVivo, JanelaModerna):
         proxima = datetime.now() + timedelta(minutes=minutos)
         faltando = [tipo for tipo in ("Filmes", "Séries") if not ({**self._destinos, self._modo_atual:
                                                                     self.var_jf_destino.get()}).get(tipo)]
+        sem_scan = self.var_jf_atualizar.get() and not (self.var_jf_url.get().strip()
+                                                        and self.var_jf_chave_jellyfin.get().strip())
         self.definir_estado_vigia(f"Ligada: próxima conferência às {proxima:%H:%M}."
                                   + (f" Sem biblioteca de {' e '.join(faltando)}: esses ficam parados." if faltando
-                                     else ""), True)
-        if faltando:                                  # aviso em laranja, não no verde de "tudo certo"
+                                     else "")
+                                  + (" Sem a chave do Jellyfin: o Jellyfin NÃO é avisado para atualizar a biblioteca."
+                                     if sem_scan else ""), True)
+        if faltando or sem_scan:                      # aviso em laranja, não no verde de "tudo certo"
             self.lb_estado_vigia.configure(text_color=Tema.AVISO)
 
     def _bibliotecas_faltando(self) -> list[str]:
@@ -785,8 +798,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
             filmes_movidos = sum(1 for _, m in movidos if not m.episodio)
             parados = "".join(f" {tipo}: biblioteca não escolhida, ficaram onde estão." for tipo, pasta in
                               (("Filmes", filmes), ("Séries", series)) if not pasta)
+            scan = self._texto_do_scan(getattr(self, "_ultimo_scan", "")) if movidos else ""
             self.fila.put(("status_fim", f"Vigia: {filmes_movidos} filme(s) e {len(movidos) - filmes_movidos} "
-                                         f"episódio(s) organizados.{parados}"))
+                                         f"episódio(s) organizados.{parados}{scan}"))
 
         self._rodar("Organizando (pasta vigiada)...", tarefa)
 
@@ -1163,13 +1177,15 @@ class AppModerna(TVAoVivo, JanelaModerna):
             pastas_apagadas = sum(1 for m in movimentos if m.pasta_apagar and not m.pasta_apagar.exists())
             self.fila.put(("jf_total", (1.0, f"Concluído: {len(movidos)} movido(s), {legendas} legenda(s), "
                                              f"{metadados} com pôster/.nfo, {erros} erro(s)")))
-            self.fila.put(("status_fim", f"Organizado: {len(movidos)} movido(s), {legendas} legenda(s)."))
+            scan = self._texto_do_scan(getattr(self, "_ultimo_scan", "")) if movidos else ""
+            self.fila.put(("status_fim", f"Organizado: {len(movidos)} movido(s), {legendas} legenda(s).{scan}"))
             if automatico:                       # pasta vigiada: ninguém para clicar em OK
                 return
             self.fila.put(("msg", ("Organização concluída",
                                    f"Movidos: {len(movidos)}\nLegendas baixadas: {legendas}\n"
                                    f"Pôster/backdrop/.nfo: {metadados}\nCom erro: {erros}\n"
                                    + (f"Pastas de torrent apagadas: {pastas_apagadas}\n" if pastas_apagadas else "")
+                                   + (f"\n{scan.strip()}\n" if scan else "")
                                    + "\n"
                                    "Para voltar atrás, use 'Desfazer última'.\nDetalhes em 'Abrir log'.",
                                    "erro" if erros else "sucesso")))
@@ -1261,7 +1277,21 @@ class AppModerna(TVAoVivo, JanelaModerna):
                             notificador=Notificador(o.discord_webhook, o.telegram_token, o.telegram_chat_id),
                             jellyfin_url=o.jellyfin_url,
                             jellyfin_api_key=o.jellyfin_api_key if o.atualizar_jellyfin else "")
-            return pos_processar(itens, cfg, self._log, ao_item=ao_item, parar=self.evento_parar.is_set)
+            resultados = pos_processar(itens, cfg, self._log, ao_item=ao_item, parar=self.evento_parar.is_set)
+            self._ultimo_scan = cfg.scan if o.atualizar_jellyfin else "desligado"
+            return resultados
+
+    @staticmethod
+    def _texto_do_scan(scan: str) -> str:
+        """Para o resultado da vigia/organizar: o Jellyfin foi avisado para atualizar a biblioteca?"""
+        if scan == "pedido":
+            return " Jellyfin: biblioteca atualizando (scan pedido)."
+        if scan == "sem chave":
+            return (" ⚠ Jellyfin: scan NÃO pedido (falta a chave de API; marque \"Lembrar as chaves\" para ela não "
+                    "sumir ao reiniciar).")
+        if scan.startswith("erro"):
+            return f" ⚠ Jellyfin: scan NÃO pedido ({scan[6:]})."
+        return ""
 
     def _avisar_analise(self, fracao: float, texto: str) -> None:
         """Chamado pela thread enquanto analisa (consulta o TMDB e planeja cada arquivo)."""
@@ -1353,6 +1383,26 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 self.fila.put(("msg", ("Jellyfin", str(erro).capitalize() + ".", "erro")))
 
         self._rodar("Testando o Jellyfin...", tarefa)
+
+    def ao_atualizar_jellyfin_agora(self) -> None:
+        """Pede ao Jellyfin para escanear as bibliotecas AGORA (o mesmo pedido do fim do Organizar e da vigia)."""
+        o = self.obter_opcoes_jellyfin()
+        if not (o.jellyfin_url and o.jellyfin_api_key):
+            self.mostrar_mensagem("Jellyfin", "Preencha o endereço e a chave de API do Jellyfin (Painel > Avançado > "
+                                  "Chaves de API).", "aviso")
+            return
+
+        def tarefa():
+            try:
+                atualizar_biblioteca(o.jellyfin_url, o.jellyfin_api_key)
+            except ErroJellyfin as erro:
+                self.fila.put(("msg", ("Jellyfin", str(erro).capitalize() + ".", "erro")))
+                return
+            self.fila.put(("msg", ("Jellyfin", "Pronto: o Jellyfin está escaneando as bibliotecas. Séries e filmes novos "
+                                   "aparecem em alguns minutos (acompanhe em Painel > Tarefas agendadas > Escanear "
+                                   "biblioteca).", "sucesso")))
+
+        self._rodar("Pedindo ao Jellyfin para atualizar a biblioteca...", tarefa)
 
     def ao_testar_avisos(self) -> None:
         o = self.obter_opcoes_jellyfin()
@@ -1665,13 +1715,20 @@ class AppModerna(TVAoVivo, JanelaModerna):
             dados.setdefault(chave, os.environ.get(variavel, ""))
         dados.setdefault("origem", PASTA_PADRAO)
         self.definir_opcoes_jellyfin(dados)
+        try:                                  # "Iniciar com o Windows" apontando para um .exe antigo/apagado? conserta
+            if atualizacao.pode_instalar_sozinho() and inicializacao.corrigir_se_preciso(instalacao.executavel_fixo()):
+                self._log.info("Iniciar com o Windows: caminho corrigido para %s", inicializacao.comando_registrado())
+        except OSError as erro:
+            self._log.warning("Iniciar com o Windows: não deu para conferir (%s)", erro)
         self.var_jf_iniciar_windows.set(inicializacao.ativo())    # o que vale é o registro do Windows
         if self.var_jf_vigiar.get():                 # ficou ligada da última vez: volta a vigiar
             self.after(3000, self.ao_alternar_vigia)
         self.definir_estado_conferencia(self._texto_ultima_conferencia())
         self._conferencia_agendada = self.after(60_000, self._ciclo_conferencia)
+        self._mostrar_pasta_programa()
         if not os.environ.get("VIDEOSCRAPER_SEM_ATUALIZACAO"):
             self.after(4000, self._ciclo_versao)          # ao abrir e depois a cada 6 horas (programa aberto)
+            self.after(2500, self._conferir_instalacao)   # .exe fora do lugar fixo? oferece instalar
 
     def _progresso_com_velocidade(self, texto: str):
         """ao_progresso(feitos, total) que mostra a velocidade e quanto falta:
@@ -1729,6 +1786,107 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._saindo = True
         self.mostrar_janela()
         self.fechar()
+
+    # ================================================================== lugar fixo do programa e atalhos
+    def _mostrar_pasta_programa(self) -> None:
+        """Na aba Jellyfin: onde o programa está. O botão "Instalar no lugar fixo" só aparece no .exe do Windows
+        rodando de fora do lugar fixo (ex.: da pasta Downloads)."""
+        pasta = atualizacao.pasta_do_programa()
+        fixo = instalacao.esta_na_pasta_fixa(pasta)
+        self.lb_pasta_programa.configure(text=f"Programa em: {pasta}" + ("  (lugar fixo ✓)" if fixo else ""))
+        if atualizacao.pode_instalar_sozinho() and not fixo:
+            self.bt_instalar_fixo.pack(anchor="w", padx=18, pady=(2, 6), after=self.bt_abrir_pasta_programa)
+        else:
+            self.bt_instalar_fixo.pack_forget()
+
+    def ao_abrir_pasta_programa(self) -> None:
+        self._abrir_no_sistema(str(atualizacao.pasta_do_programa()))
+
+    def _conferir_instalacao(self) -> None:
+        """Ao abrir o .exe (Windows): no lugar fixo, confere os atalhos e o "Iniciar com o Windows"; fora dele,
+        oferece instalar lá (uma vez; dá para pedir "Não perguntar de novo")."""
+        if not atualizacao.pode_instalar_sozinho():
+            return
+        if self.trabalhando:
+            self.after(30_000, self._conferir_instalacao)
+            return
+        pasta = atualizacao.pasta_do_programa()
+        dados = config.carregar().get("instalacao", {})
+        if instalacao.esta_na_pasta_fixa(pasta):
+            versao = atualizacao.versao_atual()
+            if dados.get("atalhos_versao") != versao:      # instalou ou atualizou: refaz os atalhos (uma vez)
+                exe = sys.executable
+
+                def refazer():
+                    try:
+                        instalacao.criar_atalhos(exe)
+                        self.fila.put(("atalhos_feitos", versao))
+                    except (OSError, subprocess.SubprocessError) as erro:
+                        self._log.warning("Atalhos: %s", erro)
+                threading.Thread(target=refazer, daemon=True).start()
+            if inicializacao.ativo():                     # "Iniciar com o Windows" aponta para o lugar fixo
+                try:
+                    inicializacao.ativar(True)
+                except OSError:
+                    pass
+            return
+        if dados.get("nao_perguntar"):
+            return
+        escolha = self.escolher(
+            "Instalar no lugar fixo",
+            f"O programa está rodando de:\n{pasta}\n\nInstalar num lugar FIXO?\n{instalacao.pasta_fixa()}\n\n"
+            "• cria o atalho \"videoscraper\" na Área de Trabalho e no Menu Iniciar;\n"
+            "• as atualizações vão sempre para lá (sem cópias espalhadas pelos Downloads);\n"
+            "• configurações, regras e canais continuam os mesmos.\n\nDepois, a cópia antiga pode ser apagada.",
+            ("Instalar no lugar fixo", "Não perguntar de novo"), cancelar="Agora não")
+        if escolha == "Instalar no lugar fixo":
+            self.ao_instalar_fixo()
+        elif escolha == "Não perguntar de novo":
+            tudo = config.carregar()
+            tudo.setdefault("instalacao", {})["nao_perguntar"] = True
+            config.salvar(tudo)
+
+    def ao_instalar_fixo(self) -> None:
+        """Copia o programa para o lugar fixo, cria os atalhos e reabre de lá."""
+        if self.trabalhando:
+            self.mostrar_mensagem("Instalar", "Espere a tarefa atual terminar.", "aviso")
+            return
+        origem = atualizacao.pasta_do_programa()
+
+        def tarefa():
+            try:
+                exe = instalacao.copiar_para_pasta_fixa(origem)
+            except OSError as erro:
+                self.fila.put(("msg", ("Instalar", f"Não deu para copiar para {instalacao.pasta_fixa()}:\n{erro}\n\n"
+                                       "Se o programa já está aberto de lá, feche-o e tente de novo.", "erro")))
+                return
+            self._log.info("Programa instalado no lugar fixo: %s", exe)
+            avisos = []
+            try:
+                instalacao.criar_atalhos(exe)
+            except (OSError, subprocess.SubprocessError) as erro:
+                avisos.append(f"Os atalhos não foram criados ({erro}).")
+            if inicializacao.ativo():
+                try:
+                    inicializacao.ativar(True, executavel=exe)
+                except OSError as erro:
+                    avisos.append(f"\"Iniciar com o Windows\" não foi trocado ({erro}).")
+            self.fila.put(("instalado_fixo", (str(exe), avisos)))
+
+        self._rodar("Instalando no lugar fixo...", tarefa)
+
+    def _instalado_fixo(self, exe: str, avisos: list[str]) -> None:
+        """Instalou: avisa, abre o programa do lugar fixo e fecha esta cópia."""
+        self.mostrar_mensagem("Instalado", f"Pronto: o programa agora fica em\n{Path(exe).parent}\n\nUse o atalho "
+                              "\"videoscraper\" da Área de Trabalho ou do Menu Iniciar. Ele vai abrir de lá agora; a "
+                              "cópia antiga (esta) pode ser apagada." + ("\n\n" + "\n".join(avisos) if avisos else ""),
+                              "sucesso")
+        try:
+            instalacao.abrir(exe)
+        except OSError as erro:
+            self._log.error("Não consegui abrir %s: %s", exe, erro)
+            return
+        self.sair_de_vez()
 
     # ================================================================== aviso de versão nova
     INTERVALO_VERSAO_MS = 6 * 60 * 60 * 1000

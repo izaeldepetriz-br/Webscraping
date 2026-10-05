@@ -233,6 +233,22 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v1.8.1
+
+- **Scan do Jellyfin à vista:** o fim da vigia e do Organizar diz se o Jellyfin foi avisado para atualizar a
+  biblioteca ("scan pedido") ou por que não (sem a chave de API, erro de conexão). Antes isso ia só para o log.
+- O estado da vigia avisa (em laranja) quando falta a chave do Jellyfin: sem "Lembrar as chaves", ela some ao
+  reiniciar o programa e o scan deixava de ser pedido.
+- Botão **"Atualizar a biblioteca agora"** (aba Jellyfin, embaixo de "Testar conexão").
+- **Lugar fixo do programa (Windows):** ao abrir o .exe de fora dele (ex.: Downloads), o programa oferece se
+  instalar em `C:\Users\<você>\AppData\Local\Programs\videoscraper` (sem precisar de administrador), cria o
+  atalho **videoscraper** na Área de Trabalho e no Menu Iniciar e reabre de lá. As atualizações vão sempre para
+  esse lugar, e o "Iniciar com o Windows" também aponta para ele. Na aba Jellyfin aparece onde o programa está e o
+  botão "Abrir a pasta do programa".
+- **"Iniciar com o Windows" que parou de funcionar:** ele guardava o caminho do .exe daquele momento; se a pasta
+  mudasse (outro download, cópia apagada), o Windows não abria nada. Agora, ao abrir, o programa confere e corrige
+  o caminho sozinho (dando preferência ao lugar fixo).
+
 ### Novidades da v1.8
 
 - **TV ao vivo, enviar com filtro ligado:** o filtro só esconde canais; agora o envio pergunta se é para mandar

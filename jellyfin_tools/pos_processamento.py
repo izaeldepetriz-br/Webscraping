@@ -46,6 +46,7 @@ class ConfigPos:
     jellyfin_api_key: str = ""                             # vazio = não pede o scan
     trabalhadores: int = 4                                 # filmes processados ao mesmo tempo
     sobrescrever: bool = False                             # trocar legenda/pôster/backdrop/.nfo que já existem
+    scan: str = ""                                         # resultado (preenchido no fim): "pedido", "sem chave", "erro: ..."
 
 
     @property
@@ -190,8 +191,11 @@ def pos_processar(itens: list, cfg: ConfigPos, log=None, ao_item=None, parar=Non
     if nomes and cfg.jellyfin_api_key:
         try:
             atualizar_biblioteca(cfg.jellyfin_url, cfg.jellyfin_api_key)
+            cfg.scan = "pedido"
         except ErroJellyfin as erro:
             log.error("Scan do Jellyfin não disparado: %s", erro)
+            cfg.scan = f"erro: {erro}"
     elif nomes:
-        log.info("Sem chave do Jellyfin: faça o scan da biblioteca pelo painel do Jellyfin")
+        log.warning("Sem chave do Jellyfin: faça o scan da biblioteca pelo painel do Jellyfin")
+        cfg.scan = "sem chave"
     return resultados

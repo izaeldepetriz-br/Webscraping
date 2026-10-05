@@ -56,3 +56,60 @@ def test_script_de_instalacao_espera_fechar_e_troca_os_arquivos():
     assert "'C:\\Prog''s\\videoscraper'" in texto                     # aspas do PowerShell escapadas
     assert "Start-Process -FilePath 'C:\\Prog''s\\videoscraper\\videoscraper.exe'" in texto
     assert "(não reabre)" in atualizacao.script_de_instalacao(Path("a.zip"), Path("p"), 1, "")
+
+
+def test_script_dos_atalhos_aponta_para_o_lugar_fixo(monkeypatch, tmp_path):
+    from videoscraper import instalacao
+    monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\Ana\AppData\Local")
+    assert str(instalacao.executavel_fixo()).replace("/", "\\").endswith(r"Programs\videoscraper\videoscraper.exe")
+    script = instalacao.script_atalhos(r"C:\Users\Ana's\AppData\Local\Programs\videoscraper\videoscraper.exe")
+    assert "GetFolderPath('Desktop')" in script and "GetFolderPath('Programs')" in script
+    assert "'C:\\Users\\Ana''s\\AppData" in script                      # aspas simples escapadas
+    origem = tmp_path / "Downloads"
+    with __import__("pytest").raises(OSError):
+        instalacao.copiar_para_pasta_fixa(origem, tmp_path / "fixo")      # sem o .exe: recusa
+    (origem / "_internal").mkdir(parents=True)
+    (origem / "videoscraper.exe").write_bytes(b"novo")
+    (tmp_path / "fixo").mkdir()
+    (tmp_path / "fixo" / "videoscraper.exe").write_bytes(b"velho")
+    exe = instalacao.copiar_para_pasta_fixa(origem, tmp_path / "fixo")      # por cima do que havia
+    assert exe.read_bytes() == b"novo"
+
+
+def test_iniciar_com_o_windows_apontando_para_exe_antigo_e_corrigido(tmp_path, monkeypatch):
+    """Caso real: reiniciou o PC e o programa não abriu (o registro apontava para uma cópia antiga/apagada)."""
+    import sys
+    from videoscraper import inicializacao
+    registro = {"videoscraper": r'"C:\Users\Ana\Downloads\velho\videoscraper.exe" --minimizado'}
+
+    class Reg:
+        HKEY_CURRENT_USER, REG_SZ = 1, 1
+
+        class _C:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        def CreateKey(self, *a):
+            return self._C()
+        OpenKey = CreateKey
+
+        def SetValueEx(self, chave, nome, _, tipo, valor):
+            registro[nome] = valor
+
+        def QueryValueEx(self, chave, nome):
+            if nome not in registro:
+                raise FileNotFoundError(nome)
+            return registro[nome], 1
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "Downloads" / "novo" / "videoscraper.exe"))
+    fixo = tmp_path / "Programs" / "videoscraper" / "videoscraper.exe"
+    fixo.parent.mkdir(parents=True)
+    fixo.write_bytes(b"exe")
+    assert inicializacao.corrigir_se_preciso(fixo, Reg()) is True
+    assert registro["videoscraper"] == f'"{fixo}" --minimizado'            # o lugar fixo tem preferência
+    assert inicializacao.corrigir_se_preciso(fixo, Reg()) is False          # já está certo: não mexe
+    registro.clear()
+    assert inicializacao.corrigir_se_preciso(fixo, Reg()) is False and registro == {}   # desligado: continua

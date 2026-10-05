@@ -111,6 +111,20 @@ if __name__ == "__main__":
             relatorio.write_text(traceback.format_exc(), encoding="utf-8")
             raise SystemExit(1)
         raise SystemExit(0)                         # fecha: o script espera isto para trocar os arquivos
+    if "--testar-instalacao" in sys.argv:           # GitHub: o lugar fixo e os atalhos funcionam no Windows?
+        from pathlib import Path
+        from videoscraper import atualizacao, instalacao
+        import tempfile
+        import traceback
+        relatorio = Path(tempfile.gettempdir()) / "videoscraper-teste-instalacao.txt"
+        try:
+            exe = instalacao.copiar_para_pasta_fixa(atualizacao.pasta_do_programa())
+            instalacao.criar_atalhos(exe)
+            relatorio.write_text(f"instalado: {exe}\n", encoding="utf-8")
+        except Exception:
+            relatorio.write_text(traceback.format_exc(), encoding="utf-8")
+            raise SystemExit(1)
+        raise SystemExit(0)
     if "--texto" in sys.argv:
         raise SystemExit(_menu_texto())
     try:

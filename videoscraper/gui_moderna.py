@@ -1437,6 +1437,15 @@ class JanelaModerna(ctk.CTk):
         self.var_jf_atualizar_sozinho = tk.BooleanVar(value=False)
         self._checkbox(lateral, "Atualizar sozinho: baixar, instalar e\nreiniciar o programa (quando estiver livre)",
                        self.var_jf_atualizar_sozinho)
+        # onde o programa está no computador (e, no Windows, o lugar fixo com atalhos)
+        self.lb_pasta_programa = ctk.CTkLabel(lateral, text="", font=ctk.CTkFont(Tema.FAMILIA, 11),
+                                              text_color=Tema.TEXTO_FRACO, anchor="w", justify="left", wraplength=290)
+        self.lb_pasta_programa.pack(anchor="w", **p)
+        self.bt_abrir_pasta_programa = self._botao(lateral, "Abrir a pasta do programa", self.ao_abrir_pasta_programa,
+                                                   "fantasma")
+        self.bt_abrir_pasta_programa.pack(anchor="w", **p)
+        self.bt_instalar_fixo = self._botao(lateral, "Instalar no lugar fixo (com atalhos)...", self.ao_instalar_fixo,
+                                            "secundario")
         self.var_jf_versao_avisada = tk.StringVar(value="")
         self.lb_estado_vigia = ctk.CTkLabel(lateral, text="Desligada. Usa as pastas e opções desta aba; o que ainda "
                                             "está baixando (.part, .!qB) fica para a próxima.",
@@ -1508,6 +1517,9 @@ class JanelaModerna(ctk.CTk):
         self._checkbox(lateral, "Atualizar a biblioteca no fim (scan)", self.var_jf_atualizar)
         self.bt_testar_jellyfin = self._botao(lateral, "Testar conexão", self.ao_testar_jellyfin)
         self.bt_testar_jellyfin.pack(fill="x", pady=(6, 0), **p)
+        # o mesmo scan do fim do Organizar/vigia, na hora (ex.: séries que não apareceram no Jellyfin)
+        self.bt_scan_jellyfin = self._botao(lateral, "Atualizar a biblioteca agora", self.ao_atualizar_jellyfin_agora)
+        self.bt_scan_jellyfin.pack(fill="x", pady=(6, 0), **p)
 
         self._separador(lateral)
         self._rotulo(lateral, "Avisos (opcional)", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
@@ -2370,6 +2382,15 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_alternar_vigia(self) -> None:
+        pass
+
+    def ao_atualizar_jellyfin_agora(self) -> None:
+        pass
+
+    def ao_abrir_pasta_programa(self) -> None:
+        pass
+
+    def ao_instalar_fixo(self) -> None:
         pass
 
     def ao_gerenciar_espelhos(self) -> None:

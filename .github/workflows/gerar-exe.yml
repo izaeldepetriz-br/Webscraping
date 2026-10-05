@@ -72,6 +72,23 @@ jobs:
             Get-Content (Join-Path $env:TEMP 'videoscraper-atualizar.ps1') -ErrorAction SilentlyContinue
             Write-Error "a atualização não trocou os arquivos"; exit 1
           }
+      - name: Autoteste do lugar fixo e dos atalhos (Área de Trabalho e Menu Iniciar)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\videoscraper\videoscraper.exe -ArgumentList '--testar-instalacao' -PassThru
+          $p.WaitForExit()
+          Get-Content (Join-Path $env:TEMP 'videoscraper-teste-instalacao.txt') -ErrorAction SilentlyContinue
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\videoscraper\videoscraper.exe'
+          $mesa = Join-Path ([Environment]::GetFolderPath('Desktop')) 'videoscraper.lnk'
+          $menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'videoscraper.lnk'
+          if ($p.ExitCode -ne 0 -or -not (Test-Path $exe) -or -not (Test-Path $mesa) -or -not (Test-Path $menu)) {
+            Write-Error "instalação no lugar fixo falhou (exe: $(Test-Path $exe), mesa: $(Test-Path $mesa), menu: $(Test-Path $menu))"; exit 1
+          }
+          $alvo = (New-Object -ComObject WScript.Shell).CreateShortcut($mesa).TargetPath
+          "atalho -> $alvo"
+          if ($alvo -ne $exe) { Write-Error "o atalho não aponta para o lugar fixo"; exit 1 }
+          $v = Start-Process -FilePath $exe -ArgumentList '--verificar' -PassThru -Wait
+          if ($v.ExitCode -ne 0) { Write-Error "o programa do lugar fixo não abriu"; exit 1 }
       - uses: actions/upload-artifact@v4
         with:
           name: videoscraper-windows
