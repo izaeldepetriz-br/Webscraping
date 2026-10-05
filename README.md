@@ -246,6 +246,11 @@ primeira falha (antes esperava o tempo limite em cada filme).
   vigia, o lugar fixo e a versão; laranja quando falta algo.
 - **Não identificados por pasta:** botão "Não identificados..." junta os arquivos por pasta (o maior grupo
   primeiro); escolha a pasta e "Corrigir nome" vale para todos os arquivos dela de uma vez.
+- **Completar biblioteca, escolhendo o quê:** uma janela para marcar **Legendas**, **Imagens** e **.nfo**
+  (e "Só o que falta" ou "Substituir o que já existe"); ex.: só atualizar as imagens, sem mexer nas legendas. A
+  escolha fica lembrada.
+- **Imagens de séries:** pôster e fundo na pasta da série e o pôster de cada temporada (`Season 01/poster.jpg`),
+  uma consulta ao TMDB por série (antes, séries não recebiam imagem nenhuma).
 
 ### Novidades da v1.8.1
 

@@ -458,6 +458,69 @@ class JanelaNaoIdentificados(ctk.CTkToplevel):
         acao(escolhidos)
 
 
+class DialogoCompletar(ctk.CTkToplevel):
+    """"Completar biblioteca": o QUE completar (legendas, imagens, .nfo) e se troca o que já existe.
+    `resultado`: {'legendas', 'imagens', 'nfo', 'substituir'} ou None (Cancelar)."""
+
+    def __init__(self, master, pasta: str, padrao: dict, series: bool):
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.resultado = None
+        self.title("Completar biblioteca")
+        self.resizable(False, False)
+        self.transient(master)
+        corpo = ctk.CTkFrame(self, fg_color="transparent")
+        corpo.pack(fill="both", expand=True, padx=26, pady=(20, 6))
+        ctk.CTkLabel(corpo, text="Completar biblioteca", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
+                     text_color=Tema.TEXTO, anchor="w").pack(fill="x")
+        ctk.CTkLabel(corpo, text=pasta, font=master.f_rotulo, text_color=Tema.TEXTO_FRACO, anchor="w",
+                     wraplength=440, justify="left").pack(fill="x", pady=(2, 10))
+        ctk.CTkLabel(corpo, text="O que completar:", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE,
+                     anchor="w").pack(fill="x")
+        self.vars = {}
+        imagens = ("Imagens: pôster e fundo da série e o pôster de cada temporada" if series
+                   else "Imagens: pôster e fundo (backdrop) de cada filme")
+        for chave, texto in (("legendas", "Legendas (nos idiomas escolhidos na aba)"), ("imagens", imagens),
+                             ("nfo", "Arquivo .nfo (sinopse, elenco...; só filmes)")):
+            self.vars[chave] = tk.BooleanVar(value=bool(padrao.get(chave, chave != "nfo" or not series)))
+            caixa = master._checkbox(corpo, texto, self.vars[chave])
+            caixa.pack_configure(padx=0)
+            if chave == "nfo" and series:
+                caixa.configure(state="disabled")
+                self.vars[chave].set(False)
+        ctk.CTkLabel(corpo, text="O que já existe:", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE,
+                     anchor="w").pack(fill="x", pady=(10, 0))
+        self.var_substituir = tk.StringVar(value="substituir" if padrao.get("substituir") else "falta")
+        for valor, texto in (("falta", "Só o que falta (não mexe no que já está lá)"),
+                             ("substituir", "Substituir o que já existe (ex.: pôster em inglês, legenda fora de sincronia)")):
+            ctk.CTkRadioButton(corpo, text=texto, value=valor, variable=self.var_substituir, font=master.f_rotulo,
+                               text_color=Tema.TEXTO, fg_color=Tema.PRIMARIA, hover_color=Tema.PRIMARIA_HOVER).pack(
+                anchor="w", pady=3)
+        ctk.CTkLabel(corpo, text="Os vídeos não são mexidos.", font=ctk.CTkFont(Tema.FAMILIA, 11),
+                     text_color=Tema.TEXTO_FRACO, anchor="w").pack(fill="x", pady=(6, 0))
+        botoes = ctk.CTkFrame(self, fg_color="transparent")
+        botoes.pack(fill="x", padx=26, pady=(10, 20))
+        master._botao(botoes, "Cancelar", self.destroy, "secundario").pack(side="left")
+        master._botao(botoes, "Completar", self._ok, "primario").pack(side="right")
+        self.bind("<Return>", lambda e: self._ok())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_reqwidth()) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - self.winfo_reqheight()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+    def _ok(self) -> None:
+        escolha = {chave: var.get() for chave, var in self.vars.items()}
+        if not any(escolha.values()):
+            self.master.mostrar_mensagem("Completar biblioteca", "Marque pelo menos uma coisa para completar.", "aviso")
+            return
+        self.resultado = {**escolha, "substituir": self.var_substituir.get() == "substituir"}
+        self.destroy()
+
+
 class LinhaCanal(NamedTuple):
     """Uma linha da tabela de canais."""
     iid: str

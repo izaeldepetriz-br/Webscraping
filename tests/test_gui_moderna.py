@@ -77,6 +77,7 @@ def app(monkeypatch, tmp_path):
     a.mostrar_mensagem = lambda t, m, tipo="info": a.caixas.append((tipo, t, m))   # responde OK sozinho
     a.perguntar = lambda t, m: True
     a.escolher = lambda t, m, opcoes, **k: opcoes[0]        # escolhe o botão principal sozinho
+    a._pedir_o_que_completar = lambda pasta, padrao, series: dict(padrao)   # "Completar": a escolha padrão
     a.campo_espera.set(0.5)
     a.var_pasta.set(str(tmp_path / "videos"))
     yield a
@@ -656,41 +657,56 @@ def test_series_com_nome_do_episodio_pela_janela(app, tmdb_gui, tmp_path):
 
 
 # ------------------------------------------------------------------ Completar com "substituir", lista ampliada
-def test_completar_biblioteca_pergunta_se_substitui(app, servicos_gui, tmp_path):
+def test_completar_biblioteca_escolhe_o_que_completar(app, servicos_gui, tmp_path, monkeypatch):
     pasta = tmp_path / "Filmes" / "Velhos Bandidos (2026)"
     pasta.mkdir(parents=True)
     (pasta / "Velhos Bandidos (2026).mkv").write_bytes(b"v")
     (pasta / "Velhos Bandidos (2026).pt-BR.srt").write_text("antiga", encoding="utf-8")
     (pasta / "poster.png").write_bytes(b"antigo")
     app.var_jf_destino.set(str(tmp_path / "Filmes"))
-    perguntas = []
+    padroes = []
 
     def responder(resposta):
-        app.escolher = lambda t, m, opcoes: (perguntas.append(opcoes), resposta)[1]
+        monkeypatch.setattr(app, "_pedir_o_que_completar",
+                            lambda pasta_, padrao, series: (padroes.append(padrao), resposta)[1])
 
     responder(None)                                                      # Cancelar: nada acontece
     app.bt_legendas.invoke()
     esperar(app)
     assert (pasta / "poster.png").read_bytes() == b"antigo" and not (pasta / "poster.jpg").exists()
-    assert perguntas[-1] == ("Só o que falta", "Substituir o que já existe")
 
-    responder("Só o que falta")
+    responder({"legendas": True, "imagens": True, "nfo": True, "substituir": False})   # só o que falta
     app.bt_legendas.invoke()
     esperar(app)
     assert (pasta / "Velhos Bandidos (2026).pt-BR.srt").read_text(encoding="utf-8") == "antiga"
     assert (pasta / "poster.png").exists() and not (pasta / "poster.jpg").exists()
     assert _linhas_jf(app)[0][4].endswith("já existia")
 
-    responder("Substituir o que já existe")
+    # o caso do usuário: SÓ as imagens, trocando as que existem; a legenda não é tocada
+    responder({"legendas": False, "imagens": True, "nfo": False, "substituir": True})
+    app.bt_legendas.invoke()
+    esperar(app)
+    assert (pasta / "Velhos Bandidos (2026).pt-BR.srt").read_text(encoding="utf-8") == "antiga"
+    assert (pasta / "poster.jpg").is_file() and not (pasta / "poster.png").exists()   # trocou, sem duplicar
+    assert "legenda" not in app.var_status.get() and "1 filme(s) com pôster/.nfo" in app.var_status.get()
+    assert app.var_jf_sobrescrever.get()                                  # a caixa acompanha a escolha
+
+    responder({"legendas": True, "imagens": False, "nfo": False, "substituir": True})
     app.bt_legendas.invoke()
     esperar(app)
     assert (pasta / "Velhos Bandidos (2026).pt-BR.srt").read_text(encoding="utf-8") != "antiga"
-    assert (pasta / "poster.jpg").is_file() and not (pasta / "poster.png").exists()   # trocou, sem duplicar
-    assert _linhas_jf(app)[0][4].endswith("baixada")
-    assert app.var_jf_sobrescrever.get()                                  # a caixa acompanha a escolha
-    app.bt_legendas.invoke()
-    esperar(app)
-    assert perguntas[-1][0] == "Substituir o que já existe"              # e vira a opção principal
+    assert padroes[-1]["legendas"] is False and padroes[-1]["imagens"] is True   # lembrou a escolha anterior
+
+
+def test_janela_completar_nao_deixa_completar_nada(app):
+    from videoscraper.gui_moderna import DialogoCompletar
+    d = DialogoCompletar(app, "E:/Series", {"legendas": False, "imagens": False}, series=True)
+    assert d.vars["nfo"].get() is False                                  # séries: .nfo não se aplica
+    d._ok()
+    assert d.resultado is None and "Marque pelo menos uma" in app.caixas[-1][2]
+    d.vars["imagens"].set(True)
+    d._ok()
+    assert d.resultado == {"legendas": False, "imagens": True, "nfo": False, "substituir": False}
 
 
 def test_ampliar_lista_esconde_painel_e_console(app):

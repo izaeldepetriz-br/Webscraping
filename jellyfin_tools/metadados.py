@@ -15,6 +15,8 @@ Imagens que já vieram no torrent têm prioridade: nada é sobrescrito (a não s
 
 from __future__ import annotations
 
+import re
+
 import threading
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -94,6 +96,21 @@ class ClienteTMDB:
         return self._get(f"/movie/{tmdb_id}", language=self.idioma, append_to_response="images,external_ids",
                          include_image_language="pt,null")
 
+    def buscar_id_serie(self, titulo: str, ano: int | None) -> int | None:
+        """Título + ano de estreia -> id da SÉRIE no TMDB."""
+        params = {"query": titulo, "language": self.idioma}
+        if ano:
+            params["first_air_date_year"] = ano
+        resultados = self._get("/search/tv", **params).get("results") or []
+        if not resultados and ano:                         # o ano da pasta pode ser o da temporada
+            resultados = self._get("/search/tv", query=titulo, language=self.idioma).get("results") or []
+        return resultados[0]["id"] if resultados else None
+
+    def detalhes_serie(self, tmdb_id: int) -> dict:
+        """A série com as imagens e a lista de temporadas (cada uma com o seu poster_path)."""
+        return self._get(f"/tv/{tmdb_id}", language=self.idioma, append_to_response="images",
+                         include_image_language="pt,null")
+
     def baixar_imagem(self, caminho_tmdb: str, destino: Path) -> None:
         """Baixa para um .part e só renomeia no fim (nada de imagem pela metade)."""
         parcial = destino.with_name(destino.name + ".part")
@@ -127,6 +144,51 @@ def escolher_backdrop(detalhes: dict) -> str | None:
     if sem_texto:
         return max(sem_texto, key=lambda b: (b.get("width") or 0, b.get("vote_average") or 0))["file_path"]
     return detalhes.get("backdrop_path")
+
+
+def _baixar_imagens(cliente: ClienteTMDB, pasta: Path, imagens, sobrescrever: bool,
+                    resultado: ResultadoMetadados) -> None:
+    """imagens: [(nome sem extensão, caminho no TMDB)]. Não troca a que já existe (a do torrent tem prioridade),
+    a não ser com sobrescrever."""
+    for nome, caminho_tmdb in imagens:
+        existente = next((p for p in pasta.glob(f"{nome}.*") if p.suffix.lower() in (".jpg", ".png", ".webp")), None)
+        if existente and not sobrescrever:
+            resultado.pulados.append(f"{existente.name} (já existia)")
+            continue
+        if not caminho_tmdb:
+            resultado.pulados.append(f"{nome}.jpg (o TMDB não tem)")
+            continue
+        destino = pasta / f"{nome}.jpg"
+        cliente.baixar_imagem(caminho_tmdb, destino)
+        resultado.criados.append(destino)
+        if existente and existente != destino:             # trocou poster.png por poster.jpg:
+            existente.unlink(missing_ok=True)              # sem duas imagens disputando o lugar
+
+
+_RE_TEMPORADA = re.compile(r"^(?:season|temporada)\s*0*(\d+)$", re.IGNORECASE)
+
+
+def enriquecer_serie(pasta_serie: Path, cliente: ClienteTMDB, titulo: str, ano: int | None,
+                     tmdb_id: int | None = None, sobrescrever: bool = False) -> ResultadoMetadados:
+    """Imagens de uma SÉRIE: poster.jpg e backdrop.jpg na pasta da série e o pôster de cada temporada
+    ('Season 01/poster.jpg'), das pastas de temporada que existirem. Uma consulta ao TMDB por série."""
+    resultado = ResultadoMetadados(pasta_serie)
+    tmdb_id = tmdb_id or cliente.buscar_id_serie(titulo, ano)
+    if not tmdb_id:
+        resultado.detalhe = "série não encontrada no TMDB"
+        log.warning("Imagens: série '%s (%s)' não encontrada no TMDB", titulo, ano)
+        return resultado
+    detalhes = cliente.detalhes_serie(tmdb_id)
+    _baixar_imagens(cliente, pasta_serie, (("poster", escolher_poster(detalhes)),
+                                           ("backdrop", escolher_backdrop(detalhes))), sobrescrever, resultado)
+    posters = {s.get("season_number"): s.get("poster_path") for s in detalhes.get("seasons") or []}
+    for pasta in sorted(p for p in pasta_serie.iterdir() if p.is_dir()):
+        if (m := _RE_TEMPORADA.match(pasta.name)) and int(m.group(1)) in posters:
+            _baixar_imagens(cliente, pasta, (("poster", posters[int(m.group(1))]),), sobrescrever, resultado)
+    log.info("Imagens da série %s: criadas %s%s", pasta_serie.name, [str(p.relative_to(pasta_serie)) for p in
+                                                                     resultado.criados] or "nada",
+             f"; puladas {len(resultado.pulados)}" if resultado.pulados else "")
+    return resultado
 
 
 # ----------------------------------------------------------------- .nfo
@@ -183,21 +245,9 @@ def enriquecer_filme(pasta: Path, nome_base: str, cliente: ClienteTMDB, titulo: 
     detalhes = cliente.detalhes(tmdb_id)
 
     if imagens:
-        for nome, escolher in (("poster", escolher_poster), ("backdrop", escolher_backdrop)):
-            existente = next((p for p in pasta.glob(f"{nome}.*") if p.suffix.lower() in (".jpg", ".png", ".webp")),
-                             None)
-            if existente and not sobrescrever:
-                resultado.pulados.append(f"{existente.name} (já existia)")   # a do torrent tem prioridade
-                continue
-            caminho_tmdb = escolher(detalhes)
-            if not caminho_tmdb:
-                resultado.pulados.append(f"{nome}.jpg (o TMDB não tem)")
-                continue
-            destino = pasta / f"{nome}.jpg"
-            cliente.baixar_imagem(caminho_tmdb, destino)
-            resultado.criados.append(destino)
-            if existente and existente != destino:             # trocou poster.png por poster.jpg:
-                existente.unlink(missing_ok=True)              # sem duas imagens disputando o lugar
+        _baixar_imagens(cliente, pasta, ((nome, escolher(detalhes)) for nome, escolher in
+                                         (("poster", escolher_poster), ("backdrop", escolher_backdrop))),
+                        sobrescrever, resultado)
 
     if nfo:
         destino = pasta / f"{nome_base}.nfo"

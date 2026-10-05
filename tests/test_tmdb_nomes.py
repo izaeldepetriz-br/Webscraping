@@ -234,3 +234,27 @@ def test_dragon_ball_153_vira_temporada_e_episodio_do_tmdb(api_falsa, tmp_path):
                      "Dragon Ball 999 - 1280x960.mkv": "Dragon Ball S01E999.mkv",
                      "Dragon.Ball.S02E05.mkv": "Dragon Ball S02E05.mkv"}
     assert len(_pedidos(api_falsa, "/3/tv/12971")) == 1                    # 1 pedido por série
+
+
+def test_imagens_da_serie_e_das_temporadas(tmp_path, api_falsa):
+    """Séries: pôster e fundo na pasta da série e o pôster de cada temporada (antes, nada para séries)."""
+    from jellyfin_tools.metadados import ClienteTMDB, enriquecer_serie
+    api_falsa.rotas["/3/search/tv"] = lambda q: (200, {"results": [{"id": 77}]})
+    api_falsa.rotas["/3/tv/77"] = lambda q: (200, {
+        "poster_path": "/serie.jpg", "backdrop_path": "/fundo.jpg",
+        "seasons": [{"season_number": 1, "poster_path": "/t1.jpg"}, {"season_number": 2, "poster_path": "/t2.jpg"}]})
+    for nome in ("serie", "fundo", "t1", "t2"):
+        api_falsa.rotas[f"/img/{nome}.jpg"] = lambda q, n=nome: (200, n.encode())
+    serie = tmp_path / "Yu Yu Hakusho (1992)"
+    (serie / "Season 01").mkdir(parents=True)
+    (serie / "Season 02").mkdir()
+    (serie / "Season 02" / "poster.jpg").write_bytes(b"meu")
+    cliente = ClienteTMDB("chave", base_url=api_falsa.base + "/3", base_imagens=api_falsa.base + "/img")
+    r = enriquecer_serie(serie, cliente, "Yu Yu Hakusho", 1992)
+    assert (serie / "poster.jpg").read_bytes() == b"serie" and (serie / "backdrop.jpg").read_bytes() == b"fundo"
+    assert (serie / "Season 01" / "poster.jpg").read_bytes() == b"t1"
+    assert (serie / "Season 02" / "poster.jpg").read_bytes() == b"meu"          # já existia: fica
+    enriquecer_serie(serie, cliente, "Yu Yu Hakusho", 1992, sobrescrever=True)
+    assert (serie / "Season 02" / "poster.jpg").read_bytes() == b"t2"           # substituir: troca
+    assert any(p["query"].get("first_air_date_year") == ["1992"] for p in api_falsa.pedidos)
+    assert len(r.criados) == 3

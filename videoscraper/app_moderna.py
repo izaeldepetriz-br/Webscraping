@@ -56,7 +56,8 @@ from .cli import salvar
 from .extracao import LinkVideo
 from .gui import ORIGENS, _SaidaParaFila, _so_caracteres_basicos
 from . import atualizacao, instalacao, bandeja, inicializacao
-from .gui_moderna import JanelaEspelhos, JanelaModerna, JanelaNaoIdentificados, OpcoesInterface, Tema
+from .gui_moderna import (DialogoCompletar, JanelaEspelhos, JanelaModerna, JanelaNaoIdentificados,
+                          OpcoesInterface, Tema)
 from .tv_moderna import TVAoVivo
 from .navegador import PERFIL_PADRAO, PlaywrightAusente
 from .servico import MENSAGEM_ROBOTS, Trabalho, fazer_login
@@ -1207,29 +1208,35 @@ class AppModerna(TVAoVivo, JanelaModerna):
         if not Path(o.destino).is_dir():
             self.mostrar_mensagem("Biblioteca não encontrada", f"A pasta não existe:\n{o.destino}", "aviso")
             return
-        problema = self._problema_legendas(o)
-        if problema:
-            self.mostrar_mensagem("Legendas", problema, "aviso")
+        padrao = {"legendas": True, "imagens": True, "nfo": True, **config.carregar().get("completar", {}),
+                  "substituir": o.sobrescrever}
+        escolha = self._pedir_o_que_completar(o.destino, padrao, o.modo == "series")
+        if not escolha:
             return
-        escolha = self.escolher(
-            "Completar biblioteca",
-            f"Procurar o que falta em:\n{o.destino}\n\n"
-            "• Só o que falta: baixa legenda, pôster, backdrop e .nfo apenas onde ainda não existem.\n"
-            "• Substituir o que já existe: baixa de novo e TROCA os que já estão lá "
-            "(ex.: legenda fora de sincronia, pôster em inglês). Os vídeos não são mexidos.",
-            self.OPCOES_COMPLETAR if not o.sobrescrever else self.OPCOES_COMPLETAR[::-1])
-        if escolha is None:
+        if escolha["legendas"] and (problema := self._problema_legendas(o)):
+            self.mostrar_mensagem("Legendas", problema + "\n\n(Ou desmarque \"Legendas\" e complete só o resto.)", "aviso")
             return
-        o.sobrescrever = escolha == self.OPCOES_COMPLETAR[1]
+        if (escolha["imagens"] or escolha["nfo"]) and not o.chave_tmdb and not escolha["legendas"]:
+            self.mostrar_mensagem("Completar biblioteca", "Imagens e .nfo vêm do TMDB: preencha a chave da API do TMDB "
+                                  "(aba Jellyfin, \"Nomes e metadados\").", "aviso")
+            return                                     # (com legendas junto: faz as legendas e avisa no log)
+        tudo = config.carregar()
+        tudo["completar"] = {k: escolha[k] for k in ("legendas", "imagens", "nfo")}   # lembra para a próxima
+        config.salvar(tudo)
+        o.sobrescrever = escolha["substituir"]
+        o.imagens_tmdb, o.gerar_nfo = escolha["imagens"], escolha["nfo"]
         self.var_jf_sobrescrever.set(o.sobrescrever)          # a caixa acompanha a escolha
         self._salvar_config()
         self._previa = None
         self.liberar_organizar(False)
-        self._completar(o, Path(o.destino))
+        self._completar(o, Path(o.destino), legendas=escolha["legendas"])
 
-    OPCOES_COMPLETAR = ("Só o que falta", "Substituir o que já existe")
+    def _pedir_o_que_completar(self, pasta: str, padrao: dict, series: bool) -> dict | None:
+        dialogo = DialogoCompletar(self, pasta, padrao, series)
+        self.wait_window(dialogo)
+        return dialogo.resultado
 
-    def _completar(self, o, destino: Path) -> None:
+    def _completar(self, o, destino: Path, legendas: bool = True) -> None:
         """Itens JÁ organizados: o mesmo pós-processamento do Organizar (legendas em cada idioma,
         pôster/backdrop/.nfo nos filmes e um scan do Jellyfin no fim), só que sem mover e sem avisos."""
         def tarefa():
@@ -1244,19 +1251,24 @@ class AppModerna(TVAoVivo, JanelaModerna):
             else:
                 linhas = ["/".join(m.destino.relative_to(destino).parts) for m, _ in itens]
             idiomas = normalizar_idiomas(o.idioma) or ["pt-BR"]
-            sufixo = f".{idiomas[0]}.srt" + (f"  (+{', '.join(idiomas[1:])})" if len(idiomas) > 1 else "")
+            sufixo = (f".{idiomas[0]}.srt" + (f"  (+{', '.join(idiomas[1:])})" if len(idiomas) > 1 else "")
+                      if legendas else "  (só imagens/.nfo)")
             self.fila.put(("jf_alvos", [(atual, f"{nome}{sufixo}") for atual, (_, nome) in zip(linhas, itens)]))
             tipo = "filme(s)" if o.modo == "filmes" else "episódio(s)"
             self._log.info("Completar biblioteca: %d %s em %s", len(itens), tipo, destino)
             resultados = self._pos_processar(o, itens, list(range(len(itens))), "Completando",
-                                             legendas=True, notificar=False)
+                                             legendas=legendas, notificar=False)
             baixadas = sum(1 for r in resultados for le in (r.legendas or {"": r.legenda}).values()
                            if le and le.status == "baixada")
             metadados = sum(1 for r in resultados if r.metadados and r.metadados.criados)
-            extra = f", {metadados} com pôster/.nfo" if o.modo == "filmes" else ""
-            self.fila.put(("jf_total", (1.0, f"Concluído: {baixadas} legenda(s){extra}")))
-            self.fila.put(("status_fim", f"Biblioteca completada: {len(itens)} {tipo}, {baixadas} legenda(s) "
-                                         f"baixada(s){extra}."))
+            series = getattr(self, "_series_feitas", [])
+            partes = ([f"{baixadas} legenda(s) baixada(s)"] if legendas else []) + (
+                [f"{metadados} filme(s) com pôster/.nfo"] if o.modo == "filmes" and (o.imagens_tmdb or o.gerar_nfo)
+                else [f"{sum(len(s.criados) for s in series)} imagem(ns) em {len(series)} série(s)"]
+                if o.modo != "filmes" and o.imagens_tmdb else [])
+            resumo = ", ".join(partes) or "nada a fazer"
+            self.fila.put(("jf_total", (1.0, f"Concluído: {resumo}")))
+            self.fila.put(("status_fim", f"Biblioteca completada: {len(itens)} {tipo}; {resumo}."))
 
         self._rodar("Completando a biblioteca...", tarefa)
 
@@ -1287,6 +1299,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                             jellyfin_api_key=o.jellyfin_api_key if o.atualizar_jellyfin else "")
             resultados = pos_processar(itens, cfg, self._log, ao_item=ao_item, parar=self.evento_parar.is_set)
             self._ultimo_scan = cfg.scan if o.atualizar_jellyfin else "desligado"
+            self._series_feitas = cfg.series_feitas
             if cfg.scan == "pedido":
                 self._saude_jellyfin = "ok"
             elif cfg.scan.startswith("erro"):

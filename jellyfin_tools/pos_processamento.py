@@ -16,6 +16,7 @@ Avisos e andamento saem na ordem dos filmes.
 
 from __future__ import annotations
 
+import re
 import contextlib
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -24,7 +25,7 @@ from pathlib import Path
 
 from .legendas import (ResultadoLegenda, baixar_legenda, baixar_legenda_episodio, episodios_da_biblioteca,
                        normalizar_idiomas, pastas_de_filmes)
-from .metadados import ClienteTMDB, ResultadoMetadados, enriquecer_filme
+from .metadados import ClienteTMDB, ResultadoMetadados, enriquecer_filme, enriquecer_serie
 from .nomes import eh_video_da_biblioteca, extrair_episodio, ler_nome_jellyfin
 from .notificacoes import Notificador
 from .registro import obter_logger
@@ -47,6 +48,7 @@ class ConfigPos:
     trabalhadores: int = 4                                 # filmes processados ao mesmo tempo
     sobrescrever: bool = False                             # trocar legenda/pôster/backdrop/.nfo que já existem
     scan: str = ""                                         # resultado (preenchido no fim): "pedido", "sem chave", "erro: ..."
+    series_feitas: list = field(default_factory=list)      # imagens de séries (uma vez por série), preenchido no fim
 
 
     @property
@@ -106,6 +108,26 @@ def itens_de_series(pasta_series: Path, catalogo=None, log=None) -> list[tuple[I
             series[pasta_serie] = serie
         itens.append((ItemBiblioteca(video, series[pasta_serie], (ep.temporada, ep.episodio)), video.stem))
     return itens
+
+
+def _imagens_das_series(episodios, cfg: ConfigPos, log, parar=None) -> list:
+    """Pôster/fundo de cada série (e das temporadas) dos episódios processados. Uma vez por série."""
+    feitas, vistas = [], set()
+    for m in episodios:
+        pasta = m.destino.parent
+        pasta_serie = pasta.parent if re.match(r"(?i)^(season|temporada)\s*\d+$", pasta.name) else pasta
+        if pasta_serie in vistas or (parar and parar()):
+            continue
+        vistas.add(pasta_serie)
+        lido = ler_nome_jellyfin(pasta_serie.name)
+        titulo = (m.filme.titulo if m.filme else None) or (lido.titulo if lido else pasta_serie.name)
+        ano = (m.filme.ano if m.filme else None) or (lido.ano if lido else None)
+        tmdb_id = getattr(m.filme, "tmdb_id", None) if m.filme else None
+        try:
+            feitas.append(enriquecer_serie(pasta_serie, cfg.tmdb, titulo, ano, tmdb_id, cfg.sobrescrever))
+        except Exception as erro:
+            log.error("Imagens da série %s falharam: %s", pasta_serie.name, erro)
+    return feitas
 
 
 def processar_item(m, cfg: ConfigPos, log=None, trava_legendas=None) -> ResultadoItem:
@@ -184,6 +206,8 @@ def pos_processar(itens: list, cfg: ConfigPos, log=None, ao_item=None, parar=Non
                 ao_item(indice, resultado)
     if parar and parar():
         log.warning("Interrompido pelo usuário depois de %d item(ns)", len(resultados))
+    elif cfg.tmdb is not None and cfg.imagens:                  # séries: as imagens são da SÉRIE, uma vez só
+        cfg.series_feitas = _imagens_das_series([m for m, _ in itens if m.episodio and m.destino], cfg, log, parar)
 
     nomes = [r.nome for r in resultados]
     if avisos and len(nomes) > cfg.limite_avisos:
