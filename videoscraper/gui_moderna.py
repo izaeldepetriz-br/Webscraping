@@ -407,6 +407,57 @@ class JanelaCorrigirNome(ctk.CTkToplevel):
         self.destroy()
 
 
+class JanelaNaoIdentificados(ctk.CTkToplevel):
+    """Os não identificados da pré-visualização juntos por pasta (uma série costuma estar numa pasta só).
+    grupos: [(pasta, quantos, motivo, exemplo)]. acoes: {'corrigir': f(posições), 'mostrar': f(posições)}."""
+
+    def __init__(self, master, grupos: list[tuple[str, int, str, str]], acoes: dict):
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.title("Não identificados por pasta")
+        self.geometry("1000x560")
+        self.transient(master)
+        total = sum(q for _, q, _, _ in grupos)
+        ctk.CTkLabel(self, text=f"{total} não identificado(s) em {len(grupos)} pasta(s)", font=master.f_secao,
+                     text_color=Tema.TEXTO, anchor="w").pack(fill="x", padx=20, pady=(16, 2))
+        ctk.CTkLabel(self, text="Escolha uma ou mais pastas (Ctrl+clique) e clique em \"Corrigir nome\": você diz qual "
+                     "série é e a regra vale para a pasta inteira (todos os arquivos dela de uma vez).",
+                     font=master.f_rotulo, text_color=Tema.TEXTO_FRACO, anchor="w", justify="left",
+                     wraplength=950).pack(fill="x", padx=20, pady=(0, 8))
+        botoes = ctk.CTkFrame(self, fg_color="transparent")       # embaixo primeiro: a tabela é que encolhe
+        botoes.pack(side="bottom", fill="x", padx=20, pady=14)
+        quadro = ctk.CTkFrame(self, fg_color=Tema.CARTAO)
+        quadro.pack(fill="both", expand=True, padx=20)
+        self.tabela = ttk.Treeview(quadro, columns=("quantos", "motivo", "exemplo"), show="tree headings",
+                                   selectmode="extended", style="Moderno.Treeview")
+        for coluna, texto, largura in (("#0", "Pasta", 420), ("quantos", "Arquivos", 90), ("motivo", "Por quê", 220),
+                                       ("exemplo", "Exemplo", 230)):
+            self.tabela.heading(coluna, text=texto, anchor="w")
+            self.tabela.column(coluna, width=largura, anchor="w", stretch=coluna in ("#0", "exemplo"))
+        for n, (pasta, quantos, motivo, exemplo) in enumerate(grupos):
+            self.tabela.insert("", "end", iid=str(n), text=pasta, values=(quantos, motivo, exemplo))
+        self.tabela.pack(side="left", fill="both", expand=True)
+        rolagem = ctk.CTkScrollbar(quadro, command=self.tabela.yview, button_color=Tema.CARTAO_BORDA)
+        rolagem.pack(side="right", fill="y")
+        self.tabela.configure(yscrollcommand=rolagem.set)
+        master._botao(botoes, "Fechar", self.destroy, "fantasma", largura=90).pack(side="right")
+        self.bt_corrigir = master._botao(botoes, "Corrigir nome da(s) pasta(s)...",
+                                         lambda: self._com_selecao(acoes["corrigir"]), "primario")
+        self.bt_corrigir.pack(side="right", padx=(0, 8))
+        self.bt_mostrar = master._botao(botoes, "Mostrar na tabela", lambda: self._com_selecao(acoes["mostrar"]),
+                                        "secundario")
+        self.bt_mostrar.pack(side="right", padx=(0, 8))
+        self.tabela.bind("<Double-1>", lambda e: self._com_selecao(acoes["corrigir"]))
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    def _com_selecao(self, acao) -> None:
+        escolhidos = [int(i) for i in self.tabela.selection()]
+        if not escolhidos:
+            self.master.mostrar_mensagem("Não identificados", "Escolha uma pasta da lista (Ctrl+clique para várias).",
+                                         "aviso")
+            return
+        acao(escolhidos)
+
+
 class LinhaCanal(NamedTuple):
     """Uma linha da tabela de canais."""
     iid: str
@@ -1010,6 +1061,9 @@ class JanelaModerna(ctk.CTk):
         self.lb_subtitulo = ctk.CTkLabel(textos, font=self.f_sub, text_color=Tema.TEXTO_SUAVE, anchor="w",
                                          text=self.SUBTITULOS["Vídeos"])
         self.lb_subtitulo.pack(anchor="w", pady=(2, 0))
+        # "painel de saúde" (aba Jellyfin): bibliotecas, Jellyfin, vigia, lugar fixo e versão numa linha só
+        self.lb_saude = ctk.CTkLabel(textos, text="", font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO_SUAVE,
+                                     anchor="w", justify="left")
         self.seletor_aba = ctk.CTkSegmentedButton(
             topo, values=["Vídeos", "Jellyfin"], command=self.mostrar_aba, height=38,
             corner_radius=Tema.RAIO_CONTROLE, font=self.f_botao, fg_color=Tema.CARTAO,
@@ -1033,6 +1087,19 @@ class JanelaModerna(ctk.CTk):
         self.seletor_aba.set(nome)
         self.lb_titulo.configure(text=self.TITULOS[nome])
         self.lb_subtitulo.configure(text=self.SUBTITULOS[nome])
+        if nome == "Jellyfin" and self.lb_saude.cget("text"):
+            self.lb_saude.pack(anchor="w", pady=(2, 0))
+        else:
+            self.lb_saude.pack_forget()
+
+    def definir_saude(self, itens: list[tuple[str, bool]]) -> None:
+        """itens: [(texto, ok)]. Uma linha: '✓ Filmes · ⚠ Séries: não escolhida · ...' (laranja se algo falta)."""
+        texto = "   ·   ".join(f"{'✓' if ok else '⚠'} {rotulo}" if ok is not None else rotulo
+                               for rotulo, ok in itens)
+        self.lb_saude.configure(text=texto, text_color=Tema.AVISO if any(ok is False for _, ok in itens)
+                                else Tema.TEXTO_SUAVE)
+        if self.aba_atual() == "Jellyfin":
+            self.lb_saude.pack(anchor="w", pady=(2, 0))
 
     def aba_atual(self) -> str:
         return self.seletor_aba.get()
@@ -1653,7 +1720,10 @@ class JanelaModerna(ctk.CTk):
         # conflito (cópia repetida ou já na biblioteca): fica a melhor, a outra sai (dá para desfazer)
         self.bt_resolver_conflitos = self._botao(acoes, "Resolver conflitos...", self.ao_resolver_conflitos,
                                                  "secundario", largura=160)
-        for b in (self.bt_resolver_conflitos, self.bt_corrigir_nome):
+        # os não identificados juntos por pasta: corrige o grupo inteiro de uma vez
+        self.bt_nao_identificados = self._botao(acoes, "Não identificados...", self.ao_nao_identificados,
+                                                "secundario", largura=160)
+        for b in (self.bt_resolver_conflitos, self.bt_corrigir_nome, self.bt_nao_identificados):
             b.configure(height=30)
             b.pack(side="right", padx=(8, 0))
         for coluna, texto in ((1, "Pasta"), (2, "Arquivo")):
@@ -2385,6 +2455,9 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_atualizar_jellyfin_agora(self) -> None:
+        pass
+
+    def ao_nao_identificados(self) -> None:
         pass
 
     def ao_abrir_pasta_programa(self) -> None:

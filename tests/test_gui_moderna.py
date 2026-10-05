@@ -2117,3 +2117,114 @@ def test_nao_perguntar_de_novo(app, monkeypatch, tmp_path):
     assert config.carregar()["instalacao"]["nao_perguntar"] is True
     app.escolher = lambda *a, **k: pytest.fail("não pergunta mais")
     app._conferir_instalacao()
+
+
+def test_tv_com_canais_a_mais_no_jellyfin_oferece_limpar_e_reenviar(app, tmp_path, api_falsa):
+    """Caso real: enviou 144 e o Jellyfin seguia com 11.129, sem nenhum sintonizador "de fora"."""
+    import json
+    from jellyfin_tools.tv_ao_vivo import Canal
+    hosts, total = [], {"n": 11129}
+
+    def tuner(q):
+        pedido = api_falsa.pedidos[-1]
+        if pedido["metodo"] == "DELETE":
+            hosts[:] = [h for h in hosts if h["Id"] != q["id"][0]]
+            total["n"] = 0                                              # sem a lista, os velhos somem
+            return 204, b""
+        corpo = {**json.loads(pedido["corpo"]), "Id": "nosso"}
+        hosts[:] = [corpo]
+        return 200, corpo
+
+    def rodar(q):
+        if hosts:
+            total["n"] = 1 if total["n"] == 0 else total["n"]
+        return 204, b""
+    api_falsa.rotas["/System/Configuration/livetv"] = lambda q: (200, {"TunerHosts": hosts, "ListingProviders": []})
+    api_falsa.rotas["/LiveTv/TunerHosts"] = tuner
+    api_falsa.rotas["/ScheduledTasks"] = lambda q: (200, [{"Key": "RefreshGuide", "Id": "abc"}])
+    api_falsa.rotas["/ScheduledTasks/Running/abc"] = rodar
+    api_falsa.rotas["/ScheduledTasks/abc"] = lambda q: (200, {"State": "Idle"})
+    api_falsa.rotas["/LiveTv/Channels"] = lambda q: (200, {"Items": [], "TotalRecordCount": total["n"]})
+    app.var_jf_url.set(api_falsa.base)
+    app.var_jf_chave_jellyfin.set("chave")
+    janela = _abrir_tv(app, [Canal("A", "https://a.org/1")])
+    janela.var_pasta.set(str(tmp_path / "TV"))
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append((t, m)), opcoes[0])[1]
+    app._publicar_canais()                                              # envio -> pergunta -> limpeza (2 tarefas)
+    fim = time.time() + 60
+    while time.time() < fim and not any("Com a lista de novo" in c[2] for c in app.caixas):
+        app.update()
+        time.sleep(0.05)
+    titulo, texto = next((t, m) for t, m in perguntas if "canais a mais" in t)
+    assert "11129 canais, mas a lista enviada tem 1" in texto and "videoscraper" in texto
+    assert "Com a lista de novo: agora TV ao vivo tem 1 canal(is)" in app.caixas[-1][2]
+
+
+def test_nao_identificados_por_pasta_corrige_o_grupo_inteiro(app, tmp_path, monkeypatch):
+    origem = tmp_path / "Downloads"
+    for nome in ("Pasta A/abc_xyz_1.mkv", "Pasta A/abc_xyz_2.mkv", "Pasta A/abc_xyz_3.mkv", "Pasta B/zzz.mkv",
+                 "Matrix.1999.mkv"):
+        (origem / nome).parent.mkdir(parents=True, exist_ok=True)
+        (origem / nome).write_bytes(b"v")
+    app.mostrar_aba("Jellyfin")
+    app.seletor_modo.set("Filmes")
+    app._ao_trocar_modo("Filmes")
+    app.var_jf_exigir.set(True)                                         # nome que o catálogo não conhece: sem nome
+    app.var_jf_origem.set(str(origem))
+    app.var_jf_destino.set(str(tmp_path / "Filmes"))
+    app.bt_previa.invoke()
+    esperar(app)
+    app.bt_nao_identificados.invoke()
+    janela = app.janela_nao_identificados
+    linhas = [(janela.tabela.item(i, "text"), janela.tabela.set(i, "quantos")) for i in janela.tabela.get_children()]
+    assert linhas == [(str(origem / "Pasta A"), "3"), (str(origem / "Pasta B"), "1")]   # o maior grupo primeiro
+    selecionados = []
+    monkeypatch.setattr(app, "ao_corrigir_nome", lambda: selecionados.append(set(app.tabela_jf.selection())))
+    janela.tabela.selection_set(["0"])
+    janela.bt_corrigir.invoke()
+    nomes = {app._movimentos_previa[int(i)].origem.name for i in selecionados[0]}
+    assert nomes == {"abc_xyz_1.mkv", "abc_xyz_2.mkv", "abc_xyz_3.mkv"} and not janela.winfo_exists()
+
+
+def test_painel_de_saude_numa_linha(app, tmp_path):
+    filmes = tmp_path / "Filmes"
+    filmes.mkdir()
+    app.mostrar_aba("Jellyfin")
+    app._destinos["Séries"] = ""
+    app.var_jf_destino.set(str(filmes))
+    app.var_jf_chave_jellyfin.set("")
+    app._ciclo_saude()
+    texto = app.lb_saude.cget("text")
+    assert "✓ Filmes" in texto and "⚠ Séries: biblioteca não escolhida" in texto
+    assert "⚠ Jellyfin: sem a chave de API" in texto and "○ Vigia desligada" in texto and "Versão" in texto
+    assert app.lb_saude.winfo_manager()                                 # aparece na aba Jellyfin
+    app.mostrar_aba("Vídeos")
+    assert not app.lb_saude.winfo_manager()                             # e some na aba Vídeos
+
+
+def test_lixeira_com_mais_de_30_dias_pergunta_e_apaga(app, tmp_path):
+    import os
+    from videoscraper import config
+    filmes = tmp_path / "Filmes"
+    velho = filmes / ".organizador" / "removidos" / "20250101-101500-000001"
+    novo = filmes / ".organizador" / "removidos" / time.strftime("%Y%m%d-%H%M%S-000002")
+    for pasta in (velho, novo):
+        (pasta / "Matrix (1999)").mkdir(parents=True)
+        (pasta / "Matrix (1999)" / "Matrix.720p.mkv").write_bytes(b"x" * 4096)
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_destino.set(str(filmes))
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append(m), "Apagar de vez")[1]
+    app._conferir_lixeira(sempre=True)
+    fim = time.time() + 10
+    while time.time() < fim and velho.exists():
+        app.update()
+        time.sleep(0.05)
+    esperar(app)
+    assert not velho.exists() and novo.exists()                         # só o de mais de 30 dias
+    assert "1 lote(s)" in perguntas[0] and "20250101" in perguntas[0]
+    assert config.carregar()["lixeira"]["perguntado"]
+    app.escolher = lambda *a, **k: pytest.fail("pergunta no máximo uma vez por semana")
+    app._conferir_lixeira()
+    os.sync() if hasattr(os, "sync") else None

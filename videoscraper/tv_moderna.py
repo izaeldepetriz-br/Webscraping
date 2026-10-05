@@ -15,7 +15,8 @@ from tkinter import filedialog
 from jellyfin_tools.paralelo import prioridade_baixa
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin
 from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, Canal, ClienteTV, NaoEhLista, carregar_canais, carregar_historico,
-                                       conferir_canais, descrever_sintonizador, importar as importar_canais,
+                                       canais_a_mais, conferir_canais, descrever_sintonizador,
+                                       importar as importar_canais, limpar_e_reenviar,
                                        publicar as publicar_canais, registrar_no_historico, resumo_historico,
                                        salvar_canais, salvar_historico, sempre_falha)
 
@@ -363,6 +364,17 @@ class TVAoVivo:
                     feito.append(f"Atenção: o Jellyfin tem mais {len(outros)} sintonizador(es) que não são desta lista "
                                  "(os canais deles entram no total).")
                     self.fila.put(("tv_outros_sintonizadores", (outros, o.jellyfin_url, o.jellyfin_api_key)))
+                else:
+                    # nenhum de fora, mas o Jellyfin ficou com bem mais canais que a lista: guarda canais velhos
+                    try:
+                        total = cliente.quantos_canais()
+                        todos = cliente.configuracao().get("TunerHosts") or []
+                    except ErroJellyfin:
+                        total, todos = None, []
+                    if canais_a_mais(total, canais, valores["antena"]):
+                        feito.append(f"Atenção: o Jellyfin tem {total} canais, mas a lista enviada tem {len(canais)}.")
+                        self.fila.put(("tv_canais_a_mais", (total, len(canais), todos, endereco, o.jellyfin_url,
+                                                            o.jellyfin_api_key)))
             for linha in feito:
                 self._log.info("TV ao vivo: %s", linha)
             dica = "" if cliente else ("\n\nSem o endereço e a chave do Jellyfin (aba Jellyfin), a lista só foi salva: "
@@ -400,3 +412,26 @@ class TVAoVivo:
             self.fila.put(("msg", ("TV ao vivo", texto, "sucesso")))
 
         self._rodar("Tirando os outros sintonizadores do Jellyfin...", tarefa)
+
+    def _oferecer_limpar_tv(self, total: int, enviados: int, todos: list[dict], endereco: str, url: str,
+                            chave: str) -> None:
+        """Depois do envio: o Jellyfin ficou com MUITO mais canais que a lista (ex.: 11.129 com 144 enviados) e
+        não há sintonizador de fora. Mostra os sintonizadores e oferece a faxina (tira, atualiza, põe de volta)."""
+        lista = "\n".join(f"• {descrever_sintonizador(h)}" for h in todos[:10]) or "• (nenhum)"
+        escolha = self.escolher(
+            "TV ao vivo: canais a mais no Jellyfin",
+            f"O Jellyfin está com {total} canais, mas a lista enviada tem {enviados}.\n\nSintonizadores no Jellyfin:\n"
+            f"{lista}\n\nO Jellyfin ainda guarda canais de listas antigas. \"Limpar e reenviar\": tira a lista do "
+            "Jellyfin, espera ele apagar os canais velhos, põe a lista atual de volta e atualiza de novo (leva alguns "
+            "minutos; os favoritos da TV ao vivo precisam ser marcados de novo).",
+            ("Limpar e reenviar",), cancelar="Deixar como está")
+        if escolha != "Limpar e reenviar":
+            return
+
+        def tarefa():
+            feito = limpar_e_reenviar(ClienteTV(url, chave), endereco, self.evento_parar.is_set)
+            for linha in feito:
+                self._log.info("TV ao vivo (limpeza): %s", linha)
+            self.fila.put(("msg", ("TV ao vivo", "\n".join(feito) or "Pronto.", "sucesso")))
+
+        self._rodar("Limpando a TV ao vivo do Jellyfin e reenviando (alguns minutos)...", tarefa)

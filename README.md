@@ -233,6 +233,20 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v1.9
+
+- **TV ao vivo, canais que não saíam do Jellyfin:** o programa contava os canais antes de o Jellyfin terminar de
+  atualizar o guia (via a tarefa "parada" antes de começar); agora só vale um fim mais novo que o do pedido, e
+  um erro da tarefa aparece na mensagem. Listas antigas do programa (outro "videoscraper" apontando para outro
+  arquivo) saem no envio. Se o Jellyfin ainda ficar com bem mais canais que a lista, o programa mostra os
+  sintonizadores e oferece **"Limpar e reenviar"** (tira, espera apagar, põe de volta).
+- **Lixeira com limpeza:** os lotes de `.organizador\removidos` com mais de 30 dias: o programa pergunta (no
+  máximo uma vez por semana) se pode apagar de vez, mostrando o espaço que libera.
+- **Painel de saúde:** no topo da aba Jellyfin, uma linha com as bibliotecas, o Jellyfin (chave/conexão), a
+  vigia, o lugar fixo e a versão; laranja quando falta algo.
+- **Não identificados por pasta:** botão "Não identificados..." junta os arquivos por pasta (o maior grupo
+  primeiro); escolha a pasta e "Corrigir nome" vale para todos os arquivos dela de uma vez.
+
 ### Novidades da v1.8.1
 
 - **Scan do Jellyfin à vista:** o fim da vigia e do Organizar diz se o Jellyfin foi avisado para atualizar a

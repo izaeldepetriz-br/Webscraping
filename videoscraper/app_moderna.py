@@ -39,9 +39,10 @@ from jellyfin_tools.espelho import (aplicar_espelho, classificar, conferir_e_avi
                                     remover_espelhos_escolhidos, verificar_links)
 from jellyfin_tools.conflitos import aplicar as aplicar_conflitos, decidir as decidir_conflitos
 from jellyfin_tools.paralelo import prioridade_baixa
+from jellyfin_tools.lixeira import apagar_lotes, lotes_antigos, tamanho_legivel
 from jellyfin_tools.tv_ao_vivo import carregar_canais, conferir_canais, mensagem_fora_do_ar
 from jellyfin_tools.regras import RegraNome, adicionar_regra, carregar_regras, regra_para, salvar_regras
-from jellyfin_tools.organizador import (DETALHE_EPISODIO, episodio_do_video, protegido, organizar_misto, problema_no_caminho, sugestao_de_caminho,
+from jellyfin_tools.organizador import (DETALHE_EPISODIO, agrupar_nao_identificados, episodio_do_video, protegido, organizar_misto, problema_no_caminho, sugestao_de_caminho,
                                        ultimo_log)
 from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, itens_de_series, pos_processar
 from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao
@@ -55,7 +56,7 @@ from .cli import salvar
 from .extracao import LinkVideo
 from .gui import ORIGENS, _SaidaParaFila, _so_caracteres_basicos
 from . import atualizacao, instalacao, bandeja, inicializacao
-from .gui_moderna import JanelaEspelhos, JanelaModerna, OpcoesInterface, Tema
+from .gui_moderna import JanelaEspelhos, JanelaModerna, JanelaNaoIdentificados, OpcoesInterface, Tema
 from .tv_moderna import TVAoVivo
 from .navegador import PERFIL_PADRAO, PlaywrightAusente
 from .servico import MENSAGEM_ROBOTS, Trabalho, fazer_login
@@ -437,12 +438,16 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 self.sair_de_vez()
         elif tipo == "versao_consultada":
             self._mostrar_versao_consultada(*dado)
+        elif tipo == "lixeira_antiga":
+            self._oferecer_limpar_lixeira(dado)
         elif tipo == "atalhos_feitos":                 # atalhos refeitos para esta versão (não refaz de novo)
             tudo = config.carregar()
             tudo.setdefault("instalacao", {})["atalhos_versao"] = dado
             config.salvar(tudo)
         elif tipo == "instalado_fixo":
             self._instalado_fixo_pendente = dado           # depois do "fim"
+        elif tipo == "tv_canais_a_mais":
+            self._tv_canais_a_mais_pendente = dado         # pergunta depois do "fim"
         elif tipo == "tv_outros_sintonizadores":
             self._tv_outros_pendente = dado                # pergunta depois do "fim"
         elif tipo == "atualizacao_baixada":
@@ -489,6 +494,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
             if getattr(self, "_instalado_fixo_pendente", None):
                 instalado, self._instalado_fixo_pendente = self._instalado_fixo_pendente, None
                 self.after(50, lambda: self._instalado_fixo(*instalado))
+            if getattr(self, "_tv_canais_a_mais_pendente", None):
+                a_mais, self._tv_canais_a_mais_pendente = self._tv_canais_a_mais_pendente, None
+                self.after(50, lambda: self._oferecer_limpar_tv(*a_mais))
             if self._tv_outros_pendente:
                 outros, self._tv_outros_pendente = self._tv_outros_pendente, None
                 self.after(50, lambda: self._oferecer_tirar_sintonizadores(*outros))
@@ -1279,6 +1287,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
                             jellyfin_api_key=o.jellyfin_api_key if o.atualizar_jellyfin else "")
             resultados = pos_processar(itens, cfg, self._log, ao_item=ao_item, parar=self.evento_parar.is_set)
             self._ultimo_scan = cfg.scan if o.atualizar_jellyfin else "desligado"
+            if cfg.scan == "pedido":
+                self._saude_jellyfin = "ok"
+            elif cfg.scan.startswith("erro"):
+                self._saude_jellyfin = cfg.scan
             return resultados
 
     @staticmethod
@@ -1376,9 +1388,11 @@ class AppModerna(TVAoVivo, JanelaModerna):
         def tarefa():
             try:
                 servidor = testar_conexao(o.jellyfin_url, o.jellyfin_api_key)
+                self._saude_jellyfin = "ok"
                 self._log.info("Jellyfin: conectado a %s", servidor)
                 self.fila.put(("msg", ("Jellyfin conectado", f"Tudo certo: {servidor}.", "sucesso")))
             except ErroJellyfin as erro:
+                self._saude_jellyfin = f"erro: {erro}"
                 self._log.warning("Jellyfin: %s", erro)
                 self.fila.put(("msg", ("Jellyfin", str(erro).capitalize() + ".", "erro")))
 
@@ -1468,6 +1482,35 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 adicionar_regra(self.arquivo_regras, regra)
                 self._log.info("Regra de nome: %s -> %s", alvo, regra.descricao())
         self.ao_previsualizar()
+
+    def ao_nao_identificados(self) -> None:
+        """Os não identificados da prévia juntos por pasta; um "Corrigir nome" por pasta resolve o grupo todo."""
+        grupos = agrupar_nao_identificados(self._movimentos_previa)
+        if not grupos:
+            self.mostrar_mensagem("Não identificados", "Nenhum não identificado na pré-visualização (pré-visualize "
+                                  "primeiro).", "info")
+            return
+        linhas = []
+        for pasta, indices in grupos:
+            primeiro = self._movimentos_previa[indices[0]]
+            motivo = (primeiro.detalhe or "").split(":")[0][:60]
+            linhas.append((str(pasta), len(indices), motivo, primeiro.origem.name))
+
+        def selecionar(posicoes) -> list[str]:
+            iids = [str(i) for n in posicoes for i in grupos[n][1]]
+            existentes = [i for i in iids if self.tabela_jf.exists(i)]
+            self.tabela_jf.selection_set(existentes)
+            if existentes:
+                self.tabela_jf.see(existentes[0])
+            return existentes
+
+        def corrigir(posicoes) -> None:
+            if selecionar(posicoes):
+                self.janela_nao_identificados.destroy()
+                self.ao_corrigir_nome()
+
+        self.janela_nao_identificados = JanelaNaoIdentificados(self, linhas, {"corrigir": corrigir,
+                                                                             "mostrar": selecionar})
 
     # ================================================================== conflitos com um clique
     def ao_resolver_conflitos(self) -> None:
@@ -1726,7 +1769,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self.definir_estado_conferencia(self._texto_ultima_conferencia())
         self._conferencia_agendada = self.after(60_000, self._ciclo_conferencia)
         self._mostrar_pasta_programa()
+        self._ciclo_saude()
         if not os.environ.get("VIDEOSCRAPER_SEM_ATUALIZACAO"):
+            self.after(8000, self._conferir_lixeira)      # .organizador\removidos com mais de 30 dias?
             self.after(4000, self._ciclo_versao)          # ao abrir e depois a cada 6 horas (programa aberto)
             self.after(2500, self._conferir_instalacao)   # .exe fora do lugar fixo? oferece instalar
 
@@ -1786,6 +1831,99 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._saindo = True
         self.mostrar_janela()
         self.fechar()
+
+    # ================================================================== painel de saúde (uma linha no topo)
+    def itens_saude(self) -> list[tuple[str, bool | None]]:
+        """O que está certo (True), o que falta (False) e o que é só informação (None)."""
+        destinos = dict(self._destinos)
+        destinos[self._modo_atual] = self.var_jf_destino.get()
+        itens: list[tuple[str, bool | None]] = []
+        for tipo in ("Filmes", "Séries"):
+            pasta = destinos.get(tipo)
+            if not pasta:
+                itens.append((f"{tipo}: biblioteca não escolhida", False))
+            elif not Path(pasta).is_dir():
+                itens.append((f"{tipo}: pasta não encontrada", False))
+            else:
+                itens.append((tipo, True))
+        jellyfin = getattr(self, "_saude_jellyfin", "")
+        if not (self.var_jf_url.get().strip() and self.var_jf_chave_jellyfin.get().strip()):
+            itens.append(("Jellyfin: sem a chave de API", False))
+        elif jellyfin.startswith("erro"):
+            itens.append((f"Jellyfin: {jellyfin[6:][:60]}", False))
+        else:
+            itens.append(("Jellyfin" + (" (conectado)" if jellyfin == "ok" else ""), True))
+        itens.append(("● Vigia ligada" if self.var_jf_vigiar.get() else "○ Vigia desligada", None))
+        if atualizacao.pode_instalar_sozinho():
+            fixo = instalacao.esta_na_pasta_fixa(atualizacao.pasta_do_programa())
+            itens.append(("Lugar fixo" if fixo else "Fora do lugar fixo", fixo))
+        atual, publicada = atualizacao.versao_atual(), getattr(self, "_versao_publicada", "")
+        if publicada and atualizacao.numeros(publicada) > atualizacao.numeros(atual):
+            itens.append((f"Versão {atual}: a {publicada} já saiu", False))
+        else:
+            itens.append((f"Versão {atual}" + (" (a mais nova)" if publicada else ""), True))
+        return itens
+
+    def _ciclo_saude(self) -> None:
+        try:
+            self.definir_saude(self.itens_saude())
+        except tk.TclError:
+            return
+        self.after(15_000, self._ciclo_saude)
+
+    # ================================================================== lixeira (.organizador\removidos)
+    def _raizes_da_lixeira(self) -> list[str]:
+        destinos = dict(self._destinos)
+        destinos[self._modo_atual] = self.var_jf_destino.get()
+        raizes = [destinos.get("Filmes"), destinos.get("Séries"), self.var_jf_origem.get(), *self.pastas_vigiadas()]
+        return [r for r in dict.fromkeys(r for r in raizes if r) if Path(r).is_dir()]
+
+    def _conferir_lixeira(self, sempre: bool = False) -> None:
+        """No máximo uma vez por semana: lotes em .organizador\removidos com mais de 30 dias -> pergunta se apaga."""
+        dados = config.carregar().get("lixeira", {})
+        if not sempre and (dados.get("nao_perguntar") or
+                           (dados.get("perguntado") and
+                            datetime.now() - datetime.fromisoformat(dados["perguntado"]) < timedelta(days=7))):
+            return
+        raizes = self._raizes_da_lixeira()
+
+        def procurar():
+            lotes = lotes_antigos(raizes)
+            if lotes:
+                self.fila.put(("lixeira_antiga", lotes))
+            elif sempre:
+                self.fila.put(("msg", ("Lixeira", "Nada com mais de 30 dias em .organizador\\removidos.", "info")))
+        threading.Thread(target=procurar, daemon=True).start()
+
+    def _oferecer_limpar_lixeira(self, lotes) -> None:
+        if self.trabalhando:
+            self.after(60_000, lambda: self._oferecer_limpar_lixeira(lotes))
+            return
+        tudo = config.carregar()
+        tudo.setdefault("lixeira", {})["perguntado"] = datetime.now().isoformat(timespec="seconds")
+        config.salvar(tudo)
+        total = sum(lote.tamanho for lote in lotes)
+        lista = "\n".join(f"• {lote.pasta}  ({lote.data:%d/%m/%Y}, {tamanho_legivel(lote.tamanho)})" for lote in lotes[:6])
+        resto = f"\n… e mais {len(lotes) - 6}" if len(lotes) > 6 else ""
+        escolha = self.escolher(
+            "Lixeira do organizador",
+            f"{len(lotes)} lote(s) em .organizador\\removidos têm mais de 30 dias ({tamanho_legivel(total)}). São as "
+            "cópias piores dos conflitos e os espelhos que você removeu.\n\n" + lista + resto +
+            "\n\nApagar de vez libera o espaço; depois disso o \"Desfazer\" desses lotes não funciona mais.",
+            ("Apagar de vez", "Não perguntar de novo"), cancelar="Agora não")
+        if escolha == "Não perguntar de novo":
+            tudo = config.carregar()
+            tudo.setdefault("lixeira", {})["nao_perguntar"] = True
+            config.salvar(tudo)
+        elif escolha == "Apagar de vez":
+            def tarefa():
+                apagados, erros = apagar_lotes(lotes)
+                for erro in erros:
+                    self._log.warning("Lixeira: %s", erro)
+                self._log.info("Lixeira: %d lote(s) apagado(s) (%s)", apagados, tamanho_legivel(total))
+                self.fila.put(("status_fim", f"Lixeira: {apagados} lote(s) apagado(s), {tamanho_legivel(total)} "
+                                             "liberados." + (f" {len(erros)} com erro (veja o log)." if erros else "")))
+            self._rodar("Apagando a lixeira antiga...", tarefa)
 
     # ================================================================== lugar fixo do programa e atalhos
     def _mostrar_pasta_programa(self) -> None:
@@ -1911,6 +2049,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
     def _mostrar_versao_consultada(self, nova, erro) -> None:
         self.bt_atualizacoes.configure(state="normal", text="⟳  Verificar atualizações")
+        if nova:
+            self._versao_publicada = nova.versao
         atual = atualizacao.versao_atual()
         if erro:
             self.mostrar_mensagem("Verificar atualizações", f"Não consegui consultar agora: {erro}.\n"
@@ -2012,6 +2152,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         threading.Thread(target=consultar, daemon=True).start()
 
     def _avisar_versao_nova(self, nova) -> None:
+        self._versao_publicada = nova.versao
         self.var_jf_versao_avisada.set(nova.versao)
         self._salvar_config()
         self._log.info("Versão nova disponível: %s (esta é %s) %s", nova.versao, atualizacao.versao_atual(), nova.url)

@@ -474,6 +474,9 @@ class ClienteTV:
         return self._pedir("POST", "/LiveTv/ListingProviders", json=corpo,
                            params={"validateListings": "false", "validateLogin": "false"}) or corpo
 
+    def _tarefa(self, id_: str) -> dict:
+        return self._pedir("GET", f"/ScheduledTasks/{id_}") or {}
+
     def atualizar_guia(self) -> str:
         """Roda a tarefa 'Atualizar o guia' agora (senão o Jellyfin espera o horário dela). Devolve o id da
         tarefa ('' se não achou). É ELA que lê a lista de novo e tira os canais que saíram."""
@@ -481,20 +484,39 @@ class ClienteTV:
         tarefa = next((t for t in tarefas if t.get("Key") == "RefreshGuide"), None)
         if not tarefa:
             return ""
+        # quando ela terminou da ÚLTIMA vez: só vale como "terminou" um fim DEPOIS deste pedido
+        try:
+            antes = (self._tarefa(tarefa["Id"]).get("LastExecutionResult") or {}).get("EndTimeUtc")
+        except ErroJellyfin:
+            antes = None
+        self._fim_anterior = getattr(self, "_fim_anterior", {})
+        self._fim_anterior[str(tarefa["Id"])] = antes
         self._pedir("POST", f"/ScheduledTasks/Running/{tarefa['Id']}")
         return str(tarefa["Id"])
 
     def esperar_tarefa(self, id_: str, limite: float = 180, parar=None, intervalo: float = 2) -> bool:
-        """Espera a tarefa terminar (até `limite` segundos). True = terminou."""
+        """Espera a tarefa pedida em atualizar_guia() TERMINAR (até `limite` segundos). True = terminou.
+        Antes bastava ela aparecer "parada" (Idle), e logo depois do pedido ela ainda nem tinha começado: o
+        programa contava os canais ANTIGOS. Agora só vale um fim mais novo que o de antes do pedido (ou tê-la
+        visto rodando). Se ela terminou com erro, o motivo fica em self.erro_da_tarefa."""
         import time
+        self.erro_da_tarefa = ""
+        antes = getattr(self, "_fim_anterior", {}).get(str(id_))
+        viu_rodando = False
         fim = time.monotonic() + limite
         time.sleep(min(intervalo, 1))
         while time.monotonic() < fim and not (parar and parar()):
             try:
-                estado = (self._pedir("GET", f"/ScheduledTasks/{id_}") or {}).get("State", "Idle")
+                info = self._tarefa(id_)
             except ErroJellyfin:
                 return False
-            if estado == "Idle":
+            estado = info.get("State", "Idle")
+            ultimo = info.get("LastExecutionResult") or {}
+            viu_rodando = viu_rodando or estado != "Idle"
+            if estado == "Idle" and ("LastExecutionResult" not in info          # Jellyfin antigo: sem o histórico
+                                     or viu_rodando or (ultimo.get("EndTimeUtc") and ultimo.get("EndTimeUtc") != antes)):
+                if ultimo.get("Status") in ("Failed", "Aborted"):
+                    self.erro_da_tarefa = ultimo.get("ErrorMessage") or ultimo.get("Status")
                 return True
             time.sleep(intervalo)
         return False
@@ -551,8 +573,16 @@ def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = 
         if nossos:
             feito.append("Jellyfin: lista vazia -> sintonizador M3U retirado (os canais saem de TV ao vivo)")
     else:
-        cliente.cadastrar_sintonizador("m3u", endereco)
+        cadastrado = cliente.cadastrar_sintonizador("m3u", endereco)
         feito.append(f"Jellyfin: sintonizador M3U -> {endereco}")
+        # versões antigas/outra pasta: outro "videoscraper" apontando para OUTRO arquivo (com a lista velha)
+        antigos = [h for h in cliente.sintonizadores("m3u", endereco)
+                   if h.get("Url") != endereco and h.get("Id") != (cadastrado or {}).get("Id")]
+        for host in antigos:
+            cliente.remover_sintonizador(host.get("Id", ""))
+        if antigos:
+            feito.append(f"Jellyfin: {len(antigos)} lista(s) antiga(s) do programa retirada(s) (" +
+                         "; ".join(str(h.get("Url", "")) for h in antigos[:3]) + ")")
     if antena.strip():
         cliente.cadastrar_sintonizador("hdhomerun", antena.strip(), f"{NOME_SINTONIZADOR} antena")
         feito.append(f"Jellyfin: sintonizador de antena HDHomeRun -> {antena.strip()}")
@@ -577,8 +607,10 @@ def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = 
             terminou = atualizar()
     if terminou:
         total = cliente.quantos_canais()
+        erro = getattr(cliente, "erro_da_tarefa", "")
         feito.append("Jellyfin: guia atualizado" + (f" -> agora TV ao vivo tem {total} canal(is)"
-                                                    if total is not None else ""))
+                                                    if total is not None else "")
+                     + (f" (a tarefa terminou com erro: {erro})" if erro else ""))
     elif cliente is not None:
         feito.append("Jellyfin: atualizando o guia (os canais mudam em TV ao vivo em alguns minutos; "
                      "acompanhe em Painel > Tarefas agendadas > Atualizar o guia)")
@@ -601,3 +633,26 @@ def _removidos_sairam(cliente: ClienteTV, removidos: list[Canal], canais: list[C
         return nomes is not None and not (nomes_sairam & nomes)
     total = cliente.quantos_canais()
     return total is not None and total_antes is not None and total <= total_antes - len(removidos) + entraram
+
+
+def canais_a_mais(total: int | None, canais: list[Canal], antena: str = "") -> bool:
+    """O Jellyfin ficou com bem mais canais do que a lista enviada? (Com antena não dá para saber quantos são.)"""
+    return total is not None and not antena.strip() and total > len(canais) + max(10, len(canais) // 10)
+
+
+def limpar_e_reenviar(cliente: ClienteTV, endereco: str, parar=None, esperar: float = 300) -> list[str]:
+    """Faxina da TV ao vivo: tira TODOS os sintonizadores M3U do programa, atualiza o guia (o Jellyfin apaga os
+    canais deles), cadastra de novo só a lista atual e atualiza o guia outra vez. Os favoritos se perdem."""
+    feito = []
+    for host in cliente.sintonizadores("m3u", endereco):
+        cliente.remover_sintonizador(host.get("Id", ""))
+    if (tarefa := cliente.atualizar_guia()) and cliente.esperar_tarefa(tarefa, esperar, parar):
+        feito.append(f"Sem a lista: o Jellyfin ficou com {cliente.quantos_canais()} canal(is) (de outras fontes).")
+    if parar and parar():
+        return feito + ["Parado: cadastre de novo com \"Salvar e enviar\"."]
+    cliente.cadastrar_sintonizador("m3u", endereco)
+    if (tarefa := cliente.atualizar_guia()) and cliente.esperar_tarefa(tarefa, esperar, parar):
+        feito.append(f"Com a lista de novo: agora TV ao vivo tem {cliente.quantos_canais()} canal(is).")
+    else:
+        feito.append("O Jellyfin ainda está atualizando o guia: confira em alguns minutos.")
+    return feito

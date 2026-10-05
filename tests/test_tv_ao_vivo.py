@@ -370,3 +370,58 @@ def test_outros_sintonizadores_sao_os_que_nao_sao_desta_lista(tmp_path, api_fals
     assert [h["Id"] for h in outros] == ["manual"]                  # a nossa lista e a nossa antena não entram
     from jellyfin_tools.tv_ao_vivo import descrever_sintonizador
     assert descrever_sintonizador(outros[0]) == 'M3U "iptv": https://iptv-org.github.io/iptv/index.m3u'
+
+
+def test_esperar_o_guia_nao_conta_antes_da_tarefa_terminar(api_falsa):
+    """Caso real: logo depois do pedido a tarefa ainda está "parada" (nem começou) e o programa achava que já
+    tinha terminado: contava os canais ANTIGOS (11.129)."""
+    import time
+    estado = {"pedido": None, "fim": "2026-10-05T10:00:00Z"}
+
+    def tarefa(q):
+        if estado["pedido"] is None:
+            return 200, {"State": "Idle", "LastExecutionResult": {"EndTimeUtc": estado["fim"], "Status": "Completed"}}
+        passou = time.monotonic() - estado["pedido"]
+        if passou < 1.5:                                                 # ainda na fila: "parada", fim antigo
+            return 200, {"State": "Idle", "LastExecutionResult": {"EndTimeUtc": estado["fim"], "Status": "Completed"}}
+        if passou < 3:
+            return 200, {"State": "Running", "LastExecutionResult": {"EndTimeUtc": estado["fim"]}}
+        return 200, {"State": "Idle", "LastExecutionResult": {"EndTimeUtc": "2026-10-05T10:05:00Z",
+                                                              "Status": "Failed", "ErrorMessage": "XMLTV inválido"}}
+
+    def rodar(q):
+        estado["pedido"] = time.monotonic()
+        return 204, b""
+    api_falsa.rotas["/ScheduledTasks"] = lambda q: (200, [{"Key": "RefreshGuide", "Id": "abc"}])
+    api_falsa.rotas["/ScheduledTasks/abc"] = tarefa
+    api_falsa.rotas["/ScheduledTasks/Running/abc"] = rodar
+    cliente = ClienteTV(api_falsa.base, "chave")
+    inicio = time.monotonic()
+    assert cliente.esperar_tarefa(cliente.atualizar_guia(), limite=20, intervalo=0.2)
+    assert time.monotonic() - inicio >= 3                                # esperou ela rodar e terminar de verdade
+    assert cliente.erro_da_tarefa == "XMLTV inválido"
+
+
+def test_listas_antigas_do_programa_saem_ao_enviar(tmp_path, api_falsa):
+    """Outro "videoscraper" apontando para OUTRO arquivo (pasta antiga, lista velha de 11 mil canais)."""
+    hosts, canais_jf = _jellyfin_falso(api_falsa, limpa_sozinho=True)
+    for n in (1, 2):
+        hosts.append({"Id": f"velho{n}", "Type": "m3u", "FriendlyName": "videoscraper",
+                      "Url": str(tmp_path / f"antiga{n}.m3u")})
+    cliente = ClienteTV(api_falsa.base, "chave")
+    feito = publicar(ler_m3u(LISTA), tmp_path / "nova", cliente=cliente)
+    assert [h["Url"] for h in hosts] == [str(tmp_path / "nova" / "canais.m3u")]   # só um, no arquivo de agora
+    assert any("1 lista(s) antiga(s) do programa retirada(s)" in f for f in feito)   # o 1º foi reaproveitado
+
+
+def test_limpar_e_reenviar_e_canais_a_mais(tmp_path, api_falsa):
+    from jellyfin_tools.tv_ao_vivo import canais_a_mais, limpar_e_reenviar
+    hosts, canais_jf = _jellyfin_falso(api_falsa, limpa_sozinho=False)
+    cliente = ClienteTV(api_falsa.base, "chave")
+    canais = ler_m3u(LISTA)
+    publicar(canais, tmp_path, cliente=cliente)
+    canais_jf.update({("t1", f"Velho {n}"): True for n in range(500)})   # o Jellyfin guardou canais velhos
+    assert canais_a_mais(cliente.quantos_canais(), canais) and not canais_a_mais(2, canais)
+    assert not canais_a_mais(9999, canais, antena="192.168.0.5")          # com antena não dá para saber
+    feito = limpar_e_reenviar(cliente, str(tmp_path / "canais.m3u"))
+    assert "agora TV ao vivo tem 2 canal(is)" in feito[-1] and len(hosts) == 1

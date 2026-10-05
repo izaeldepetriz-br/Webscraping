@@ -949,3 +949,13 @@ def _remover_pastas_vazias(pasta: Path, raiz: Path, itens: list, mensagens: list
             return
         pasta.rmdir()
         pasta = pasta.parent
+
+
+def agrupar_nao_identificados(movimentos: list[Movimento]) -> list[tuple[Path, list[int]]]:
+    """Os não identificados juntos por pasta (os de uma série costumam estar na mesma pasta): [(pasta,
+    [índices na lista])], a pasta com mais arquivos primeiro. Assim um "Corrigir nome" resolve o grupo todo."""
+    grupos: dict[Path, list[int]] = {}
+    for i, m in enumerate(movimentos):
+        if m.status == "nao_identificado":
+            grupos.setdefault(m.origem.parent, []).append(i)
+    return sorted(grupos.items(), key=lambda pi: (-len(pi[1]), str(pi[0]).lower()))
