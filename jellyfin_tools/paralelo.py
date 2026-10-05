@@ -8,26 +8,90 @@ consultas que já estavam em andamento terminam sozinhas em segundo plano, sem s
 
 from __future__ import annotations
 
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+import queue
+import threading
+from time import monotonic
 
 
 def em_paralelo(itens: list, funcao, trabalhadores: int = 16, ao_progresso=None, parar=None,
-                intervalo: float = 0.2) -> dict:
-    """{índice: funcao(item)} dos que terminaram (todos, ou até o parar()). ao_progresso(feitos, total)."""
+                intervalo: float = 0.2, prazo: float | None = None, ao_estourar=None) -> dict:
+    """{índice: funcao(item)} dos que terminaram (todos, ou até o parar()). ao_progresso(feitos, total).
+
+    Leve com listas enormes: os itens ficam numa fila simples e cada trabalhador pega o próximo
+    (antes, 11 mil "tarefas" eram entregues de uma vez e cada espera passava por todas elas: só isso
+    ocupava um núcleo do processador e deixava a janela lenta). O progresso sai no máximo a cada
+    `intervalo` segundos.
+
+    prazo (segundos): um item que passa disso deixa de ser esperado; o resultado dele é ao_estourar(item)
+    (ou None) e outro trabalhador entra no lugar. A consulta presa termina sozinha em segundo plano
+    (os trabalhadores são "daemon": nem o fechamento do programa espera por eles)."""
     resultado: dict = {}
     if not itens:
         return resultado
-    executor = ThreadPoolExecutor(max_workers=max(1, min(trabalhadores, len(itens))))
-    pendentes = {executor.submit(funcao, item): n for n, item in enumerate(itens)}
+    trabalhadores = max(1, min(trabalhadores, len(itens)))
+    fila: queue.Queue = queue.Queue()
+    for par in enumerate(itens):
+        fila.put(par)
+    prontos: queue.Queue = queue.Queue()
+    cancelado = threading.Event()
+    trava = threading.Lock()
+    rodando: dict = {}                       # índice -> quando começou
+    abandonados: set = set()
+
+    def trabalhar() -> None:
+        while not cancelado.is_set():
+            try:
+                n, item = fila.get_nowait()
+            except queue.Empty:
+                return
+            with trava:
+                rodando[n] = monotonic()
+            try:
+                prontos.put((n, funcao(item), None))
+            except BaseException as erro:                  # devolve o erro para quem chamou
+                prontos.put((n, None, erro))
+            with trava:
+                rodando.pop(n, None)
+                if n in abandonados:                       # passou do prazo: alguém já entrou no lugar
+                    return
+
+    def contratar() -> None:
+        threading.Thread(target=trabalhar, daemon=True, name="em_paralelo").start()
+
+    for _ in range(trabalhadores):
+        contratar()
+    ultimo_aviso = 0.0
     try:
-        while pendentes:
-            prontos, _ = wait(pendentes, timeout=intervalo, return_when=FIRST_COMPLETED)
-            for futuro in prontos:
-                resultado[pendentes.pop(futuro)] = futuro.result()
-                if ao_progresso:
-                    ao_progresso(len(resultado), len(itens))
+        while len(resultado) < len(itens):
+            novos = 0
+            try:
+                pacote = prontos.get(timeout=intervalo)
+                while True:
+                    n, valor, erro = pacote
+                    if erro is not None:
+                        raise erro
+                    if n not in resultado:                 # o de um item abandonado não conta mais
+                        resultado[n] = valor
+                        novos += 1
+                    pacote = prontos.get_nowait()
+            except queue.Empty:
+                pass
+            if prazo:
+                agora = monotonic()
+                with trava:
+                    estourados = [n for n, comeco in rodando.items()
+                                  if agora - comeco > prazo and n not in abandonados and n not in resultado]
+                    abandonados.update(estourados)
+                for n in estourados:
+                    resultado[n] = ao_estourar(itens[n]) if ao_estourar else None
+                    novos += 1
+                    contratar()                            # o preso fica para trás; outro segue a fila
             if parar and parar():
                 break
+            agora = monotonic()
+            if ao_progresso and novos and (agora - ultimo_aviso >= intervalo or len(resultado) == len(itens)):
+                ultimo_aviso = agora
+                ao_progresso(len(resultado), len(itens))
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)        # não espera: o Parar é imediato
+        cancelado.set()                                    # o Parar é imediato: ninguém pega mais nada
     return resultado

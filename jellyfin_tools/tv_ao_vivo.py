@@ -133,8 +133,30 @@ class Situacao:
     servidor_caiu: bool = False     # nem conectou (o servidor inteiro, não só este canal)
 
 
-def conferir_canal(url: str, timeout=(4, 8), sessao: requests.Session | None = None) -> Situacao:
-    """timeout: (conectar, esperar a resposta). Um canal que nem conecta em 4 s está fora do ar."""
+TEMPO_CONECTAR, TEMPO_RESPOSTA = 3, 6     # segundos: conectar / esperar cada pedaço da resposta
+PRAZO_POR_CANAL = 12                      # nenhum canal segura a fila mais que isso (somando tudo)
+
+
+def _primeiros_bytes(resposta, quantos: int, prazo: float = TEMPO_RESPOSTA) -> bytes:
+    """O começo da resposta, sem ficar preso: lê o que já chegou (read1) até ter `quantos` bytes, o fim
+    ou o prazo. (Ler "2048 bytes" de uma vez esperava os 2048; um servidor que manda 1 byte por vez
+    prendia a consulta por minutos.)"""
+    import time
+    ler = getattr(resposta.raw, "read1", None)
+    if ler is None:                                       # urllib3 antigo
+        return next(resposta.iter_content(2048), b"")
+    inicio, limite = b"", time.monotonic() + prazo
+    while len(inicio) < quantos and time.monotonic() < limite:
+        parte = ler(2048, decode_content=True)
+        if not parte:
+            break
+        inicio += parte
+    return inicio
+
+
+def conferir_canal(url: str, timeout=(TEMPO_CONECTAR, TEMPO_RESPOSTA),
+                   sessao: requests.Session | None = None) -> Situacao:
+    """timeout: (conectar, esperar a resposta). Um canal que nem conecta em 3 s está fora do ar."""
     sessao = sessao or requests
     aviso = "; link temporário (token/expires): deve parar de funcionar" if _RE_TEMPORARIO.search(url) else ""
     try:
@@ -144,9 +166,12 @@ def conferir_canal(url: str, timeout=(4, 8), sessao: requests.Session | None = N
             if not r.ok:
                 return Situacao(False, f"fora do ar (HTTP {r.status_code})")
             tipo = r.headers.get("Content-Type", "").lower()
-            inicio = next(r.iter_content(2048), b"")
-    except (requests.ConnectionError, requests.ConnectTimeout) as erro:
-        return Situacao(False, f"sem resposta ({type(erro).__name__})", servidor_caiu=True)
+            inicio = _primeiros_bytes(r, 7 if ".m3u8" in url.lower() or "mpegurl" in tipo else 1)
+    except (requests.ConnectionError, requests.Timeout) as erro:
+        # não conectou, ou conectou e ficou mudo: conta como falha do SERVIDOR (os outros canais dele
+        # provavelmente estão iguais)
+        nome = "demorou demais para responder" if isinstance(erro, requests.ReadTimeout) else "sem resposta"
+        return Situacao(False, f"{nome} ({type(erro).__name__})", servidor_caiu=True)
     except requests.RequestException as erro:
         return Situacao(False, f"sem resposta ({type(erro).__name__})")
     if ".m3u8" in url.lower() or "mpegurl" in tipo:
@@ -160,16 +185,49 @@ def conferir_canal(url: str, timeout=(4, 8), sessao: requests.Session | None = N
     return Situacao(True, "no ar" + aviso)
 
 
-FALHAS_PARA_DESISTIR = 2      # 2 canais do mesmo servidor que nem conectam (e nenhum que respondeu): desiste dele
+FALHAS_PARA_DESISTIR = 2      # 2 canais do mesmo servidor sem resposta (e nenhum que respondeu): desiste dele
 POR_SERVIDOR = 6              # no máximo 6 consultas ao MESMO servidor ao mesmo tempo (não sobrecarrega nem é bloqueado)
+
+
+def _servidores_que_existem(urls: list[str], parar=None) -> set[str]:
+    """Os nomes de servidor que o DNS encontra. Feito UMA vez por servidor, todos ao mesmo tempo:
+    servidor que não existe mais (comum em listas velhas) sai na hora, sem esperar canal por canal."""
+    import socket
+    from urllib.parse import urlparse
+    nomes = sorted({h for h in (urlparse(u).hostname for u in urls) if h})
+
+    def existe(nome: str) -> bool:
+        try:
+            socket.getaddrinfo(nome, None)
+            return True
+        except (OSError, UnicodeError):
+            return False
+    achados = em_paralelo(nomes, existe, 64, parar=parar, prazo=5, ao_estourar=lambda _: False)
+    return {n for i, n in enumerate(nomes) if achados.get(i, True)}
+
+
+def _intercalar_por_servidor(canais: list[Canal]) -> list[int]:
+    """Ordem de conferência: 1º canal de cada servidor, depois o 2º de cada um... Assim vários servidores
+    trabalham ao mesmo tempo e um servidor morto é descoberto logo no começo (não no meio da lista)."""
+    from urllib.parse import urlparse
+    vez: dict[str, int] = {}
+    chave = []
+    for i, c in enumerate(canais):
+        servidor = urlparse(c.url).netloc.lower()
+        vez[servidor] = vez.get(servidor, 0) + 1
+        chave.append((vez[servidor], i))
+    return [i for _, i in sorted(chave)]
 
 
 def conferir_canais(canais: list[Canal], trabalhadores: int = 32, ao_progresso=None,
                     parar=None) -> list[tuple[Canal, Situacao]]:
     """Confere vários canais ao mesmo tempo. Mais rápido em listas grandes:
-      - cada trabalhador reaproveita a conexão (canais do mesmo servidor não reconectam do zero);
-      - no máximo POR_SERVIDOR consultas ao mesmo servidor ao mesmo tempo (as outras vão para outros servidores);
-      - servidor que nunca respondeu e já falhou em 2 canais: os outros canais dele saem "fora do ar" sem esperar.
+      - servidores que não existem (DNS) são descobertos de uma vez, antes de tudo;
+      - os canais são intercalados por servidor (vários servidores trabalhando juntos);
+      - no máximo POR_SERVIDOR consultas ao mesmo servidor ao mesmo tempo;
+      - servidor que nunca respondeu e já falhou em 2 canais (não conectou OU ficou mudo): os outros
+        canais dele saem "fora do ar" sem esperar;
+      - nenhum canal demora mais que PRAZO_POR_CANAL segundos.
     Com parar() verdadeiro, para NA HORA e devolve só os conferidos."""
     import threading
     from urllib.parse import urlparse
@@ -177,26 +235,82 @@ def conferir_canais(canais: list[Canal], trabalhadores: int = 32, ao_progresso=N
     falhas: dict[str, int] = {}
     responderam: set[str] = set()
     vagas: dict[str, threading.Semaphore] = {}
+    # com proxy configurado quem procura o servidor é o proxy: aí não dá para julgar pelo DNS daqui
+    existem = None if requests.utils.getproxies() else _servidores_que_existem([c.url for c in canais], parar)
+    if parar and parar():
+        return []
+
+    def desistiu(servidor: str) -> Situacao | None:
+        if servidor not in responderam and falhas.get(servidor, 0) >= FALHAS_PARA_DESISTIR:
+            return Situacao(False, f"o servidor {servidor} não responde (outros canais dele já falharam)", True)
+        return None
+
+    def falhou(servidor: str) -> None:
+        with trava:
+            falhas[servidor] = falhas.get(servidor, 0) + 1
 
     def um(canal: Canal) -> Situacao:
-        servidor = urlparse(canal.url).netloc.lower()
+        p = urlparse(canal.url)
+        servidor = p.netloc.lower()
+        if existem is not None and p.hostname and p.hostname not in existem:
+            return Situacao(False, f"o servidor {p.hostname} não existe mais (endereço não encontrado)", True)
         with trava:
-            if servidor not in responderam and falhas.get(servidor, 0) >= FALHAS_PARA_DESISTIR:
-                return Situacao(False, f"o servidor {servidor} não responde (outros canais dele já falharam)", True)
+            if parou := desistiu(servidor):
+                return parou
             vaga = vagas.setdefault(servidor, threading.Semaphore(POR_SERVIDOR))
         if not hasattr(local, "sessao"):
             local.sessao = requests.Session()
+            local.sessao.max_redirects = 5
         with vaga:
+            with trava:                                  # enquanto esperava a vez, o servidor pode ter caído
+                if parou := desistiu(servidor):
+                    return parou
             situacao = conferir_canal(canal.url, sessao=local.sessao)
-        with trava:
-            if situacao.servidor_caiu:
-                falhas[servidor] = falhas.get(servidor, 0) + 1
-            else:
+        if situacao.servidor_caiu:
+            falhou(servidor)
+        else:
+            with trava:
                 responderam.add(servidor)
         return situacao
 
-    resultado = em_paralelo(canais, um, trabalhadores, ao_progresso, parar)
-    return [(canais[i], resultado[i]) for i in sorted(resultado)]
+    def estourou(canal: Canal) -> Situacao:
+        falhou(urlparse(canal.url).netloc.lower())
+        return Situacao(False, f"sem resposta em {PRAZO_POR_CANAL} s", servidor_caiu=True)
+
+    ordem = _intercalar_por_servidor(canais)
+    resultado = em_paralelo([canais[i] for i in ordem], um, trabalhadores, ao_progresso, parar,
+                            prazo=PRAZO_POR_CANAL, ao_estourar=estourou)
+    por_posicao = {ordem[k]: s for k, s in resultado.items()}        # volta para a ordem da lista
+    return [(canais[i], por_posicao[i]) for i in sorted(por_posicao)]
+
+
+def exportar_tabela(linhas: list[dict], caminho) -> Path:
+    """Salva as linhas da tabela de canais ({canal, grupo, situacao, no_ar, link}) conforme a extensão:
+      .json -> lista de objetos;  .csv -> separado por ";" (abre direto no Excel em português);
+      .txt  -> uma linha por canal, colunas separadas por TAB (cola certinho numa planilha)."""
+    import csv
+    caminho = Path(caminho)
+    tipo = caminho.suffix.lower()
+    titulos = {"canal": "Canal", "grupo": "Grupo", "situacao": "Situação", "no_ar": "No ar", "link": "Link"}
+
+    def sim_nao(valor) -> str:
+        return "" if valor is None else ("sim" if valor else "não")
+    if tipo == ".json":
+        caminho.write_text(json.dumps(linhas, ensure_ascii=False, indent=2), encoding="utf-8")
+    elif tipo == ".csv":
+        with caminho.open("w", newline="", encoding="utf-8-sig") as arquivo:   # -sig: o Excel lê os acentos
+            escritor = csv.writer(arquivo, delimiter=";")
+            escritor.writerow(titulos.values())
+            for linha in linhas:
+                escritor.writerow([sim_nao(linha[c]) if c == "no_ar" else linha[c] for c in titulos])
+    elif tipo == ".txt":
+        texto = ["\t".join(titulos.values())] + [
+            "\t".join(sim_nao(linha[c]) if c == "no_ar" else str(linha[c]).replace("\t", " ") for c in titulos)
+            for linha in linhas]
+        caminho.write_text("\n".join(texto) + "\n", encoding="utf-8")
+    else:
+        raise ValueError(f"use .json, .csv ou .txt (não {tipo or 'sem extensão'})")
+    return caminho
 
 
 def mensagem_fora_do_ar(fora: list[tuple[Canal, Situacao]], limite: int = 15) -> tuple[str, str]:

@@ -822,10 +822,8 @@ class AppModerna(JanelaModerna):
                 situacoes = conferir_canais(canais, parar=self.evento_parar.is_set,
                                             ao_progresso=self._progresso_com_velocidade("Conferindo canais ao vivo"))
                 fora = [(c, s) for c, s in situacoes if not s.ok]
-                for c, s in situacoes:
-                    (self._log.info if s.ok else self._log.warning)("[canal %s] %s (%s)", "ok" if s.ok else "fora do ar",
-                                                                     c.nome, s.detalhe)
-                    linhas.append((f"TV ao vivo/{c.nome}", s.ok, s.detalhe))
+                self._registrar_canais(situacoes)
+                linhas += [(f"TV ao vivo/{c.nome}", s.ok, s.detalhe) for c, s in situacoes]
                 if fora and notificador.ativo:
                     notificador.enviar(*mensagem_fora_do_ar(fora))
             if linhas:
@@ -1747,6 +1745,19 @@ class AppModerna(JanelaModerna):
             self._canais = [c for i, c in enumerate(self._canais) if i not in tirar]
             self._guardar_canais()
 
+    CANAIS_NO_CONSOLE = 300
+
+    def _registrar_canais(self, situacoes) -> None:
+        """Uma linha por canal no arquivo de log. No console da janela, só em listas pequenas: 11 mil linhas
+        de uma vez travavam a tela por alguns segundos (a situação de cada um já aparece na tabela)."""
+        grande = len(situacoes) > self.CANAIS_NO_CONSOLE
+        for c, s in situacoes:
+            nivel = logging.DEBUG if grande else (logging.INFO if s.ok else logging.WARNING)
+            self._log.log(nivel, "[canal] %s: %s", c.nome, s.detalhe)
+        if grande:
+            self._log.info("[canal] %d canais conferidos: a situação de cada um está na tabela de canais e no "
+                           "arquivo de log (botão Abrir log).", len(situacoes))
+
     def _progresso_com_velocidade(self, texto: str):
         """ao_progresso(feitos, total) que mostra a velocidade e quanto falta:
         'Conferindo canais: 526 de 11393 · 41/s · faltam ~4 min'."""
@@ -1769,8 +1780,7 @@ class AppModerna(JanelaModerna):
         def tarefa():
             situacoes = conferir_canais(canais, parar=self.evento_parar.is_set,
                                         ao_progresso=self._progresso_com_velocidade("Conferindo canais"))
-            for c, sit in situacoes:
-                (self._log.info if sit.ok else self._log.warning)("[canal] %s: %s", c.nome, sit.detalhe)
+            self._registrar_canais(situacoes)
             fora = sum(1 for _, sit in situacoes if not sit.ok)
             self.fila.put(("canais_conferidos", situacoes))
             parado = f" Parado: {len(situacoes)} de {len(canais)} conferidos." if len(situacoes) < len(canais) else ""

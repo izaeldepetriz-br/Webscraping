@@ -1,3 +1,4 @@
+import pytest
 """Canais ao vivo: lista .m3u, conferência dos links e cadastro no Jellyfin (servidor falso)."""
 import json
 
@@ -145,3 +146,104 @@ def test_muitos_canais_no_mesmo_servidor_vao_rapido_sem_sobrecarregar(api_falsa)
     assert all(s.ok for _, s in situacoes)
     assert time.monotonic() - inicio < 60 * 0.2 / 2                     # bem mais rápido que um por vez
     assert maximo[0] <= 6                                               # no máximo 6 no mesmo servidor
+
+
+def test_em_paralelo_prazo_nao_deixa_um_item_segurar_a_fila():
+    import time
+    from jellyfin_tools.paralelo import em_paralelo
+
+    def consulta(n):
+        time.sleep(30 if n % 10 == 0 else 0.01)                  # 1 em cada 10 "fica preso"
+        return n
+    inicio = time.monotonic()
+    feitos = em_paralelo(list(range(50)), consulta, trabalhadores=4, prazo=0.5, ao_estourar=lambda n: f"estourou {n}")
+    assert time.monotonic() - inicio < 5                          # antes: os presos seguravam tudo
+    assert len(feitos) == 50 and feitos[10] == "estourou 10" and feitos[11] == 11
+
+
+def test_em_paralelo_devolve_o_erro_e_aguenta_lista_enorme():
+    import time
+    from jellyfin_tools.paralelo import em_paralelo
+
+    def falha(n):
+        raise ValueError("deu ruim")
+    with pytest.raises(ValueError, match="deu ruim"):
+        em_paralelo([1, 2, 3], falha)
+    avisos = []
+    inicio = time.monotonic()
+    feitos = em_paralelo(list(range(20000)), lambda n: n * 2, trabalhadores=32, ao_progresso=lambda f, t: avisos.append(f))
+    assert len(feitos) == 20000 and feitos[19999] == 39998 and avisos[-1] == 20000
+    assert len(avisos) < 2000                                      # o progresso não sai a cada item (a janela agradece)
+    assert time.monotonic() - inicio < 20
+
+
+def test_servidor_mudo_e_desistido_logo():
+    """O servidor aceita a ligação e não responde nada: antes cada canal esperava a vez e o tempo todo."""
+    import socket
+    import time
+    mudo = socket.socket()
+    mudo.bind(("127.0.0.1", 0))
+    mudo.listen(200)
+    porta = mudo.getsockname()[1]
+    try:
+        canais = [Canal(f"C{n}", f"http://127.0.0.1:{porta}/c{n}.m3u8") for n in range(40)]
+        inicio = time.monotonic()
+        situacoes = conferir_canais(canais)
+        assert time.monotonic() - inicio < 20                      # antes: 40 x 8 s / 6 = ~53 s
+        assert not any(s.ok for _, s in situacoes)
+        assert sum("não responde (outros canais dele já falharam)" in s.detalhe for _, s in situacoes) >= 25
+    finally:
+        mudo.close()
+
+
+def test_servidor_que_nao_existe_sai_sem_consultar_canal_por_canal(monkeypatch, api_falsa):
+    import socket
+    import requests
+    original = socket.getaddrinfo
+    procurados = []
+
+    def dns(nome, *a, **k):
+        procurados.append(nome)
+        if str(nome).endswith(".invalid"):
+            raise socket.gaierror("não existe")
+        return original(nome, *a, **k)
+    monkeypatch.setattr(socket, "getaddrinfo", dns)
+    monkeypatch.setattr(requests.utils, "getproxies", lambda: {})
+    api_falsa.rotas["/ok.m3u8"] = lambda q: (200, b"#EXTM3U\n", {"Content-Type": "application/x-mpegURL"})
+    canais = [Canal(f"Velho {n}", f"http://canal{n % 3}.invalid/{n}.m3u8") for n in range(30)]
+    canais.insert(5, Canal("Bom", api_falsa.base + "/ok.m3u8"))
+    situacoes = conferir_canais(canais)
+    assert [c.nome for c, _ in situacoes] == [c.nome for c in canais]                # mesma ordem da lista
+    assert dict((c.nome, s.ok) for c, s in situacoes)["Bom"] is True
+    assert all("não existe mais" in s.detalhe for c, s in situacoes if c.nome != "Bom")
+    assert sum(n.endswith(".invalid") for n in procurados) == 3                   # uma vez por servidor
+
+
+def test_primeiros_bytes_nao_fica_preso_num_servidor_que_pinga():
+    import time
+    from jellyfin_tools.tv_ao_vivo import _primeiros_bytes
+
+    class Pinga:                                                    # 1 byte a cada 0,3 s, para sempre
+        def read1(self, n, decode_content=True):
+            time.sleep(0.3)
+            return b"#"
+    resposta = type("R", (), {"raw": Pinga()})()
+    inicio = time.monotonic()
+    assert _primeiros_bytes(resposta, 2048, prazo=1).startswith(b"#")
+    assert time.monotonic() - inicio < 2
+
+
+def test_exportar_tabela(tmp_path):
+    import csv
+    import json
+    from jellyfin_tools.tv_ao_vivo import exportar_tabela
+    linhas = [{"canal": "TV Cultura", "grupo": "Abertos", "situacao": "no ar", "no_ar": True, "link": "https://a.org/1.m3u8"},
+              {"canal": "Rádio", "grupo": "", "situacao": "", "no_ar": None, "link": "https://b.net/r.mp3"}]
+    assert json.loads(exportar_tabela(linhas, tmp_path / "c.json").read_text(encoding="utf-8")) == linhas
+    exportar_tabela(linhas, tmp_path / "c.csv")
+    tabela = list(csv.reader((tmp_path / "c.csv").open(encoding="utf-8-sig"), delimiter=";"))
+    assert tabela[0] == ["Canal", "Grupo", "Situação", "No ar", "Link"] and tabela[1][3] == "sim" and tabela[2][3] == ""
+    texto = exportar_tabela(linhas, tmp_path / "c.txt").read_text(encoding="utf-8").splitlines()
+    assert texto[1].split("\t") == ["TV Cultura", "Abertos", "no ar", "sim", "https://a.org/1.m3u8"]
+    with pytest.raises(ValueError):
+        exportar_tabela(linhas, tmp_path / "c.xls")

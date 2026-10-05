@@ -1,5 +1,6 @@
 """Interface moderna (CustomTkinter): a View sozinha e o app ligado ao motor.
 Precisa de customtkinter e de uma tela (no Linux sem monitor: xvfb-run python -m pytest)."""
+import logging
 import os
 import time
 from pathlib import Path
@@ -1582,10 +1583,25 @@ def test_tv_ao_vivo_filtro_por_coluna(app):
     janela.bt_remover.invoke()                                          # remove os filtrados (selecionados)
     assert [c.nome for c in app._canais] == ["Rádio", "Velho", "Novo"]
     janela.limpar_filtros()
-    janela.abrir_filtro("grupo")                                        # a janelinha de caixinhas
+    janela.abrir_filtro("grupo")                                        # a janelinha: digitar e/ou marcar
     app.update()
     assert janela._janela_filtro.winfo_exists()
-    janela._janela_filtro.destroy()
+    texto, marcados, aplicar = janela._filtro_aberto
+    texto.set("RADI")                                                   # digitou (sem acento e maiúsculas valem)
+    aplicar()
+    assert nomes() == ["Rádio"] and not janela._janela_filtro.winfo_exists()
+    janela.abrir_filtro("grupo")
+    texto, marcados, aplicar = janela._filtro_aberto
+    assert marcados == {"Rádios"}                                       # lembra o filtro de antes
+    marcados.update({"Abertos"})                                        # marcou mais um (sem digitar nada)
+    aplicar()
+    assert nomes() == ["Rádio", "Velho"]
+    janela.limpar_filtros()
+    janela.abrir_filtro("#0")
+    janela._filtro_aberto[0].set("zzz")                                 # nada contém isso: nenhum canal
+    janela._filtro_aberto[2]()
+    assert nomes() == [] and "0 de 3" in janela.lb_resumo.cget("text")
+    janela.limpar_filtros()
     janela.aplicar_filtro("grupo", ["(sem grupo)", "Abertos", "Rádios"])   # todos marcados = sem filtro
     assert len(nomes()) == 3 and "filtro" not in janela.lb_resumo.cget("text")
 
@@ -1636,3 +1652,37 @@ def test_parar_a_previsualizacao_e_imediato(app, tmp_path, monkeypatch):
     assert time.time() - parou_em < 2                                   # antes: os 300 arquivos (~6 s)
     assert "Pré-visualização parada" in app.var_status.get()
     assert 0 < len(_linhas_jf(app)) < 300 and app.bt_organizar.cget("state") == "disabled"
+
+
+def test_tv_ao_vivo_exportar_o_que_esta_na_tabela(app, tmp_path, monkeypatch):
+    import json
+    from jellyfin_tools.tv_ao_vivo import Canal, Situacao
+    app.mostrar_aba("Jellyfin")
+    app.bt_tv_ao_vivo.invoke()
+    janela = app.janela_canais
+    app._canais = [Canal("TV Cultura", "https://a.org/1.m3u8", "Abertos"), Canal("Rádio", "https://b.net/r.mp3", "Rádios")]
+    app._situacao_canais = {app._canais[1].url: Situacao(False, "fora do ar (HTTP 404)")}
+    app._mostrar_canais()
+    assert janela.exportar(tmp_path / "todos.json") == 2
+    dados = json.loads((tmp_path / "todos.json").read_text(encoding="utf-8"))
+    assert dados[0] == {"canal": "TV Cultura", "grupo": "Abertos", "situacao": "", "no_ar": None,
+                        "link": "https://a.org/1.m3u8"}
+    janela.aplicar_filtro("grupo", ["Rádios"])                          # com filtro: só os filtrados
+    from videoscraper import gui_moderna
+    monkeypatch.setattr(gui_moderna.filedialog, "asksaveasfilename", lambda **k: str(tmp_path / "filtrados.csv"))
+    janela.bt_exportar.invoke()
+    linhas = (tmp_path / "filtrados.csv").read_text(encoding="utf-8-sig").splitlines()
+    assert len(linhas) == 2 and linhas[1].startswith("Rádio;Rádios;fora do ar (HTTP 404);não;")
+    assert "1 canal(is) (só os do filtro)" in app.caixas[-1][2]
+
+
+def test_conferencia_grande_nao_enche_o_console(app):
+    from jellyfin_tools.tv_ao_vivo import Canal, Situacao
+    linhas = []
+    app._log.addHandler(type("H", (logging.Handler,), {"emit": lambda self, r: linhas.append(r)})(logging.INFO))
+    poucos = [(Canal(f"C{n}", f"http://x/{n}"), Situacao(True, "no ar")) for n in range(3)]
+    app._registrar_canais(poucos)
+    assert len(linhas) == 3
+    linhas.clear()
+    app._registrar_canais(poucos * 200)                                  # 600 canais: um resumo só no console
+    assert len(linhas) == 1 and "600 canais conferidos" in linhas[0].getMessage()

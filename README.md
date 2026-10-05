@@ -233,6 +233,18 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v1.6.1 (TV ao vivo mais rápida)
+
+- **Conferir canais sem travar:** servidor que conecta e fica mudo conta como "fora do ar" (depois de 2 canais
+  assim, os outros dele saem na hora); nenhum canal segura a fila mais que 12 s; servidor que nem existe mais é
+  descoberto uma vez só, no começo; os canais são intercalados por servidor. Num teste com servidores lentos e
+  mudos, 467 canais passaram de **mais de 5 min para 18 s**, e o processador gasto em 11 mil canais caiu de 62 s
+  para 2 s.
+- **Filtro da coluna com campo de digitar:** escreva parte do valor (a lista encolhe enquanto você digita) e/ou
+  marque um ou vários valores (☑). Abre na hora mesmo com 11 mil canais (antes travava a tela).
+- **Exportar (JSON, CSV ou TXT)...:** salva as colunas da tabela (com filtro ligado, só os filtrados). O CSV abre
+  direto no Excel.
+
 ### Novidades da v1.6
 
 - **Verificar atualizações** (no topo): consulta na hora, sem fechar o programa; **Baixar agora** em segundo
