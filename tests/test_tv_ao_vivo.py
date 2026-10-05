@@ -450,3 +450,86 @@ def test_texto_do_diagnostico():
     assert 'M3U "videoscraper": C:/tv/canais.m3u' in texto and "xmltv: https://guia/epg.xml" in texto
     assert "Canais no Jellyfin: 11129 (amostra de 2: 1 são da sua lista)" in texto
     assert "Canal X  [serviço: IPTV Plugin]" in texto and 'Última "Atualizar o guia": Completed' in texto
+
+
+DIAGNOSTICO_REAL = {   # o diagnóstico que o usuário mandou (11.129 canais que não saem nem com "Limpar e reenviar")
+    "info": {"Services": [{"Name": "Next Pvr", "Status": "Ok"}, {"Name": "TVHclient LiveTvService", "Status": "Ok"},
+                          {"Name": "Emby", "Status": "Ok"}]},
+    "config": {"TunerHosts": [{"Type": "m3u", "FriendlyName": "videoscraper",
+                               "Url": r"C:\Users\x\.videoscraper\tv\canais.m3u"}], "ListingProviders": []},
+    "canais": {"TotalRecordCount": 11129, "Items": [{"Name": "&TV HD (1080p)"}]},
+    "plugins": [{"Name": "NextPVR", "Version": "9.0.0.0", "Id": "p-nextpvr", "Status": "Active"},
+                {"Name": "TVHeadend", "Version": "12.0.0.0", "Id": "p-tvh", "Status": "Active"},
+                {"Name": "TMDb", "Version": "10.10.0.0", "Id": "p-tmdb", "Status": "Active"}]}
+
+
+def test_plugins_de_tv_do_diagnostico_real():
+    from jellyfin_tools.tv_ao_vivo import plugins_de_tv, texto_diagnostico
+    plugins, sem_plugin = plugins_de_tv(DIAGNOSTICO_REAL)
+    assert [p["Id"] for p in plugins] == ["p-nextpvr", "p-tvh"] and sem_plugin == []   # "Emby" é o do Jellyfin
+    assert "Plugins de TV ao vivo além do Jellyfin: NextPVR 9.0.0.0, TVHeadend 12.0.0.0" in texto_diagnostico(
+        DIAGNOSTICO_REAL)
+    desligados = {**DIAGNOSTICO_REAL, "plugins": [{**p, "Status": "Disabled"} for p in DIAGNOSTICO_REAL["plugins"]]}
+    assert plugins_de_tv(desligados) == ([], [])                       # já desativados: nada a fazer
+    sem_lista = {**DIAGNOSTICO_REAL, "plugins": {"erro": "HTTP 403"}}
+    assert plugins_de_tv(sem_lista) == ([], ["Next Pvr", "TVHclient LiveTvService"])
+    assert plugins_de_tv({"info": {"Services": [{"Name": "Emby"}]}}) == ([], [])
+
+
+def test_desativar_plugins_reinicia_e_os_canais_velhos_saem(tmp_path, api_falsa):
+    """Com um plugin de TV dando erro, o Jellyfin pula a limpeza; desativado (e reiniciado), os velhos saem."""
+    from jellyfin_tools.tv_ao_vivo import desativar_plugins_e_limpar, plugins_de_tv
+    hosts, canais_jf = _jellyfin_falso(api_falsa, limpa_sozinho=True)
+    plugins = [dict(p) for p in DIAGNOSTICO_REAL["plugins"]]
+    estado = {"pendentes": set(), "fora_do_ar": 0}
+    guia_original = api_falsa.rotas["/ScheduledTasks/Running/abc"]
+
+    def atualizar_guia(q):
+        if any(p["Status"] == "Active" and p["Id"] != "p-tmdb" for p in plugins):
+            return 204, b""                                             # erro no plugin: não limpa nada
+        canais_jf.clear()
+        return guia_original(q)
+
+    def desativar(id_):
+        def rota(q):
+            estado["pendentes"].add(id_)
+            return 204, b""
+        return rota
+
+    def reiniciar(q):
+        estado["fora_do_ar"] = 2
+        for p in plugins:
+            if p["Id"] in estado["pendentes"]:
+                p["Status"] = "Disabled"
+        return 204, b""
+
+    def info_publica(q):
+        if estado["fora_do_ar"]:
+            estado["fora_do_ar"] -= 1
+            return 503, b"reiniciando"
+        return 200, {"ServerName": "jf"}
+
+    api_falsa.rotas["/ScheduledTasks/Running/abc"] = atualizar_guia
+    api_falsa.rotas["/Plugins"] = lambda q: (200, plugins)
+    for p in plugins:
+        api_falsa.rotas[f"/Plugins/{p['Id']}/{p['Version']}/Disable"] = desativar(p["Id"])
+    api_falsa.rotas["/System/Restart"] = reiniciar
+    api_falsa.rotas["/System/Info/Public"] = info_publica
+
+    cliente = ClienteTV(api_falsa.base, "chave")
+    publicar(ler_m3u(LISTA), tmp_path, cliente=cliente)
+    canais_jf.update({("velho", f"&TV {n}"): True for n in range(500)})
+    a_desativar, _ = plugins_de_tv({"info": DIAGNOSTICO_REAL["info"], "plugins": cliente.plugins()})
+    feito, total = desativar_plugins_e_limpar(cliente, a_desativar)
+    assert total == 2 and "tinha 500 canal(is), agora tem 2" in feito[-1]
+    assert [p["Status"] for p in plugins] == ["Disabled", "Disabled", "Active"]   # o TMDb não é de TV: fica
+    assert "Plugin desativado: NextPVR 9.0.0.0" in feito[0] and "Jellyfin reiniciado." in feito
+
+
+def test_esperar_voltar_desiste_se_o_jellyfin_nao_volta(api_falsa):
+    relogio = [0.0]
+    api_falsa.rotas["/System/Info/Public"] = lambda q: (503, b"fora")
+    cliente = ClienteTV(api_falsa.base, "chave")
+    assert not cliente.esperar_voltar(60, dormir=lambda s: relogio.__setitem__(0, relogio[0] + s),
+                                      agora=lambda: relogio[0])
+    assert relogio[0] >= 60

@@ -545,12 +545,47 @@ class ClienteTV:
                                 ("config", self.configuracao),
                                 ("canais", lambda: self._pedir("GET", "/LiveTv/Channels",
                                                                params={"Limit": 15, "EnableImages": "false"}) or {}),
-                                ("tarefas", lambda: self._pedir("GET", "/ScheduledTasks") or [])):
+                                ("tarefas", lambda: self._pedir("GET", "/ScheduledTasks") or []),
+                                ("plugins", self.plugins)):
             try:
                 d[chave] = consulta()
             except ErroJellyfin as erro:
                 d[chave] = {"erro": str(erro)}
         return d
+
+    def plugins(self) -> list[dict]:
+        return self._pedir("GET", "/Plugins") or []
+
+    def desativar_plugin(self, plugin: dict) -> None:
+        """Desativa (não apaga) o plugin. Vale depois de reiniciar o Jellyfin; volta em Painel > Plugins > Ativar."""
+        self._pedir("POST", f"/Plugins/{plugin.get('Id')}/{plugin.get('Version')}/Disable")
+
+    def reiniciar(self) -> None:
+        self._pedir("POST", "/System/Restart")
+
+    def esperar_voltar(self, limite: float = 240, parar=None, dormir=None, agora=None) -> bool:
+        """Depois de reiniciar: espera o Jellyfin cair (até 30 s) e voltar a responder (até `limite` s)."""
+        import time
+        dormir, agora = dormir or time.sleep, agora or time.monotonic
+        inicio = agora()
+
+        def responde() -> bool:
+            try:
+                r = self.sessao.get(self.base + "/System/Info/Public", timeout=5)
+                return r.ok and bool(r.content)
+            except requests.RequestException:
+                return False
+        while agora() - inicio < 30 and responde():          # ainda não caiu
+            if parar and parar():
+                return False
+            dormir(2)
+        while agora() - inicio < limite:
+            if parar and parar():
+                return False
+            if responde():
+                return True
+            dormir(3)
+        return False
 
     def quantos_canais(self) -> int | None:
         """Quantos canais o Jellyfin tem agora em TV ao vivo (None se não deu para saber)."""
@@ -681,6 +716,56 @@ def limpar_e_reenviar(cliente: ClienteTV, endereco: str, parar=None, esperar: fl
     return feito
 
 
+SERVICO_DO_JELLYFIN = "Emby"        # o serviço de TV do próprio Jellyfin (onde ficam os sintonizadores M3U)
+APELIDOS_PLUGIN = {"tvhclient": ("tvheadend", "tvhclient"), "nextpvr": ("nextpvr",)}
+
+
+def _simples(texto) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(texto or "").lower())
+
+
+def plugins_de_tv(d: dict) -> tuple[list[dict], list[str]]:
+    """Os serviços de TV ao vivo que vêm de PLUGINS (Next Pvr, TVHclient...) e o plugin de cada um.
+    Se um deles der erro ao atualizar o guia (ex.: instalado mas sem servidor), o Jellyfin pula a limpeza e os
+    canais velhos nunca saem. Devolve (plugins ativos a desativar, serviços cujo plugin não achei)."""
+    servicos = [str(s.get("Name") or "") for s in (d.get("info") or {}).get("Services") or []
+                if s.get("Name") and s.get("Name") != SERVICO_DO_JELLYFIN]
+    plugins = d.get("plugins") if isinstance(d.get("plugins"), list) else []
+    achados, sem_plugin = [], []
+    for servico in servicos:
+        nome = _simples(servico)
+        chaves = next((apelidos for chave, apelidos in APELIDOS_PLUGIN.items() if chave in nome), (nome,))
+        plugin = next((p for p in plugins if any(c and (c in _simples(p.get("Name")) or _simples(p.get("Name")) in c)
+                                                 for c in chaves) and _simples(p.get("Name"))), None)
+        if plugin is None:
+            sem_plugin.append(servico)
+        elif plugin.get("Status") not in ("Disabled", "NotSupported") and plugin not in achados:
+            achados.append(plugin)
+    return achados, sem_plugin
+
+
+def desativar_plugins_e_limpar(cliente: ClienteTV, plugins: list[dict], parar=None, esperar: float = 300,
+                               esperar_reinicio: float = 240) -> tuple[list[str], int | None]:
+    """Desativa os plugins de TV, reinicia o Jellyfin, atualiza o guia e conta os canais. (o que foi feito, total)"""
+    feito, antes = [], cliente.quantos_canais()
+    for plugin in plugins:
+        cliente.desativar_plugin(plugin)
+        feito.append(f"Plugin desativado: {plugin.get('Name')} {plugin.get('Version')}")
+    cliente.reiniciar()
+    if not cliente.esperar_voltar(esperar_reinicio, parar):
+        feito.append("O Jellyfin não voltou sozinho depois de reiniciar: abra-o de novo e, na janela TV ao vivo, "
+                     "clique em \"Salvar e enviar ao Jellyfin\".")
+        return feito, None
+    feito.append("Jellyfin reiniciado.")
+    if (tarefa := cliente.atualizar_guia()) and cliente.esperar_tarefa(tarefa, esperar, parar):
+        total = cliente.quantos_canais()
+        feito.append(f"Guia atualizado: TV ao vivo tinha {antes} canal(is), agora tem {total}."
+                     + (f" Erro na atualização: {cliente.erro_da_tarefa}" if cliente.erro_da_tarefa else ""))
+        return feito, total
+    feito.append("O Jellyfin ainda está atualizando o guia: confira em alguns minutos.")
+    return feito, None
+
+
 def texto_diagnostico(d: dict, nomes_da_lista: set[str] = frozenset()) -> str:
     """O diagnóstico em texto (para mostrar e para a pessoa copiar e mandar)."""
     linhas = []
@@ -710,4 +795,9 @@ def texto_diagnostico(d: dict, nomes_da_lista: set[str] = frozenset()) -> str:
         ultimo = tarefa.get("LastExecutionResult") or {}
         linhas.append(f"Última \"Atualizar o guia\": {ultimo.get('Status', '?')} em {ultimo.get('EndTimeUtc', '?')}"
                       + (f" — {ultimo.get('ErrorMessage')}" if ultimo.get("ErrorMessage") else ""))
+    plugins, sem_plugin = plugins_de_tv(d)
+    if plugins or sem_plugin:
+        nomes = [f"{p.get('Name')} {p.get('Version')}" for p in plugins] + sem_plugin
+        linhas.append(f"Plugins de TV ao vivo além do Jellyfin: {', '.join(nomes)}. Se um deles não estiver "
+                      "configurado, a atualização do guia falha nele e o Jellyfin NÃO apaga os canais velhos.")
     return "\n".join(linhas)

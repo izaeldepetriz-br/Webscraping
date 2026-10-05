@@ -117,17 +117,25 @@ def test_verificar_links_de_outros_sites(api_falsa):
 
 
 def test_verificar_links_em_paralelo(api_falsa):
+    """Conta quantos pedidos chegam AO MESMO TEMPO (e não o tempo de relógio, que falhava com a máquina
+    ocupada rodando outros testes)."""
+    import threading
     import time
     from jellyfin_tools.espelho import verificar_links
+    agora, maximo, trava = [0], [0], threading.Lock()
 
     def devagar(q):
+        with trava:
+            agora[0] += 1
+            maximo[0] = max(maximo[0], agora[0])
         time.sleep(0.3)
+        with trava:
+            agora[0] -= 1
         return 206, b"x", {"Content-Type": "video/mp4", "Accept-Ranges": "bytes"}
     api_falsa.rotas["/lento.mp4"] = devagar
     urls = [f"{api_falsa.base}/lento.mp4?n={n}" for n in range(8)]
-    inicio = time.perf_counter()
     r = verificar_links(urls, respeitar_robots=False)
-    assert all(v.ok for v in r.values()) and time.perf_counter() - inicio < 8 * 0.3 / 2   # não um por vez
+    assert all(v.ok for v in r.values()) and maximo[0] >= 2                     # não um por vez
 
 
 def test_link_que_nao_serve_nao_vira_strm(tmp_path):

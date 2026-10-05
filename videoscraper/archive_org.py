@@ -25,9 +25,10 @@ POR_PAGINA = 500                 # itens por consulta (menos pedidos em buscas g
 
 
 def reconhece(url: str) -> bool:
-    """Links de coleção (/details/X), item (/details/X) ou busca (/search?query=...) do archive.org."""
+    """Links de coleção (/details/X), item (/details/X ou a lista de arquivos /download/X) ou busca
+    (/search?query=...) do archive.org."""
     p = urlparse(url)
-    return p.netloc.lower() in HOSTS and (p.path.startswith("/details/") or p.path.startswith("/search"))
+    return p.netloc.lower() in HOSTS and p.path.startswith(("/details/", "/download/", "/search"))
 
 
 def _base(url: str) -> str:
@@ -65,6 +66,29 @@ def _json(cliente: ClienteHTTP, url: str, params: dict | None = None) -> dict | 
     except Exception as erro:                      # rede, HTTP de erro ou JSON inválido
         print(f"  ❌ archive.org: {erro}", file=sys.stderr)
         return None
+
+
+def _ordem_natural(texto: str):
+    """'Episódio 1x02' antes de 'Episódio 1x10' (os números contam como números)."""
+    return [int(p) if p.isdigit() else p.lower() for p in re.split(r"(\d+)", texto)]
+
+
+def videos_do_item(arquivos: list[dict]) -> list[dict]:
+    """TODOS os vídeos de um item (ex.: os episódios de uma série), um por nome: quando o mesmo episódio vem
+    em mais de um arquivo (o .mkv original e o .mp4 que o archive.org gera), fica o original; empatando, o
+    maior. Em ordem natural (1x02 antes de 1x10)."""
+    def tamanho(a):
+        try:
+            return int(a.get("size") or 0)
+        except ValueError:
+            return 0
+    grupos: dict[str, list[dict]] = {}
+    for a in arquivos:
+        nome = str(a.get("name", ""))
+        if nome.lower().endswith(EXTENSOES) and "/" not in nome.strip("/"):   # sem miniaturas/subpastas
+            grupos.setdefault(nome.rsplit(".", 1)[0].lower(), []).append(a)
+    escolhidos = [max(g, key=lambda a: (a.get("source") == "original", tamanho(a))) for g in grupos.values()]
+    return sorted(escolhidos, key=lambda a: _ordem_natural(a["name"]))
 
 
 def _consulta(cliente: ClienteHTTP, url: str) -> tuple[str | None, dict | None]:
@@ -120,9 +144,19 @@ def buscar(cliente: ClienteHTTP, url: str, limite: int = 100, parar=None,
     """Todos os vídeos (até `limite` itens) da coleção/busca/item apontado por `url`."""
     base = _base(url)
     consulta, meta_item = _consulta(cliente, url)
-    if meta_item is not None:                        # link de um item só
-        link = _link_do_item(base, urlparse(url).path.split("/")[2], meta_item)
-        return [link] if link else []
+    if meta_item is not None:                        # link de um item só: TODOS os vídeos dele (ex.: episódios)
+        identificador = urlparse(url).path.split("/")[2]
+        videos = videos_do_item(meta_item.get("files") or [])
+        if len(videos) <= 1:
+            link = _link_do_item(base, identificador, meta_item)
+            return [link] if link else []
+        metadata = meta_item.get("metadata") or {}
+        licenca, ano = licenca_legivel(metadata.get("licenseurl")), _ano(metadata)
+        print(f"archive.org: {len(videos)} vídeo(s) no item {identificador}", file=sys.stderr)
+        return [LinkVideo(url=f"{base}/download/{quote(identificador)}/{quote(a['name'])}",
+                          origem=f"{base}/details/{identificador}", tipo="archive.org",
+                          titulo=a["name"].rsplit(".", 1)[0], licenca=licenca, ano=ano)
+                for a in videos[:limite]]
     if not consulta:
         if bloqueadas is not None and not cliente.permitido(f"{base}/metadata/x"):
             bloqueadas.append(url)

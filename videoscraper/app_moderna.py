@@ -9,6 +9,7 @@ conversa com a janela por uma fila, para a tela nunca travar.
 
 from __future__ import annotations
 
+import re
 import contextlib
 import logging
 import os
@@ -130,6 +131,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._versao_pendente = None            # aviso de versão nova que chegou durante uma tarefa
         self._atualizacao_pendente = None       # .zip da versão nova baixado (pergunta no fim)
         self._tv_outros_pendente = None         # TV ao vivo: outros sintonizadores no Jellyfin (pergunta no fim)
+        self._baixar_pendente = None            # vídeos achados pelo "Baixar" sem buscar antes (licença no fim)
         self._instalar_ao_sair = None           # (zip, reabrir): troca os arquivos quando o programa fechar
         self._versao_agendada = None
         self._bandeja = None                    # ícone perto do relógio (quando escondida)
@@ -231,6 +233,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
         url, opcoes = self._validar(exigir_url=not self.links)
         if not opcoes:
             return
+        # archive.org: qualquer pessoa pode enviar arquivos; sem licença aberta, pergunta (como no Espelhar)
+        escolhidos = self._filtrar_por_licenca(escolhidos)
+        if escolhidos is None:
+            return
         if opcoes.limite:
             escolhidos = escolhidos[:opcoes.limite]
 
@@ -245,6 +251,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
                     if not lista:
                         self._explicar_resultado(t, lista)
                         return
+                    if self._sem_licenca_aberta(lista):   # pergunta no fim e baixa o que for escolhido
+                        self.fila.put(("baixar_depois", lista))
+                        self.fila.put(("status_fim", f"{len(lista)} vídeo(s) encontrados: escolha a licença."))
+                        return
                     if opcoes.limite:
                         lista = lista[:opcoes.limite]
                 resumo = t.baixar(lista, opcoes.pasta,
@@ -255,6 +265,42 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                        "erro" if resumo.falhas else "sucesso")))
 
         self._rodar("Baixando vídeos...", tarefa)
+
+    OPCOES_LICENCA = ("Só domínio público / CC", "Todos (tenho certeza)")
+
+    @staticmethod
+    def _sem_licenca_aberta(links: list[LinkVideo]) -> list[LinkVideo]:
+        return [lk for lk in links if lk.tipo == "archive.org" and not licenca_aberta(lk.licenca)]
+
+    def _filtrar_por_licenca(self, links: list[LinkVideo]) -> list[LinkVideo] | None:
+        """Vídeos do archive.org sem domínio público/Creative Commons: pergunta se baixa só os livres ou todos.
+        Devolve a lista a baixar, ou None se cancelou (ou se não sobrou nada)."""
+        sem_licenca = self._sem_licenca_aberta(links)
+        if not sem_licenca:
+            return links
+        livres = len(links) - len(sem_licenca)
+        escolha = self.escolher(
+            "Licença dos vídeos",
+            f"{len(links)} vídeo(s): {livres} com domínio público ou Creative Commons e {len(sem_licenca)} do "
+            "archive.org sem licença aberta (coluna Licença vazia ou outra).\n\n"
+            "No archive.org qualquer pessoa pode enviar arquivos: baixe só o que é de domínio público, tem licença "
+            "livre (Creative Commons) ou que você tem direito de baixar. Cópias de filmes e séries comerciais "
+            "(ex.: \"WEB-DL\" de um streaming) não são.\n\n"
+            f"\"{self.OPCOES_LICENCA[0]}\": baixa {livres} e pula os outros.\n"
+            f"\"{self.OPCOES_LICENCA[1]}\": você tem certeza de que pode baixar todos os {len(links)}?",
+            self.OPCOES_LICENCA)
+        if escolha is None:
+            return None
+        if escolha == self.OPCOES_LICENCA[1]:
+            self._log.info("Baixar: %d vídeo(s) sem licença aberta confirmados pela pessoa", len(sem_licenca))
+            return links
+        fora = {id(lk) for lk in sem_licenca}
+        restantes = [lk for lk in links if id(lk) not in fora]
+        if not restantes:
+            self.mostrar_mensagem("Licença dos vídeos", "Nenhum dos vídeos escolhidos é de domínio público ou "
+                                  "Creative Commons: nada foi baixado.", "aviso")
+            return None
+        return restantes
 
     def _rodar(self, status: str, tarefa) -> None:
         if self.trabalhando:
@@ -455,6 +501,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._tv_outros_pendente = dado                # pergunta depois do "fim"
         elif tipo == "atualizacao_baixada":
             self._atualizacao_pendente = dado              # pergunta depois do "fim"
+        elif tipo == "baixar_depois":
+            self._baixar_pendente = dado                   # pergunta a licença depois do "fim"
         elif tipo == "versao_nova":
             if self.trabalhando:                       # não interrompe uma tarefa: avisa no fim
                 self._versao_pendente = dado
@@ -506,6 +554,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
             if self._tv_outros_pendente:
                 outros, self._tv_outros_pendente = self._tv_outros_pendente, None
                 self.after(50, lambda: self._oferecer_tirar_sintonizadores(*outros))
+            if self._baixar_pendente:
+                lista, self._baixar_pendente = self._baixar_pendente, None
+                self.after(50, lambda: self._baixar(lista))
             if self._atualizacao_pendente:
                 baixada, self._atualizacao_pendente = self._atualizacao_pendente, None
                 self.after(50, lambda: self._atualizacao_baixada(*baixada))
@@ -547,7 +598,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
         if not ids:
             self.mostrar_mensagem("Nenhum link", "Selecione um vídeo da lista primeiro.", "aviso")
             return None
-        return self.links[int(ids[0])]
+        foco = self.tabela.focus()                   # a linha clicada por último (com vários marcados)
+        return self.links[int(foco if foco in ids else ids[0])]
 
     # ================================================================== aba Jellyfin
     def ao_previsualizar(self) -> None:
@@ -1112,31 +1164,46 @@ class AppModerna(TVAoVivo, JanelaModerna):
         if problema:
             self.mostrar_mensagem("Legendas", problema, "aviso")
             return
-        quantos = sum(m.status == "simulado" for m in self._movimentos_previa)
-        lixo = sum(len(m.apagar or []) for m in self._movimentos_previa) if o.limpar_lixo else 0
+        # Só o que está MARCADO (☑) e À VISTA: desmarcado ou escondido por um filtro fica onde está
+        escondidos = {i for i in self._ordem_jf if not self._visivel_jf(i) and self._categoria_jf.get(i) == "mover"}
+        fora = {self._movimentos_previa[int(i)].origem for i in set(self.nao_mover_jf()) | escondidos
+                if int(i) < len(self._movimentos_previa)}
+        quantos = sum(m.status == "simulado" and m.origem not in fora for m in self._movimentos_previa)
+        limpezas = sum(m.status == "limpeza" and m.origem not in fora for m in self._movimentos_previa)
+        if not quantos and not limpezas:
+            self.mostrar_mensagem("Organizar", "Nenhum arquivo marcado (☑) e à vista para mover. Marque na coluna "
+                                  "# (ou \"☑ Mover selecionados\") e confira os filtros (\"Mostrar todos\").", "aviso")
+            return
+        lixo = sum(len(m.apagar or []) for m in self._movimentos_previa
+                   if m.origem not in fora) if o.limpar_lixo else 0
         aviso_lixo = (f"\n\n{lixo} arquivo(s) de lixo (.url, .txt, trailers) serão APAGADOS. "
                       "Isso não tem como desfazer." if lixo else "")
-        pastas = [m.pasta_apagar for m in self._movimentos_previa if m.pasta_apagar]
+        pastas = [m.pasta_apagar for m in self._movimentos_previa if m.pasta_apagar and m.origem not in fora]
         if pastas:
             aviso_lixo += (f"\n\n{len(pastas)} pasta(s) de torrent serão APAGADAS inteiras, com o que sobrar "
                            "nelas (amostras, prints, .nfo de release...). Isso não tem como desfazer.")
-        ocultos = self.linhas_ocultas_jf("mover")
-        if ocultos:
-            aviso_lixo += f"\n\nAtenção: {ocultos} deles estão escondidos pelo filtro \"Mostrar\" e também serão movidos."
         substituir = ("\n\n\"Substituir o que já existe\" está marcado: legendas, pôster, backdrop e .nfo "
                       "dos itens movidos serão baixados de novo e trocados." if o.sobrescrever else "")
+        desmarcados = ""
+        if fora:
+            partes = [f"{n} {texto}" for n, texto in ((len(self.nao_mover_jf()), "desmarcado(s) (☐)"),
+                                                      (len(escondidos - set(self.nao_mover_jf())),
+                                                       "escondido(s) pelo filtro")) if n]
+            desmarcados = f"\n\n{' e '.join(partes)} ficam onde estão, sem nenhuma alteração."
         if not self.perguntar("Organizar", f"Mover {quantos} arquivo(s) para:\n{o.destino}\n\n"
                               "Nenhum vídeo é sobrescrito, e você pode voltar atrás com 'Desfazer última'."
-                              + substituir + aviso_lixo):
+                              + desmarcados + substituir + aviso_lixo):
             return
         self._salvar_config()
         self._previa = None
         self.liberar_organizar(False)
         self._tmdb_ativo = o.tmdb
+        if fora:
+            self._log.info("Organizar: %d arquivo(s) desmarcado(s) ficam onde estão", len(fora))
 
-        self._rodar("Organizando...", self._tarefa_organizar(o))
+        self._rodar("Organizando...", self._tarefa_organizar(o, fora=frozenset(fora)))
 
-    def _tarefa_organizar(self, o, filtro=None, automatico: bool = False):
+    def _tarefa_organizar(self, o, filtro=None, automatico: bool = False, fora=frozenset()):
         """O trabalho do Organizar, sem perguntas (roda na thread). Usado pelo botão e pela pasta
         vigiada (filtro = só o que terminou de baixar; automatico = sem caixa de mensagem no fim)."""
         def tarefa():
@@ -1171,7 +1238,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                          incluir_tmdbid=o.incluir_tmdbid, exigir_catalogo=o.exigir_catalogo,
                                          modo=o.modo, limpar_lixo=o.limpar_lixo,
                                          apagar_pasta_origem=o.apagar_pasta_origem,
-                                         nomes_episodios=o.nomes_episodios, filtro=filtro, parar=self.evento_parar.is_set,
+                                         nomes_episodios=o.nomes_episodios, filtro=filtro, fora=fora,
+                                         parar=self.evento_parar.is_set,
                                          protegidas=o.pastas_protegidas, regras=self.regras_de_nome(),
                                          ao_planejar=ao_planejar, ao_progresso=ao_progresso,
                                          ao_analisar=self._avisar_analise)
@@ -1714,6 +1782,37 @@ class AppModerna(TVAoVivo, JanelaModerna):
         finally:
             if servidor:
                 servidor.shutdown()
+
+    RE_PASTA_TEMPORADA = re.compile(r"^(season|temporada|s)\s*\d+$", re.IGNORECASE)
+
+    def _pasta_para_proteger(self, origem: Path) -> Path:
+        """A pasta do vídeo; se for de temporada ("Season 1", "Temporada 2", "S01"), a da série."""
+        pasta = origem.parent
+        return pasta.parent if self.RE_PASTA_TEMPORADA.match(pasta.name.strip()) else pasta
+
+    def ao_proteger_pasta_jf(self) -> None:
+        """Põe a pasta das linhas selecionadas em "Pastas protegidas": o organizador nunca mais mexe nela
+        (nem a pasta vigiada). Na prévia atual, os arquivos dela ficam desmarcados (☐)."""
+        ids = [i for i in self.tabela_jf.selection() if int(i) < len(self._movimentos_previa)]
+        if not ids:
+            self.mostrar_mensagem("Proteger a pasta", "Selecione na lista um arquivo da pasta que não deve ser "
+                                  "alterada (Ctrl+clique para várias) e clique de novo.", "aviso")
+            return
+        pastas = list(dict.fromkeys(self._pasta_para_proteger(self._movimentos_previa[int(i)].origem) for i in ids))
+        if not self.perguntar("Proteger a pasta", "O organizador (e a pasta vigiada) nunca vai mexer em:\n\n"
+                              + "\n".join(f"• {p}" for p in pastas[:15])
+                              + (f"\n... e mais {len(pastas) - 15}" if len(pastas) > 15 else "")
+                              + "\n\nPara voltar a organizar, apague a linha em \"Pastas protegidas\" (aba Jellyfin, "
+                              "lado esquerdo).\n\nProteger?"):
+            return
+        self.definir_pastas_protegidas(self.pastas_protegidas() + [str(p) for p in pastas
+                                                                     if str(p) not in self.pastas_protegidas()])
+        self._salvar_config()
+        dentro = [str(i) for i, m in enumerate(self._movimentos_previa)
+                  if any(p == m.origem.parent or p in m.origem.parents for p in pastas)]
+        self.marcar_mover_jf(dentro, False)
+        self._log.info("Pastas protegidas: %s", ", ".join(map(str, pastas)))
+        self.definir_status(f"{len(pastas)} pasta(s) protegida(s): {len(dentro)} arquivo(s) ficam onde estão.")
 
     def ao_selecionar_jf(self) -> None:
         ids = self.tabela_jf.selection()

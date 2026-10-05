@@ -255,7 +255,9 @@ def _planejar_episodio(video: Path, pasta_series: Path, catalogo: Catalogo | Non
                                                 f"temporada {temporada}, episódio {episodio} (TMDB)") if t)
     pasta_serie = pasta_series / nome_jellyfin(nome, ano, serie.tmdb_id if serie else None, incluir_tmdbid)
     pasta = pasta_serie / pasta_temporada(temporada)
-    titulo_ep = ep.titulo if ep.saga else ""          # 'HunterXHunter 66_York Shin': fica o nome da saga
+    # 'HunterXHunter 66_York Shin': fica o nome da saga; 'EP37 Professor Tom': numeração contínua (a conta
+    # para temporada do TMDB pode errar), o nome que veio no arquivo vale mais
+    titulo_ep = ep.titulo if ep.saga or ep.absoluto else ""
     if not titulo_ep and nomes_episodios and serie is not None and catalogo is not None:
         titulo_ep = getattr(catalogo, "nome_episodio", lambda *a: None)(serie, temporada, episodio) or ""
     titulo_ep = titulo_ep or ep.titulo                 # o nome que veio no arquivo ('13 - To'hajiilee')
@@ -322,7 +324,23 @@ def _achar_serie(catalogo, ep, video: Path, raiz: Path | None = None):
         serie, detalhe = _consultar(catalogo, ep.serie, dica, "serie")
         if serie and serie.ano == dica:
             return serie, detalhe
+    if not ep.ano and catalogo is not None and (epoca := ano_do_episodio(video.name)):
+        try:                                   # 'Tom and Jerry EP37 Professor Tom (1948)': a série de 1940
+            if serie := catalogo.buscar_serie_da_epoca(ep.serie, epoca):
+                return serie, ""
+        except ErroCatalogo as erro:
+            return None, f"catálogo indisponível: {erro}"
     return _consultar(catalogo, ep.serie, ep.ano, "serie")   # ano da pasta era outro (ex.: da temporada)
+
+
+_RE_ANO_EPISODIO = re.compile(r"\((19[0-9]\d|20[0-4]\d)\)")
+
+
+def ano_do_episodio(nome_arquivo: str) -> int | None:
+    """Ano entre parênteses DEPOIS da marca do episódio: é o ano do episódio, não o da série
+    ('Tom and Jerry EP37 Professor Tom (1948).mkv' -> 1948)."""
+    anos = _RE_ANO_EPISODIO.findall(Path(nome_arquivo).stem)
+    return int(anos[-1]) if anos else None
 
 
 _RE_ANO_PASTA = re.compile(r"(?<!\d)(19[3-9]\d|20[0-4]\d)(?!\d)")
@@ -413,7 +431,7 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
                     ao_planejar=None, ao_progresso=None,
                     apagar_pasta_origem: bool = False, ao_analisar=None,
                     nomes_episodios: bool = False, filtro=None, protegidas=(), regras=(),
-                    parar=None) -> list[Movimento]:
+                    parar=None, fora=frozenset()) -> list[Movimento]:
     """Organiza todos os vídeos de `origem` na biblioteca `pasta_filmes` (no modo "series",
     a pasta de séries do Jellyfin). Devolve o que fez (ou faria).
     limpar_lixo: ao aplicar, apaga .url/.txt de propaganda e trailers pequenos (< limite_trailer_mb).
@@ -424,6 +442,7 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
     ao_analisar(fracao, texto): andamento da ANÁLISE (consultas ao TMDB + planejamento), 0.0 a 1.0.
     nomes_episodios: no modo séries, acrescenta o nome do episódio (TMDB) depois do número;
     episódios já organizados só com o número também são renomeados.
+    fora: caminhos que a pessoa DESMARCOU na prévia (vídeos ou pastas "vai apagar a pasta"): ficam como estão.
     filtro(video) -> bool: só os vídeos aprovados entram (ex.: vigia.filtro_prontos(), só o que
     terminou de baixar); os outros ficam onde estão, sem aparecer no resultado.
     protegidas: pastas que o organizador NUNCA mexe (ex.: as do Sonarr/Radarr), nem entra nelas.
@@ -445,8 +464,9 @@ def organizar_pasta(origem: str | Path, pasta_filmes: str | Path, catalogo: Cata
     trailers = {v for v in videos if eh_trailer(v, origem, limite_trailer_mb, modo)}
     # Pastas de torrent que uma organização ANTERIOR já esvaziou (só sobrou propaganda/imagens):
     sobras = _planejar_sobras(origem, pasta_filmes, videos, limite_trailer_mb) if apagar_pasta_origem else []
+    sobras = [s for s in sobras if s.origem not in fora]
     trailers |= {v for s in sobras for v in s.apagar or []}
-    analisar = [v for v in videos if v not in trailers and (filtro is None or filtro(v))]
+    analisar = [v for v in videos if v not in trailers and v not in fora and (filtro is None or filtro(v))]
     avisar_analise = ao_analisar or (lambda *a: None)
     # Com o TMDB, as consultas pela internet são quase todo o tempo da análise: são feitas antes,
     # em paralelo, e ocupam 90% da barra. Sem TMDB, a análise é só local (rápida).

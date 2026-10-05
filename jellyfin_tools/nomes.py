@@ -248,7 +248,11 @@ def extrair_episodio(nome_arquivo: str) -> EpisodioExtraido | None:
     else:
         m = _PADRAO_SO_EPISODIO.search(base)
         if m:
-            return _montar_episodio(base[:m.start()], 1, int(m.group(1)), absoluto=True)
+            resto = base[m.end():]
+            # 'Tom and Jerry EP37 Professor Tom (1948)': o nome do episódio vem depois, separado por espaço
+            # ('Naruto.EP12.720p' tem ponto: é etiqueta da cópia, não nome)
+            titulo = titulo_do_episodio(resto) if re.match(r"\s*(?:-\s+)?[^\W\d_]", resto) and " " in resto else ""
+            return _montar_episodio(base[:m.start()], 1, int(m.group(1)), absoluto=True, titulo=titulo)
         for padrao in (_PADRAO_PONTO, _PADRAO_HIFEN):
             if (m := padrao.search(base)) and 1 <= int(m.group(1)) <= 40 and int(m.group(2)) >= 1:
                 return _montar_episodio(base[:m.start()], int(m.group(1)), int(m.group(2)))

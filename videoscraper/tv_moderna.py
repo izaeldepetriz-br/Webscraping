@@ -15,7 +15,8 @@ from tkinter import filedialog
 from jellyfin_tools.paralelo import prioridade_baixa
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin
 from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, Canal, ClienteTV, NaoEhLista, carregar_canais, carregar_historico,
-                                       canais_a_mais, conferir_canais, descrever_sintonizador,
+                                       canais_a_mais, conferir_canais, desativar_plugins_e_limpar,
+                                       descrever_sintonizador, plugins_de_tv,
                                        importar as importar_canais, limpar_e_reenviar,
                                        publicar as publicar_canais, registrar_no_historico, resumo_historico,
                                        salvar_canais, salvar_historico, sempre_falha, texto_diagnostico)
@@ -439,8 +440,9 @@ class TVAoVivo:
             total = cliente.quantos_canais()
             if total is not None and total > enviados + max(10, enviados // 10):
                 # nem sem a lista os canais saíram: vêm de outra fonte, ou o Jellyfin não está limpando
-                self.fila.put(("tv_diagnostico", ("\n".join(feito), texto_diagnostico(cliente.diagnostico(),
-                                                                                       enviados_nomes))))
+                d = cliente.diagnostico()
+                self.fila.put(("tv_diagnostico", ("\n".join(feito), texto_diagnostico(d, enviados_nomes),
+                                                  plugins_de_tv(d)[0], url, chave)))
             else:
                 self.fila.put(("msg", ("TV ao vivo", "\n".join(feito) or "Pronto.", "sucesso")))
 
@@ -455,20 +457,55 @@ class TVAoVivo:
         nomes = {c.nome for c in self._canais}
 
         def tarefa():
-            texto = texto_diagnostico(ClienteTV(o.jellyfin_url, o.jellyfin_api_key).diagnostico(), nomes)
+            d = ClienteTV(o.jellyfin_url, o.jellyfin_api_key).diagnostico()
+            texto = texto_diagnostico(d, nomes)
             self._log.info("TV ao vivo, diagnóstico:\n%s", texto)
-            self.fila.put(("tv_diagnostico", ("", texto)))
+            self.fila.put(("tv_diagnostico", ("", texto, plugins_de_tv(d)[0], o.jellyfin_url, o.jellyfin_api_key)))
 
         self._rodar("Consultando o Jellyfin (diagnóstico da TV ao vivo)...", tarefa)
 
-    def _mostrar_diagnostico_tv(self, antes: str, texto: str) -> None:
-        explicacao = (
-            "\n\nSe os canais não são da sua lista e não há outro sintonizador, eles vêm de outro serviço (plugin de "
-            "TV ao vivo) ou ficaram guardados porque a atualização do guia teve um erro: com erro, o Jellyfin pula a "
-            "limpeza dos canais velhos. Veja em Painel > Logs (procure \"Error refreshing\").")
+    def _mostrar_diagnostico_tv(self, antes: str, texto: str, plugins: list[dict] = (), url: str = "",
+                                chave: str = "") -> None:
+        if plugins:
+            nomes = " e ".join(str(p.get("Name")) for p in plugins)
+            explicacao = (
+                f"\n\nPROVÁVEL CAUSA: os plugins {nomes} estão instalados. Se um deles não está configurado (ou o "
+                "servidor dele está desligado), a atualização do guia dá erro nele e, com erro, o Jellyfin PULA a "
+                "limpeza: os canais velhos nunca saem.\n\n\"Desativar os plugins e limpar\": desativa esses "
+                "plugins (não apaga), reinicia o Jellyfin e atualiza o guia. Use se você não usa NextPVR/TVHeadend.")
+            opcoes = ("Desativar os plugins e limpar", "Copiar o diagnóstico")
+        else:
+            explicacao = (
+                "\n\nSe os canais não são da sua lista e não há outro sintonizador, eles vêm de outro serviço (plugin "
+                "de TV ao vivo) ou ficaram guardados porque a atualização do guia teve um erro: com erro, o Jellyfin "
+                "pula a limpeza dos canais velhos. Veja em Painel > Logs (procure \"Error refreshing\").")
+            opcoes = ("Copiar o diagnóstico",)
         escolha = self.escolher("TV ao vivo: diagnóstico", (antes + "\n\n" if antes else "") + texto + explicacao,
-                                ("Copiar o diagnóstico",), cancelar="Fechar")
+                                opcoes, cancelar="Fechar")
         if escolha == "Copiar o diagnóstico":
             self.clipboard_clear()
             self.clipboard_append(texto)
             self.definir_status("Diagnóstico copiado: cole numa mensagem (Ctrl+V).")
+        elif escolha == "Desativar os plugins e limpar":
+            self._desativar_plugins_tv(list(plugins), url, chave)
+
+    def _desativar_plugins_tv(self, plugins: list[dict], url: str, chave: str) -> None:
+        nomes = "\n".join(f"• {p.get('Name')} {p.get('Version')}" for p in plugins)
+        if not self.perguntar(
+                "Desativar plugins de TV ao vivo",
+                f"Vou desativar no Jellyfin:\n{nomes}\n\ne REINICIAR o Jellyfin (quem estiver assistindo algo cai "
+                "por um ou dois minutos). Depois o guia é atualizado e os canais velhos saem.\n\nNada é apagado: "
+                "para usar de novo, Painel > Plugins > (o plugin) > Ativar, e reinicie.\n\nVocê tem certeza?"):
+            return
+        enviados = len(self._canais)
+
+        def tarefa():
+            feito, total = desativar_plugins_e_limpar(ClienteTV(url, chave), plugins, self.evento_parar.is_set)
+            for linha in feito:
+                self._log.info("TV ao vivo (plugins): %s", linha)
+            sobrou = total is not None and total > enviados + max(10, enviados // 10)
+            self.fila.put(("msg", ("TV ao vivo", "\n".join(feito) + (
+                "\n\nAinda há canais a mais: clique em \"Diagnóstico do Jellyfin\" de novo e me mande o resultado."
+                if sobrou else ""), "aviso" if sobrou or total is None else "sucesso")))
+
+        self._rodar("Desativando plugins de TV e reiniciando o Jellyfin (alguns minutos)...", tarefa)

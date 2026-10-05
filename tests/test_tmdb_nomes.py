@@ -258,3 +258,38 @@ def test_imagens_da_serie_e_das_temporadas(tmp_path, api_falsa):
     assert (serie / "Season 02" / "poster.jpg").read_bytes() == b"t2"           # substituir: troca
     assert any(p["query"].get("first_air_date_year") == ["1992"] for p in api_falsa.pedidos)
     assert len(r.criados) == 3
+
+
+def test_tom_and_jerry_classico_mantem_nome_do_episodio_e_acha_a_serie_da_epoca(api_falsa, tmp_path):
+    """Caso real: 'Tom and Jerry EP37 Professor Tom (1948).mkv' virava 'Tom e Jerry na Singapura S01E37' (a
+    série de 2023, primeira da busca) e perdia o nome do episódio. O (1948) é o ano DO EPISÓDIO."""
+    api_falsa.rotas["/3/search/tv"] = lambda q: (200, {"results": [
+        {"id": 230000, "name": "Tom e Jerry na Singapura", "original_name": "Tom and Jerry",
+         "first_air_date": "2023-05-01"},
+        {"id": 2000, "name": "Tom and Jerry", "original_name": "Tom and Jerry", "first_air_date": "1940-02-10"},
+        {"id": 3000, "name": "O Show de Tom e Jerry", "original_name": "The Tom and Jerry Show",
+         "first_air_date": "2014-04-09"}]})
+    api_falsa.rotas["/3/tv/2000/season/1"] = lambda q: (404, {})        # sem nomes de episódio no TMDB
+    origem, series = tmp_path / "Downloads", tmp_path / "Series"
+    origem.mkdir()
+    for nome in ("Tom and Jerry EP37 Professor Tom (1948).mkv", "Tom and Jerry EP30 Dr Jekyll and Mr Mouse (1947).mkv"):
+        (origem / nome).write_bytes(b"v")
+    movimentos = organizar_pasta(origem, series, _tmdb(api_falsa), modo="series", nomes_episodios=True)
+    novos = {m.origem.name: m.destino_curto for m in movimentos}
+    assert novos == {
+        "Tom and Jerry EP37 Professor Tom (1948).mkv":
+            "Tom and Jerry (1940)/Season 01/Tom and Jerry S01E37 - Professor Tom.mkv",
+        "Tom and Jerry EP30 Dr Jekyll and Mr Mouse (1947).mkv":
+            "Tom and Jerry (1940)/Season 01/Tom and Jerry S01E30 - Dr Jekyll and Mr Mouse.mkv"}
+
+    # sem o ano do episódio no nome, continua como antes (o primeiro da busca)
+    tmdb = _tmdb(api_falsa)
+    assert tmdb.buscar("Tom and Jerry", None, "serie").ano == 2023
+    assert tmdb.buscar_serie_da_epoca("Tom and Jerry", 2024).ano == 2023     # a mais perto antes do ano
+    assert tmdb.buscar_serie_da_epoca("Tom and Jerry", 1930).ano == 2023     # nenhuma antes: a melhor
+
+
+def test_ano_do_episodio():
+    from jellyfin_tools.organizador import ano_do_episodio
+    assert ano_do_episodio("Tom and Jerry EP37 Professor Tom (1948).mkv") == 1948
+    assert ano_do_episodio("Dark S01E01.mkv") is None

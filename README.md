@@ -233,6 +233,35 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v1.9.2
+
+- **TV ao vivo, os 11.129 canais que não saíam:** o diagnóstico agora lista os **plugins de TV ao vivo**
+  (ex.: NextPVR, TVHeadend). Se um deles está instalado mas sem servidor, a atualização do guia dá erro nele e,
+  com erro, o Jellyfin **pula a limpeza** dos canais velhos. O botão **"Desativar os plugins e limpar"**
+  desativa esses plugins (sem apagar), reinicia o Jellyfin, atualiza o guia e mostra quantos canais ficaram.
+  Para usar de novo: Painel > Plugins > Ativar.
+- **Tela de Arquivos (Organizar), seletor e filtros:** caixa ☑/☐ na coluna **#** de cada "vai mover"
+  (clique na caixa; o título **☑ #** marca/desmarca todos os que estão à vista; botões **☑ Mover selecionados**
+  e **☐ Não mover selecionados**). Clique no título de **cada coluna** (Situação, Arquivo atual, Novo nome,
+  Nome via, Legenda, Progresso) para filtrar digitando ou marcando valores. **O Organizar só mexe no que está
+  marcado E à vista**: o que foi desmarcado ou escondido por um filtro fica onde está, sem nenhuma alteração.
+- **Proteger a pasta...:** selecione um arquivo e a pasta dele (a da série, se o arquivo estiver em
+  "Season 1") entra em "Pastas protegidas": nem o Organizar nem a pasta vigiada mexem mais nela.
+- **Episódios com nome e ano no arquivo** ("Tom and Jerry EP37 Professor Tom (1948).mkv"): o nome do episódio
+  é mantido ("Tom and Jerry S01E37 - Professor Tom") e o ano do episódio ajuda a achar a série certa no TMDB
+  (a de 1940, e não a refilmagem de 2023 com o mesmo nome).
+
+- **archive.org, item com vários vídeos:** o link de um item (`/details/<item>` ou a lista de arquivos
+  `/download/<item>`) traz TODOS os vídeos dele (ex.: os episódios de uma série em domínio público), um por
+  episódio (o original no lugar do .mp4 gerado), em ordem natural. Antes vinha só um.
+- **Licença ao baixar (como no Espelhar):** se algum vídeo do archive.org não for de domínio público nem
+  Creative Commons, o programa pergunta: **"Só domínio público / CC"** (baixa os livres e pula os outros) ou
+  **"Todos (tenho certeza)"**. Lá qualquer pessoa pode enviar arquivos; baixe só o que você tem direito.
+- **Seletor na lista de vídeos:** caixa ☐/☑ na coluna **#**. Um clique marca ou desmarca a linha sem perder as
+  outras (não precisa de Ctrl); Shift+clique continua marcando um intervalo; clicar no título **☐ #** marca todos
+  (de novo: nenhum). No campo **Marcar**, digite números (`1-5, 8` ou `10 a 12`) ou parte do nome (`1x0`) e
+  aperte Enter. Depois, **Baixar selecionados**.
+
 ### Novidades da v1.9.1
 
 - **TV ao vivo, canais que nem a limpeza tira:** a lista enviada não repete mais `tvg-id` nem número (o mesmo

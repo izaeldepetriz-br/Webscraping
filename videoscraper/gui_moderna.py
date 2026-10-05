@@ -333,6 +333,131 @@ class JanelaEspelhos(ctk.CTkToplevel):
 _RE_SEPARA_PASTAS = re.compile(r"[\n;]|,\s*(?=[A-Za-z]:[\\/]|\\\\|/)")
 
 
+def janela_de_filtro(dono, app, titulo: str, valores: list[tuple[str, int]], ativos, ao_aplicar,
+                     botao: str = "Mostrar e selecionar"):
+    """Janelinha do filtro de uma coluna (como no Excel): um campo para DIGITAR (a lista encolhe enquanto você
+    escreve) e a lista para MARCAR um ou vários valores (☑). Leve mesmo com milhares de valores: é uma lista
+    simples do Tk, não uma caixinha (widget) por valor, que travava a tela com 11 mil canais.
+    valores: [(valor, quantos)]; ativos: os marcados agora (None = todos); ao_aplicar(escolhidos).
+    Devolve (janela, (var_texto, marcados, aplicar)) - o segundo é para os testes digitarem/marcarem."""
+    sem_acentos = {v: _sem_acentos(v) for v, _ in valores}       # calculado uma vez (a busca roda a cada letra)
+    marcados = {v for v, _ in valores} if ativos is None else set(ativos)
+    janela = ctk.CTkToplevel(dono, fg_color=Tema.CARTAO)
+    janela.title(f"Filtrar: {titulo}")
+    janela.transient(dono)
+    janela.geometry("460x480")
+    janela.minsize(360, 320)
+    ctk.CTkLabel(janela, text=f"{titulo}: digite e/ou marque um ou vários", font=app.f_secao,
+                 text_color=Tema.TEXTO, anchor="w").pack(fill="x", padx=16, pady=(14, 6))
+    var_texto = tk.StringVar()
+    campo = app._entrada(janela, var_texto, "Digite parte do valor (ex.: globo, 404, .org)", altura=32)
+    campo.pack(fill="x", padx=16)
+    quadro = ctk.CTkFrame(janela, fg_color=Tema.CAMPO, corner_radius=8)
+    quadro.pack(fill="both", expand=True, padx=16, pady=(8, 0))
+    lista = tk.Listbox(quadro, activestyle="none", selectmode="browse", exportselection=False, borderwidth=0,
+                       highlightthickness=0, bg=Tema.CAMPO, fg=Tema.TEXTO, selectbackground=Tema.CAMPO,
+                       selectforeground=Tema.TEXTO, font=(Tema.FAMILIA, 11))
+    rolagem = ctk.CTkScrollbar(quadro, command=lista.yview, button_color=Tema.CARTAO_BORDA)
+    lista.configure(yscrollcommand=rolagem.set)
+    rolagem.pack(side="right", fill="y", pady=4)
+    lista.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=6)
+    lb_conta = ctk.CTkLabel(janela, text="", font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_FRACO,
+                            anchor="w")
+    lb_conta.pack(fill="x", padx=16, pady=(4, 0))
+    visiveis: list[tuple[str, int]] = []
+
+    def linha(valor, quantos) -> str:
+        return f"{'☑' if valor in marcados else '☐'}  {valor}  ({quantos})"
+
+    def contar() -> None:
+        lb_conta.configure(text=f"{len(visiveis)} de {len(valores)} valor(es) na lista · {len(marcados)} marcado(s)")
+
+    def mostrar(*_):
+        procura = _sem_acentos(var_texto.get().strip())
+        visiveis[:] = [vq for vq in valores if procura in sem_acentos[vq[0]]]
+        lista.delete(0, "end")
+        if visiveis:
+            lista.insert("end", *[linha(v, q) for v, q in visiveis])
+        for i, (v, _) in enumerate(visiveis):
+            if v not in marcados:
+                lista.itemconfigure(i, fg=Tema.TEXTO_FRACO)
+        contar()
+
+    def trocar(indice: int) -> None:
+        if not 0 <= indice < len(visiveis):
+            return
+        valor, quantos = visiveis[indice]
+        marcados.symmetric_difference_update({valor})
+        lista.delete(indice)
+        lista.insert(indice, linha(valor, quantos))
+        lista.itemconfigure(indice, fg=Tema.TEXTO if valor in marcados else Tema.TEXTO_FRACO)
+        contar()
+
+    def marcar_visiveis(marcar: bool) -> None:
+        for v, _ in visiveis:
+            (marcados.add if marcar else marcados.discard)(v)
+        mostrar()
+
+    espera = [None]
+
+    def ao_digitar(*_):                         # espera a pessoa parar de digitar (não refaz a cada letra)
+        if espera[0]:
+            janela.after_cancel(espera[0])
+        espera[0] = janela.after(150, mostrar)
+    var_texto.trace_add("write", ao_digitar)
+    lista.bind("<ButtonRelease-1>", lambda e: trocar(lista.nearest(e.y)))
+    lista.bind("<space>", lambda e: trocar(lista.index("active")))
+
+    botoes = ctk.CTkFrame(janela, fg_color="transparent")
+    botoes.pack(fill="x", padx=16, pady=12)
+    estilo = dict(height=30, corner_radius=6, fg_color="transparent", hover_color=Tema.SECUNDARIA_HOVER,
+                  text_color=Tema.PRIMARIA, font=ctk.CTkFont(Tema.FAMILIA, 12), width=60)
+    ctk.CTkButton(botoes, text="Todos", command=lambda: marcar_visiveis(True), **estilo).pack(side="left")
+    ctk.CTkButton(botoes, text="Nenhum", command=lambda: marcar_visiveis(False), **estilo).pack(side="left",
+                                                                                             padx=(4, 0))
+
+    def aplicar():
+        if espera[0]:
+            janela.after_cancel(espera[0])
+        # Como no Excel: com algo digitado, valem os MARCADOS que aparecem na lista (os que contêm o texto)
+        procura = _sem_acentos(var_texto.get().strip())
+        escolhidos = set(marcados)
+        if procura:
+            escolhidos = {v for v, _ in valores if v in marcados and procura in sem_acentos[v]} or {"\0nada"}
+        ao_aplicar(escolhidos)
+        janela.destroy()
+    app._botao(botoes, botao, aplicar, "primario").pack(side="right")
+    janela.bind("<Return>", lambda e: aplicar())
+    janela.bind("<Escape>", lambda e: janela.destroy())
+    mostrar()
+    janela.update_idletasks()
+    x = max(0, min(dono.winfo_pointerx() - 40, janela.winfo_screenwidth() - 480))
+    y = max(0, min(dono.winfo_pointery() + 10, janela.winfo_screenheight() - 520))
+    janela.geometry(f"+{x}+{y}")
+    campo.focus_set()
+    return janela, (var_texto, marcados, aplicar)
+
+
+def numeros_do_texto(texto: str) -> set[int] | None:
+    """"1-5, 8; 10 a 12" -> {1, 2, 3, 4, 5, 8, 10, 11, 12}. Texto que não é só números/intervalos -> None
+    (aí a busca é pelo nome)."""
+    juntos = re.sub(r"(\d)\s*(?:-|até|a)\s*(?=\d)", r"\1-", texto.strip().lower())
+    partes = [p for p in re.split(r"[,;\s]+", juntos) if p]
+    numeros: set[int] = set()
+    for parte in partes:
+        intervalo = re.fullmatch(r"(\d+)-(\d+)", parte)
+        if intervalo:
+            inicio, fim = sorted((int(intervalo[1]), int(intervalo[2])))
+            if fim - inicio > 100_000:
+                return None
+            numeros.update(range(inicio, fim + 1))
+        elif parte.isdigit():
+            numeros.add(int(parte))
+        else:
+            return None
+    return numeros or None
+
+
 def dividir_pastas(texto: str) -> list[str]:
     return [p.strip().strip('"') for p in _RE_SEPARA_PASTAS.split(texto or "") if p.strip().strip('"')]
 
@@ -813,110 +938,11 @@ class JanelaCanais(ctk.CTkToplevel):
         self._mostrar()
 
     def abrir_filtro(self, coluna: str) -> None:
-        """Janelinha do filtro da coluna: um campo para DIGITAR (a lista encolhe enquanto você escreve) e a
-        lista para MARCAR um ou vários valores (☑). Leve mesmo com milhares de valores: é uma lista simples
-        do Tk, não uma caixinha (widget) por valor, que travava a tela com 11 mil canais."""
         if self._janela_filtro is not None and self._janela_filtro.winfo_exists():
             self._janela_filtro.destroy()
-        valores = self.valores_da_coluna(coluna)
-        sem_acentos = {v: _sem_acentos(v) for v, _ in valores}       # calculado uma vez (a busca roda a cada letra)
-        ativos = self._filtros.get(coluna)
-        marcados = {v for v, _ in valores} if ativos is None else set(ativos)
-        janela = ctk.CTkToplevel(self, fg_color=Tema.CARTAO)
-        janela.title(f"Filtrar: {self.TITULOS[coluna]}")
-        janela.transient(self)
-        janela.geometry("460x480")
-        janela.minsize(360, 320)
-        ctk.CTkLabel(janela, text=f"{self.TITULOS[coluna]}: digite e/ou marque um ou vários", font=self.master.f_secao,
-                     text_color=Tema.TEXTO, anchor="w").pack(fill="x", padx=16, pady=(14, 6))
-        var_texto = tk.StringVar()
-        campo = self.master._entrada(janela, var_texto, "Digite parte do valor (ex.: globo, 404, .org)", altura=32)
-        campo.pack(fill="x", padx=16)
-        quadro = ctk.CTkFrame(janela, fg_color=Tema.CAMPO, corner_radius=8)
-        quadro.pack(fill="both", expand=True, padx=16, pady=(8, 0))
-        lista = tk.Listbox(quadro, activestyle="none", selectmode="browse", exportselection=False, borderwidth=0,
-                           highlightthickness=0, bg=Tema.CAMPO, fg=Tema.TEXTO, selectbackground=Tema.CAMPO,
-                           selectforeground=Tema.TEXTO, font=(Tema.FAMILIA, 11))
-        rolagem = ctk.CTkScrollbar(quadro, command=lista.yview, button_color=Tema.CARTAO_BORDA)
-        lista.configure(yscrollcommand=rolagem.set)
-        rolagem.pack(side="right", fill="y", pady=4)
-        lista.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=6)
-        lb_conta = ctk.CTkLabel(janela, text="", font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_FRACO,
-                                anchor="w")
-        lb_conta.pack(fill="x", padx=16, pady=(4, 0))
-        visiveis: list[tuple[str, int]] = []
-
-        def linha(valor, quantos) -> str:
-            return f"{'☑' if valor in marcados else '☐'}  {valor}  ({quantos})"
-
-        def contar() -> None:
-            lb_conta.configure(text=f"{len(visiveis)} de {len(valores)} valor(es) na lista · {len(marcados)} marcado(s)")
-
-        def mostrar(*_):
-            procura = _sem_acentos(var_texto.get().strip())
-            visiveis[:] = [vq for vq in valores if procura in sem_acentos[vq[0]]]
-            lista.delete(0, "end")
-            if visiveis:
-                lista.insert("end", *[linha(v, q) for v, q in visiveis])
-            for i, (v, _) in enumerate(visiveis):
-                if v not in marcados:
-                    lista.itemconfigure(i, fg=Tema.TEXTO_FRACO)
-            contar()
-
-        def trocar(indice: int) -> None:
-            if not 0 <= indice < len(visiveis):
-                return
-            valor, quantos = visiveis[indice]
-            marcados.symmetric_difference_update({valor})
-            lista.delete(indice)
-            lista.insert(indice, linha(valor, quantos))
-            lista.itemconfigure(indice, fg=Tema.TEXTO if valor in marcados else Tema.TEXTO_FRACO)
-            contar()
-
-        def marcar_visiveis(marcar: bool) -> None:
-            for v, _ in visiveis:
-                (marcados.add if marcar else marcados.discard)(v)
-            mostrar()
-
-        espera = [None]
-
-        def ao_digitar(*_):                         # espera a pessoa parar de digitar (não refaz a cada letra)
-            if espera[0]:
-                janela.after_cancel(espera[0])
-            espera[0] = janela.after(150, mostrar)
-        var_texto.trace_add("write", ao_digitar)
-        lista.bind("<ButtonRelease-1>", lambda e: trocar(lista.nearest(e.y)))
-        lista.bind("<space>", lambda e: trocar(lista.index("active")))
-
-        botoes = ctk.CTkFrame(janela, fg_color="transparent")
-        botoes.pack(fill="x", padx=16, pady=12)
-        estilo = dict(height=30, corner_radius=6, fg_color="transparent", hover_color=Tema.SECUNDARIA_HOVER,
-                      text_color=Tema.PRIMARIA, font=ctk.CTkFont(Tema.FAMILIA, 12), width=60)
-        ctk.CTkButton(botoes, text="Todos", command=lambda: marcar_visiveis(True), **estilo).pack(side="left")
-        ctk.CTkButton(botoes, text="Nenhum", command=lambda: marcar_visiveis(False), **estilo).pack(side="left",
-                                                                                                 padx=(4, 0))
-
-        def aplicar():
-            if espera[0]:
-                janela.after_cancel(espera[0])
-            # Como no Excel: com algo digitado, valem os MARCADOS que aparecem na lista (os que contêm o texto)
-            procura = _sem_acentos(var_texto.get().strip())
-            escolhidos = set(marcados)
-            if procura:
-                escolhidos = {v for v, _ in valores if v in marcados and procura in sem_acentos[v]} or {"\0nada"}
-            self.aplicar_filtro(coluna, escolhidos)
-            janela.destroy()
-        self.master._botao(botoes, "Mostrar e selecionar", aplicar, "primario").pack(side="right")
-        janela.bind("<Return>", lambda e: aplicar())
-        janela.bind("<Escape>", lambda e: janela.destroy())
-        mostrar()
-        janela.update_idletasks()
-        x = max(0, min(self.winfo_pointerx() - 40, janela.winfo_screenwidth() - 480))
-        y = max(0, min(self.winfo_pointery() + 10, janela.winfo_screenheight() - 520))
-        janela.geometry(f"+{x}+{y}")
-        campo.focus_set()
-        self._janela_filtro = janela
-        self._filtro_aberto = (var_texto, marcados, aplicar)     # para os testes digitarem/marcarem
+        self._janela_filtro, self._filtro_aberto = janela_de_filtro(
+            self, self.master, self.TITULOS[coluna], self.valores_da_coluna(coluna), self._filtros.get(coluna),
+            lambda escolhidos: self.aplicar_filtro(coluna, escolhidos))
 
     def exportar(self, caminho) -> int:
         """Salva o que está NA TABELA (com o filtro, só os filtrados) em .json, .csv ou .txt. Devolve quantos."""
@@ -1022,6 +1048,7 @@ class JanelaModerna(ctk.CTk):
     # Linha tingida de leve + símbolo na coluna Situação (o Treeview não colore uma célula só).
     FUNDO_SITUACAO = {"ok": "#132519", "erro": "#2a1519", "pulado": "#2a2212"}
     SIMBOLO_SITUACAO = {"ok": "\u2713", "erro": "\u2715", "pulado": "\u21b7"}    # ✓ ✕ ↷
+    CAIXA = {False: "\u2610", True: "\u2611"}       # ☐ ☑ (seletor na coluna "#")
 
     def __init__(self, pasta_padrao: str = "videos_baixados"):
         ctk.set_appearance_mode("dark")
@@ -1340,9 +1367,19 @@ class JanelaModerna(ctk.CTk):
                                                  width=120, **estilo)
         for b in (self.bt_limpar_selecao, self.bt_selecionar_espelhaveis, self.bt_selecionar_todos):
             b.pack(side="right", padx=(4, 0))
-        self.lb_selecao = ctk.CTkLabel(topo, text="Ctrl+clique ou Shift+clique para escolher vários",
-                                       font=self.f_rotulo, text_color=Tema.TEXTO_FRACO)
+        # Seletor: "1-5, 8" (números da coluna #) ou parte do nome ("1x0"); Enter marca (soma ao que já está)
+        self.campo_selecionar = ctk.CTkEntry(topo, width=170, height=26,
+                                             placeholder_text="Marcar: 1-5, 8 ou nome",
+                                             fg_color=Tema.CAMPO, border_color=Tema.CAMPO_BORDA, text_color=Tema.TEXTO)
+        self.campo_selecionar.bind("<Return>", lambda e: self.marcar_por_texto())
+        self.bt_marcar = ctk.CTkButton(topo, text="Marcar", command=self.marcar_por_texto, width=64, **estilo)
+        self.bt_marcar.pack(side="right", padx=(4, 0))
+        self.campo_selecionar.pack(side="right", padx=(4, 0))
+        self.lb_selecao = ctk.CTkLabel(topo, text=self.DICA_SELECAO, font=self.f_rotulo, text_color=Tema.TEXTO_FRACO)
         self.lb_selecao.pack(side="right", padx=(0, 10))
+        self._marcados: set[str] = set()                  # linhas com ☑ (para trocar só as que mudaram)
+        self.tabela.heading("n", text=f"{self.CAIXA[False]} #", command=self.alternar_todos)
+        self.tabela.bind("<Button-1>", self._ao_clicar_tabela)
         self.tabela.bind("<<TreeviewSelect>>", lambda e: self._atualizar_selecao())
         self.tabela.bind("<Control-a>", lambda e: (self.selecionar_todos(), "break")[1])
         self.tabela.bind("<Control-A>", lambda e: (self.selecionar_todos(), "break")[1])
@@ -1681,8 +1718,13 @@ class JanelaModerna(ctk.CTk):
             "Escolha as pastas e clique em Pré-visualizar. Nada é movido sem você confirmar.")
         self.tabela_jf.configure(displaycolumns=self.ORDEM_TELA_JF)
         self.tabela_jf.bind("<<TreeviewSelect>>", lambda e: self.ao_selecionar_jf())
+        self.tabela_jf.bind("<Button-1>", self._ao_clicar_tabela_jf)
+        self._fora_jf: set[str] = set()       # "vai mover" desmarcados (☐): o Organizar deixa onde estão
+        self._filtros_col_jf: dict[str, set[str]] = {}     # filtro por coluna (clique no título): coluna -> valores
+        self._janela_filtro_jf = None
         topo = self._topos_tabela[str(self.tabela_jf)]
         self._montar_filtros_jf(topo)
+        self._titulos_jf()
         # Botões no topo (ao lado do título), e não numa faixa embaixo: sobra mais altura para a lista
         faixa.grid_remove()
         self.bt_ampliar_jf = self._botao(topo, "⤢  Ampliar lista", self.alternar_lista_jf, "fantasma", largura=130)
@@ -1730,11 +1772,63 @@ class JanelaModerna(ctk.CTk):
             fg_color="transparent", hover_color=Tema.SECUNDARIA_HOVER, text_color=Tema.PRIMARIA,
             font=ctk.CTkFont(Tema.FAMILIA, 11, underline=True))
         self.bt_mostrar_todos_jf.pack(side="left")
+        # Seletor: ☑ = o Organizar mexe; ☐ = fica onde está. Clique na caixa (coluna #) ou use os botões
+        selecao = ctk.CTkFrame(topo, fg_color="transparent")
+        selecao.pack(side="bottom", fill="x", pady=(4, 0), before=linha)       # embaixo da linha "Mostrar:"
+        self._rotulo(selecao, "Seleção:", fonte=ctk.CTkFont(Tema.FAMILIA, 11, "bold")).pack(side="left", padx=(0, 8))
+        estilo = dict(height=22, corner_radius=6, fg_color="transparent", hover_color=Tema.SECUNDARIA_HOVER,
+                      text_color=Tema.PRIMARIA, font=ctk.CTkFont(Tema.FAMILIA, 11))
+        self.bt_marcar_jf = ctk.CTkButton(selecao, text="☑ Mover selecionados", width=130,
+                                          command=lambda: self.marcar_mover_jf(self.tabela_jf.selection(), True), **estilo)
+        self.bt_desmarcar_jf = ctk.CTkButton(selecao, text="☐ Não mover selecionados", width=150,
+                                             command=lambda: self.marcar_mover_jf(self.tabela_jf.selection(), False),
+                                             **estilo)
+        self.bt_proteger_pasta_jf = ctk.CTkButton(selecao, text="Proteger a pasta...", width=110,
+                                                  command=self.ao_proteger_pasta_jf, **estilo)
+        for b in (self.bt_marcar_jf, self.bt_desmarcar_jf, self.bt_proteger_pasta_jf):
+            b.pack(side="left", padx=(0, 4))
+        self._rotulo(selecao, "Só o que está ☑ e à vista é organizado · clique no título de uma coluna para filtrar",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(side="left", padx=(10, 0))
+
+    def marcar_mover_jf(self, iids, mover: bool | None = None) -> int:
+        """☑/☐ nas linhas "vai mover" (mover=None: inverte cada uma). Devolve quantas mudaram."""
+        mudou = 0
+        for iid in iids:
+            if self._categoria_jf.get(iid) != "mover" or not self.tabela_jf.exists(iid):
+                continue
+            fica = (iid not in self._fora_jf) if mover is None else not mover
+            if fica == (iid in self._fora_jf):
+                continue
+            (self._fora_jf.add if fica else self._fora_jf.discard)(iid)
+            numero = str(self.tabela_jf.set(iid, "n")).split()[-1]
+            self.tabela_jf.set(iid, "n", f"{self.CAIXA[not fica]} {numero}")
+            mudou += 1
+        return mudou
+
+    def nao_mover_jf(self) -> list[str]:
+        """iids das linhas "vai mover" que estão desmarcadas (☐)."""
+        return [i for i in self._ordem_jf if i in self._fora_jf]
+
+    def _ao_clicar_tabela_jf(self, evento):
+        """Clique na caixa ☑/☐ (coluna #) de uma linha "vai mover": marca/desmarca sem mudar a seleção."""
+        if self.tabela_jf.identify_region(evento.x, evento.y) != "cell" or \
+                self.tabela_jf.identify_column(evento.x) != "#1":
+            return None
+        iid = self.tabela_jf.identify_row(evento.y)
+        if not iid or self._categoria_jf.get(iid) != "mover" or evento.state & 0x0005:
+            return None
+        self.marcar_mover_jf([iid])
+        return "break"
+
+    def ao_proteger_pasta_jf(self) -> None:
+        pass
 
     def mostrar_todos_jf(self) -> None:
         """Marca todas as caixas do filtro (nada fica escondido)."""
         for var in self.vars_filtro_jf.values():
             var.set(True)
+        self._filtros_col_jf.clear()
+        self._titulos_jf()
         self.aplicar_filtro_jf()
 
     def _agendar_totais_jf(self) -> None:
@@ -1756,7 +1850,66 @@ class JanelaModerna(ctk.CTk):
 
     def _visivel_jf(self, iid: str) -> bool:
         categoria = self._categoria_jf.get(iid)
-        return categoria is None or categoria not in self.vars_filtro_jf or self.vars_filtro_jf[categoria].get()
+        if not (categoria is None or categoria not in self.vars_filtro_jf or self.vars_filtro_jf[categoria].get()):
+            return False
+        return all(self.valor_jf(coluna, iid) in valores for coluna, valores in self._filtros_col_jf.items())
+
+    # ---- filtro por coluna (como na janela de canais): clique no título da coluna
+    def _titulos_jf(self) -> None:
+        for chave, texto, *_ in self.COLUNAS_JF:
+            if chave == "n":                          # o # é o seletor: clique marca/desmarca todos os visíveis
+                self.tabela_jf.heading("n", text=f"{self.CAIXA[True]} #", command=self.alternar_mover_visiveis_jf)
+                continue
+            marca = " ▼ (filtro)" if chave in self._filtros_col_jf else " ▾"
+            self.tabela_jf.heading(chave, text=texto + marca, anchor="w",
+                                   command=lambda c=chave: self.abrir_filtro_jf(c))
+
+    def valor_jf(self, coluna: str, iid: str) -> str:
+        """O valor da célula como aparece no filtro (sem o símbolo ✓/✕ da situação; vazio = "(vazio)")."""
+        valor = str(self.tabela_jf.set(iid, coluna)).strip()
+        if coluna == "status":
+            valor = re.sub(r"^[\u2713\u2715\u21b7]\s+", "", valor)
+        return valor or "(vazio)"
+
+    def valores_jf(self, coluna: str) -> list[tuple[str, int]]:
+        contagem: dict[str, int] = {}
+        for iid in self._ordem_jf:
+            valor = self.valor_jf(coluna, iid)
+            contagem[valor] = contagem.get(valor, 0) + 1
+        return sorted(contagem.items(), key=lambda vq: _sem_acentos(vq[0]))
+
+    def aplicar_filtro_coluna_jf(self, coluna: str, escolhidos) -> None:
+        """Mostra só as linhas com um dos valores nessa coluna. Todos marcados (ou nenhum) = sem filtro nela.
+        O Organizar só mexe no que está À VISTA (o escondido pelo filtro fica onde está)."""
+        escolhidos = set(escolhidos)
+        if not escolhidos or escolhidos >= {v for v, _ in self.valores_jf(coluna)}:
+            self._filtros_col_jf.pop(coluna, None)
+        else:
+            self._filtros_col_jf[coluna] = escolhidos
+        self._titulos_jf()
+        self.aplicar_filtro_jf()
+
+    def abrir_filtro_jf(self, coluna: str) -> None:
+        if self._janela_filtro_jf is not None and self._janela_filtro_jf.winfo_exists():
+            self._janela_filtro_jf.destroy()
+        titulo = next(t for c, t, *_ in self.COLUNAS_JF if c == coluna)
+        self._janela_filtro_jf, self._filtro_aberto_jf = janela_de_filtro(
+            self, self, titulo, self.valores_jf(coluna), self._filtros_col_jf.get(coluna),
+            lambda escolhidos: self.aplicar_filtro_coluna_jf(coluna, escolhidos), botao="Mostrar")
+
+    def tirar_filtros_coluna_jf(self) -> None:
+        self._filtros_col_jf.clear()
+        self._titulos_jf()
+        self.aplicar_filtro_jf()
+
+    def visiveis_jf(self) -> list[str]:
+        return [i for i in self._ordem_jf if self._visivel_jf(i)]
+
+    def alternar_mover_visiveis_jf(self) -> None:
+        """Título "☑ #": desmarca todos os "vai mover" à vista; se já estão todos desmarcados, marca."""
+        visiveis = [i for i in self.visiveis_jf() if self._categoria_jf.get(i) == "mover"]
+        algum_marcado = any(i not in self._fora_jf for i in visiveis)
+        self.marcar_mover_jf(visiveis, not algum_marcado)
 
     def aplicar_filtro_jf(self) -> None:
         """Esconde/mostra as linhas conforme as caixas marcadas, mantendo a ordem original."""
@@ -1766,9 +1919,6 @@ class JanelaModerna(ctk.CTk):
             if self._visivel_jf(iid):
                 tabela.move(iid, "", "end")
         self._atualizar_contador(tabela)
-
-    def linhas_ocultas_jf(self, categoria: str) -> int:
-        return sum(1 for iid in self._ordem_jf if self._categoria_jf.get(iid) == categoria and not self._visivel_jf(iid))
 
     def _montar_detalhe_jf(self, corpo) -> None:
         """Cartão 'Antes -> Depois' com a pasta e o arquivo, como estão e como vão ficar."""
@@ -2070,6 +2220,10 @@ class JanelaModerna(ctk.CTk):
     def limpar_tabela_jf(self) -> None:
         self.tabela_jf.delete(*self._ordem_jf)
         self._ordem_jf.clear()
+        self._fora_jf.clear()
+        if self._filtros_col_jf:                      # lista nova: os valores do filtro antigo não valem mais
+            self._filtros_col_jf.clear()
+            self._titulos_jf()
         self._categoria_jf.clear()
         self._atualizar_contador(self.tabela_jf)
         self._agendar_totais_jf()
@@ -2084,6 +2238,8 @@ class JanelaModerna(ctk.CTk):
             tags = (tipo,)
         else:
             tags = ("par" if len(self.tabela_jf.get_children()) % 2 == 0 else "impar",)
+        if categoria == "mover":                       # seletor: ☑ vai mover / ☐ fica onde está
+            numero = f"{self.CAIXA[iid not in self._fora_jf]} {numero}"
         self.tabela_jf.insert("", "end", iid=iid, values=(numero, situacao, atual, novo, legenda, progresso, fonte),
                               tags=tags)
         self._ordem_jf.append(iid)
@@ -2257,8 +2413,8 @@ class JanelaModerna(ctk.CTk):
                         conteudo: str = "", licenca: str = "") -> None:
         """conteudo: 'Filme', 'Série' ou '—'; licenca: a informada pelo site (archive.org)."""
         listra = "par" if len(self.tabela.get_children()) % 2 == 0 else "impar"
-        self.tabela.insert("", "end", iid=iid, values=(numero, situacao, titulo, origem, link, conteudo, licenca),
-                           tags=(listra,))
+        self.tabela.insert("", "end", iid=iid, values=(f"{self.CAIXA[False]} {numero}", situacao, titulo, origem,
+                                                       link, conteudo, licenca), tags=(listra,))
         self._atualizar_contador(self.tabela)
 
     def atualizar_situacao(self, iid: str, texto: str, tipo: str) -> None:
@@ -2271,8 +2427,65 @@ class JanelaModerna(ctk.CTk):
         self.tabela.item(iid, values=valores, tags=(tipo,))
         self.tabela.see(iid)
 
+    DICA_SELECAO = "Clique para marcar ☑ (vários)"
+
     def selecionar_todos(self) -> None:
         self.tabela.selection_set(self.tabela.get_children())
+
+    def alternar_todos(self) -> None:
+        """Clique no título "☐ #": marca todos; se já estão todos marcados, desmarca."""
+        linhas = self.tabela.get_children()
+        if linhas and len(self.tabela.selection()) == len(linhas):
+            self.limpar_selecao()
+        else:
+            self.selecionar_todos()
+
+    def _ao_clicar_tabela(self, evento):
+        """Um clique marca/desmarca a linha SEM perder as outras (como uma caixa de seleção). Ctrl e Shift
+        continuam como antes (Shift+clique = intervalo)."""
+        if evento.state & 0x0005:                         # Shift (0x1) ou Ctrl (0x4): comportamento normal
+            return None
+        if self.tabela.identify_region(evento.x, evento.y) not in ("cell", "tree"):
+            return None                                   # título da coluna, borda: deixa o Treeview cuidar
+        iid = self.tabela.identify_row(evento.y)
+        if not iid:
+            return None
+        if iid in self.tabela.selection():
+            self.tabela.selection_remove(iid)
+        else:
+            self.tabela.selection_add(iid)
+        self.tabela.focus(iid)
+        self.tabela.focus_set()
+        return "break"
+
+    def marcar_por_texto(self, texto: str | None = None) -> int:
+        """Marca (somando ao que já está) pelos números da coluna # ("1-5, 8") ou por parte do título
+        ("1x0", "episódio 2"). Devolve quantas linhas foram marcadas."""
+        texto = (self.campo_selecionar.get() if texto is None else texto).strip()
+        if not texto:
+            return 0
+        linhas = self.tabela.get_children()
+        numeros = numeros_do_texto(texto)
+        if numeros is not None:
+            escolhidas = [i for i in linhas if self._numero_da_linha(i) in numeros]
+        else:
+            procura = texto.casefold()
+            escolhidas = [i for i in linhas if procura in str(self.tabela.set(i, "titulo")).casefold()]
+        if escolhidas:
+            self.tabela.selection_add(escolhidas)
+            self.tabela.see(escolhidas[0])
+            if self.campo_selecionar.get():
+                self.campo_selecionar.delete(0, "end")
+                self.focus_set()                          # devolve o texto cinza de exemplo
+        else:
+            self.lb_selecao.configure(text=f"Nada com \"{texto}\"", text_color=Tema.AVISO)
+        return len(escolhidas)
+
+    def _numero_da_linha(self, iid: str) -> int:
+        try:
+            return int(str(self.tabela.set(iid, "n")).split()[-1])
+        except (ValueError, IndexError):
+            return -1
 
     def selecionar_filmes_e_series(self) -> None:
         """Só o que dá para espelhar no Jellyfin (Tipo = Filme ou Série; o "—" fica de fora)."""
@@ -2283,10 +2496,16 @@ class JanelaModerna(ctk.CTk):
         self.tabela.selection_remove(self.tabela.selection())
 
     def _atualizar_selecao(self) -> None:
-        quantos = len(self.tabela.selection())
+        selecao = set(self.tabela.selection())
+        anteriores = getattr(self, "_marcados", set())
+        for iid in selecao ^ anteriores:                  # troca ☐/☑ só nas linhas que mudaram (listas grandes)
+            if self.tabela.exists(iid):
+                self.tabela.set(iid, "n", f"{self.CAIXA[iid in selecao]} {self._numero_da_linha(iid)}")
+        self._marcados = selecao
+        quantos, total = len(selecao), len(self.tabela.get_children())
+        self.tabela.heading("n", text=f"{self.CAIXA[bool(total) and quantos == total]} #")
         self.lb_selecao.configure(
-            text=f"{quantos} de {len(self.tabela.get_children())} selecionado(s)" if quantos
-            else "Ctrl+clique ou Shift+clique para escolher vários",
+            text=f"{quantos} de {total} selecionado(s)" if quantos else self.DICA_SELECAO,
             text_color=Tema.TEXTO if quantos else Tema.TEXTO_FRACO)
 
     def selecionados(self) -> list[str]:

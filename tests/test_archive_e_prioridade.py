@@ -80,3 +80,30 @@ def test_melhor_arquivo():
     assert archive_org.melhor_arquivo([{"name": "capa.jpg"}]) is None
     assert not archive_org.reconhece("https://archive.org/about/")
     assert archive_org.reconhece("https://archive.org/search?query=filmes")
+
+
+def test_item_com_varios_episodios_pelo_link_download(api_falsa, monkeypatch):
+    """Link /download/<item> (a lista de arquivos) de um item com uma série inteira: TODOS os episódios, um por
+    episódio (o .mkv original no lugar do .mp4 gerado), em ordem natural; o resto (.txt, miniaturas) fica de fora."""
+    arquivos = [{"name": "leiame.txt", "source": "original"}, {"name": "item.thumbs/1.jpg", "source": "derivative"}]
+    for n in (1, 2, 10):
+        arquivos += [{"name": f"Episodio 1x{n:02d} - Nome.mkv", "source": "original", "size": "400000000"},
+                     {"name": f"Episodio 1x{n:02d} - Nome.mp4", "source": "derivative", "size": "130000000"}]
+    arquivos.append({"name": "Episodio 1x03 - So mp4.mp4", "source": "original", "size": "100"})
+    api_falsa.rotas["/metadata/serie_pd"] = lambda q: (200, {
+        "metadata": {"mediatype": "movies", "title": "Série PD", "year": "1955",
+                     "licenseurl": "http://creativecommons.org/publicdomain/mark/1.0/"}, "files": arquivos})
+    monkeypatch.setattr(archive_org, "HOSTS", archive_org.HOSTS + (api_falsa.base.split("//")[1],))
+    url = api_falsa.base + "/download/serie_pd"
+    assert archive_org.reconhece(url)
+    links = archive_org.buscar(ClienteHTTP(espera=0), url)
+    assert [lk.titulo for lk in links] == ["Episodio 1x01 - Nome", "Episodio 1x02 - Nome", "Episodio 1x03 - So mp4",
+                                          "Episodio 1x10 - Nome"]
+    assert links[0].url == api_falsa.base + "/download/serie_pd/Episodio%201x01%20-%20Nome.mkv"
+    assert all(lk.licenca == "Domínio público" and lk.ano == 1955 for lk in links)
+    assert len(archive_org.buscar(ClienteHTTP(espera=0), url, limite=2)) == 2
+
+
+def test_videos_do_item():
+    assert archive_org.videos_do_item([{"name": "a.mp4", "size": "10"}, {"name": "capa.jpg"}]) == [{"name": "a.mp4", "size": "10"}]
+    assert archive_org.videos_do_item([]) == []

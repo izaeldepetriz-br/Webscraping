@@ -66,6 +66,11 @@ class Catalogo:
         """Título do episódio (ex.: 'Segredos'), ou None se o catálogo não souber."""
         return None
 
+    def buscar_serie_da_epoca(self, titulo: str, ano_episodio: int) -> Filme | None:
+        """Série com o ano DO EPISÓDIO ('Tom and Jerry EP37 Professor Tom (1948)'): entre as que têm o mesmo
+        nome, a que já existia naquele ano (e não a refilmagem de 2023). Padrão: a busca sem ano."""
+        return self.buscar(titulo, None, "serie")
+
     def pre_buscar_episodios(self, pedidos, ao_progresso=None, parar=None) -> None:
         """Adianta nome_episodio() de várias temporadas: pedidos [(serie, temporada)]."""
 
@@ -343,7 +348,22 @@ class CatalogoTMDB(Catalogo):
             return
         em_paralelo(faltam, lambda t: self._episodios_da_temporada(*t), self.TRABALHADORES, ao_progresso, parar)
 
-    def _buscar_sem_cache(self, titulo: str, ano: int | None, tipo: str) -> Filme | None:
+    def buscar_serie_da_epoca(self, titulo: str, ano_episodio: int) -> Filme | None:
+        if not titulo:
+            return None
+        chave = self._chave_cache(titulo, ("época", ano_episodio), "serie")
+        with self._trava_cache:
+            if chave in self._cache:
+                return self._cache[chave]
+        if self._erro_grave:
+            raise ErroCatalogo(self._erro_grave)
+        serie = self._buscar_sem_cache(titulo, None, "serie", ate=ano_episodio)
+        with self._trava_cache:
+            self._cache[chave] = serie
+        return serie
+
+    def _buscar_sem_cache(self, titulo: str, ano: int | None, tipo: str, ate: int | None = None) -> Filme | None:
+        """ate: o ano do episódio. Entre os empatados no nome, fica o que estreou até lá (o mais perto)."""
         resultados = self._pesquisar(titulo, ano, tipo)
         if not resultados and ano:
             resultados = self._pesquisar(titulo, None, tipo)     # tenta sem o ano
@@ -351,6 +371,7 @@ class CatalogoTMDB(Catalogo):
         k_titulo, k_original, k_data = (("title", "original_title", "release_date") if tipo == "filme"
                                         else ("name", "original_name", "first_air_date"))
         melhor, nota_melhor = None, 0.0
+        candidatos = []
         for r in resultados:
             data = r.get(k_data) or ""
             if len(data) < 4 or not data[:4].isdigit():
@@ -361,9 +382,16 @@ class CatalogoTMDB(Catalogo):
             if not filme.titulo:
                 continue
             nota = _pontuar(filme, titulo, ano)
+            candidatos.append((filme, nota))
             if nota > nota_melhor:
                 melhor, nota_melhor = filme, nota
-        return melhor if nota_melhor >= self.minimo else None
+        if nota_melhor < self.minimo:
+            return None
+        if ate:
+            empatados = [f for f, n in candidatos if n >= nota_melhor - 0.02 and f.ano <= ate]
+            if empatados:
+                return max(empatados, key=lambda f: f.ano)       # o que estreou mais perto (antes) do episódio
+        return melhor
 
 
 def _achou(catalogo: Catalogo, consulta) -> bool:
@@ -393,6 +421,12 @@ class CatalogoEmCadeia(Catalogo):
     def pre_buscar_episodios(self, pedidos, ao_progresso=None, parar=None) -> None:
         for catalogo in self.catalogos:
             catalogo.pre_buscar_episodios(pedidos, ao_progresso, parar)
+
+    def buscar_serie_da_epoca(self, titulo: str, ano_episodio: int) -> Filme | None:
+        for catalogo in self.catalogos:
+            if serie := catalogo.buscar_serie_da_epoca(titulo, ano_episodio):
+                return serie
+        return None
 
     def temporadas(self, serie: Filme) -> list[tuple[int, int]] | None:
         for catalogo in self.catalogos:

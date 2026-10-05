@@ -490,18 +490,23 @@ def test_filtro_por_situacao(app, tmp_path):
 
     app.vars_filtro_jf["mover"].set(False)                                        # esconde quem vai mover
     app.aplicar_filtro_jf()
-    perguntas = []
+    perguntas, avisos = [], []
     app.perguntar = lambda t, m: perguntas.append(m) or True
+    app.mostrar_mensagem = lambda t, m, tipo="info": avisos.append(m)
+    app.bt_organizar.invoke()
+    assert perguntas == [] and "à vista" in avisos[0]                            # escondido não é movido
+    assert (biblioteca / "Cidade.de.Deus.2002.1080p.mkv").exists()
+    app.vars_filtro_jf["mover"].set(True)
+    app.aplicar_filtro_jf()
     app.bt_organizar.invoke()
     esperar(app)
-    assert "1 deles estão escondidos pelo filtro" in perguntas[0]                 # avisa antes de mover
     assert (biblioteca / "Cidade de Deus (2002)" / "Cidade de Deus (2002).mkv").exists()
     app.vars_filtro_jf["movido"].set(False)                                       # "movido" também some
     app.aplicar_filtro_jf()
     assert [l[2] for l in _linhas_jf(app)] == ["video_sem_ano.mp4"]
 
     app._salvar_config()                                                          # o filtro é lembrado
-    assert set(config.carregar()["jellyfin"]["filtros_ocultos"]) == {"organizado", "mover", "movido"}
+    assert set(config.carregar()["jellyfin"]["filtros_ocultos"]) == {"organizado", "movido"}
 
 
 def test_varios_idiomas_pela_janela(app, tmp_path):
@@ -1265,7 +1270,7 @@ def test_selecionar_todos_e_so_filmes_e_series_na_aba_videos(app):
     assert len(app.selecionados()) == 3
     app.limpar_selecao()
     app.update()
-    assert "Ctrl+clique" in app.lb_selecao.cget("text")
+    assert app.lb_selecao.cget("text") == app.DICA_SELECAO               # nada selecionado: a dica
     app.bt_selecionar_todos.invoke()
     assert len(app.selecionados()) == 3
 
@@ -2288,3 +2293,221 @@ def test_tv_limpeza_que_nao_resolve_mostra_o_diagnostico(app, tmp_path, api_fals
         app.update()
         time.sleep(0.03)
     assert sum("diagnóstico" in t for t, _ in perguntas) == 2
+
+
+def test_baixar_do_archive_sem_licenca_pergunta_so_livres_ou_todos(app):
+    from videoscraper.extracao import LinkVideo
+    app.mostrar_aba("Vídeos")
+    app.definir_url("https://archive.org/download/item")
+    sem = LinkVideo("https://archive.org/download/item/ep1.mkv", "https://archive.org/details/item", "archive.org", "ep1")
+    livre = LinkVideo("https://archive.org/download/pd/ep1.mkv", "https://archive.org/details/pd", "archive.org", "ep1",
+                      licenca="Domínio público")
+    cc = LinkVideo("https://archive.org/download/cc/a.mp4", "https://archive.org/details/cc", "archive.org", "a",
+                   licenca="CC BY 4.0")
+    perguntas, baixados, avisos = [], [], []
+    resposta = [None]
+    app.escolher = lambda t, m, opcoes, cancelar="Cancelar": (perguntas.append(m), resposta[0])[1]
+    app.mostrar_mensagem = lambda t, m, tipo="info": avisos.append(m)
+    rodar_original = app._rodar
+    app._rodar = lambda status, tarefa: baixados.append(status)        # não baixa de verdade no teste
+
+    app._baixar([sem, livre])                                          # cancelou: nada
+    assert "1 com domínio público" in perguntas[0] and "certeza" in perguntas[0] and baixados == []
+
+    app.trabalhando = False
+    resposta[0] = app.OPCOES_LICENCA[0]                                # "Só domínio público / CC"
+    filtrados = app._filtrar_por_licenca([sem, livre, cc])
+    assert filtrados == [livre, cc]
+    assert app._filtrar_por_licenca([sem]) is None and "nada foi baixado" in avisos[-1]
+
+    resposta[0] = app.OPCOES_LICENCA[1]                                # "Todos (tenho certeza)"
+    assert app._filtrar_por_licenca([sem, livre]) == [sem, livre]
+
+    perguntas.clear()
+    assert app._filtrar_por_licenca([livre, cc]) == [livre, cc] and perguntas == []   # todos livres: nem pergunta
+    app._baixar([livre])
+    assert baixados == ["Baixando vídeos..."]
+    app._rodar = rodar_original
+
+    # "Baixar" sem buscar antes: a busca acha os vídeos e a pergunta vem no fim (com a janela livre)
+    chamados = []
+    app._baixar = lambda lista: chamados.append(lista)
+    app.trabalhando = True
+    app.fila.put(("baixar_depois", [sem, livre]))
+    app.fila.put(("fim", None))
+    for _ in range(20):
+        app.update()
+        time.sleep(0.02)
+    assert chamados == [[sem, livre]]
+
+
+def test_seletor_da_lista_de_videos(app):
+    """☐/☑ na coluna #, um clique marca sem perder os outros, título "☐ #" marca todos e o campo "1-3, 5"."""
+    from videoscraper.gui_moderna import numeros_do_texto
+    assert numeros_do_texto("1-3, 5") == {1, 2, 3, 5} and numeros_do_texto("2 a 4") == {2, 3, 4}
+    assert numeros_do_texto("1x0") is None
+    app.mostrar_aba("Vídeos")
+    app.limpar_tabela()
+    for i in range(6):
+        app.adicionar_video(str(i), i + 1, "", f"Episodio 1x0{i + 1}", "archive.org", f"https://a/{i}.mkv")
+    app.update()
+    assert app.tabela.set("0", "n") == "☐ 1"
+
+    class Clique:
+        def __init__(self, iid, estado=0):
+            x, y, _, h = app.tabela.bbox(iid, "titulo")
+            self.x, self.y, self.state = x + 5, y + h // 2, estado
+    app.tabela.see("0")
+    app.update()
+    assert app._ao_clicar_tabela(Clique("0")) == "break"
+    assert app._ao_clicar_tabela(Clique("2")) == "break"
+    app.update()
+    assert set(app.tabela.selection()) == {"0", "2"}                  # sem Ctrl: os dois ficam marcados
+    assert app.tabela.set("0", "n") == "☑ 1" and app.tabela.set("1", "n") == "☐ 2"
+    assert "2 de 6 selecionado" in app.lb_selecao.cget("text")
+    app._ao_clicar_tabela(Clique("0"))                                 # clicar de novo desmarca
+    app.update()
+    assert app.tabela.selection() == ("2",) and app.tabela.set("0", "n") == "☐ 1"
+    assert app._ao_clicar_tabela(Clique("4", estado=0x1)) is None     # Shift: o Treeview cuida (intervalo)
+
+    assert app.marcar_por_texto("4-5") == 2
+    app.update()
+    assert set(app.tabela.selection()) == {"2", "3", "4"}
+    assert app.marcar_por_texto("1x06") == 1                           # pelo nome
+    assert app.marcar_por_texto("nada disso") == 0 and "Nada com" in app.lb_selecao.cget("text")
+
+    app.alternar_todos()                                               # título "☐ #": todos
+    app.update()
+    assert len(app.tabela.selection()) == 6 and app.tabela.heading("n", "text") == "☑ #"
+    app.alternar_todos()                                               # de novo: nenhum
+    app.update()
+    assert app.tabela.selection() == () and app.tabela.set("5", "n") == "☐ 6"
+
+
+def test_arquivos_seletor_filtro_por_coluna_e_so_o_que_esta_a_vista_muda(app, tmp_path):
+    """Tela de Arquivos: ☑/☐ por linha, filtro em cada coluna e o Organizar só mexe no marcado E à vista."""
+    origem = tmp_path / "Baixados"
+    _video_grande(origem / "Cidade.de.Deus.2002.1080p.mkv")
+    _video_grande(origem / "Matrix.1999.1080p.mkv")
+    _video_grande(origem / "Up.2009.1080p.mkv")
+    filmes = tmp_path / "Filmes"
+    filmes.mkdir()
+    app.mostrar_aba("Jellyfin")
+    app.seletor_modo.set("Filmes")
+    app._ao_trocar_modo("Filmes")
+    app.var_jf_origem.set(str(origem))
+    app.var_jf_destino.set(str(filmes))
+    app.var_jf_legendas.set(False)
+    app.bt_previa.invoke()
+    esperar(app)
+    atuais = {app.tabela_jf.set(i, "atual"): i for i in app._ordem_jf if app._categoria_jf.get(i) == "mover"}
+    matrix, cidade = atuais["Matrix.1999.1080p.mkv"], atuais["Cidade.de.Deus.2002.1080p.mkv"]
+    assert app.tabela_jf.set(matrix, "n").startswith("☑")
+
+    # 1) individual: clique na caixa da coluna #
+    app.tabela_jf.see(matrix)
+    app.update()
+    x, y, _, h = app.tabela_jf.bbox(matrix, "n")
+
+    class Clique:
+        state = 0
+    Clique.x, Clique.y = x + 4, y + h // 2
+    assert app._ao_clicar_tabela_jf(Clique) == "break"
+    assert app.tabela_jf.set(matrix, "n").startswith("☐") and app.nao_mover_jf() == [matrix]
+
+    # 2) filtro numa coluna (Arquivo atual): digitar "cidade" e aplicar
+    valores = dict(app.valores_jf("atual"))
+    assert valores["Cidade.de.Deus.2002.1080p.mkv"] >= 1 and "▾" in app.tabela_jf.heading("atual", "text")
+    app.abrir_filtro_jf("atual")
+    texto, marcados, aplicar = app._filtro_aberto_jf
+    texto.set("cidade")
+    aplicar()
+    app.update()
+    assert cidade in app.visiveis_jf() and matrix not in app.visiveis_jf() and \
+        all("Cidade" in app.tabela_jf.set(i, "atual") for i in app.visiveis_jf()) and "(filtro)" in app.tabela_jf.heading("atual", "text")
+    assert app.valor_jf("status", cidade) == "vai mover"                    # sem o símbolo, para o filtro
+
+    perguntas = []
+    app.perguntar = lambda t, m: perguntas.append(m) or True
+    app.bt_organizar.invoke()
+    esperar(app)
+    assert "Mover 1 arquivo(s)" in perguntas[0] and "escondido(s) pelo filtro" in perguntas[0]
+    assert (filmes / "Cidade de Deus (2002)" / "Cidade de Deus (2002).mkv").exists()
+    assert "1 desmarcado(s) (☐) e 1 escondido(s) pelo filtro" in perguntas[0]
+    assert (origem / "Matrix.1999.1080p.mkv").exists()                      # desmarcado: ficou
+    assert (origem / "Up.2009.1080p.mkv").exists()                          # escondido pelo filtro: ficou
+
+    # 3) "Mostrar todos" tira o filtro das colunas
+    app.mostrar_todos_jf()
+    assert "▾" in app.tabela_jf.heading("atual", "text") and not app._filtros_col_jf
+
+
+def test_arquivos_marcar_todos_e_proteger_a_pasta(app, tmp_path):
+    origem = tmp_path / "Baixados"
+    for n in (1, 2):
+        _video_grande(origem / "Tom and Jerry" / "Season 1" / f"Tom and Jerry S01E0{n}.mkv")
+    _video_grande(origem / "Pica-Pau" / "Pica-Pau S01E01.mkv")
+    series = tmp_path / "Series"
+    series.mkdir()
+    app.mostrar_aba("Jellyfin")
+    app.seletor_modo.set("Séries")
+    app._ao_trocar_modo("Séries")
+    app.var_jf_origem.set(str(origem))
+    app.var_jf_destino.set(str(series))
+    app.var_jf_legendas.set(False)
+    app.definir_pastas_protegidas([])
+    app.bt_previa.invoke()
+    esperar(app)
+    mover = [i for i in app._ordem_jf if app._categoria_jf.get(i) == "mover"]
+    app.alternar_mover_visiveis_jf()                                         # título "☑ #": desmarca todos
+    assert set(app.nao_mover_jf()) == set(mover)
+    app.alternar_mover_visiveis_jf()                                         # de novo: marca todos
+    assert app.nao_mover_jf() == []
+    app.tabela_jf.selection_set([mover[0]])
+    app.marcar_mover_jf(app.tabela_jf.selection(), False)                     # "☐ Não mover selecionados"
+    assert app.nao_mover_jf() == [mover[0]]
+    app.marcar_mover_jf(app.tabela_jf.selection(), True)
+
+    tom = next(i for i in mover if "Tom" in app.tabela_jf.set(i, "atual"))
+    app.tabela_jf.selection_set([tom])
+    perguntas = []
+    app.perguntar = lambda t, m: perguntas.append(m) or True
+    app.ao_proteger_pasta_jf()
+    assert str(origem / "Tom and Jerry") in perguntas[0]                     # a pasta da série, não a "Season 1"
+    assert app.pastas_protegidas() == [str(origem / "Tom and Jerry")]
+    dos_tom = [i for i in mover if "Tom" in app.tabela_jf.set(i, "atual")]
+    assert len(dos_tom) == 2 and set(app.nao_mover_jf()) == set(dos_tom)
+
+
+def test_sobra_desmarcada_nao_e_apagada(app, tmp_path):
+    """'vai apagar a pasta' desmarcado (☐): a pasta fica, sem nenhuma alteração."""
+    import json
+    raiz = tmp_path / "The Office"
+    sobra = raiz / "Vida de Escritorio 2005 - 1a Temporada WWW.BLUDV.TV"
+    sobra.mkdir(parents=True)
+    with open(sobra / "BLUDV.TV.mp4", "wb") as f:
+        f.truncate(52 * 1024 * 1024)
+    (sobra / "The.Office.S01E01.720p-poster.jpg").write_bytes(b"jpg")
+    novo = raiz / "The Office (2005)" / "Season 01" / "The Office S01E01 - Piloto.mkv"
+    novo.parent.mkdir(parents=True)
+    novo.write_bytes(b"v")
+    (raiz / ".organizador").mkdir()
+    (raiz / ".organizador" / "log-1.json").write_text(json.dumps({"raiz": str(raiz), "itens": [
+        {"de": str(sobra / "The.Office.S01E01.720p.mkv"), "para": str(novo)}]}), encoding="utf-8")
+    app.mostrar_aba("Jellyfin")
+    app.seletor_modo.set("Séries")
+    app._ao_trocar_modo("Séries")
+    app.var_jf_origem.set(str(raiz))
+    app.var_jf_destino.set(str(raiz))
+    app.var_jf_apagar_pasta.set(True)
+    app.var_jf_legendas.set(False)
+    app.bt_previa.invoke()
+    esperar(app)
+    iid = next(i for i in app._ordem_jf if app.tabela_jf.set(i, "atual") == sobra.name)
+    assert app.marcar_mover_jf([iid], False) == 1
+    avisos = []
+    app.mostrar_mensagem = lambda t, m, tipo="info": avisos.append(m)
+    app.bt_organizar.invoke()
+    esperar(app)
+    assert "Nenhum arquivo marcado" in avisos[0]
+    assert (sobra / "BLUDV.TV.mp4").exists() and (sobra / "The.Office.S01E01.720p-poster.jpg").exists()
