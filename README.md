@@ -233,6 +233,24 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v1.7 (TV ao vivo organizada)
+
+- **Desfazer remoção:** os canais removidos (selecionados ou "Remover todos") podem voltar, cada um no lugar em
+  que estava (guarda as últimas 10 remoções).
+- **Favoritos mantidos:** ao enviar com canais removidos, o programa atualiza a lista, espera o Jellyfin
+  atualizar o guia e confere se os removidos saíram; só recria o sintonizador se eles continuarem lá.
+- **Selecionar os repetidos:** o mesmo canal em links diferentes ("TV Cultura (720p)" = "TV Cultura HD"); fica
+  um de cada (o primeiro que está no ar).
+- **Histórico (coluna Últimas):** as últimas 5 conferências de cada canal (✓ no ar, ✕ falhou) e o botão
+  "os que sempre falham" (falhou em todas as últimas 3 ou mais; canais "Not 24/7" que às vezes funcionam não entram).
+- **Editar com duplo clique:** nome, número, grupo, link, logo e o ID do guia.
+- **Número do canal (Nº):** vai para o Jellyfin (tvg-chno); "Numerar em ordem..." numera 1, 2, 3... (ou só os
+  selecionados, continuando do maior número).
+- **Velocidade da conferência:** Leve (8 consultas ao mesmo tempo), Normal (16, o padrão) ou Rápida (32). Muitas
+  conexões de uma vez podem lotar o roteador/Wi-Fi e parecer que o computador travou. No Windows a conferência
+  roda com prioridade "abaixo do normal".
+- Código: a parte de TV ao vivo da janela foi para `videoscraper/tv_moderna.py`.
+
 ### Novidades da v1.6.3
 
 - **Canais removidos saem do Jellyfin de verdade:** ao "Salvar e enviar", a lista canais.m3u é sempre regravada

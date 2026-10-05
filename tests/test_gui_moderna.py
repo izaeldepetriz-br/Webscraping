@@ -1665,14 +1665,14 @@ def test_tv_ao_vivo_exportar_o_que_esta_na_tabela(app, tmp_path, monkeypatch):
     app._mostrar_canais()
     assert janela.exportar(tmp_path / "todos.json") == 2
     dados = json.loads((tmp_path / "todos.json").read_text(encoding="utf-8"))
-    assert dados[0] == {"canal": "TV Cultura", "grupo": "Abertos", "situacao": "", "no_ar": None,
-                        "link": "https://a.org/1.m3u8"}
+    assert dados[0] == {"numero": "", "canal": "TV Cultura", "grupo": "Abertos", "situacao": "", "no_ar": None,
+                        "historico": "", "link": "https://a.org/1.m3u8"}
     janela.aplicar_filtro("grupo", ["Rádios"])                          # com filtro: só os filtrados
     from videoscraper import gui_moderna
     monkeypatch.setattr(gui_moderna.filedialog, "asksaveasfilename", lambda **k: str(tmp_path / "filtrados.csv"))
     janela.bt_exportar.invoke()
     linhas = (tmp_path / "filtrados.csv").read_text(encoding="utf-8-sig").splitlines()
-    assert len(linhas) == 2 and linhas[1].startswith("Rádio;Rádios;fora do ar (HTTP 404);não;")
+    assert len(linhas) == 2 and linhas[1].startswith(";Rádio;Rádios;fora do ar (HTTP 404);não;")
     assert "1 canal(is) (só os do filtro)" in app.caixas[-1][2]
 
 
@@ -1733,3 +1733,102 @@ def test_enviar_lista_vazia_pergunta_e_tira_do_jellyfin(app, tmp_path):
     esperar(app)
     assert "#EXTINF" not in (tmp_path / "TV" / "canais.m3u").read_text(encoding="utf-8")
     assert "1 canal(is) saíram da lista" in app.caixas[-1][2]
+
+
+def _abrir_tv(app, canais):
+    app.mostrar_aba("Jellyfin")
+    app.bt_tv_ao_vivo.invoke()
+    app._canais = list(canais)
+    app._guardar_canais()
+    return app.janela_canais
+
+
+def test_tv_desfazer_remocao_volta_cada_canal_para_o_lugar(app):
+    from jellyfin_tools.tv_ao_vivo import Canal
+    janela = _abrir_tv(app, [Canal(f"C{n}", f"https://a.org/{n}.m3u8") for n in range(5)])
+    assert janela.bt_desfazer.cget("state") == "disabled"                 # nada para desfazer ainda
+    janela.tabela.selection_set(["1", "3"])
+    janela.bt_remover.invoke()
+    assert [c.nome for c in app._canais] == ["C0", "C2", "C4"]
+    janela.bt_remover_todos.invoke()
+    assert app._canais == [] and janela.bt_desfazer.cget("state") == "normal"
+    janela.bt_desfazer.invoke()                                         # desfaz o "Remover todos"
+    assert [c.nome for c in app._canais] == ["C0", "C2", "C4"]
+    janela.bt_desfazer.invoke()                                         # e a remoção de antes
+    assert [c.nome for c in app._canais] == ["C0", "C1", "C2", "C3", "C4"]
+    assert "2 canal(is) voltaram" in app.caixas[-1][2]
+    assert janela.bt_desfazer.cget("state") == "disabled"                 # nada mais para desfazer
+    app._desfazer_remocao_canais()
+    assert "Não há remoção" in app.caixas[-1][2]
+
+
+def test_tv_selecionar_repetidos_deixa_um_de_cada(app):
+    from jellyfin_tools.tv_ao_vivo import Canal, Situacao
+    janela = _abrir_tv(app, [Canal("TV Cultura (720p)", "https://a.org/1.m3u8"), Canal("Band", "https://a.org/2.m3u8"),
+                             Canal("TV Cultura HD", "https://b.org/1.m3u8"), Canal("tv cultura", "https://c.org/1.m3u8")])
+    app._situacao_canais = {"https://b.org/1.m3u8": Situacao(True, "no ar")}
+    app._mostrar_canais()
+    assert janela.selecionar_duplicados() == 2
+    assert sorted(janela.selecionados()) == ["0", "3"]                 # fica a cópia que está no ar (a 2)
+    app._canais = [Canal("A", "https://a.org/a"), Canal("B", "https://a.org/b")]
+    app._mostrar_canais()
+    assert janela.selecionar_duplicados() == 0 and "Nenhum canal repetido" in app.caixas[-1][2]
+
+
+def test_tv_historico_das_conferencias_e_os_que_sempre_falham(app):
+    from jellyfin_tools.tv_ao_vivo import Canal, Situacao, carregar_historico
+    canais = [Canal("Sempre", "https://a.org/1"), Canal("Às vezes", "https://a.org/2"), Canal("Morto", "https://a.org/3")]
+    janela = _abrir_tv(app, canais)
+    for rodada in range(3):
+        app._tratar_mensagem("canais_conferidos", [(canais[0], Situacao(True, "no ar")),
+                                                   (canais[1], Situacao(rodada == 1, "fora do ar (HTTP 404)")),
+                                                   (canais[2], Situacao(False, "sem resposta"))])
+    ultimas = {janela.tabela.item(i, "text"): janela.tabela.set(i, "historico") for i in janela.tabela.get_children()}
+    assert ultimas == {"Sempre": "✓✓✓  sempre no ar", "Às vezes": "✕✓✕  2 de 3 falharam",
+                       "Morto": "✕✕✕  3 de 3 falharam"}
+    assert janela.selecionar_mortos() == 1 and janela.selecionados() == ["2"]   # o "Not 24/7" não entra
+    assert carregar_historico(app.arquivo_historico_canais)["https://a.org/2"] == [False, True, False]
+    assert janela.valores_da_coluna("historico")[-1] == ("sempre no ar", 1)
+
+
+def test_tv_editar_canal_com_duplo_clique(app, monkeypatch):
+    from jellyfin_tools.tv_ao_vivo import Canal, Situacao, ler_m3u
+    janela = _abrir_tv(app, [Canal("Cultura", "https://a.org/1.m3u8"), Canal("Band", "https://a.org/2.m3u8")])
+    app._situacao_canais = {"https://a.org/1.m3u8": Situacao(False, "fora do ar (HTTP 404)")}
+    pedidos = []
+    monkeypatch.setattr(app, "_pedir_dados_canal", lambda dados: (pedidos.append(dados), {
+        **dados, "nome": "TV Cultura", "numero": "2", "grupo": "Abertos", "url": "https://novo.org/c.m3u8"})[1])
+    app.update()
+    janela.tabela.see("0")
+    x, y, _, _ = janela.tabela.bbox("0", "#0")
+    from types import SimpleNamespace
+    janela._ao_duplo_clique(SimpleNamespace(x=x + 10, y=y + 5), app._editar_canal)   # o duplo clique na linha
+    assert pedidos and pedidos[0]["nome"] == "Cultura"
+    assert app._canais[0] == Canal("TV Cultura", "https://novo.org/c.m3u8", "Abertos", numero="2")
+    assert "https://a.org/1.m3u8" not in app._situacao_canais          # outro link: situação antiga sai
+    assert janela.tabela.set("0", "numero") == "2"
+    monkeypatch.setattr(app, "_pedir_dados_canal", lambda dados: {**dados, "url": "https://a.org/2.m3u8"})
+    app._editar_canal("0")                                              # link de outro canal: recusa
+    assert "já está em outro canal" in app.caixas[-1][2] and app._canais[0].url == "https://novo.org/c.m3u8"
+    monkeypatch.setattr(app, "_pedir_dados_canal", lambda dados: {**dados, "numero": "dois"})
+    app._editar_canal("0")
+    assert "precisa ser um número" in app.caixas[-1][2]
+    from videoscraper.gui_moderna import DialogoCanal
+    dialogo = DialogoCanal(janela, {"nome": "X", "url": "https://x"})   # a janelinha abre e devolve
+    dialogo.vars["numero"].set("7")
+    dialogo._salvar()
+    assert dialogo.resultado["numero"] == "7" and dialogo.resultado["nome"] == "X"
+    from jellyfin_tools.tv_ao_vivo import gerar_m3u
+    assert ler_m3u(gerar_m3u(app._canais))[0].numero == "2"                 # o número vai no tvg-chno
+
+
+def test_tv_numerar_em_ordem(app):
+    from jellyfin_tools.tv_ao_vivo import Canal
+    janela = _abrir_tv(app, [Canal(f"C{n}", f"https://a.org/{n}") for n in range(4)])
+    janela.bt_numerar.invoke()
+    assert [c.numero for c in app._canais] == ["1", "2", "3", "4"]
+    app._canais.append(Canal("Novo", "https://a.org/novo"))
+    app._guardar_canais()
+    janela.tabela.selection_set(["4"])
+    janela.bt_numerar.invoke()                                          # só o selecionado: continua do maior
+    assert app._canais[-1].numero == "5" and [c.numero for c in app._canais[:4]] == ["1", "2", "3", "4"]

@@ -38,8 +38,8 @@ from jellyfin_tools.espelho import (aplicar_espelho, classificar, conferir_e_avi
                                     lotes_de_espelhos, nome_do_link, planejar_espelho, remover_espelhos,
                                     remover_espelhos_escolhidos, verificar_links)
 from jellyfin_tools.conflitos import aplicar as aplicar_conflitos, decidir as decidir_conflitos
-from jellyfin_tools.tv_ao_vivo import (Canal, ClienteTV, NaoEhLista, carregar_canais, conferir_canais, importar as importar_canais,
-                                       mensagem_fora_do_ar, publicar as publicar_canais, salvar_canais)
+from jellyfin_tools.paralelo import prioridade_baixa
+from jellyfin_tools.tv_ao_vivo import carregar_canais, conferir_canais, mensagem_fora_do_ar
 from jellyfin_tools.regras import RegraNome, adicionar_regra, carregar_regras, regra_para, salvar_regras
 from jellyfin_tools.organizador import (DETALHE_EPISODIO, episodio_do_video, protegido, organizar_misto, problema_no_caminho, sugestao_de_caminho,
                                        ultimo_log)
@@ -55,7 +55,8 @@ from .cli import salvar
 from .extracao import LinkVideo
 from .gui import ORIGENS, _SaidaParaFila, _so_caracteres_basicos
 from . import atualizacao, bandeja, inicializacao
-from .gui_moderna import JanelaCanais, JanelaEspelhos, JanelaModerna, OpcoesInterface
+from .gui_moderna import JanelaEspelhos, JanelaModerna, OpcoesInterface
+from .tv_moderna import TVAoVivo
 from .navegador import PERFIL_PADRAO, PlaywrightAusente
 from .servico import MENSAGEM_ROBOTS, Trabalho, fazer_login
 
@@ -101,7 +102,7 @@ STATUS_LEGENDA = {"baixada": ("baixada", "ok"), "ja_existe": ("já existia", Non
                   "sem_video": ("sem vídeo", None)}
 
 
-class AppModerna(JanelaModerna):
+class AppModerna(TVAoVivo, JanelaModerna):
     def __init__(self):
         super().__init__(pasta_padrao=PASTA_PADRAO)
         self.fila: queue.Queue = queue.Queue()
@@ -129,8 +130,7 @@ class AppModerna(JanelaModerna):
         self._instalar_ao_sair = None           # (zip, reabrir): troca os arquivos quando o programa fechar
         self._versao_agendada = None
         self._bandeja = None                    # ícone perto do relógio (quando escondida)
-        self.janela_canais = None               # "TV ao vivo..."
-        self._canais, self._situacao_canais = [], {}
+        self._iniciar_tv_ao_vivo()
         self._saindo = False
         self._espelhos_salvos = {}
         self._vigia_conferindo = False
@@ -428,8 +428,7 @@ class AppModerna(JanelaModerna):
         elif tipo == "canais_importados":
             self._juntar_canais(dado)
         elif tipo == "canais_conferidos":
-            self._situacao_canais.update({c.url: sit for c, sit in dado})
-            self._mostrar_canais(manter_selecao=True)
+            self._receber_conferencia_canais(dado)
         elif tipo == "bandeja":                        # clique no ícone perto do relógio
             if dado == "abrir":
                 self.mostrar_janela()
@@ -804,6 +803,7 @@ class AppModerna(JanelaModerna):
             self._log.warning("Conferência automática: escolha as bibliotecas de Filmes/Séries")
             return
         notificador = Notificador(o.discord_webhook, o.telegram_token, o.telegram_chat_id)
+        trabalhadores = self._consultas_ao_mesmo_tempo()
 
         def tarefa():
             resultado, quebrados, removidos = [], [], 0
@@ -819,10 +819,12 @@ class AppModerna(JanelaModerna):
                 linhas.append(("/".join(arquivo.relative_to(raiz).parts), v.ok, texto))
             fora = []
             if canais:                                 # canais ao vivo: avisa se algum saiu do ar
-                situacoes = conferir_canais(canais, parar=self.evento_parar.is_set,
-                                            ao_progresso=self._progresso_com_velocidade("Conferindo canais ao vivo"))
+                with prioridade_baixa():
+                    situacoes = conferir_canais(canais, trabalhadores, parar=self.evento_parar.is_set,
+                                                ao_progresso=self._progresso_com_velocidade("Conferindo canais ao vivo"))
                 fora = [(c, s) for c, s in situacoes if not s.ok]
                 self._registrar_canais(situacoes)
+                self.fila.put(("canais_conferidos", situacoes))
                 linhas += [(f"TV ao vivo/{c.nome}", s.ok, s.detalhe) for c, s in situacoes]
                 if fora and notificador.ativo:
                     notificador.enviar(*mensagem_fora_do_ar(fora))
@@ -1642,122 +1644,6 @@ class AppModerna(JanelaModerna):
         if not os.environ.get("VIDEOSCRAPER_SEM_ATUALIZACAO"):
             self.after(4000, self._ciclo_versao)          # ao abrir e depois a cada 6 horas (programa aberto)
 
-    # ================================================================== TV ao vivo (canais no Jellyfin)
-    @property
-    def arquivo_canais(self) -> Path:
-        return config.ARQUIVO.parent / "canais.json"
-
-    def ao_tv_ao_vivo(self) -> None:
-        if self.janela_canais is None or not self.janela_canais.winfo_exists():
-            self.janela_canais = JanelaCanais(self, {
-                "adicionar": self._adicionar_canal, "importar_arquivo": self._importar_canais_arquivo,
-                "importar_endereco": self._importar_canais_endereco, "remover": self._remover_canais,
-                "remover_todos": self._remover_todos_canais,
-                "conferir": self._conferir_canais, "publicar": self._publicar_canais})
-            dados = config.carregar().get("tv", {})
-            dados.setdefault("pasta", str(config.ARQUIVO.parent / "tv"))
-            self.janela_canais.definir_valores(dados)
-        self._canais = carregar_canais(self.arquivo_canais)
-        self._mostrar_canais()
-        self.janela_canais.lift()
-
-    def _mostrar_canais(self, manter_selecao: bool = False) -> None:
-        if self.janela_canais is None or not self.janela_canais.winfo_exists():
-            return
-        linhas = []
-        for i, c in enumerate(self._canais):
-            situacao = self._situacao_canais.get(c.url)            # None = ainda não conferido
-            linhas.append((str(i), c.nome, c.grupo, situacao.detalhe if situacao else "—", c.url,
-                           situacao.ok if situacao else None))
-        self.janela_canais.preencher(linhas, manter_selecao)
-
-    def _guardar_canais(self) -> None:
-        salvar_canais(self.arquivo_canais, self._canais)
-        if self.janela_canais is not None and self.janela_canais.winfo_exists():
-            tudo = config.carregar()
-            tudo["tv"] = self.janela_canais.valores()
-            config.salvar(tudo)
-        self._mostrar_canais()
-
-    def _juntar_canais(self, novos) -> int:
-        conhecidos = {c.url for c in self._canais}
-        somados = [c for c in novos if c.url not in conhecidos]
-        self._canais += somados
-        self._guardar_canais()
-        return len(somados)
-
-    def _adicionar_canal(self) -> None:
-        janela = self.janela_canais
-        nome, link = janela.var_nome.get().strip(), janela.var_link.get().strip()
-        if not link.lower().startswith(("http://", "https://", "rtsp://", "rtmp://", "udp://")):
-            self.mostrar_mensagem("TV ao vivo", "Cole o link do sinal do canal (começa com http://, https://, rtsp://...).",
-                                  "aviso")
-            return
-        if link.lower().split("?")[0].endswith(".m3u") and not nome:
-            self._importar_canais_endereco()                   # é uma LISTA de canais: importa todos
-            return
-        self._juntar_canais([Canal(nome or link.rsplit("/", 1)[-1], link)])
-        janela.var_nome.set("")
-        janela.var_link.set("")
-
-    def _importar_canais_arquivo(self) -> None:
-        arquivo = filedialog.askopenfilename(title="Lista de canais (.m3u)",
-                                             filetypes=[("Lista de canais", "*.m3u *.m3u8"), ("Todos", "*.*")])
-        if arquivo:
-            try:
-                somados = self._juntar_canais(importar_canais(arquivo))
-            except (NaoEhLista, OSError) as erro:
-                self.mostrar_mensagem("TV ao vivo", f"Não importei: {erro}", "aviso")
-                return
-            self._log.info("TV ao vivo: %d canal(is) importado(s) de %s", somados, arquivo)
-
-    def _importar_canais_endereco(self) -> None:
-        link = self.janela_canais.var_link.get().strip()
-        if not link.lower().startswith(("http://", "https://")):
-            self.mostrar_mensagem("TV ao vivo", "Cole o endereço da lista .m3u (http...) no campo do link.", "aviso")
-            return
-
-        def tarefa():
-            try:
-                novos = importar_canais(link)
-            except (NaoEhLista, OSError) as erro:          # página de site, endereço fora do ar...
-                self._log.warning("TV ao vivo: %s: %s", link, erro)
-                self.fila.put(("msg", ("TV ao vivo", f"Não importei: {erro}", "aviso")))
-                return
-            self._log.info("TV ao vivo: %d canal(is) na lista %s", len(novos), link)
-            self.fila.put(("canais_importados", novos))
-
-        self._rodar("Importando a lista de canais...", tarefa)
-
-    def _remover_todos_canais(self) -> None:
-        if self._canais and self.perguntar("TV ao vivo", f"Tirar TODOS os {len(self._canais)} canal(is) da lista?\n\n"
-                                           "(O que já foi enviado ao Jellyfin muda só no próximo \"Salvar e enviar\".)"):
-            self._canais, self._situacao_canais = [], {}
-            self._guardar_canais()
-
-    def _remover_canais(self) -> None:
-        tirar = {int(i) for i in self.janela_canais.selecionados()}
-        if not tirar:
-            self.mostrar_mensagem("TV ao vivo", "Selecione os canais (clique; Ctrl+clique para vários), ou use "
-                                  "\"Selecionar os fora do ar\" / \"Remover todos\".", "aviso")
-            return
-        if self.perguntar("TV ao vivo", f"Tirar {len(tirar)} canal(is) da lista?"):
-            self._canais = [c for i, c in enumerate(self._canais) if i not in tirar]
-            self._guardar_canais()
-
-    CANAIS_NO_CONSOLE = 300
-
-    def _registrar_canais(self, situacoes) -> None:
-        """Uma linha por canal no arquivo de log. No console da janela, só em listas pequenas: 11 mil linhas
-        de uma vez travavam a tela por alguns segundos (a situação de cada um já aparece na tabela)."""
-        grande = len(situacoes) > self.CANAIS_NO_CONSOLE
-        for c, s in situacoes:
-            nivel = logging.DEBUG if grande else (logging.INFO if s.ok else logging.WARNING)
-            self._log.log(nivel, "[canal] %s: %s", c.nome, s.detalhe)
-        if grande:
-            self._log.info("[canal] %d canais conferidos: a situação de cada um está na tabela de canais e no "
-                           "arquivo de log (botão Abrir log).", len(situacoes))
-
     def _progresso_com_velocidade(self, texto: str):
         """ao_progresso(feitos, total) que mostra a velocidade e quanto falta:
         'Conferindo canais: 526 de 11393 · 41/s · faltam ~4 min'."""
@@ -1771,52 +1657,6 @@ class AppModerna(JanelaModerna):
             self._avisar_analise(feitos / total, f"{texto}: {feitos} de {total} · {por_segundo:.0f}/s"
                                  + (f" · {resto}" if resto else ""))
         return avisar
-
-    def _conferir_canais(self) -> None:
-        """Confere os canais SELECIONADOS na tabela (sem seleção, todos). Os outros mantêm a situação de antes."""
-        janela = self.janela_canais
-        escolhidos = janela.a_conferir() if janela is not None and janela.winfo_exists() else None
-        canais = list(self._canais) if escolhidos is None else \
-            [self._canais[int(i)] for i in escolhidos if 0 <= int(i) < len(self._canais)]
-        if not canais:
-            return
-        rotulo = "Conferindo canais" if len(canais) == len(self._canais) else f"Conferindo {len(canais)} selecionado(s)"
-
-        def tarefa():
-            situacoes = conferir_canais(canais, parar=self.evento_parar.is_set,
-                                        ao_progresso=self._progresso_com_velocidade(rotulo))
-            self._registrar_canais(situacoes)
-            fora = sum(1 for _, sit in situacoes if not sit.ok)
-            self.fila.put(("canais_conferidos", situacoes))
-            parado = f" Parado: {len(situacoes)} de {len(canais)} conferidos." if len(situacoes) < len(canais) else ""
-            self.fila.put(("status_fim", f"Canais: {len(situacoes) - fora} no ar, {fora} fora do ar.{parado}"))
-
-        self._rodar("Conferindo os canais ao vivo...", tarefa)
-
-    def _publicar_canais(self) -> None:
-        valores = self.janela_canais.valores()
-        if not valores["pasta"]:
-            self.mostrar_mensagem("TV ao vivo", "Escolha a pasta onde salvar a lista (canais.m3u).", "aviso")
-            return
-        if not self._canais and not valores["antena"] and not self.perguntar(
-                "TV ao vivo", "A lista está VAZIA.\n\nEnviar assim TIRA do Jellyfin os canais enviados antes "
-                "(a lista canais.m3u fica sem canais). Continuar?"):
-            return
-        self._guardar_canais()
-        o = self.obter_opcoes_jellyfin()
-        canais = list(self._canais)
-
-        def tarefa():
-            cliente = ClienteTV(o.jellyfin_url, o.jellyfin_api_key) if o.jellyfin_url and o.jellyfin_api_key else None
-            feito = publicar_canais(canais, valores["pasta"], valores["no_servidor"], valores["guia"], cliente,
-                                    valores["antena"], parar=self.evento_parar.is_set)
-            for linha in feito:
-                self._log.info("TV ao vivo: %s", linha)
-            dica = "" if cliente else ("\n\nSem o endereço e a chave do Jellyfin (aba Jellyfin), a lista só foi salva: "
-                                       "cadastre-a em Painel > TV ao vivo > Sintonizadores > M3U.")
-            self.fila.put(("msg", ("TV ao vivo", "\n".join(feito) + dica, "sucesso")))
-
-        self._rodar("Enviando os canais ao Jellyfin (e esperando ele atualizar o guia)...", tarefa)
 
     # ================================================================== Windows: iniciar junto e ícone no relógio
     def ao_alternar_inicializacao(self) -> None:

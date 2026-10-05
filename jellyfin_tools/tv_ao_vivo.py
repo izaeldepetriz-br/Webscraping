@@ -43,6 +43,7 @@ class Canal:
     grupo: str = ""        # "Notícias", "Abertos"... (group-title)
     logo: str = ""         # tvg-logo
     id_guia: str = ""      # tvg-id: liga o canal à programação do guia (XMLTV)
+    numero: str = ""       # tvg-chno: o número do canal no Jellyfin (vazio = o Jellyfin numera sozinho)
 
 
 # ----------------------------------------------------------------- a lista (.m3u)
@@ -71,7 +72,8 @@ def ler_m3u(texto: str) -> list[Canal]:
             atributos = dict(_RE_ATRIBUTO.findall(linha))
             nome = linha.rsplit(",", 1)[-1].strip() if "," in linha else ""
             info = Canal(nome or atributos.get("tvg-name", ""), "", atributos.get("group-title", ""),
-                         atributos.get("tvg-logo", ""), atributos.get("tvg-id", ""))
+                         atributos.get("tvg-logo", ""), atributos.get("tvg-id", ""),
+                         atributos.get("tvg-chno", "") or atributos.get("channel-number", ""))
         elif linha and not linha.startswith("#"):
             if not _RE_LINK.match(linha):            # HTML, texto solto...: não é canal
                 info = None
@@ -89,17 +91,89 @@ def gerar_m3u(canais: list[Canal], guia: str = "") -> str:
     linhas = [cabecalho]
     for c in canais:
         atributos = " ".join(f'{chave}="{valor}"' for chave, valor in
-                             (("tvg-id", c.id_guia), ("tvg-name", c.nome), ("tvg-logo", c.logo),
-                              ("group-title", c.grupo)) if valor)
+                             (("tvg-id", c.id_guia), ("tvg-chno", c.numero), ("tvg-name", c.nome),
+                              ("tvg-logo", c.logo), ("group-title", c.grupo)) if valor)
         linhas += [f"#EXTINF:-1 {atributos},{c.nome}".replace("-1 ,", "-1,"), c.url]
     return "\n".join(linhas) + "\n"
 
 
 def carregar_canais(arquivo: str | Path) -> list[Canal]:
+    campos = set(Canal.__dataclass_fields__)
     try:
-        return [Canal(**c) for c in json.loads(Path(arquivo).read_text(encoding="utf-8"))]
-    except (OSError, ValueError, TypeError):
+        return [Canal(**{k: v for k, v in c.items() if k in campos})
+                for c in json.loads(Path(arquivo).read_text(encoding="utf-8"))]
+    except (OSError, ValueError, TypeError, AttributeError):
         return []
+
+
+# ----------------------------------------------------------------- duplicados e histórico
+_RE_ENFEITES = re.compile(r"\([^)]*\)|\[[^\]]*\]|\b(?:fhd|uhd|hd|sd|4k|h265|hevc)\b")
+
+
+def nome_base(nome: str) -> str:
+    """O nome sem enfeites, para achar o mesmo canal em links diferentes:
+    'TV Cultura (720p) [Not 24/7]' e 'tv cultura HD' -> 'tv cultura'."""
+    import unicodedata
+    texto = "".join(c for c in unicodedata.normalize("NFD", nome.lower()) if unicodedata.category(c) != "Mn")
+    texto = _RE_ENFEITES.sub(" ", texto)
+    return " ".join(re.sub(r"[^\w&+]+", " ", texto).split())
+
+
+def duplicados(canais: list[Canal], ok: dict[str, bool | None] | None = None) -> list[int]:
+    """Índices das CÓPIAS a tirar: canais com o mesmo nome base. Fica um de cada (o primeiro que está
+    no ar; sem conferência, o primeiro da lista)."""
+    ok = ok or {}
+    grupos: dict[str, list[int]] = {}
+    for i, c in enumerate(canais):
+        if base := nome_base(c.nome):
+            grupos.setdefault(base, []).append(i)
+    tirar = []
+    for indices in grupos.values():
+        if len(indices) > 1:
+            fica = next((i for i in indices if ok.get(canais[i].url)), indices[0])
+            tirar += [i for i in indices if i != fica]
+    return sorted(tirar)
+
+
+GUARDAR_CONFERENCIAS = 5
+
+
+def carregar_historico(arquivo: str | Path) -> dict[str, list[bool]]:
+    """{link: [resultado das últimas conferências, a mais nova no fim]} (True = no ar)."""
+    try:
+        dados = json.loads(Path(arquivo).read_text(encoding="utf-8"))
+        return {str(url): [bool(v) for v in lista][-GUARDAR_CONFERENCIAS:] for url, lista in dados.items()}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
+def salvar_historico(arquivo: str | Path, historico: dict[str, list[bool]], canais: list[Canal] | None = None) -> None:
+    """Grava (e esquece os links que não estão mais na lista, se ela for passada)."""
+    if canais is not None:
+        existentes = {c.url for c in canais}
+        historico = {url: v for url, v in historico.items() if url in existentes}
+    Path(arquivo).parent.mkdir(parents=True, exist_ok=True)
+    Path(arquivo).write_text(json.dumps(historico, ensure_ascii=False), encoding="utf-8")
+
+
+def registrar_no_historico(historico: dict[str, list[bool]], situacoes) -> None:
+    for canal, situacao in situacoes:
+        historico[canal.url] = (historico.get(canal.url, []) + [bool(situacao.ok)])[-GUARDAR_CONFERENCIAS:]
+
+
+def resumo_historico(resultados: list[bool]) -> str:
+    """'✓✓✕✓✕  2 de 5 falharam' (a mais nova à direita); vazio = nunca conferido."""
+    if not resultados:
+        return ""
+    falhas = resultados.count(False)
+    marcas = "".join("✓" if r else "✕" for r in resultados)
+    return f"{marcas}  {falhas} de {len(resultados)} falharam" if falhas else f"{marcas}  sempre no ar"
+
+
+def sempre_falha(resultados: list[bool], minimo: int = 3) -> bool:
+    """Falhou em TODAS as últimas conferências (pelo menos `minimo`): é seguro dizer que está morto.
+    Um canal "Not 24/7" que funciona em alguns horários não entra aqui."""
+    return len(resultados) >= minimo and not any(resultados)
 
 
 def salvar_canais(arquivo: str | Path, canais: list[Canal]) -> None:
@@ -196,7 +270,7 @@ POUCOS_CANAIS = 30            # conferindo até 30 (ex.: os selecionados), cada 
 POR_SERVIDOR = 6              # no máximo 6 consultas ao MESMO servidor ao mesmo tempo (não sobrecarrega nem é bloqueado)
 
 
-def _servidores_que_existem(urls: list[str], parar=None) -> set[str]:
+def _servidores_que_existem(urls: list[str], parar=None, trabalhadores: int = 16) -> set[str]:
     """Os nomes de servidor que o DNS encontra. Feito UMA vez por servidor, todos ao mesmo tempo:
     servidor que não existe mais (comum em listas velhas) sai na hora, sem esperar canal por canal."""
     import socket
@@ -209,7 +283,7 @@ def _servidores_que_existem(urls: list[str], parar=None) -> set[str]:
             return True
         except (OSError, UnicodeError):
             return False
-    achados = em_paralelo(nomes, existe, 64, parar=parar, prazo=5, ao_estourar=lambda _: False)
+    achados = em_paralelo(nomes, existe, trabalhadores, parar=parar, prazo=5, ao_estourar=lambda _: False)
     return {n for i, n in enumerate(nomes) if achados.get(i, True)}
 
 
@@ -226,7 +300,12 @@ def _intercalar_por_servidor(canais: list[Canal]) -> list[int]:
     return [i for _, i in sorted(chave)]
 
 
-def conferir_canais(canais: list[Canal], trabalhadores: int = 32, ao_progresso=None,
+VELOCIDADES = {"Leve": 8, "Normal": 16, "Rápida": 32}     # consultas ao mesmo tempo
+# Por que não sempre "Rápida": muitas conexões de uma vez (mais as consultas de endereço) podem lotar o
+# roteador/Wi-Fi de casa; a internet do computador inteiro fica lenta e parece que "travou".
+
+
+def conferir_canais(canais: list[Canal], trabalhadores: int = VELOCIDADES["Normal"], ao_progresso=None,
                     parar=None) -> list[tuple[Canal, Situacao]]:
     """Confere vários canais ao mesmo tempo. Mais rápido em listas grandes:
       - servidores que não existem (DNS) são descobertos de uma vez, antes de tudo;
@@ -244,7 +323,8 @@ def conferir_canais(canais: list[Canal], trabalhadores: int = 32, ao_progresso=N
     responderam: set[str] = set()
     vagas: dict[str, threading.Semaphore] = {}
     # com proxy configurado quem procura o servidor é o proxy: aí não dá para julgar pelo DNS daqui
-    existem = None if requests.utils.getproxies() else _servidores_que_existem([c.url for c in canais], parar)
+    existem = None if requests.utils.getproxies() else _servidores_que_existem([c.url for c in canais], parar,
+                                                                                     trabalhadores)
     if parar and parar():
         return []
 
@@ -302,7 +382,9 @@ def exportar_tabela(linhas: list[dict], caminho) -> Path:
     import csv
     caminho = Path(caminho)
     tipo = caminho.suffix.lower()
-    titulos = {"canal": "Canal", "grupo": "Grupo", "situacao": "Situação", "no_ar": "No ar", "link": "Link"}
+    titulos = {"numero": "Nº", "canal": "Canal", "grupo": "Grupo", "situacao": "Situação", "no_ar": "No ar",
+               "historico": "Últimas", "link": "Link"}
+    linhas = [{**dict.fromkeys(titulos, ""), **linha} for linha in linhas]
 
     def sim_nao(valor) -> str:
         return "" if valor is None else ("sim" if valor else "não")
@@ -410,6 +492,14 @@ class ClienteTV:
             time.sleep(intervalo)
         return False
 
+    def nomes_dos_canais(self) -> set[str] | None:
+        """Os nomes dos canais que o Jellyfin tem em TV ao vivo (None se não deu para saber)."""
+        try:
+            itens = (self._pedir("GET", "/LiveTv/Channels", params={"EnableImages": "false"}) or {}).get("Items")
+            return {str(i.get("Name", "")) for i in itens} if isinstance(itens, list) else None
+        except ErroJellyfin:
+            return None
+
     def quantos_canais(self) -> int | None:
         """Quantos canais o Jellyfin tem agora em TV ao vivo (None se não deu para saber)."""
         try:
@@ -424,18 +514,21 @@ def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = 
     caminho_no_servidor: como o SERVIDOR do Jellyfin enxerga o arquivo, se for outro computador
     (ex.: 'E:\\TV\\canais.m3u' lá, '\\\\Servidor\\e\\TV\\canais.m3u' aqui). Vazio = o mesmo caminho.
 
-    Canais REMOVIDOS saem do Jellyfin de verdade:
-      - o arquivo é SEMPRE regravado (lista vazia = arquivo sem canais; antes ele ficava com os antigos);
-      - se algum canal saiu, o sintonizador M3U é recriado (o Jellyfin guardava os canais antigos dele);
-      - lista vazia: o nosso sintonizador M3U é retirado do Jellyfin;
-      - depois roda "Atualizar o guia", espera terminar e conta quantos canais o Jellyfin ficou tendo."""
+    Canais REMOVIDOS saem do Jellyfin de verdade, guardando os favoritos sempre que der:
+      1. o arquivo é SEMPRE regravado (lista vazia = arquivo sem canais);
+      2. o sintonizador M3U é atualizado no lugar e o guia é atualizado (o Jellyfin relê a lista);
+      3. o programa confere se os removidos sumiram. Só se continuarem lá (ou se não der para conferir)
+         o sintonizador é recriado, e aí os favoritos desses canais precisam ser marcados de novo;
+      4. lista vazia: o nosso sintonizador M3U é retirado do Jellyfin."""
     feito = []
     arquivo = Path(pasta) / "canais.m3u"
     try:
-        antigos = {c.url for c in ler_m3u(arquivo.read_text(encoding="utf-8", errors="replace"))}
+        antigos = ler_m3u(arquivo.read_text(encoding="utf-8", errors="replace"))
     except OSError:
-        antigos = set()
-    removidos = antigos - {c.url for c in canais}
+        antigos = []
+    urls_novas, urls_antigas = {c.url for c in canais}, {c.url for c in antigos}
+    removidos = [c for c in antigos if c.url not in urls_novas]
+    entraram = len(urls_novas - urls_antigas)
     arquivo.parent.mkdir(parents=True, exist_ok=True)
     arquivo.write_text(gerar_m3u(canais, guia), encoding="utf-8")
     feito.append(f"lista salva: {arquivo} ({len(canais)} canal(is))"
@@ -444,16 +537,13 @@ def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = 
         return feito
     endereco = caminho_no_servidor.strip() or str(arquivo)
     nossos = cliente.sintonizadores("m3u", endereco)
+    total_antes = cliente.quantos_canais() if removidos and nossos and canais else None
     if not canais:
         for host in nossos:
             cliente.remover_sintonizador(host.get("Id", ""))
         if nossos:
             feito.append("Jellyfin: lista vazia -> sintonizador M3U retirado (os canais saem de TV ao vivo)")
     else:
-        if removidos and nossos:
-            for host in nossos:
-                cliente.remover_sintonizador(host.get("Id", ""))
-            feito.append(f"Jellyfin: sintonizador M3U recriado para tirar os {len(removidos)} canal(is) removidos")
         cliente.cadastrar_sintonizador("m3u", endereco)
         feito.append(f"Jellyfin: sintonizador M3U -> {endereco}")
     if antena.strip():
@@ -462,12 +552,39 @@ def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = 
     if guia.strip():
         cliente.cadastrar_guia(guia.strip())
         feito.append(f"Jellyfin: guia de programação (XMLTV) -> {guia.strip()}")
-    if tarefa := cliente.atualizar_guia():
-        if esperar_guia and cliente.esperar_tarefa(tarefa, esperar_guia, parar):
-            total = cliente.quantos_canais()
-            feito.append("Jellyfin: guia atualizado" + (f" -> agora TV ao vivo tem {total} canal(is)"
-                                                        if total is not None else ""))
-        else:
-            feito.append("Jellyfin: atualizando o guia (os canais mudam em TV ao vivo em alguns minutos; "
-                         "acompanhe em Painel > Tarefas agendadas > Atualizar o guia)")
+
+    def atualizar() -> bool:
+        tarefa = cliente.atualizar_guia()
+        return bool(tarefa and esperar_guia and cliente.esperar_tarefa(tarefa, esperar_guia, parar))
+
+    terminou = atualizar()
+    if canais and removidos and nossos:
+        if terminou and _removidos_sairam(cliente, removidos, canais, total_antes, entraram):
+            feito.append(f"Jellyfin: os {len(removidos)} canal(is) removidos saíram (os favoritos foram mantidos)")
+        elif not (parar and parar()):
+            for host in cliente.sintonizadores("m3u", endereco):
+                cliente.remover_sintonizador(host.get("Id", ""))
+            cliente.cadastrar_sintonizador("m3u", endereco)
+            feito.append(f"Jellyfin: os removidos continuavam lá -> sintonizador M3U recriado para tirar os "
+                         f"{len(removidos)} canal(is) (os favoritos destes canais precisam ser marcados de novo)")
+            terminou = atualizar()
+    if terminou:
+        total = cliente.quantos_canais()
+        feito.append("Jellyfin: guia atualizado" + (f" -> agora TV ao vivo tem {total} canal(is)"
+                                                    if total is not None else ""))
+    elif cliente is not None:
+        feito.append("Jellyfin: atualizando o guia (os canais mudam em TV ao vivo em alguns minutos; "
+                     "acompanhe em Painel > Tarefas agendadas > Atualizar o guia)")
     return feito
+
+
+def _removidos_sairam(cliente: ClienteTV, removidos: list[Canal], canais: list[Canal], total_antes: int | None,
+                      entraram: int) -> bool:
+    """Os canais removidos sumiram do Jellyfin? Pelo nome, quando o nome saiu de vez da lista; senão (ex.: tirou
+    uma cópia repetida, o nome continua) pela conta: o total tem que ter caído."""
+    nomes_sairam = {c.nome for c in removidos} - {c.nome for c in canais}
+    if nomes_sairam:
+        nomes = cliente.nomes_dos_canais()
+        return nomes is not None and not (nomes_sairam & nomes)
+    total = cliente.quantos_canais()
+    return total is not None and total_antes is not None and total <= total_antes - len(removidos) + entraram

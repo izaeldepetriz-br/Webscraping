@@ -17,6 +17,7 @@ import re
 import sys
 import tkinter as tk
 from dataclasses import dataclass
+from typing import NamedTuple
 from datetime import datetime
 from tkinter import filedialog, ttk
 
@@ -396,11 +397,73 @@ class JanelaCorrigirNome(ctk.CTkToplevel):
         self.destroy()
 
 
+class LinhaCanal(NamedTuple):
+    """Uma linha da tabela de canais."""
+    iid: str
+    nome: str
+    grupo: str
+    situacao: str
+    link: str
+    ok: bool | None            # None = não conferido
+    numero: str = ""
+    historico: str = ""        # "✓✓✕✓✕ (2 de 5 falharam)"
+    morto: bool = False        # falhou em TODAS as últimas conferências (3 ou mais)
+
+
+class DialogoCanal(ctk.CTkToplevel):
+    """Editar um canal (duplo clique na tabela): nome, número, grupo, link, logo e o ID do guia.
+    `resultado` vira um dict com os campos (None = Cancelar)."""
+
+    CAMPOS = (("nome", "Nome do canal", "ex.: TV Cultura"),
+              ("numero", "Número no Jellyfin (opcional)", "ex.: 2  (vazio = o Jellyfin numera sozinho)"),
+              ("grupo", "Grupo (opcional)", "ex.: Abertos, Notícias, Rádios"),
+              ("url", "Link do sinal", "https://.../index.m3u8"),
+              ("logo", "Logo (opcional)", "link de uma imagem .png/.jpg"),
+              ("id_guia", "ID no guia XMLTV (opcional)", "o tvg-id que liga o canal à programação"))
+
+    def __init__(self, master, dados: dict, titulo: str = "Editar canal"):
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.resultado = None
+        self.title(titulo)
+        self.resizable(False, False)
+        self.transient(master)
+        app = master.master if not hasattr(master, "_entrada") else master
+        corpo = ctk.CTkFrame(self, fg_color="transparent")
+        corpo.pack(fill="both", expand=True, padx=24, pady=(18, 6))
+        ctk.CTkLabel(corpo, text=titulo, font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"), text_color=Tema.TEXTO,
+                     anchor="w").pack(fill="x", pady=(0, 8))
+        self.vars = {}
+        for chave, rotulo, dica in self.CAMPOS:
+            app._rotulo(corpo, rotulo).pack(fill="x", pady=(6, 2))
+            self.vars[chave] = tk.StringVar(value=str(dados.get(chave, "") or ""))
+            app._entrada(corpo, self.vars[chave], dica, altura=32, width=460).pack(fill="x")
+        botoes = ctk.CTkFrame(self, fg_color="transparent")
+        botoes.pack(fill="x", padx=24, pady=(12, 18))
+        app._botao(botoes, "Cancelar", self.destroy, "secundario").pack(side="left")
+        app._botao(botoes, "Salvar", self._salvar, "primario").pack(side="right")
+        self.bind("<Return>", lambda e: self._salvar())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_reqwidth()) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - self.winfo_reqheight()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+    def _salvar(self) -> None:
+        self.resultado = {chave: var.get().strip() for chave, var in self.vars.items()}
+        self.destroy()
+
+
 class JanelaCanais(ctk.CTkToplevel):
     """TV ao vivo no Jellyfin: a lista de canais (.m3u), o guia (XMLTV) e a antena (HDHomeRun).
-    acoes: {'adicionar', 'importar_arquivo', 'importar_endereco', 'remover', 'conferir', 'publicar'}."""
+    acoes: {'adicionar', 'importar_arquivo', 'importar_endereco', 'remover', 'remover_todos', 'conferir',
+            'publicar', 'editar' (iid), 'numerar', 'desfazer'}."""
 
-    COLUNAS = (("grupo", "Grupo", 110), ("situacao", "Situação", 190), ("url", "Link", 330))
+    COLUNAS = (("numero", "Nº", 44), ("grupo", "Grupo", 100), ("situacao", "Situação", 180),
+               ("historico", "Últimas", 215), ("url", "Link", 260))
 
     def __init__(self, master, acoes: dict):
         super().__init__(master, fg_color=Tema.CARTAO)
@@ -445,7 +508,7 @@ class JanelaCanais(ctk.CTkToplevel):
         self._linhas: list = []
         self._filtros: dict[str, set[str]] = {}
         self._janela_filtro = None
-        self.tabela.column("#0", width=230, minwidth=120, anchor="w")
+        self.tabela.column("#0", width=200, minwidth=120, anchor="w")
         for chave, texto, largura in self.COLUNAS:
             self.tabela.column(chave, width=largura, minwidth=60, stretch=chave == "url", anchor="w")
         self._titulos_colunas()
@@ -457,30 +520,56 @@ class JanelaCanais(ctk.CTkToplevel):
         self.tabela.configure(yscrollcommand=rolagem.set)
         self.tabela.bind("<Delete>", lambda e: acoes["remover"]())
 
+        # Linha 1: o resumo e as formas de SELECIONAR. Linha 2: o que fazer com os selecionados.
         faixa = ctk.CTkFrame(self, fg_color="transparent")
         faixa.pack(fill="x", padx=24)
-        self.lb_resumo = ctk.CTkLabel(faixa, text="", font=m.f_rotulo, text_color=Tema.TEXTO_SUAVE)
+        selecao = ctk.CTkFrame(faixa, fg_color="transparent")
+        selecao.pack(fill="x")
+        self.lb_resumo = ctk.CTkLabel(selecao, text="", font=m.f_rotulo, text_color=Tema.TEXTO_SUAVE)
         self.lb_resumo.pack(side="left")
-        estilo = dict(height=30, corner_radius=6, fg_color="transparent", hover_color=Tema.SECUNDARIA_HOVER,
-                      text_color=Tema.PRIMARIA, font=ctk.CTkFont(Tema.FAMILIA, 12))
-        self.bt_selecionar_todos = ctk.CTkButton(faixa, text="Selecionar todos", width=20,
-                                                 command=self.selecionar_todos, **estilo)
-        self.bt_selecionar_fora = ctk.CTkButton(faixa, text="Selecionar os fora do ar", width=20,
-                                                command=self.selecionar_fora_do_ar, **estilo)
-        self.bt_tirar_filtros = ctk.CTkButton(faixa, text="Tirar os filtros", width=20, command=self.limpar_filtros,
-                                              **estilo)
-        self.bt_selecionar_todos.pack(side="left", padx=(8, 0))
-        self.bt_selecionar_fora.pack(side="left", padx=(0, 0))
-        self.bt_tirar_filtros.pack(side="left", padx=(0, 0))
-        self.bt_conferir = m._botao(faixa, "Conferir todos", acoes["conferir"], "secundario")
+        estilo = dict(height=28, corner_radius=6, fg_color="transparent", hover_color=Tema.SECUNDARIA_HOVER,
+                      text_color=Tema.PRIMARIA, font=ctk.CTkFont(Tema.FAMILIA, 12), width=20)
+        ctk.CTkLabel(selecao, text="Selecionar:", font=m.f_rotulo, text_color=Tema.TEXTO_FRACO).pack(side="left",
+                                                                                                   padx=(16, 0))
+        self.bt_selecionar_todos = ctk.CTkButton(selecao, text="todos", command=self.selecionar_todos, **estilo)
+        self.bt_selecionar_fora = ctk.CTkButton(selecao, text="os fora do ar", command=self.selecionar_fora_do_ar,
+                                                **estilo)
+        self.bt_selecionar_mortos = ctk.CTkButton(selecao, text="os que sempre falham",
+                                                  command=self.selecionar_mortos, **estilo)
+        self.bt_selecionar_duplicados = ctk.CTkButton(selecao, text="os repetidos",
+                                                      command=self.selecionar_duplicados, **estilo)
+        self.bt_tirar_filtros = ctk.CTkButton(selecao, text="Tirar os filtros", command=self.limpar_filtros, **estilo)
+        for botao in (self.bt_selecionar_todos, self.bt_selecionar_fora, self.bt_selecionar_mortos,
+                      self.bt_selecionar_duplicados):
+            botao.pack(side="left")
+        self.bt_tirar_filtros.pack(side="right")
+
+        acoes_linha = ctk.CTkFrame(faixa, fg_color="transparent")
+        acoes_linha.pack(fill="x", pady=(4, 0))
+        self.bt_numerar = m._botao(acoes_linha, "Numerar em ordem...", acoes["numerar"], "secundario")
+        self.bt_numerar.pack(side="left")
+        self.bt_desfazer = m._botao(acoes_linha, "Desfazer remoção", acoes["desfazer"], "secundario")
+        self.bt_desfazer.pack(side="left", padx=(6, 0))
+        self.bt_conferir = m._botao(acoes_linha, "Conferir todos", acoes["conferir"], "secundario")
         self.bt_conferir.configure(width=170)
         self.bt_conferir.pack(side="right")
+        # Leve = 8 consultas ao mesmo tempo, Normal = 16, Rápida = 32 (pode lotar o roteador/Wi-Fi de casa)
+        self.var_velocidade = tk.StringVar(value="Normal")
+        self.menu_velocidade = ctk.CTkOptionMenu(acoes_linha, values=["Leve", "Normal", "Rápida"], width=96,
+                                                 height=32, variable=self.var_velocidade, fg_color=Tema.CAMPO,
+                                                 button_color=Tema.CAMPO_BORDA, button_hover_color=Tema.SECUNDARIA_HOVER,
+                                                 text_color=Tema.TEXTO, font=m.f_rotulo, dropdown_font=m.f_rotulo)
+        self.menu_velocidade.pack(side="right", padx=(0, 6))
+        ctk.CTkLabel(acoes_linha, text="Velocidade:", font=m.f_rotulo, text_color=Tema.TEXTO_FRACO).pack(
+            side="right", padx=(12, 4))
         self.tabela.bind("<<TreeviewSelect>>", lambda e: self._texto_conferir())
-        self.bt_remover_todos = m._botao(faixa, "Remover todos", acoes["remover_todos"], "perigo")
+        self.bt_remover_todos = m._botao(acoes_linha, "Remover todos", acoes["remover_todos"], "perigo")
         self.bt_remover_todos.pack(side="right", padx=(0, 6))
-        self.bt_remover = m._botao(faixa, "Remover selecionados", acoes["remover"], "perigo")
+        self.bt_remover = m._botao(acoes_linha, "Remover selecionados", acoes["remover"], "perigo")
         self.bt_remover.pack(side="right", padx=(0, 6))
         self.tabela.bind("<Control-a>", lambda e: (self.selecionar_todos(), "break")[1])
+        # duplo clique numa linha (não no título): editar o canal
+        self.tabela.bind("<Double-1>", lambda e: self._ao_duplo_clique(e, acoes["editar"]))
 
         campos = ctk.CTkFrame(self, fg_color="transparent")
         campos.pack(fill="x", padx=24, pady=(10, 0))
@@ -520,13 +609,14 @@ class JanelaCanais(ctk.CTkToplevel):
             parte.pack_configure(side="bottom", before=quadro)
         self.bind("<Escape>", lambda e: self.destroy())
 
-    TITULOS = {"#0": "Canal", "grupo": "Grupo", "situacao": "Situação", "url": "Link"}
+    TITULOS = {"#0": "Canal", "numero": "Nº", "grupo": "Grupo", "situacao": "Situação", "historico": "Últimas",
+               "url": "Link"}
 
-    def preencher(self, linhas: list[tuple[str, str, str, str, str, bool | None]], manter_selecao: bool = False) -> None:
-        """linhas: [(iid, nome, grupo, situação, link, ok)] (ok None = não conferido).
+    def preencher(self, linhas: list[LinhaCanal], manter_selecao: bool = False) -> None:
+        """linhas: [LinhaCanal] (ok None = não conferido).
         manter_selecao: depois de conferir, os mesmos canais continuam selecionados (a lista não mudou)."""
         antes = self.selecionados() if manter_selecao else []
-        self._linhas = list(linhas)
+        self._linhas = [LinhaCanal(*linha) for linha in linhas]
         self._mostrar()
         if antes:
             existem = set(self.tabela.get_children())
@@ -536,14 +626,17 @@ class JanelaCanais(ctk.CTkToplevel):
     @staticmethod
     def valor_na_coluna(coluna: str, linha) -> str:
         """O que conta para o filtro: o link conta pelo site (todos os canais de exemplo.org juntos)."""
-        _, nome, grupo, situacao, link, _ = linha
+        linha = LinhaCanal(*linha)
         if coluna == "url":
             from urllib.parse import urlparse
-            return urlparse(link).netloc or link
+            return urlparse(linha.link).netloc or linha.link
         if coluna == "situacao":           # "o servidor a.org não responde" e "o servidor b.net..." = um valor só
-            return re.sub(r"\bo servidor \S+ ", "o servidor ", situacao) if situacao and situacao != "—" \
-                else "(não conferido)"
-        return {"#0": nome, "grupo": grupo or "(sem grupo)"}[coluna]
+            return re.sub(r"\bo servidor \S+ ", "o servidor ", linha.situacao) \
+                if linha.situacao and linha.situacao != "—" else "(não conferido)"
+        if coluna == "historico":          # sem as marcas ✓✕: "2 de 5 falharam", "sempre no ar"
+            return linha.historico.split("  ", 1)[-1] if linha.historico else "(nunca conferido)"
+        return {"#0": linha.nome, "grupo": linha.grupo or "(sem grupo)",
+                "numero": linha.numero or "(sem número)"}[coluna]
 
     def _passa(self, linha) -> bool:
         return all(self.valor_na_coluna(c, linha) in valores for c, valores in self._filtros.items())
@@ -551,10 +644,11 @@ class JanelaCanais(ctk.CTkToplevel):
     def _mostrar(self) -> None:
         self.tabela.delete(*self.tabela.get_children())
         visiveis = [linha for linha in self._linhas if self._passa(linha)]
-        for iid, nome, grupo, situacao, link, ok in visiveis:
-            tags = () if ok is None else ("ok" if ok else "erro",)
-            self.tabela.insert("", "end", iid=iid, text=nome, values=(grupo, situacao, link), tags=tags)
-        fora = sum(1 for *_, ok in self._linhas if ok is False)
+        for linha in visiveis:
+            tags = () if linha.ok is None else ("ok" if linha.ok else "erro",)
+            self.tabela.insert("", "end", iid=linha.iid, text=linha.nome, tags=tags,
+                               values=(linha.numero, linha.grupo, linha.situacao, linha.historico, linha.link))
+        fora = sum(1 for linha in self._linhas if linha.ok is False)
         quantos = f"{len(visiveis)} de {len(self._linhas)}" if self._filtros else f"{len(self._linhas)}"
         self.lb_resumo.configure(text=f"{quantos} canal(is)" + (f" · {fora} fora do ar" if fora else "")
                                  + (" · filtro ligado" if self._filtros else ""))
@@ -701,9 +795,10 @@ class JanelaCanais(ctk.CTkToplevel):
         """Salva o que está NA TABELA (com o filtro, só os filtrados) em .json, .csv ou .txt. Devolve quantos."""
         from jellyfin_tools.tv_ao_vivo import exportar_tabela
         visiveis = set(self.tabela.get_children())
-        linhas = [{"canal": nome, "grupo": grupo, "situacao": situacao if situacao != "—" else "",
-                   "no_ar": ok, "link": link}
-                  for iid, nome, grupo, situacao, link, ok in self._linhas if iid in visiveis]
+        linhas = [{"numero": linha.numero, "canal": linha.nome, "grupo": linha.grupo,
+                   "situacao": linha.situacao if linha.situacao != "—" else "", "no_ar": linha.ok,
+                   "historico": linha.historico, "link": linha.link}
+                  for linha in self._linhas if linha.iid in visiveis]
         exportar_tabela(linhas, caminho)
         return len(linhas)
 
@@ -738,6 +833,37 @@ class JanelaCanais(ctk.CTkToplevel):
         self.tabela.selection_set(self.tabela.get_children())
         self._texto_conferir()
 
+    def _ao_duplo_clique(self, evento, editar) -> None:
+        if self.tabela.identify_region(evento.x, evento.y) in ("cell", "tree"):
+            if iid := self.tabela.identify_row(evento.y):
+                editar(iid)
+
+    def _selecionar(self, iids: list[str], vazio: str) -> int:
+        self.tabela.selection_set(iids)
+        if iids:
+            self.tabela.see(iids[0])
+        else:
+            self.master.mostrar_mensagem("TV ao vivo", vazio, "info")
+        self._texto_conferir()
+        return len(iids)
+
+    def selecionar_duplicados(self) -> int:
+        """Os canais REPETIDOS (mesmo nome sem enfeites como "(720p)" ou "HD"), deixando um de cada: o primeiro
+        que está no ar. É só conferir e clicar em Remover selecionados."""
+        from jellyfin_tools.tv_ao_vivo import Canal, duplicados
+        visiveis = set(self.tabela.get_children())
+        linhas = [linha for linha in self._linhas if linha.iid in visiveis]
+        canais = [Canal(linha.nome, linha.link) for linha in linhas]
+        tirar = duplicados(canais, {linha.link: linha.ok for linha in linhas})
+        return self._selecionar([linhas[i].iid for i in tirar], "Nenhum canal repetido na lista.")
+
+    def selecionar_mortos(self) -> int:
+        """Os que falharam em TODAS as últimas conferências (3 ou mais). Um canal "Not 24/7", que funciona
+        só em alguns horários, não entra: uma falha só não prova que ele morreu."""
+        visiveis = set(self.tabela.get_children())
+        return self._selecionar([linha.iid for linha in self._linhas if linha.morto and linha.iid in visiveis],
+                                "Nenhum canal falhou em todas as últimas conferências (são precisas pelo menos 3).")
+
     def selecionar_fora_do_ar(self) -> None:
         """Os que a conferência marcou em vermelho (fora do ar, página, pede login...)."""
         self.tabela.selection_set([i for i in self.tabela.get_children() if "erro" in self.tabela.item(i, "tags")])
@@ -748,12 +874,15 @@ class JanelaCanais(ctk.CTkToplevel):
 
     def valores(self) -> dict:
         return {"guia": self.var_guia.get().strip(), "antena": self.var_antena.get().strip(),
-                "pasta": self.var_pasta.get().strip(), "no_servidor": self.var_no_servidor.get().strip()}
+                "pasta": self.var_pasta.get().strip(), "no_servidor": self.var_no_servidor.get().strip(),
+                "velocidade": self.var_velocidade.get()}
 
     def definir_valores(self, dados: dict) -> None:
         for chave, var in (("guia", self.var_guia), ("antena", self.var_antena), ("pasta", self.var_pasta),
                            ("no_servidor", self.var_no_servidor)):
             var.set(dados.get(chave, "") or "")
+        if dados.get("velocidade") in ("Leve", "Normal", "Rápida"):
+            self.var_velocidade.set(dados["velocidade"])
 
 
 # =============================================================================== janela

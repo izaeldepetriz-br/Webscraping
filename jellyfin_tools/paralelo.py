@@ -95,3 +95,40 @@ def em_paralelo(itens: list, funcao, trabalhadores: int = 16, ao_progresso=None,
     finally:
         cancelado.set()                                    # o Parar é imediato: ninguém pega mais nada
     return resultado
+
+
+class prioridade_baixa:
+    """Enquanto ativo, o programa roda com prioridade "abaixo do normal" no Windows: numa conferência longa,
+    o resto do computador (navegador, vídeo...) continua fluindo. Em outros sistemas não faz nada.
+
+        with prioridade_baixa():
+            conferir_canais(...)
+    """
+    _ativos = 0
+    _trava = threading.Lock()
+
+    def __enter__(self):
+        with self._trava:
+            type(self)._ativos += 1
+            if self._ativos == 1:
+                self._mudar(0x00004000)          # BELOW_NORMAL_PRIORITY_CLASS
+        return self
+
+    def __exit__(self, *erro):
+        with self._trava:
+            type(self)._ativos -= 1
+            if self._ativos == 0:
+                self._mudar(0x00000020)          # NORMAL_PRIORITY_CLASS
+        return False
+
+    @staticmethod
+    def _mudar(classe: int) -> None:
+        import sys
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), classe)
+        except Exception:                        # sem permissão etc.: segue na prioridade normal
+            pass

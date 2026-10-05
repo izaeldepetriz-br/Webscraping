@@ -1,6 +1,7 @@
 import pytest
 """Canais ao vivo: lista .m3u, conferência dos links e cadastro no Jellyfin (servidor falso)."""
 import json
+from pathlib import Path
 
 from jellyfin_tools.tv_ao_vivo import (Canal, ClienteTV, carregar_canais, conferir_canais, gerar_m3u, ler_m3u,
                                        mensagem_fora_do_ar, publicar, salvar_canais)
@@ -239,12 +240,14 @@ def test_exportar_tabela(tmp_path):
     from jellyfin_tools.tv_ao_vivo import exportar_tabela
     linhas = [{"canal": "TV Cultura", "grupo": "Abertos", "situacao": "no ar", "no_ar": True, "link": "https://a.org/1.m3u8"},
               {"canal": "Rádio", "grupo": "", "situacao": "", "no_ar": None, "link": "https://b.net/r.mp3"}]
-    assert json.loads(exportar_tabela(linhas, tmp_path / "c.json").read_text(encoding="utf-8")) == linhas
+    dados = json.loads(exportar_tabela(linhas, tmp_path / "c.json").read_text(encoding="utf-8"))
+    assert [{k: d[k] for k in linhas[0]} for d in dados] == linhas and dados[0]["numero"] == ""
     exportar_tabela(linhas, tmp_path / "c.csv")
     tabela = list(csv.reader((tmp_path / "c.csv").open(encoding="utf-8-sig"), delimiter=";"))
-    assert tabela[0] == ["Canal", "Grupo", "Situação", "No ar", "Link"] and tabela[1][3] == "sim" and tabela[2][3] == ""
+    assert tabela[0] == ["Nº", "Canal", "Grupo", "Situação", "No ar", "Últimas", "Link"]
+    assert tabela[1][4] == "sim" and tabela[2][4] == ""
     texto = exportar_tabela(linhas, tmp_path / "c.txt").read_text(encoding="utf-8").splitlines()
-    assert texto[1].split("\t") == ["TV Cultura", "Abertos", "no ar", "sim", "https://a.org/1.m3u8"]
+    assert texto[1].split("\t") == ["", "TV Cultura", "Abertos", "no ar", "sim", "", "https://a.org/1.m3u8"]
     with pytest.raises(ValueError):
         exportar_tabela(linhas, tmp_path / "c.xls")
 
@@ -271,15 +274,17 @@ def test_poucos_canais_sao_todos_tentados_mesmo_com_o_servidor_falhando():
     assert not any("outros canais dele já falharam" in s.detalhe for _, s in situacoes)
 
 
-def test_canais_removidos_saem_do_jellyfin_ao_enviar(tmp_path, api_falsa):
-    """Caso real: removia os canais, clicava em "Salvar e enviar" e o Jellyfin continuava com os antigos."""
-    hosts = []
-    proximo = [0]
+def _jellyfin_falso(api_falsa, limpa_sozinho: bool):
+    """Jellyfin falso: sintonizadores, tarefa do guia e a lista de canais. limpa_sozinho=True: ao atualizar o
+    guia ele relê o .m3u e tira os que saíram; False: guarda os antigos do sintonizador (o caso que o usuário viu)."""
+    hosts, proximo, canais_jf = [], [0], {}
 
     def tuner(q):
         pedido = api_falsa.pedidos[-1]
         if pedido["metodo"] == "DELETE":
             hosts[:] = [h for h in hosts if h["Id"] != q["id"][0]]
+            for chave in [k for k in canais_jf if k[0] == q["id"][0]]:
+                del canais_jf[chave]
             return 204, b""
         corpo = json.loads(pedido["corpo"])
         if not corpo.get("Id"):
@@ -288,26 +293,61 @@ def test_canais_removidos_saem_do_jellyfin_ao_enviar(tmp_path, api_falsa):
         hosts[:] = [h for h in hosts if h["Id"] != corpo["Id"]] + [corpo]
         return 200, corpo
 
+    def atualizar_guia(q):
+        for h in hosts:
+            lidos = {c.nome for c in ler_m3u(Path(h["Url"]).read_text(encoding="utf-8"))}
+            if limpa_sozinho:
+                for chave in [k for k in canais_jf if k[0] == h["Id"] and k[1] not in lidos]:
+                    del canais_jf[chave]
+            canais_jf.update({(h["Id"], n): True for n in lidos})
+        return 204, b""
+
     api_falsa.rotas["/System/Configuration/livetv"] = lambda q: (200, {"TunerHosts": hosts, "ListingProviders": []})
     api_falsa.rotas["/LiveTv/TunerHosts"] = tuner
     api_falsa.rotas["/ScheduledTasks"] = lambda q: (200, [{"Key": "RefreshGuide", "Id": "abc"}])
-    api_falsa.rotas["/ScheduledTasks/Running/abc"] = lambda q: (204, b"")
+    api_falsa.rotas["/ScheduledTasks/Running/abc"] = atualizar_guia
     api_falsa.rotas["/ScheduledTasks/abc"] = lambda q: (200, {"State": "Idle"})
-    api_falsa.rotas["/LiveTv/Channels"] = lambda q: (200, {"Items": [], "TotalRecordCount": 1})
+    api_falsa.rotas["/LiveTv/Channels"] = lambda q: (200, {"Items": [{"Name": n} for _, n in canais_jf],
+                                                           "TotalRecordCount": len(canais_jf)})
+    return hosts, canais_jf
+
+
+def test_removidos_saem_e_os_favoritos_ficam_quando_o_jellyfin_limpa_sozinho(tmp_path, api_falsa):
+    hosts, canais_jf = _jellyfin_falso(api_falsa, limpa_sozinho=True)
     cliente = ClienteTV(api_falsa.base, "chave")
     canais = ler_m3u(LISTA)
     publicar(canais, tmp_path, cliente=cliente)
-    assert [h["Id"] for h in hosts] == ["t1"]
-
+    assert [h["Id"] for h in hosts] == ["t1"] and len(canais_jf) == 2
     feito = publicar(canais[:1], tmp_path, cliente=cliente)                 # tirou um canal
-    assert (tmp_path / "canais.m3u").read_text(encoding="utf-8").count("#EXTINF") == 1
-    assert [h["Id"] for h in hosts] == ["t2"]                              # recriado: o Jellyfin esquece o antigo
-    assert any("1 canal(is) saíram" in f for f in feito) and any("recriado" in f for f in feito)
+    assert [h["Id"] for h in hosts] == ["t1"]                              # o mesmo sintonizador: favoritos ficam
+    assert any("removidos saíram (os favoritos foram mantidos)" in f for f in feito)
     assert any("agora TV ao vivo tem 1 canal(is)" in f for f in feito)
 
+
+def test_removidos_saem_mesmo_quando_o_jellyfin_guarda_os_antigos(tmp_path, api_falsa):
+    """Caso real: removia os canais, clicava em "Salvar e enviar" e o Jellyfin continuava com os antigos."""
+    hosts, canais_jf = _jellyfin_falso(api_falsa, limpa_sozinho=False)
+    cliente = ClienteTV(api_falsa.base, "chave")
+    canais = ler_m3u(LISTA)
+    publicar(canais, tmp_path, cliente=cliente)
+    feito = publicar(canais[:1], tmp_path, cliente=cliente)
+    assert (tmp_path / "canais.m3u").read_text(encoding="utf-8").count("#EXTINF") == 1
+    assert [h["Id"] for h in hosts] == ["t2"]                              # recriado: o Jellyfin esquece o antigo
+    assert [n for _, n in canais_jf] == ["TV Cultura"]
+    assert any("1 canal(is) saíram" in f for f in feito) and any("recriado" in f for f in feito)
     feito = publicar(canais[:1], tmp_path, cliente=cliente)                 # nada mudou: só atualiza
     assert [h["Id"] for h in hosts] == ["t2"] and not any("recriado" in f for f in feito)
-
     feito = publicar([], tmp_path, cliente=cliente)                         # "Remover todos" e enviar
     assert "#EXTINF" not in (tmp_path / "canais.m3u").read_text(encoding="utf-8")
     assert hosts == [] and any("sintonizador M3U retirado" in f for f in feito)
+
+
+def test_tirar_uma_copia_repetida_confere_pela_conta(tmp_path, api_falsa):
+    """O nome continua na lista (era uma cópia): confere pelo total de canais."""
+    hosts, canais_jf = _jellyfin_falso(api_falsa, limpa_sozinho=False)
+    cliente = ClienteTV(api_falsa.base, "chave")
+    canais = [Canal("TV Cultura", "http://a.org/1.m3u8"), Canal("TV Cultura", "http://b.org/1.m3u8"),
+              Canal("Rádio", "http://a.org/r.mp3")]
+    publicar(canais, tmp_path, cliente=cliente)
+    feito = publicar([canais[0], canais[2]], tmp_path, cliente=cliente)
+    assert any("recriado" in f for f in feito) or any("mantidos" in f for f in feito)
