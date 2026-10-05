@@ -233,6 +233,13 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v1.6.3
+
+- **Canais removidos saem do Jellyfin de verdade:** ao "Salvar e enviar", a lista canais.m3u é sempre regravada
+  (lista vazia = sem canais; antes ficava a antiga), o sintonizador M3U é recriado quando algum canal saiu e,
+  com a lista vazia, é retirado do Jellyfin. Depois o programa roda "Atualizar o guia", espera terminar e mostra
+  quantos canais o Jellyfin ficou tendo. Enviar a lista vazia pede confirmação.
+
 ### Novidades da v1.6.2
 
 - **Conferir só os selecionados:** selecione uma faixa de canais e o botão vira "Conferir N selecionado(s)"

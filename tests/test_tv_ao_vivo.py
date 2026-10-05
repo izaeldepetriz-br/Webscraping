@@ -269,3 +269,45 @@ def test_poucos_canais_sao_todos_tentados_mesmo_com_o_servidor_falhando():
     canais = [Canal(f"C{n}", f"http://127.0.0.1:9/canal{n}.m3u8") for n in range(8)]   # porta fechada
     situacoes = conferir_canais(canais)
     assert not any("outros canais dele já falharam" in s.detalhe for _, s in situacoes)
+
+
+def test_canais_removidos_saem_do_jellyfin_ao_enviar(tmp_path, api_falsa):
+    """Caso real: removia os canais, clicava em "Salvar e enviar" e o Jellyfin continuava com os antigos."""
+    hosts = []
+    proximo = [0]
+
+    def tuner(q):
+        pedido = api_falsa.pedidos[-1]
+        if pedido["metodo"] == "DELETE":
+            hosts[:] = [h for h in hosts if h["Id"] != q["id"][0]]
+            return 204, b""
+        corpo = json.loads(pedido["corpo"])
+        if not corpo.get("Id"):
+            proximo[0] += 1
+            corpo["Id"] = f"t{proximo[0]}"
+        hosts[:] = [h for h in hosts if h["Id"] != corpo["Id"]] + [corpo]
+        return 200, corpo
+
+    api_falsa.rotas["/System/Configuration/livetv"] = lambda q: (200, {"TunerHosts": hosts, "ListingProviders": []})
+    api_falsa.rotas["/LiveTv/TunerHosts"] = tuner
+    api_falsa.rotas["/ScheduledTasks"] = lambda q: (200, [{"Key": "RefreshGuide", "Id": "abc"}])
+    api_falsa.rotas["/ScheduledTasks/Running/abc"] = lambda q: (204, b"")
+    api_falsa.rotas["/ScheduledTasks/abc"] = lambda q: (200, {"State": "Idle"})
+    api_falsa.rotas["/LiveTv/Channels"] = lambda q: (200, {"Items": [], "TotalRecordCount": 1})
+    cliente = ClienteTV(api_falsa.base, "chave")
+    canais = ler_m3u(LISTA)
+    publicar(canais, tmp_path, cliente=cliente)
+    assert [h["Id"] for h in hosts] == ["t1"]
+
+    feito = publicar(canais[:1], tmp_path, cliente=cliente)                 # tirou um canal
+    assert (tmp_path / "canais.m3u").read_text(encoding="utf-8").count("#EXTINF") == 1
+    assert [h["Id"] for h in hosts] == ["t2"]                              # recriado: o Jellyfin esquece o antigo
+    assert any("1 canal(is) saíram" in f for f in feito) and any("recriado" in f for f in feito)
+    assert any("agora TV ao vivo tem 1 canal(is)" in f for f in feito)
+
+    feito = publicar(canais[:1], tmp_path, cliente=cliente)                 # nada mudou: só atualiza
+    assert [h["Id"] for h in hosts] == ["t2"] and not any("recriado" in f for f in feito)
+
+    feito = publicar([], tmp_path, cliente=cliente)                         # "Remover todos" e enviar
+    assert "#EXTINF" not in (tmp_path / "canais.m3u").read_text(encoding="utf-8")
+    assert hosts == [] and any("sintonizador M3U retirado" in f for f in feito)

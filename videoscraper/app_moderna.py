@@ -1795,11 +1795,12 @@ class AppModerna(JanelaModerna):
 
     def _publicar_canais(self) -> None:
         valores = self.janela_canais.valores()
-        if not self._canais and not valores["antena"]:
-            self.mostrar_mensagem("TV ao vivo", "Adicione canais (ou o IP da antena HDHomeRun) primeiro.", "aviso")
-            return
         if not valores["pasta"]:
             self.mostrar_mensagem("TV ao vivo", "Escolha a pasta onde salvar a lista (canais.m3u).", "aviso")
+            return
+        if not self._canais and not valores["antena"] and not self.perguntar(
+                "TV ao vivo", "A lista está VAZIA.\n\nEnviar assim TIRA do Jellyfin os canais enviados antes "
+                "(a lista canais.m3u fica sem canais). Continuar?"):
             return
         self._guardar_canais()
         o = self.obter_opcoes_jellyfin()
@@ -1808,14 +1809,14 @@ class AppModerna(JanelaModerna):
         def tarefa():
             cliente = ClienteTV(o.jellyfin_url, o.jellyfin_api_key) if o.jellyfin_url and o.jellyfin_api_key else None
             feito = publicar_canais(canais, valores["pasta"], valores["no_servidor"], valores["guia"], cliente,
-                                    valores["antena"])
+                                    valores["antena"], parar=self.evento_parar.is_set)
             for linha in feito:
                 self._log.info("TV ao vivo: %s", linha)
             dica = "" if cliente else ("\n\nSem o endereço e a chave do Jellyfin (aba Jellyfin), a lista só foi salva: "
                                        "cadastre-a em Painel > TV ao vivo > Sintonizadores > M3U.")
             self.fila.put(("msg", ("TV ao vivo", "\n".join(feito) + dica, "sucesso")))
 
-        self._rodar("Enviando os canais ao Jellyfin...", tarefa)
+        self._rodar("Enviando os canais ao Jellyfin (e esperando ele atualizar o guia)...", tarefa)
 
     # ================================================================== Windows: iniciar junto e ícone no relógio
     def ao_alternar_inicializacao(self) -> None:

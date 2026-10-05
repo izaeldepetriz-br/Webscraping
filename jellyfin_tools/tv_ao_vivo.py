@@ -359,12 +359,19 @@ class ClienteTV:
     def configuracao(self) -> dict:
         return self._pedir("GET", "/System/Configuration/livetv") or {}
 
+    def sintonizadores(self, tipo: str, endereco: str = "", nome: str = NOME_SINTONIZADOR) -> list[dict]:
+        """Os sintonizadores que são nossos: mesmo endereço, ou o nosso nome com o mesmo tipo."""
+        return [h for h in self.configuracao().get("TunerHosts") or []
+                if (endereco and h.get("Url") == endereco) or (h.get("FriendlyName") == nome and h.get("Type") == tipo)]
+
+    def remover_sintonizador(self, id_: str) -> None:
+        """Tira o sintonizador do Jellyfin. Na próxima atualização do guia, os canais dele somem de TV ao vivo."""
+        self._pedir("DELETE", "/LiveTv/TunerHosts", params={"id": id_})
+
     def cadastrar_sintonizador(self, tipo: str, endereco: str, nome: str = NOME_SINTONIZADOR) -> dict:
         """tipo 'm3u' (endereco = o .m3u, como o SERVIDOR enxerga) ou 'hdhomerun' (endereco = IP da antena).
         Se já existe um com o mesmo endereço, ou o nosso do mesmo tipo, ele é atualizado (não duplica)."""
-        existente = next((t for t in self.configuracao().get("TunerHosts") or []
-                          if t.get("Url") == endereco or (t.get("FriendlyName") == nome and t.get("Type") == tipo)),
-                         None)
+        existente = next(iter(self.sintonizadores(tipo, endereco, nome)), None)
         corpo = {**(existente or {}), "Type": tipo, "Url": endereco, "FriendlyName": nome,
                  "ImportFavoritesOnly": False, "AllowHWTranscoding": False, "EnableStreamLooping": False,
                  "TunerCount": (existente or {}).get("TunerCount", 0), "Source": ""}
@@ -378,31 +385,75 @@ class ClienteTV:
         return self._pedir("POST", "/LiveTv/ListingProviders", json=corpo,
                            params={"validateListings": "false", "validateLogin": "false"}) or corpo
 
-    def atualizar_guia(self) -> bool:
-        """Roda a tarefa 'Atualizar o guia' agora (senão o Jellyfin espera o horário dela)."""
+    def atualizar_guia(self) -> str:
+        """Roda a tarefa 'Atualizar o guia' agora (senão o Jellyfin espera o horário dela). Devolve o id da
+        tarefa ('' se não achou). É ELA que lê a lista de novo e tira os canais que saíram."""
         tarefas = self._pedir("GET", "/ScheduledTasks") or []
         tarefa = next((t for t in tarefas if t.get("Key") == "RefreshGuide"), None)
         if not tarefa:
-            return False
+            return ""
         self._pedir("POST", f"/ScheduledTasks/Running/{tarefa['Id']}")
-        return True
+        return str(tarefa["Id"])
+
+    def esperar_tarefa(self, id_: str, limite: float = 180, parar=None, intervalo: float = 2) -> bool:
+        """Espera a tarefa terminar (até `limite` segundos). True = terminou."""
+        import time
+        fim = time.monotonic() + limite
+        time.sleep(min(intervalo, 1))
+        while time.monotonic() < fim and not (parar and parar()):
+            try:
+                estado = (self._pedir("GET", f"/ScheduledTasks/{id_}") or {}).get("State", "Idle")
+            except ErroJellyfin:
+                return False
+            if estado == "Idle":
+                return True
+            time.sleep(intervalo)
+        return False
+
+    def quantos_canais(self) -> int | None:
+        """Quantos canais o Jellyfin tem agora em TV ao vivo (None se não deu para saber)."""
+        try:
+            return int((self._pedir("GET", "/LiveTv/Channels", params={"Limit": 0}) or {}).get("TotalRecordCount"))
+        except (ErroJellyfin, TypeError, ValueError):
+            return None
 
 
 def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = "", guia: str = "",
-             cliente: ClienteTV | None = None, antena: str = "") -> list[str]:
+             cliente: ClienteTV | None = None, antena: str = "", parar=None, esperar_guia: float = 180) -> list[str]:
     """Grava '<pasta>/canais.m3u' e (com o cliente) cadastra no Jellyfin: a lista, o guia e a antena.
     caminho_no_servidor: como o SERVIDOR do Jellyfin enxerga o arquivo, se for outro computador
-    (ex.: 'E:\\TV\\canais.m3u' lá, '\\\\Servidor\\e\\TV\\canais.m3u' aqui). Vazio = o mesmo caminho."""
+    (ex.: 'E:\\TV\\canais.m3u' lá, '\\\\Servidor\\e\\TV\\canais.m3u' aqui). Vazio = o mesmo caminho.
+
+    Canais REMOVIDOS saem do Jellyfin de verdade:
+      - o arquivo é SEMPRE regravado (lista vazia = arquivo sem canais; antes ele ficava com os antigos);
+      - se algum canal saiu, o sintonizador M3U é recriado (o Jellyfin guardava os canais antigos dele);
+      - lista vazia: o nosso sintonizador M3U é retirado do Jellyfin;
+      - depois roda "Atualizar o guia", espera terminar e conta quantos canais o Jellyfin ficou tendo."""
     feito = []
-    if canais:
-        arquivo = Path(pasta) / "canais.m3u"
-        arquivo.parent.mkdir(parents=True, exist_ok=True)
-        arquivo.write_text(gerar_m3u(canais, guia), encoding="utf-8")
-        feito.append(f"lista salva: {arquivo} ({len(canais)} canal(is))")
+    arquivo = Path(pasta) / "canais.m3u"
+    try:
+        antigos = {c.url for c in ler_m3u(arquivo.read_text(encoding="utf-8", errors="replace"))}
+    except OSError:
+        antigos = set()
+    removidos = antigos - {c.url for c in canais}
+    arquivo.parent.mkdir(parents=True, exist_ok=True)
+    arquivo.write_text(gerar_m3u(canais, guia), encoding="utf-8")
+    feito.append(f"lista salva: {arquivo} ({len(canais)} canal(is))"
+                 + (f"; {len(removidos)} canal(is) saíram da lista" if removidos else ""))
     if cliente is None:
         return feito
-    if canais:
-        endereco = caminho_no_servidor.strip() or str(Path(pasta) / "canais.m3u")
+    endereco = caminho_no_servidor.strip() or str(arquivo)
+    nossos = cliente.sintonizadores("m3u", endereco)
+    if not canais:
+        for host in nossos:
+            cliente.remover_sintonizador(host.get("Id", ""))
+        if nossos:
+            feito.append("Jellyfin: lista vazia -> sintonizador M3U retirado (os canais saem de TV ao vivo)")
+    else:
+        if removidos and nossos:
+            for host in nossos:
+                cliente.remover_sintonizador(host.get("Id", ""))
+            feito.append(f"Jellyfin: sintonizador M3U recriado para tirar os {len(removidos)} canal(is) removidos")
         cliente.cadastrar_sintonizador("m3u", endereco)
         feito.append(f"Jellyfin: sintonizador M3U -> {endereco}")
     if antena.strip():
@@ -411,6 +462,12 @@ def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = 
     if guia.strip():
         cliente.cadastrar_guia(guia.strip())
         feito.append(f"Jellyfin: guia de programação (XMLTV) -> {guia.strip()}")
-    if cliente.atualizar_guia():
-        feito.append("Jellyfin: atualizando o guia agora (os canais aparecem em TV ao vivo em alguns minutos)")
+    if tarefa := cliente.atualizar_guia():
+        if esperar_guia and cliente.esperar_tarefa(tarefa, esperar_guia, parar):
+            total = cliente.quantos_canais()
+            feito.append("Jellyfin: guia atualizado" + (f" -> agora TV ao vivo tem {total} canal(is)"
+                                                        if total is not None else ""))
+        else:
+            feito.append("Jellyfin: atualizando o guia (os canais mudam em TV ao vivo em alguns minutos; "
+                         "acompanhe em Painel > Tarefas agendadas > Atualizar o guia)")
     return feito

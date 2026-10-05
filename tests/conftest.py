@@ -201,6 +201,9 @@ def api_falsa():
             tamanho = int(self.headers.get("Content-Length", 0))
             self._responder(self.rfile.read(tamanho))
 
+        def do_DELETE(self):
+            self._responder()
+
         def log_message(self, *a):
             pass
 

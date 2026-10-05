@@ -1709,3 +1709,27 @@ def test_conferir_so_os_canais_selecionados(app, api_falsa):
     assert {c.nome for c in app._canais if app._situacao_canais.get(c.url, Situacao(False)).ok} == {"C3", "C4", "C5"}
     assert app._situacao_canais[app._canais[0].url].detalhe == "fora do ar (HTTP 404)"   # os outros ficam como estavam
     assert set(janela.selecionados()) == {"3", "4", "5"}                # a seleção continua
+
+
+def test_enviar_lista_vazia_pergunta_e_tira_do_jellyfin(app, tmp_path):
+    from jellyfin_tools.tv_ao_vivo import Canal
+    app.mostrar_aba("Jellyfin")
+    app.bt_tv_ao_vivo.invoke()
+    janela = app.janela_canais
+    janela.var_pasta.set(str(tmp_path / "TV"))
+    app._juntar_canais([Canal("TV Cultura", "https://a.org/1.m3u8")])
+    app._publicar_canais()
+    esperar(app)
+    assert (tmp_path / "TV" / "canais.m3u").read_text(encoding="utf-8").count("#EXTINF") == 1
+    janela.bt_remover_todos.invoke()
+    perguntas = []
+    app.perguntar = lambda t, m: (perguntas.append(m), False)[1]          # respondeu "não"
+    app._publicar_canais()
+    esperar(app)
+    assert "TIRA do Jellyfin" in perguntas[-1]
+    assert (tmp_path / "TV" / "canais.m3u").read_text(encoding="utf-8").count("#EXTINF") == 1   # nada mudou
+    app.perguntar = lambda t, m: True                                     # agora "sim"
+    app._publicar_canais()
+    esperar(app)
+    assert "#EXTINF" not in (tmp_path / "TV" / "canais.m3u").read_text(encoding="utf-8")
+    assert "1 canal(is) saíram da lista" in app.caixas[-1][2]
