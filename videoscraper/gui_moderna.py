@@ -663,10 +663,13 @@ class JanelaCanais(ctk.CTkToplevel):
         self.bt_selecionar_duplicados = ctk.CTkButton(selecao, text="os repetidos",
                                                       command=self.selecionar_duplicados, **estilo)
         self.bt_tirar_filtros = ctk.CTkButton(selecao, text="Tirar os filtros", command=self.limpar_filtros, **estilo)
+        self.bt_diagnostico = ctk.CTkButton(selecao, text="Diagnóstico do Jellyfin",
+                                            command=acoes.get("diagnostico", lambda: None), **estilo)
         for botao in (self.bt_selecionar_todos, self.bt_selecionar_fora, self.bt_selecionar_mortos,
                       self.bt_selecionar_duplicados):
             botao.pack(side="left")
         self.bt_tirar_filtros.pack(side="right")
+        self.bt_diagnostico.pack(side="right", padx=(0, 8))
 
         acoes_linha = ctk.CTkFrame(faixa, fg_color="transparent")
         acoes_linha.pack(fill="x", pady=(4, 0))

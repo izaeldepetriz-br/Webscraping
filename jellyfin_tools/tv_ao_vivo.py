@@ -87,11 +87,19 @@ def ler_m3u(texto: str) -> list[Canal]:
 
 
 def gerar_m3u(canais: list[Canal], guia: str = "") -> str:
+    """A lista .m3u para o Jellyfin. tvg-id e número NÃO se repetem: o mesmo tvg-id em dois canais (comum em
+    listas da internet: a versão HD e a SD do mesmo canal) pode dar erro na atualização do guia, e com erro
+    o Jellyfin não apaga os canais velhos. O repetido fica sem tvg-id (o 1º continua ligado ao guia)."""
     cabecalho = f'#EXTM3U url-tvg="{guia}"' if guia else "#EXTM3U"
     linhas = [cabecalho]
+    ids_usados, numeros_usados = set(), set()
     for c in canais:
+        id_guia = c.id_guia if c.id_guia and c.id_guia.lower() not in ids_usados else ""
+        numero = c.numero if c.numero and c.numero not in numeros_usados else ""
+        ids_usados.add(id_guia.lower())
+        numeros_usados.add(numero)
         atributos = " ".join(f'{chave}="{valor}"' for chave, valor in
-                             (("tvg-id", c.id_guia), ("tvg-chno", c.numero), ("tvg-name", c.nome),
+                             (("tvg-id", id_guia), ("tvg-chno", numero), ("tvg-name", c.nome),
                               ("tvg-logo", c.logo), ("group-title", c.grupo)) if valor)
         linhas += [f"#EXTINF:-1 {atributos},{c.nome}".replace("-1 ,", "-1,"), c.url]
     return "\n".join(linhas) + "\n"
@@ -529,6 +537,21 @@ class ClienteTV:
         except ErroJellyfin:
             return None
 
+    def diagnostico(self) -> dict:
+        """Tudo o que ajuda a descobrir DE ONDE vêm canais que não saem: os serviços de TV ao vivo (o do próprio
+        Jellyfin e os de plugins), os sintonizadores, os guias, uma amostra dos canais e a última atualização."""
+        d: dict = {}
+        for chave, consulta in (("info", lambda: self._pedir("GET", "/LiveTv/Info") or {}),
+                                ("config", self.configuracao),
+                                ("canais", lambda: self._pedir("GET", "/LiveTv/Channels",
+                                                               params={"Limit": 15, "EnableImages": "false"}) or {}),
+                                ("tarefas", lambda: self._pedir("GET", "/ScheduledTasks") or [])):
+            try:
+                d[chave] = consulta()
+            except ErroJellyfin as erro:
+                d[chave] = {"erro": str(erro)}
+        return d
+
     def quantos_canais(self) -> int | None:
         """Quantos canais o Jellyfin tem agora em TV ao vivo (None se não deu para saber)."""
         try:
@@ -656,3 +679,35 @@ def limpar_e_reenviar(cliente: ClienteTV, endereco: str, parar=None, esperar: fl
     else:
         feito.append("O Jellyfin ainda está atualizando o guia: confira em alguns minutos.")
     return feito
+
+
+def texto_diagnostico(d: dict, nomes_da_lista: set[str] = frozenset()) -> str:
+    """O diagnóstico em texto (para mostrar e para a pessoa copiar e mandar)."""
+    linhas = []
+    info, cfg, canais = d.get("info") or {}, d.get("config") or {}, d.get("canais") or {}
+    servicos = info.get("Services") or []
+    linhas.append(f"Serviços de TV ao vivo: {len(servicos)}")
+    for s in servicos:
+        linhas.append(f"  • {s.get('Name')}: {s.get('Status')}" + (f" ({s.get('StatusMessage')})" if s.get("StatusMessage")
+                                                                   else ""))
+    hosts = cfg.get("TunerHosts") or []
+    linhas.append(f"Sintonizadores: {len(hosts)}")
+    linhas += [f"  • {descrever_sintonizador(h)}" for h in hosts]
+    guias = cfg.get("ListingProviders") or []
+    linhas.append(f"Guias (XMLTV/Schedules Direct): {len(guias)}")
+    linhas += [f"  • {g.get('Type')}: {g.get('Path') or g.get('ListingsId') or ''}" for g in guias]
+    if "erro" in canais:
+        linhas.append(f"Canais: não deu para ler ({canais['erro']})")
+    else:
+        itens = canais.get("Items") or []
+        da_lista = sum(1 for c in itens if c.get("Name") in nomes_da_lista)
+        linhas.append(f"Canais no Jellyfin: {canais.get('TotalRecordCount')} (amostra de {len(itens)}: {da_lista} são "
+                      "da sua lista)")
+        linhas += [f"  • {c.get('Name')}  [serviço: {c.get('ServiceName') or '?'}]" for c in itens[:10]]
+    tarefa = next((t for t in (d.get("tarefas") if isinstance(d.get("tarefas"), list) else [])
+                   if t.get("Key") == "RefreshGuide"), None)
+    if tarefa:
+        ultimo = tarefa.get("LastExecutionResult") or {}
+        linhas.append(f"Última \"Atualizar o guia\": {ultimo.get('Status', '?')} em {ultimo.get('EndTimeUtc', '?')}"
+                      + (f" — {ultimo.get('ErrorMessage')}" if ultimo.get("ErrorMessage") else ""))
+    return "\n".join(linhas)

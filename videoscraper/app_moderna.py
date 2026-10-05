@@ -447,6 +447,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             config.salvar(tudo)
         elif tipo == "instalado_fixo":
             self._instalado_fixo_pendente = dado           # depois do "fim"
+        elif tipo == "tv_diagnostico":
+            self._tv_diagnostico_pendente = dado           # depois do "fim"
         elif tipo == "tv_canais_a_mais":
             self._tv_canais_a_mais_pendente = dado         # pergunta depois do "fim"
         elif tipo == "tv_outros_sintonizadores":
@@ -495,6 +497,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
             if getattr(self, "_instalado_fixo_pendente", None):
                 instalado, self._instalado_fixo_pendente = self._instalado_fixo_pendente, None
                 self.after(50, lambda: self._instalado_fixo(*instalado))
+            if getattr(self, "_tv_diagnostico_pendente", None):
+                diagnostico, self._tv_diagnostico_pendente = self._tv_diagnostico_pendente, None
+                self.after(50, lambda: self._mostrar_diagnostico_tv(*diagnostico))
             if getattr(self, "_tv_canais_a_mais_pendente", None):
                 a_mais, self._tv_canais_a_mais_pendente = self._tv_canais_a_mais_pendente, None
                 self.after(50, lambda: self._oferecer_limpar_tv(*a_mais))

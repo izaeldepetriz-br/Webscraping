@@ -18,7 +18,7 @@ from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, Canal, ClienteTV, NaoEhLista
                                        canais_a_mais, conferir_canais, descrever_sintonizador,
                                        importar as importar_canais, limpar_e_reenviar,
                                        publicar as publicar_canais, registrar_no_historico, resumo_historico,
-                                       salvar_canais, salvar_historico, sempre_falha)
+                                       salvar_canais, salvar_historico, sempre_falha, texto_diagnostico)
 
 from . import config
 from .gui_moderna import DialogoCanal, JanelaCanais, LinhaCanal
@@ -68,6 +68,7 @@ class TVAoVivo:
                 "importar_endereco": self._importar_canais_endereco, "remover": self._remover_canais,
                 "remover_todos": self._remover_todos_canais, "conferir": self._conferir_canais,
                 "publicar": self._publicar_canais, "editar": self._editar_canal, "numerar": self._numerar_canais,
+                "diagnostico": self.ao_diagnostico_tv,
                 "desfazer": self._desfazer_remocao_canais})
             dados = config.carregar().get("tv", {})
             dados.setdefault("pasta", str(config.ARQUIVO.parent / "tv"))
@@ -428,10 +429,46 @@ class TVAoVivo:
         if escolha != "Limpar e reenviar":
             return
 
+        enviados_nomes = {c.nome for c in self._canais}
+
         def tarefa():
-            feito = limpar_e_reenviar(ClienteTV(url, chave), endereco, self.evento_parar.is_set)
+            cliente = ClienteTV(url, chave)
+            feito = limpar_e_reenviar(cliente, endereco, self.evento_parar.is_set)
             for linha in feito:
                 self._log.info("TV ao vivo (limpeza): %s", linha)
-            self.fila.put(("msg", ("TV ao vivo", "\n".join(feito) or "Pronto.", "sucesso")))
+            total = cliente.quantos_canais()
+            if total is not None and total > enviados + max(10, enviados // 10):
+                # nem sem a lista os canais saíram: vêm de outra fonte, ou o Jellyfin não está limpando
+                self.fila.put(("tv_diagnostico", ("\n".join(feito), texto_diagnostico(cliente.diagnostico(),
+                                                                                       enviados_nomes))))
+            else:
+                self.fila.put(("msg", ("TV ao vivo", "\n".join(feito) or "Pronto.", "sucesso")))
 
         self._rodar("Limpando a TV ao vivo do Jellyfin e reenviando (alguns minutos)...", tarefa)
+
+    def ao_diagnostico_tv(self) -> None:
+        """Botão "Diagnóstico do Jellyfin": de onde vêm os canais que estão na TV ao vivo."""
+        o = self.obter_opcoes_jellyfin()
+        if not (o.jellyfin_url and o.jellyfin_api_key):
+            self.mostrar_mensagem("TV ao vivo", "Preencha o endereço e a chave de API do Jellyfin (aba Jellyfin).", "aviso")
+            return
+        nomes = {c.nome for c in self._canais}
+
+        def tarefa():
+            texto = texto_diagnostico(ClienteTV(o.jellyfin_url, o.jellyfin_api_key).diagnostico(), nomes)
+            self._log.info("TV ao vivo, diagnóstico:\n%s", texto)
+            self.fila.put(("tv_diagnostico", ("", texto)))
+
+        self._rodar("Consultando o Jellyfin (diagnóstico da TV ao vivo)...", tarefa)
+
+    def _mostrar_diagnostico_tv(self, antes: str, texto: str) -> None:
+        explicacao = (
+            "\n\nSe os canais não são da sua lista e não há outro sintonizador, eles vêm de outro serviço (plugin de "
+            "TV ao vivo) ou ficaram guardados porque a atualização do guia teve um erro: com erro, o Jellyfin pula a "
+            "limpeza dos canais velhos. Veja em Painel > Logs (procure \"Error refreshing\").")
+        escolha = self.escolher("TV ao vivo: diagnóstico", (antes + "\n\n" if antes else "") + texto + explicacao,
+                                ("Copiar o diagnóstico",), cancelar="Fechar")
+        if escolha == "Copiar o diagnóstico":
+            self.clipboard_clear()
+            self.clipboard_append(texto)
+            self.definir_status("Diagnóstico copiado: cole numa mensagem (Ctrl+V).")

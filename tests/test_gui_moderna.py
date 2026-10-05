@@ -2244,3 +2244,47 @@ def test_lixeira_com_mais_de_30_dias_pergunta_e_apaga(app, tmp_path):
     app.escolher = lambda *a, **k: pytest.fail("pergunta no máximo uma vez por semana")
     app._conferir_lixeira()
     os.sync() if hasattr(os, "sync") else None
+
+
+def test_tv_limpeza_que_nao_resolve_mostra_o_diagnostico(app, tmp_path, api_falsa):
+    """Caso real: mesmo sem a lista, o Jellyfin seguia com 11.129 canais (outra fonte, ou ele não limpa)."""
+    import json
+    from jellyfin_tools.tv_ao_vivo import Canal
+    hosts = []
+
+    def tuner(q):
+        pedido = api_falsa.pedidos[-1]
+        if pedido["metodo"] == "DELETE":
+            hosts.clear()
+            return 204, b""
+        corpo = {**json.loads(pedido["corpo"]), "Id": "nosso"}
+        hosts[:] = [corpo]
+        return 200, corpo
+    api_falsa.rotas["/System/Configuration/livetv"] = lambda q: (200, {"TunerHosts": hosts, "ListingProviders": []})
+    api_falsa.rotas["/LiveTv/TunerHosts"] = tuner
+    api_falsa.rotas["/LiveTv/Info"] = lambda q: (200, {"Services": [{"Name": "IPTV Plugin", "Status": "Ok"}]})
+    api_falsa.rotas["/ScheduledTasks"] = lambda q: (200, [{"Key": "RefreshGuide", "Id": "abc"}])
+    api_falsa.rotas["/ScheduledTasks/Running/abc"] = lambda q: (204, b"")
+    api_falsa.rotas["/ScheduledTasks/abc"] = lambda q: (200, {"State": "Idle"})
+    api_falsa.rotas["/LiveTv/Channels"] = lambda q: (200, {"Items": [{"Name": "Canal X", "ServiceName": "IPTV Plugin"}],
+                                                           "TotalRecordCount": 11129})
+    app.var_jf_url.set(api_falsa.base)
+    app.var_jf_chave_jellyfin.set("chave")
+    janela = _abrir_tv(app, [Canal("A", "https://a.org/1")])
+    janela.var_pasta.set(str(tmp_path / "TV"))
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append((t, m)), opcoes[0])[1]   # limpa e copia
+    app._publicar_canais()
+    fim = time.time() + 60
+    while time.time() < fim and not any("diagnóstico" in t for t, _ in perguntas):
+        app.update()
+        time.sleep(0.05)
+    titulo, texto = next((t, m) for t, m in perguntas if "diagnóstico" in t)
+    assert "Sem a lista: o Jellyfin ficou com 11129" in texto and "IPTV Plugin" in texto
+    assert "Canal X  [serviço: IPTV Plugin]" in app.clipboard_get()
+    janela.bt_diagnostico.invoke()                                      # o botão faz o mesmo, sem limpar
+    esperar(app)
+    for _ in range(10):
+        app.update()
+        time.sleep(0.03)
+    assert sum("diagnóstico" in t for t, _ in perguntas) == 2

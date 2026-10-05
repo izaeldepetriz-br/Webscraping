@@ -233,6 +233,14 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v1.9.1
+
+- **TV ao vivo, canais que nem a limpeza tira:** a lista enviada não repete mais `tvg-id` nem número (o mesmo
+  tvg-id em dois canais pode dar erro na atualização do guia, e com erro o Jellyfin não apaga os canais velhos).
+- **Diagnóstico do Jellyfin** (janela TV ao vivo, e sozinho quando a limpeza não resolve): serviços de TV ao vivo
+  (inclusive de plugins), sintonizadores, guias, uma amostra dos canais com o serviço de cada um e a última
+  atualização do guia; botão para copiar e mandar.
+
 ### Novidades da v1.9
 
 - **TV ao vivo, canais que não saíam do Jellyfin:** o programa contava os canais antes de o Jellyfin terminar de

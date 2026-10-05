@@ -425,3 +425,28 @@ def test_limpar_e_reenviar_e_canais_a_mais(tmp_path, api_falsa):
     assert not canais_a_mais(9999, canais, antena="192.168.0.5")          # com antena não dá para saber
     feito = limpar_e_reenviar(cliente, str(tmp_path / "canais.m3u"))
     assert "agora TV ao vivo tem 2 canal(is)" in feito[-1] and len(hosts) == 1
+
+
+def test_lista_gerada_nao_repete_tvg_id_nem_numero():
+    """O mesmo tvg-id em dois canais (HD e SD) pode dar erro na atualização do guia; com erro, o Jellyfin não
+    apaga os canais velhos."""
+    canais = [Canal("Cultura HD", "http://a/1", id_guia="Cultura.br", numero="2"),
+              Canal("Cultura SD", "http://a/2", id_guia="cultura.br", numero="2"), Canal("Band", "http://a/3", numero="4")]
+    lidos = ler_m3u(gerar_m3u(canais))
+    assert [c.id_guia for c in lidos] == ["Cultura.br", "", ""] and [c.numero for c in lidos] == ["2", "", "4"]
+    assert [c.url for c in lidos] == ["http://a/1", "http://a/2", "http://a/3"]       # nenhum canal some
+
+
+def test_texto_do_diagnostico():
+    from jellyfin_tools.tv_ao_vivo import texto_diagnostico
+    d = {"info": {"Services": [{"Name": "Emby", "Status": "Ok"}, {"Name": "IPTV Plugin", "Status": "Ok"}]},
+         "config": {"TunerHosts": [{"Type": "m3u", "FriendlyName": "videoscraper", "Url": "C:/tv/canais.m3u"}],
+                    "ListingProviders": [{"Type": "xmltv", "Path": "https://guia/epg.xml"}]},
+         "canais": {"TotalRecordCount": 11129, "Items": [{"Name": "TV Cultura", "ServiceName": "Emby"},
+                                                         {"Name": "Canal X", "ServiceName": "IPTV Plugin"}]},
+         "tarefas": [{"Key": "RefreshGuide", "LastExecutionResult": {"Status": "Completed", "EndTimeUtc": "2026-10-05"}}]}
+    texto = texto_diagnostico(d, {"TV Cultura"})
+    assert "Serviços de TV ao vivo: 2" in texto and "IPTV Plugin: Ok" in texto
+    assert 'M3U "videoscraper": C:/tv/canais.m3u' in texto and "xmltv: https://guia/epg.xml" in texto
+    assert "Canais no Jellyfin: 11129 (amostra de 2: 1 são da sua lista)" in texto
+    assert "Canal X  [serviço: IPTV Plugin]" in texto and 'Última "Atualizar o guia": Completed' in texto
