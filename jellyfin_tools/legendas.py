@@ -29,34 +29,86 @@ from .nomes import eh_video_da_biblioteca, extrair_episodio, extrair_titulo_e_an
 
 IDIOMA_PADRAO = "pt-BR"
 
-# Apelidos aceitos ao digitar os idiomas -> código que o Jellyfin entende no nome do arquivo.
-APELIDOS_IDIOMA = {
-    "pt-br": "pt-BR", "ptbr": "pt-BR", "pt_br": "pt-BR", "br": "pt-BR", "pt": "pt-BR", "por": "pt-BR",
-    "portugues": "pt-BR", "português": "pt-BR", "pt-pt": "pt-PT", "ptpt": "pt-PT",
-    "en": "en", "eng": "en", "english": "en", "ingles": "en", "inglês": "en",
-    "es": "es", "spa": "es", "esp": "es", "espanol": "es", "español": "es", "espanhol": "es",
-    "fr": "fr", "fre": "fr", "fra": "fr", "frances": "fr", "francês": "fr",
-    "it": "it", "ita": "it", "italiano": "it", "de": "de", "ger": "de", "deu": "de", "alemao": "de",
-    "alemão": "de", "ja": "ja", "jpn": "ja", "japones": "ja", "japonês": "ja",
-}
+# Idiomas conhecidos: (código que o Jellyfin entende no nome do arquivo, nome em português, outros jeitos de
+# escrever). Dá para digitar o código, o nome em português ou em inglês, com ou sem acento.
+IDIOMAS_CONHECIDOS = (
+    ("pt-BR", "Português (Brasil)", "pt-br ptbr pt_br br pt por portugues português portuguese brazilian"),
+    ("pt-PT", "Português (Portugal)", "pt-pt ptpt pt_pt europeu"),
+    ("en", "Inglês", "eng english ingles inglês"),
+    ("es", "Espanhol", "spa esp espanol español espanhol spanish castelhano"),
+    ("fr", "Francês", "fre fra frances francês french"),
+    ("it", "Italiano", "ita italiano italian"),
+    ("de", "Alemão", "ger deu alemao alemão german"),
+    ("ja", "Japonês", "jpn jp japones japonês japanese"),
+    ("ko", "Coreano", "kor coreano korean"),
+    ("zh", "Chinês", "chi zho chines chinês chinese mandarim"),
+    ("ru", "Russo", "rus russo russian"),
+    ("ar", "Árabe", "ara arabe árabe arabic"),
+    ("he", "Hebraico", "heb hebraico hebrew"),
+    ("tr", "Turco", "tur turco turkish"),
+    ("pl", "Polonês", "pol polones polonês polish"),
+    ("nl", "Holandês", "dut nld holandes holandês neerlandes dutch"),
+    ("sv", "Sueco", "swe sueco swedish"),
+    ("no", "Norueguês", "nor norueguês noruegues norwegian"),
+    ("da", "Dinamarquês", "dan dinamarques dinamarquês danish"),
+    ("fi", "Finlandês", "fin finlandes finlandês finnish"),
+    ("el", "Grego", "gre ell grego greek"),
+    ("cs", "Tcheco", "cze ces tcheco checo czech"),
+    ("sk", "Eslovaco", "slo slk eslovaco slovak"),
+    ("sl", "Esloveno", "slv esloveno slovenian"),
+    ("hu", "Húngaro", "hun hungaro húngaro hungarian"),
+    ("ro", "Romeno", "rum ron romeno romanian"),
+    ("bg", "Búlgaro", "bul bulgaro búlgaro bulgarian"),
+    ("hr", "Croata", "hrv croata croatian"),
+    ("sr", "Sérvio", "srp servio sérvio serbian"),
+    ("uk", "Ucraniano", "ukr ucraniano ukrainian"),
+    ("hi", "Hindi", "hin hindi"),
+    ("th", "Tailandês", "tha tailandes tailandês thai"),
+    ("vi", "Vietnamita", "vie vietnamita vietnamese"),
+    ("id", "Indonésio", "ind indonesio indonésio indonesian"),
+    ("ms", "Malaio", "may msa malaio malay"),
+    ("fa", "Persa", "per fas persa farsi persian"),
+    ("ca", "Catalão", "cat catalao catalão catalan"),
+    ("gl", "Galego", "glg galego galician"),
+    ("eu", "Basco", "baq eus basco basque"),
+    ("la", "Latim", "lat latim latin"),
+)
+APELIDOS_IDIOMA = {apelido: codigo for codigo, nome, outros in IDIOMAS_CONHECIDOS
+                   for apelido in [codigo.lower(), nome.lower(), *outros.split()]}
+_NOMES_IDIOMA = {codigo: nome for codigo, nome, _ in IDIOMAS_CONHECIDOS}
 
 
-def normalizar_idiomas(texto) -> list[str]:
-    """'pt-BR, inglês; es' -> ['pt-BR', 'en', 'es'] (sem repetir, na ordem digitada).
-    Aceita também uma lista. Códigos desconhecidos no formato 'xx' ou 'xx-YY' passam como estão."""
+def nome_do_idioma(codigo: str) -> str:
+    """'fr' -> 'Francês'; código que não está na lista volta como está."""
+    return _NOMES_IDIOMA.get(codigo, codigo)
+
+
+def analisar_idiomas(texto) -> tuple[list[str], list[str]]:
+    """'pt-BR, coreano; xyz' -> (['pt-BR', 'ko'], ['xyz']): os idiomas entendidos (sem repetir, na ordem
+    digitada) e as palavras que não deu para entender. Separa por vírgula, ponto e vírgula ou espaço.
+    Um código no formato 'xx' ou 'xx-YY' que não está na lista passa como está (pode ser um idioma raro)."""
     partes = texto if isinstance(texto, (list, tuple)) else re.split(r"[,;\s]+", str(texto or ""))
-    idiomas = []
+    idiomas, desconhecidos = [], []
     for parte in partes:
         chave = str(parte).strip().lower()
         if not chave:
             continue
         codigo = APELIDOS_IDIOMA.get(chave)
-        if codigo is None and re.fullmatch(r"[a-z]{2,3}(-[a-z]{2})?", chave):
+        if codigo is None and re.fullmatch(r"[a-z]{2}(-[a-z]{2})?", chave):
             base, _, regiao = chave.partition("-")
             codigo = f"{base}-{regiao.upper()}" if regiao else base
-        if codigo and codigo not in idiomas:
+        if codigo is None:
+            desconhecidos.append(str(parte).strip())
+        elif codigo not in idiomas:
             idiomas.append(codigo)
-    return idiomas
+    return idiomas, desconhecidos
+
+
+def normalizar_idiomas(texto) -> list[str]:
+    """'pt-BR, inglês; es' -> ['pt-BR', 'en', 'es'] (sem repetir, na ordem digitada). Aceita também uma lista."""
+    return analisar_idiomas(texto)[0]
+
+
 TAMANHO_MAXIMO = 5 * 1024 * 1024        # legenda é texto: 5 MB já é muito
 SIMILARIDADE_MINIMA = 0.6
 

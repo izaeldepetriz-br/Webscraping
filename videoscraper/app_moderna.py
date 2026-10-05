@@ -55,7 +55,7 @@ from .cli import salvar
 from .extracao import LinkVideo
 from .gui import ORIGENS, _SaidaParaFila, _so_caracteres_basicos
 from . import atualizacao, bandeja, inicializacao
-from .gui_moderna import JanelaEspelhos, JanelaModerna, OpcoesInterface
+from .gui_moderna import JanelaEspelhos, JanelaModerna, OpcoesInterface, Tema
 from .tv_moderna import TVAoVivo
 from .navegador import PERFIL_PADRAO, PlaywrightAusente
 from .servico import MENSAGEM_ROBOTS, Trabalho, fazer_login
@@ -127,6 +127,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._previa_pendente = False
         self._versao_pendente = None            # aviso de versão nova que chegou durante uma tarefa
         self._atualizacao_pendente = None       # .zip da versão nova baixado (pergunta no fim)
+        self._tv_outros_pendente = None         # TV ao vivo: outros sintonizadores no Jellyfin (pergunta no fim)
         self._instalar_ao_sair = None           # (zip, reabrir): troca os arquivos quando o programa fechar
         self._versao_agendada = None
         self._bandeja = None                    # ícone perto do relógio (quando escondida)
@@ -436,6 +437,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 self.sair_de_vez()
         elif tipo == "versao_consultada":
             self._mostrar_versao_consultada(*dado)
+        elif tipo == "tv_outros_sintonizadores":
+            self._tv_outros_pendente = dado                # pergunta depois do "fim"
         elif tipo == "atualizacao_baixada":
             self._atualizacao_pendente = dado              # pergunta depois do "fim"
         elif tipo == "versao_nova":
@@ -477,6 +480,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
             if self._conflitos_pendentes:
                 pendentes, self._conflitos_pendentes = self._conflitos_pendentes, None
                 self.after(50, lambda: self._confirmar_conflitos(*pendentes))
+            if self._tv_outros_pendente:
+                outros, self._tv_outros_pendente = self._tv_outros_pendente, None
+                self.after(50, lambda: self._oferecer_tirar_sintonizadores(*outros))
             if self._atualizacao_pendente:
                 baixada, self._atualizacao_pendente = self._atualizacao_pendente, None
                 self.after(50, lambda: self._atualizacao_baixada(*baixada))
@@ -683,6 +689,12 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.definir_estado_vigia("Desligada.", False)
             self._log.info("Vigia desligada")
             return
+        self.atualizar_aviso_vigiadas(arrumar=True)
+        if problemas := self.problemas_nas_vigiadas(self.pastas_vigiadas()):
+            self.mostrar_mensagem("Pastas vigiadas", "Confira as pastas vigiadas:\n\n" + "\n".join(
+                f"• {p}" for p in problemas) + "\n\nAs que não existem são ignoradas.", "aviso")
+        for aviso in self._bibliotecas_faltando():         # no log; na tela, o estado da vigia já diz
+            self._log.warning("Vigia: %s", aviso)
         self._log.info("Vigia ligada: conferindo %s a cada %s min", self.var_jf_origem.get(),
                        int(self.campo_vigia_min.get()))
         self._ciclo_vigia()
@@ -691,7 +703,22 @@ class AppModerna(TVAoVivo, JanelaModerna):
         minutos = self.campo_vigia_min.get()
         self._vigia_agendada = self.after(int(minutos * 60_000), self._ciclo_vigia)
         proxima = datetime.now() + timedelta(minutes=minutos)
-        self.definir_estado_vigia(f"Ligada: próxima conferência às {proxima:%H:%M}.", True)
+        faltando = [tipo for tipo in ("Filmes", "Séries") if not ({**self._destinos, self._modo_atual:
+                                                                    self.var_jf_destino.get()}).get(tipo)]
+        self.definir_estado_vigia(f"Ligada: próxima conferência às {proxima:%H:%M}."
+                                  + (f" Sem biblioteca de {' e '.join(faltando)}: esses ficam parados." if faltando
+                                     else ""), True)
+        if faltando:                                  # aviso em laranja, não no verde de "tudo certo"
+            self.lb_estado_vigia.configure(text_color=Tema.AVISO)
+
+    def _bibliotecas_faltando(self) -> list[str]:
+        """A vigia separa filmes e séries; sem uma das bibliotecas, aquele tipo fica parado (antes, sem aviso)."""
+        destinos = dict(self._destinos)
+        destinos[self._modo_atual] = self.var_jf_destino.get()
+        artigo = {"Filmes": "os filmes", "Séries": "as séries"}
+        return [f"A biblioteca de {tipo} não está escolhida: {artigo[tipo]} ficam onde estão. Escolha-a no modo "
+                f"{tipo} (campo \"Biblioteca de {tipo} do Jellyfin\")." for tipo in ("Filmes", "Séries")
+                if not destinos.get(tipo)]
 
     def _alvos_da_vigia(self, o):
         """(pastas vigiadas, biblioteca de Filmes, biblioteca de Séries). Sem lista, vigia a pasta de origem."""
@@ -756,8 +783,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 self._pos_processar(o, [(m, m.destino.stem) for _, m in movidos], [i for i, _ in movidos],
                                     "Vigia", legendas=o.legendas, notificar=True)
             filmes_movidos = sum(1 for _, m in movidos if not m.episodio)
+            parados = "".join(f" {tipo}: biblioteca não escolhida, ficaram onde estão." for tipo, pasta in
+                              (("Filmes", filmes), ("Séries", series)) if not pasta)
             self.fila.put(("status_fim", f"Vigia: {filmes_movidos} filme(s) e {len(movidos) - filmes_movidos} "
-                                         "episódio(s) organizados."))
+                                         f"episódio(s) organizados.{parados}"))
 
         self._rodar("Organizando (pasta vigiada)...", tarefa)
 
@@ -1707,7 +1736,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
     def _ciclo_versao(self) -> None:
         """Consulta sozinha enquanto o programa está aberto (quem deixa rodando perto do relógio também é avisado)."""
         self._versao_agendada = self.after(self.INTERVALO_VERSAO_MS, self._ciclo_versao)
-        if self.var_jf_avisar_versao.get():
+        if self.var_jf_avisar_versao.get() or self.var_jf_atualizar_sozinho.get():
             self.verificar_versao_nova()
 
     def ao_verificar_atualizacoes(self) -> None:
@@ -1734,8 +1763,12 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._log.info("Atualizações: esta é a mais nova (%s; publicada: %s)", atual, nova.versao)
             self.mostrar_mensagem("Verificar atualizações", f"Você já está na versão mais nova ({atual}).", "sucesso")
 
-    def _baixar_atualizacao(self, nova) -> None:
-        """Baixa o .zip em segundo plano (pode continuar usando o programa) e abre a pasta no fim."""
+    def _baixar_atualizacao(self, nova, sozinho: bool = False) -> None:
+        """Baixa o .zip em segundo plano (pode continuar usando o programa). sozinho=True ("Atualizar sozinho"):
+        no fim, instala e reinicia sem perguntar."""
+        if self.trabalhando and sozinho:                 # automático: tenta de novo quando a tarefa acabar
+            self.after(60_000, lambda: self._baixar_atualizacao(nova, sozinho))
+            return
         if self.trabalhando:
             self.mostrar_mensagem("Atualização", "Espere a tarefa atual terminar e clique de novo em "
                                   "\"Verificar atualizações\".", "aviso")
@@ -1752,13 +1785,40 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 self.fila.put(("msg", ("Atualização", f"{erro}. Use a página de download:\n{nova.url}", "aviso")))
                 return
             self._log.info("Atualização %s baixada: %s", nova.versao, arquivo)
-            self.fila.put(("atualizacao_baixada", (nova, arquivo)))
+            self.fila.put(("atualizacao_baixada", (nova, arquivo, sozinho)))
             self.fila.put(("status_fim", f"Versão {nova.versao} baixada em {arquivo.parent}."))
 
         self._rodar(f"Baixando a versão {nova.versao}...", tarefa)
 
-    def _atualizacao_baixada(self, nova, arquivo) -> None:
-        """Baixou: avisa que, para concluir, o programa PRECISA FECHAR (o Windows não troca um programa aberto)."""
+    SEGUNDOS_PARA_REINICIAR = 20
+
+    def _reiniciar_para_atualizar(self, versao: str, faltam: int | None = None) -> None:
+        """"Atualizar sozinho": espera o programa ficar livre, avisa no rodapé com contagem regressiva e reinicia
+        (fecha, troca os arquivos e abre de novo). Desmarcar a opção cancela: instala quando você fechar."""
+        if not self.var_jf_atualizar_sozinho.get():
+            self.definir_status(f"Reinício cancelado: a versão {versao} será instalada quando você fechar o programa.")
+            if self._instalar_ao_sair:
+                self._instalar_ao_sair = (self._instalar_ao_sair[0], False)      # instala ao fechar, sem reabrir
+            return
+        if self.trabalhando:                              # nunca interrompe uma tarefa: tenta de novo daqui a pouco
+            self.after(30_000, lambda: self._reiniciar_para_atualizar(versao))
+            return
+        faltam = self.SEGUNDOS_PARA_REINICIAR if faltam is None else faltam
+        if faltam <= 0:
+            self._log.info("Atualizar sozinho: reiniciando para instalar a versão %s", versao)
+            self.sair_de_vez()
+            return
+        self.definir_status(f"Versão {versao} pronta: o programa reinicia sozinho em {faltam} s para atualizar "
+                            "(desmarque \"Atualizar sozinho\" na aba Jellyfin para cancelar).")
+        self.after(1000, lambda: self._reiniciar_para_atualizar(versao, faltam - 1))
+
+    def _atualizacao_baixada(self, nova, arquivo, sozinho: bool = False) -> None:
+        """Baixou: avisa que, para concluir, o programa PRECISA FECHAR (o Windows não troca um programa aberto).
+        Com "Atualizar sozinho": não pergunta; reinicia quando estiver livre."""
+        if sozinho and atualizacao.pode_instalar_sozinho():
+            self._instalar_ao_sair = (arquivo, True)
+            self._reiniciar_para_atualizar(nova.versao)
+            return
         if not atualizacao.pode_instalar_sozinho():           # rodando pelo Python: troca à mão
             if self.escolher("Atualização baixada",
                              f"A versão {nova.versao} está em:\n{arquivo}\n\nPara concluir, FECHE o programa, extraia o "
@@ -1771,9 +1831,11 @@ class AppModerna(TVAoVivo, JanelaModerna):
             "Atualização pronta para instalar",
             f"A versão {nova.versao} foi baixada.\n\nPara concluir a atualização, o programa PRECISA SER FECHADO: o "
             "Windows não deixa trocar um programa que está aberto. Ele fecha, troca os arquivos sozinho (uns "
-            "segundos) e abre de novo já na versão nova.\n\nConfigurações, regras e canais continuam valendo.",
-            ("Fechar e atualizar agora", "Atualizar quando eu fechar"), cancelar="Depois")
-        if escolha == "Fechar e atualizar agora":
+            "segundos) e abre de novo já na versão nova.\n\nConfigurações, regras e canais continuam valendo.\n\n"
+            "Dica: marque \"Atualizar sozinho\" na aba Jellyfin e as próximas versões se instalam e reiniciam sem "
+            "perguntar.",
+            ("Atualizar e reiniciar agora", "Atualizar quando eu fechar"), cancelar="Depois")
+        if escolha == "Atualizar e reiniciar agora":
             self._instalar_ao_sair = (arquivo, True)
             self.sair_de_vez()
         elif escolha == "Atualizar quando eu fechar":
@@ -1795,6 +1857,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self.var_jf_versao_avisada.set(nova.versao)
         self._salvar_config()
         self._log.info("Versão nova disponível: %s (esta é %s) %s", nova.versao, atualizacao.versao_atual(), nova.url)
+        if self.var_jf_atualizar_sozinho.get() and nova.arquivo_url and atualizacao.pode_instalar_sozinho():
+            self._log.info("Atualizar sozinho: baixando %s", nova.versao)
+            self._baixar_atualizacao(nova, sozinho=True)
+            return
         notas = f"\n\nO que mudou:\n{nova.notas[:400]}" if nova.notas else ""
         opcoes = (("Baixar agora",) if nova.arquivo_url else ()) + ("Abrir a página de download",)
         escolha = self.escolher("Versão nova", f"Saiu a versão {nova.versao} do programa (esta é a "

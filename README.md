@@ -233,6 +233,21 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v1.8
+
+- **TV ao vivo, enviar com filtro ligado:** o filtro só esconde canais; agora o envio pergunta se é para mandar
+  só os filtrados (os outros saem da lista, dá para desfazer) ou todos.
+- **Outros sintonizadores no Jellyfin:** depois do envio, o programa mostra os sintonizadores cadastrados fora
+  dele (ex.: uma lista grande da internet), que somam canais ao total, e oferece tirá-los do Jellyfin.
+- **Pastas vigiadas:** aceitam vírgula ou ponto e vírgula além de uma por linha; aviso na hora para pasta que não
+  existe. Vigiar a própria biblioteca continua valendo (o que já está organizado fica).
+- **Vigia e filmes:** sem a biblioteca de Filmes escolhida, os filmes ficavam parados sem aviso; agora o estado
+  da vigia e o resultado de cada rodada avisam.
+- **Idiomas das legendas:** quantos quiser (vírgula, ponto e vírgula ou espaço), pelo código ou pelo nome
+  (francês, coreano, russo...); 40 idiomas conhecidos; mostra o que entendeu; botão "Mais idiomas..." para marcar.
+- **Atualizar sozinho:** com a opção marcada, a versão nova é baixada, o programa espera ficar livre, avisa no
+  rodapé (20 s) e reinicia já atualizado. Desmarcar cancela.
+
 ### Novidades da v1.7 (TV ao vivo organizada)
 
 - **Desfazer remoção:** os canais removidos (selecionados ou "Remover todos") podem voltar, cada um no lugar em

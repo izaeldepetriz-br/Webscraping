@@ -295,6 +295,8 @@ def _jellyfin_falso(api_falsa, limpa_sozinho: bool):
 
     def atualizar_guia(q):
         for h in hosts:
+            if h.get("Type") != "m3u" or not Path(h["Url"]).is_file():
+                continue                                                # antena, lista da internet...
             lidos = {c.nome for c in ler_m3u(Path(h["Url"]).read_text(encoding="utf-8"))}
             if limpa_sozinho:
                 for chave in [k for k in canais_jf if k[0] == h["Id"] and k[1] not in lidos]:
@@ -351,3 +353,14 @@ def test_tirar_uma_copia_repetida_confere_pela_conta(tmp_path, api_falsa):
     publicar(canais, tmp_path, cliente=cliente)
     feito = publicar([canais[0], canais[2]], tmp_path, cliente=cliente)
     assert any("recriado" in f for f in feito) or any("mantidos" in f for f in feito)
+
+
+def test_outros_sintonizadores_sao_os_que_nao_sao_desta_lista(tmp_path, api_falsa):
+    hosts, _ = _jellyfin_falso(api_falsa, limpa_sozinho=True)
+    cliente = ClienteTV(api_falsa.base, "chave")
+    publicar(ler_m3u(LISTA), tmp_path, cliente=cliente, antena="192.168.0.50")
+    hosts.append({"Id": "manual", "Type": "m3u", "FriendlyName": "iptv", "Url": "https://iptv-org.github.io/iptv/index.m3u"})
+    outros = cliente.outros_sintonizadores(str(tmp_path / "canais.m3u"))
+    assert [h["Id"] for h in outros] == ["manual"]                  # a nossa lista e a nossa antena não entram
+    from jellyfin_tools.tv_ao_vivo import descrever_sintonizador
+    assert descrever_sintonizador(outros[0]) == 'M3U "iptv": https://iptv-org.github.io/iptv/index.m3u'

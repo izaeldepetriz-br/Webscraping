@@ -1547,7 +1547,7 @@ def test_atualizacao_baixada_avisa_que_precisa_fechar(app, monkeypatch, tmp_path
     app._atualizacao_baixada(nova, arquivo)
     titulo, texto, opcoes = mensagens[-1]
     assert titulo == "Atualização pronta para instalar" and "PRECISA SER FECHADO" in texto
-    assert opcoes == ("Fechar e atualizar agora", "Atualizar quando eu fechar")
+    assert opcoes == ("Atualizar e reiniciar agora", "Atualizar quando eu fechar")
     assert not instalados                                               # ainda não: só quando fechar
     destruida = []
     monkeypatch.setattr(app, "destroy", lambda: destruida.append(True))
@@ -1832,3 +1832,181 @@ def test_tv_numerar_em_ordem(app):
     janela.tabela.selection_set(["4"])
     janela.bt_numerar.invoke()                                          # só o selecionado: continua do maior
     assert app._canais[-1].numero == "5" and [c.numero for c in app._canais[:4]] == ["1", "2", "3", "4"]
+
+
+def test_tv_enviar_com_filtro_ligado_pergunta_e_manda_so_os_filtrados(app, tmp_path):
+    from jellyfin_tools.tv_ao_vivo import Canal
+    janela = _abrir_tv(app, [Canal("A", "https://a.org/1", "Abertos"), Canal("B", "https://a.org/2", "Rádios"),
+                             Canal("C", "https://a.org/3", "Abertos")])
+    janela.var_pasta.set(str(tmp_path / "TV"))
+    janela.aplicar_filtro("grupo", ["Abertos"])
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append((m, opcoes)), opcoes[0])[1]   # "só os filtrados"
+    app._publicar_canais()
+    esperar(app)
+    assert "o filtro só esconde" in perguntas[0][0] and perguntas[0][1][0] == "Enviar só os 2 filtrados"
+    assert [c.nome for c in app._canais] == ["A", "C"] and not janela._filtros
+    assert (tmp_path / "TV" / "canais.m3u").read_text(encoding="utf-8").count("#EXTINF") == 2
+    janela.bt_desfazer.invoke()                                         # o que saiu pode voltar
+    assert [c.nome for c in app._canais] == ["A", "B", "C"]
+
+
+def test_tv_oferece_tirar_os_outros_sintonizadores_do_jellyfin(app, tmp_path, api_falsa):
+    import json
+    from jellyfin_tools.tv_ao_vivo import Canal
+    hosts = [{"Id": "manual", "Type": "m3u", "FriendlyName": "iptv", "Url": "https://iptv-org.github.io/iptv/index.m3u"}]
+
+    def tuner(q):
+        pedido = api_falsa.pedidos[-1]
+        if pedido["metodo"] == "DELETE":
+            hosts[:] = [h for h in hosts if h["Id"] != q["id"][0]]
+            return 204, b""
+        corpo = {**json.loads(pedido["corpo"]), "Id": "nosso"}
+        hosts[:] = [h for h in hosts if h["Id"] != "nosso"] + [corpo]
+        return 200, corpo
+    api_falsa.rotas["/System/Configuration/livetv"] = lambda q: (200, {"TunerHosts": hosts, "ListingProviders": []})
+    api_falsa.rotas["/LiveTv/TunerHosts"] = tuner
+    api_falsa.rotas["/ScheduledTasks"] = lambda q: (200, [])
+    app.var_jf_url.set(api_falsa.base)
+    app.var_jf_chave_jellyfin.set("chave")
+    janela = _abrir_tv(app, [Canal("A", "https://a.org/1")])
+    janela.var_pasta.set(str(tmp_path / "TV"))
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append(m), opcoes[0])[1]
+    app._publicar_canais()
+    esperar(app)
+    for _ in range(20):                                                 # a pergunta vem depois do "fim"
+        app.update()
+        time.sleep(0.03)
+    esperar(app)
+    assert any("iptv-org.github.io" in m and "cadastrados fora do programa" in m for m in perguntas)
+    assert [h["Id"] for h in hosts] == ["nosso"]                        # o de fora saiu, o nosso ficou
+    assert "1 sintonizador(es) retirado(s)" in app.caixas[-1][2]
+
+
+def test_pastas_vigiadas_aceitam_virgula_e_avisam_o_que_esta_errado(app, tmp_path):
+    from videoscraper.gui_moderna import dividir_pastas
+    assert dividir_pastas("E:\\Series, E:\\Filmes; D:\\Down\nC:\\Filmes, Séries") == \
+        ["E:\\Series", "E:\\Filmes", "D:\\Down", "C:\\Filmes, Séries"]          # vírgula no nome continua no nome
+    downloads, filmes = tmp_path / "Downloads", tmp_path / "Filmes"
+    downloads.mkdir()
+    filmes.mkdir()
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_destino.set(str(filmes))
+    app.txt_pastas_vigiadas.delete("1.0", "end")
+    app.txt_pastas_vigiadas.insert("1.0", f"{downloads}, {filmes}; {tmp_path / 'nao_existe'}")
+    app.atualizar_aviso_vigiadas(arrumar=True)                          # ao sair do campo: uma por linha
+    assert app.txt_pastas_vigiadas.get("1.0", "end").strip().splitlines() == \
+        [str(downloads), str(filmes), str(tmp_path / "nao_existe")]
+    aviso = app.lb_aviso_vigiadas.cget("text")
+    assert "Não existe" in aviso and "biblioteca" not in aviso and app.lb_aviso_vigiadas.winfo_manager()
+    pastas, _, _ = app._alvos_da_vigia(app.obter_opcoes_jellyfin())
+    assert pastas == [str(downloads), str(filmes)]                      # a biblioteca também pode ser vigiada
+    app.definir_pastas_vigiadas([str(downloads)])
+    assert app.lb_aviso_vigiadas.cget("text") == "" and not app.lb_aviso_vigiadas.winfo_manager()
+
+
+def test_atualizar_sozinho_baixa_espera_ficar_livre_e_reinicia(app, monkeypatch, tmp_path):
+    """Opção "Atualizar sozinho": versão nova -> baixa sem perguntar -> espera a tarefa acabar -> reinicia."""
+    from videoscraper import atualizacao
+    nova = atualizacao.VersaoNova("v9.9", "https://github.com/x/v9.9", arquivo_url="https://x/v.zip")
+    arquivo = tmp_path / "videoscraper-windows-v9.9.zip"
+    monkeypatch.setattr(atualizacao, "pode_instalar_sozinho", lambda: True)
+    monkeypatch.setattr(atualizacao, "baixar", lambda n, **k: (arquivo.write_bytes(b"zip"), arquivo)[1])
+    instalados, reinicios = [], []
+    monkeypatch.setattr(atualizacao, "instalar_ao_fechar", lambda z, reabrir=True: instalados.append((z, reabrir)))
+    monkeypatch.setattr(app, "sair_de_vez", lambda: reinicios.append(app._instalar_ao_sair))
+    app.escolher = lambda *a, **k: pytest.fail("não deveria perguntar nada")
+    app.SEGUNDOS_PARA_REINICIAR = 2
+    app.var_jf_atualizar_sozinho.set(True)
+    app._avisar_versao_nova(nova)
+    fim = time.time() + 10
+    while not reinicios and time.time() < fim:
+        app.update()
+        time.sleep(0.05)
+    assert reinicios == [(arquivo, True)]                                # fecha, troca e ABRE de novo
+    assert app.var_jf_versao_avisada.get() == "v9.9"
+
+
+def test_atualizar_sozinho_desmarcado_cancela_o_reinicio(app, monkeypatch, tmp_path):
+    from videoscraper import atualizacao
+    nova = atualizacao.VersaoNova("v9.9", "https://github.com/x/v9.9", arquivo_url="https://x/v.zip")
+    monkeypatch.setattr(atualizacao, "pode_instalar_sozinho", lambda: True)
+    reinicios = []
+    monkeypatch.setattr(app, "sair_de_vez", lambda: reinicios.append(True))
+    app.SEGUNDOS_PARA_REINICIAR = 2
+    app.var_jf_atualizar_sozinho.set(True)
+    app._atualizacao_baixada(nova, tmp_path / "v.zip", sozinho=True)
+    assert "reinicia sozinho em 2 s" in app.var_status.get()
+    app.var_jf_atualizar_sozinho.set(False)                             # mudou de ideia
+    fim = time.time() + 4
+    while time.time() < fim:
+        app.update()
+        time.sleep(0.05)
+    assert not reinicios and "Reinício cancelado" in app.var_status.get()
+    assert app._instalar_ao_sair == (tmp_path / "v.zip", False)         # instala quando fechar, sem reabrir
+
+
+def test_idiomas_das_legendas_quantos_quiser(app):
+    """Vários idiomas por vírgula, ponto e vírgula ou espaço, pelo nome ou código; e a lista "Mais idiomas"."""
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_outros_idiomas.set("francês; coreano, russo xyz jp")
+    assert app.idiomas_jf() == "pt-BR, fr, ko, ru, ja"
+    texto = app.lb_idiomas_entendidos.cget("text")
+    assert "Entendi: Francês (fr), Coreano (ko), Russo (ru), Japonês (ja)" in texto and "Não reconheci: xyz" in texto
+    app.var_jf_outros_idiomas.set("fr")
+    app.abrir_mais_idiomas()
+    busca, marcados, aplicar = app._idiomas_abertos
+    assert marcados == {"fr"}
+    busca.set("core")                                                  # procura
+    marcados.update({"ko", "ar"})
+    aplicar()
+    assert app.var_jf_outros_idiomas.get() == "fr, ko, ar" and not app._janela_idiomas.winfo_exists()
+    assert "⚠" not in app.lb_idiomas_entendidos.cget("text")
+
+
+def _vigia_nas_bibliotecas(app, tmp_path, filmes_escolhida=True):
+    """O jeito do usuário: os arquivos caem DENTRO das bibliotecas e a vigia arruma no lugar."""
+    import os
+    series, filmes = tmp_path / "Series_Organizadas", tmp_path / "Filmes_Organizados"
+    for p in (series / "Animes" / "Ashita no Joe 2 - 01 ~ 47" / "[Erai-raws] Ashita no Joe 2 - 14 [720p].mkv",
+              filmes / "Matrix (1999)" / "Matrix (1999).mkv", filmes / "Interestelar.2014.1080p.BluRay.x264.mkv"):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"v" * 2048)
+        os.utime(p, (time.time() - 3600, time.time() - 3600))      # terminou de baixar
+    app.mostrar_aba("Jellyfin")
+    app._destinos["Filmes"], app._destinos["Séries"] = (str(filmes) if filmes_escolhida else ""), str(series)
+    app.var_jf_destino.set(app._destinos[app._modo_atual])
+    app.var_jf_legendas.set(False)
+    app.definir_pastas_vigiadas([str(series), str(filmes)])
+    app.var_jf_vigiar.set(True)
+    app.ao_alternar_vigia()
+    fim = time.time() + 60
+    while (app._vigia_conferindo or app.trabalhando) and time.time() < fim:
+        app.update()
+        time.sleep(0.05)
+    esperar(app)
+    app.var_jf_vigiar.set(False)
+    app.ao_alternar_vigia()
+    return series, filmes
+
+
+def test_vigia_nas_proprias_bibliotecas_organiza_filmes_e_series(app, tmp_path):
+    series, filmes = _vigia_nas_bibliotecas(app, tmp_path)
+    assert (filmes / "Interestelar (2014)" / "Interestelar (2014).mkv").is_file()       # o filme foi organizado
+    assert (series / "Ashita no Joe 2" / "Season 01" / "Ashita no Joe 2 S01E14.mkv").is_file()
+    assert (filmes / "Matrix (1999)" / "Matrix (1999).mkv").is_file()                 # já estava: fica
+    assert "1 filme(s) e 1 episódio(s)" in app.var_status.get()
+
+
+def test_vigia_sem_biblioteca_de_filmes_avisa_em_vez_de_ignorar_calada(app, tmp_path):
+    series, filmes = _vigia_nas_bibliotecas(app, tmp_path, filmes_escolhida=False)
+    estados = []
+    app.definir_estado_vigia = lambda texto, ligada: estados.append(texto)
+    app.var_jf_vigiar.set(True)
+    app.ao_alternar_vigia()                                             # o estado da vigia já avisa
+    assert "Sem biblioteca de Filmes: esses ficam parados" in estados[-1]
+    app.var_jf_vigiar.set(False)
+    app.ao_alternar_vigia()
+    assert "Filmes: biblioteca não escolhida, ficaram onde estão" in app.var_status.get()
+    assert (filmes / "Interestelar.2014.1080p.BluRay.x264.mkv").is_file()             # parado, mas avisado

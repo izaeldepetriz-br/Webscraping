@@ -13,10 +13,11 @@ from pathlib import Path
 from tkinter import filedialog
 
 from jellyfin_tools.paralelo import prioridade_baixa
+from jellyfin_tools.servidor_jellyfin import ErroJellyfin
 from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, Canal, ClienteTV, NaoEhLista, carregar_canais, carregar_historico,
-                                       conferir_canais, importar as importar_canais, publicar as publicar_canais,
-                                       registrar_no_historico, resumo_historico, salvar_canais, salvar_historico,
-                                       sempre_falha)
+                                       conferir_canais, descrever_sintonizador, importar as importar_canais,
+                                       publicar as publicar_canais, registrar_no_historico, resumo_historico,
+                                       salvar_canais, salvar_historico, sempre_falha)
 
 from . import config
 from .gui_moderna import DialogoCanal, JanelaCanais, LinhaCanal
@@ -321,6 +322,24 @@ class TVAoVivo:
         if not valores["pasta"]:
             self.mostrar_mensagem("TV ao vivo", "Escolha a pasta onde salvar a lista (canais.m3u).", "aviso")
             return
+        janela = self.janela_canais
+        visiveis = set(janela.tabela.get_children()) if janela._filtros else None
+        if visiveis is not None and len(visiveis) < len(self._canais):
+            # O filtro só ESCONDE: a lista enviada é a inteira. Pergunta o que a pessoa quer.
+            fora = len(self._canais) - len(visiveis)
+            escolha = self.escolher(
+                "TV ao vivo", f"O filtro está ligado: a tabela mostra {len(visiveis)} de {len(self._canais)} canais.\n\n"
+                f"O envio manda a LISTA inteira (o filtro só esconde). Enviar só os {len(visiveis)} que aparecem? "
+                f"Os outros {fora} saem da lista (dá para voltar com \"Desfazer remoção\").",
+                (f"Enviar só os {len(visiveis)} filtrados", f"Enviar todos os {len(self._canais)}"), cancelar="Cancelar")
+            if escolha is None:
+                return
+            if escolha.startswith("Enviar só"):
+                tirar = [i for i in range(len(self._canais)) if str(i) not in visiveis]
+                self._guardar_na_lixeira(tirar)
+                self._canais = [c for i, c in enumerate(self._canais) if str(i) in visiveis]
+                janela.limpar_filtros()
+                self._guardar_canais()
         if not self._canais and not valores["antena"] and not self.perguntar(
                 "TV ao vivo", "A lista está VAZIA.\n\nEnviar assim TIRA do Jellyfin os canais enviados antes "
                 "(a lista canais.m3u fica sem canais). Continuar?"):
@@ -333,6 +352,17 @@ class TVAoVivo:
             cliente = ClienteTV(o.jellyfin_url, o.jellyfin_api_key) if o.jellyfin_url and o.jellyfin_api_key else None
             feito = publicar_canais(canais, valores["pasta"], valores["no_servidor"], valores["guia"], cliente,
                                     valores["antena"], parar=self.evento_parar.is_set)
+            if cliente is not None:                       # outros sintonizadores somam canais ao total do Jellyfin
+                endereco = valores["no_servidor"].strip() or str(Path(valores["pasta"]) / "canais.m3u")
+                try:
+                    outros = cliente.outros_sintonizadores(endereco)
+                except ErroJellyfin as erro:
+                    outros = []
+                    self._log.warning("TV ao vivo: não deu para ver os outros sintonizadores: %s", erro)
+                if outros:
+                    feito.append(f"Atenção: o Jellyfin tem mais {len(outros)} sintonizador(es) que não são desta lista "
+                                 "(os canais deles entram no total).")
+                    self.fila.put(("tv_outros_sintonizadores", (outros, o.jellyfin_url, o.jellyfin_api_key)))
             for linha in feito:
                 self._log.info("TV ao vivo: %s", linha)
             dica = "" if cliente else ("\n\nSem o endereço e a chave do Jellyfin (aba Jellyfin), a lista só foi salva: "
@@ -340,3 +370,33 @@ class TVAoVivo:
             self.fila.put(("msg", ("TV ao vivo", "\n".join(feito) + dica, "sucesso")))
 
         self._rodar("Enviando os canais ao Jellyfin (e esperando ele atualizar o guia)...", tarefa)
+
+    def _oferecer_tirar_sintonizadores(self, outros: list[dict], url: str, chave: str) -> None:
+        """Depois do envio: o Jellyfin tem sintonizadores que não são desta lista (ex.: uma lista grande cadastrada
+        à mão no Painel). Mostra quais são e, se a pessoa quiser, tira do Jellyfin."""
+        lista = "\n".join(f"• {descrever_sintonizador(h)}" for h in outros[:10])
+        resto = f"\n… e mais {len(outros) - 10}" if len(outros) > 10 else ""
+        escolha = self.escolher(
+            "TV ao vivo: outros sintonizadores",
+            f"Além da sua lista, o Jellyfin tem {len(outros)} sintonizador(es) cadastrados fora do programa:\n\n"
+            f"{lista}{resto}\n\nOs canais deles aparecem junto em TV ao vivo (por isso o total é maior que a sua lista). "
+            "Tirar estes sintonizadores do Jellyfin? (Só eles; a sua lista continua.)",
+            ("Tirar do Jellyfin",), cancelar="Deixar como está")
+        if escolha != "Tirar do Jellyfin":
+            return
+
+        def tarefa():
+            cliente = ClienteTV(url, chave)
+            for host in outros:
+                cliente.remover_sintonizador(host.get("Id", ""))
+                self._log.info("TV ao vivo: sintonizador retirado do Jellyfin: %s", descrever_sintonizador(host))
+            texto = f"{len(outros)} sintonizador(es) retirado(s) do Jellyfin."
+            if (tarefa_guia := cliente.atualizar_guia()) and cliente.esperar_tarefa(tarefa_guia, 180,
+                                                                                  self.evento_parar.is_set):
+                total = cliente.quantos_canais()
+                texto += f"\nGuia atualizado: agora TV ao vivo tem {total} canal(is)." if total is not None else ""
+            else:
+                texto += "\nO Jellyfin está atualizando o guia: os canais somem em alguns minutos."
+            self.fila.put(("msg", ("TV ao vivo", texto, "sucesso")))
+
+        self._rodar("Tirando os outros sintonizadores do Jellyfin...", tarefa)

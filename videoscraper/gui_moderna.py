@@ -117,6 +117,7 @@ class OpcoesJellyfin:
     remover_quebrados: bool = False
     ultima_conferencia: str = ""     # data/hora (ISO) da última conferência automática
     avisar_versao: bool = True       # ao abrir, avisar se saiu versão nova (página Releases do GitHub)
+    atualizar_sozinho: bool = False  # versão nova: baixa, instala e reinicia o programa sozinho (quando livre)
     versao_avisada: str = ""         # a última versão já avisada (não repete o aviso a cada abertura)
     fechar_na_bandeja: bool = False  # o X esconde a janela perto do relógio (a vigia continua)
 
@@ -325,6 +326,15 @@ class JanelaEspelhos(ctk.CTkToplevel):
         total = sum(len(self.arvore.get_children(g)) for g in self.arvore.get_children())
         escolhidos = len(self.selecionados())
         self.lb_resumo.configure(text=f"{total} espelho(s)" + (f" · {escolhidos} selecionado(s)" if escolhidos else ""))
+
+
+# Uma pasta por linha; também aceita ";" e "," quando a vírgula separa dois caminhos ("E:\\A, E:\\B"). Uma
+# vírgula no meio do nome de uma pasta ("Filmes, Séries") continua fazendo parte do nome.
+_RE_SEPARA_PASTAS = re.compile(r"[\n;]|,\s*(?=[A-Za-z]:[\\/]|\\\\|/)")
+
+
+def dividir_pastas(texto: str) -> list[str]:
+    return [p.strip().strip('"') for p in _RE_SEPARA_PASTAS.split(texto or "") if p.strip().strip('"')]
 
 
 def _sem_acentos(texto: str) -> str:
@@ -1366,12 +1376,23 @@ class JanelaModerna(ctk.CTk):
         self._checkbox(lateral, "Vigiar a pasta de origem e organizar\nsozinho o que terminar de baixar",
                        self.var_jf_vigiar, comando=self.ao_alternar_vigia)
         self.campo_vigia_min = self._numero(lateral, "Conferir a cada (min):", 5, 1, 240, 1)
-        self._rotulo(lateral, "Pastas vigiadas, uma por linha (ex.: as do\nuTorrent). Filmes e séries são separados\n"
-                              "sozinhos. Vazio = a pasta de origem acima.").pack(anchor="w", pady=(4, 2), **p)
+        self._rotulo(lateral, "Pastas vigiadas, uma por linha (ex.: as do\nuTorrent, ou a própria biblioteca). Filmes e\n"
+                              "séries são separados sozinhos. Vazio = a\npasta de origem acima.").pack(anchor="w", pady=(4, 2), **p)
         self.txt_pastas_vigiadas = ctk.CTkTextbox(lateral, height=64, font=self.f_rotulo, fg_color=Tema.CAMPO,
                                                   border_width=1, border_color=Tema.CAMPO_BORDA, text_color=Tema.TEXTO,
                                                   corner_radius=Tema.RAIO_CONTROLE, wrap="none")
         self.txt_pastas_vigiadas.pack(fill="x", **p)
+        # aviso embaixo do campo: pasta que não existe, ou que é a própria biblioteca (some quando está tudo certo)
+        self.lb_aviso_vigiadas = ctk.CTkLabel(lateral, text="", font=ctk.CTkFont(Tema.FAMILIA, 11),
+                                              text_color=Tema.AVISO, anchor="w", justify="left", wraplength=300)
+        self._espera_vigiadas = None
+
+        def ao_digitar_vigiadas(_=None):
+            if self._espera_vigiadas:
+                self.after_cancel(self._espera_vigiadas)
+            self._espera_vigiadas = self.after(600, self.atualizar_aviso_vigiadas)
+        self.txt_pastas_vigiadas.bind("<KeyRelease>", ao_digitar_vigiadas)
+        self.txt_pastas_vigiadas.bind("<FocusOut>", lambda e: self.atualizar_aviso_vigiadas(arrumar=True))
         self._botao(lateral, "Adicionar pasta...", self._adicionar_pasta_vigiada, "fantasma").pack(
             anchor="w", pady=(2, 4), **p)
         # pastas que o organizador nunca mexe (ex.: as que o Sonarr/Radarr cuidam)
@@ -1413,6 +1434,9 @@ class JanelaModerna(ctk.CTk):
                        self.var_jf_fechar_bandeja)
         self.var_jf_avisar_versao = tk.BooleanVar(value=True)
         self._checkbox(lateral, "Avisar quando sair versão nova\ndo programa (ao abrir)", self.var_jf_avisar_versao)
+        self.var_jf_atualizar_sozinho = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Atualizar sozinho: baixar, instalar e\nreiniciar o programa (quando estiver livre)",
+                       self.var_jf_atualizar_sozinho)
         self.var_jf_versao_avisada = tk.StringVar(value="")
         self.lb_estado_vigia = ctk.CTkLabel(lateral, text="Desligada. Usa as pastas e opções desta aba; o que ainda "
                                             "está baixando (.part, .!qB) fica para a próxima.",
@@ -1455,9 +1479,18 @@ class JanelaModerna(ctk.CTk):
         self.vars_idioma_jf = {codigo: tk.BooleanVar(value=(codigo == "pt-BR")) for codigo, _ in self.IDIOMAS_JF}
         for codigo, nome in self.IDIOMAS_JF:
             self._checkbox(lateral, f"{nome} ({codigo})", self.vars_idioma_jf[codigo])
-        self._rotulo(lateral, "Outros idiomas:").pack(anchor="w", pady=(4, 0), **p)
+        self._rotulo(lateral, "Outros idiomas (quantos quiser, separados\npor vírgula, ponto e vírgula ou espaço):").pack(
+            anchor="w", pady=(4, 0), **p)
         self.var_jf_outros_idiomas = tk.StringVar()
-        self._entrada(lateral, self.var_jf_outros_idiomas, "ex.: fr, it, de").pack(fill="x", pady=(2, 4), **p)
+        self._entrada(lateral, self.var_jf_outros_idiomas, "ex.: fr, italiano; coreano").pack(fill="x", pady=(2, 2), **p)
+        # o que o programa entendeu do que foi digitado (e o que não entendeu)
+        self.lb_idiomas_entendidos = ctk.CTkLabel(lateral, text="", font=ctk.CTkFont(Tema.FAMILIA, 11),
+                                                  text_color=Tema.TEXTO_FRACO, anchor="w", justify="left",
+                                                  wraplength=300)
+        self.lb_idiomas_entendidos.pack(anchor="w", **p)
+        self.var_jf_outros_idiomas.trace_add("write", lambda *_: self.atualizar_idiomas_entendidos())
+        self.bt_mais_idiomas = self._botao(lateral, "Mais idiomas...", self.abrir_mais_idiomas, "fantasma")
+        self.bt_mais_idiomas.pack(anchor="w", pady=(0, 4), **p)
         self.var_jf_sobrescrever = tk.BooleanVar(value=False)
         self._checkbox(lateral, "Substituir o que já existe (legendas,\npôster, backdrop e .nfo)",
                        self.var_jf_sobrescrever)
@@ -1746,6 +1779,7 @@ class JanelaModerna(ctk.CTk):
             conferir_unidade=self.var_jf_conferir_unidade.get(), remover_quebrados=self.var_jf_remover_quebrados.get(),
             ultima_conferencia=self.var_jf_ultima_conferencia.get(),
             avisar_versao=self.var_jf_avisar_versao.get(), versao_avisada=self.var_jf_versao_avisada.get(),
+            atualizar_sozinho=self.var_jf_atualizar_sozinho.get(),
             fechar_na_bandeja=self.var_jf_fechar_bandeja.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
@@ -1755,6 +1789,73 @@ class JanelaModerna(ctk.CTk):
         marcados = [codigo for codigo, var in self.vars_idioma_jf.items() if var.get()]
         todos = normalizar_idiomas(marcados + normalizar_idiomas(self.var_jf_outros_idiomas.get()))
         return ", ".join(todos) or "pt-BR"
+
+    def atualizar_idiomas_entendidos(self) -> None:
+        """Embaixo do campo "Outros idiomas": 'Entendi: Francês (fr), Coreano (ko)' e o que não deu para entender."""
+        from jellyfin_tools.legendas import analisar_idiomas, nome_do_idioma
+        idiomas, desconhecidos = analisar_idiomas(self.var_jf_outros_idiomas.get())
+        partes = []
+        if idiomas:
+            partes.append("Entendi: " + ", ".join(f"{nome_do_idioma(c)} ({c})" for c in idiomas))
+        if desconhecidos:
+            partes.append("⚠ Não reconheci: " + ", ".join(desconhecidos) + " (use o código, ex.: fr, ou \"Mais "
+                          "idiomas...\")")
+        self.lb_idiomas_entendidos.configure(text="\n".join(partes),
+                                             text_color=Tema.AVISO if desconhecidos else Tema.TEXTO_FRACO)
+
+    def abrir_mais_idiomas(self) -> None:
+        """Lista dos idiomas conhecidos para MARCAR (com busca). Os marcados vão para "Outros idiomas"."""
+        from jellyfin_tools.legendas import IDIOMAS_CONHECIDOS, normalizar_idiomas
+        fixos = {codigo for codigo, _ in self.IDIOMAS_JF}
+        opcoes = [(codigo, nome) for codigo, nome, _ in IDIOMAS_CONHECIDOS if codigo not in fixos]
+        marcados = set(normalizar_idiomas(self.var_jf_outros_idiomas.get()))
+        janela = ctk.CTkToplevel(self, fg_color=Tema.CARTAO)
+        janela.title("Idiomas das legendas")
+        janela.transient(self)
+        janela.geometry("380x520")
+        ctk.CTkLabel(janela, text="Marque os idiomas (um arquivo de legenda cada)", font=self.f_secao,
+                     text_color=Tema.TEXTO, anchor="w").pack(fill="x", padx=16, pady=(14, 6))
+        var_busca = tk.StringVar()
+        self._entrada(janela, var_busca, "Procurar (ex.: core, russo, ja)", altura=32).pack(fill="x", padx=16)
+        quadro = ctk.CTkFrame(janela, fg_color=Tema.CAMPO, corner_radius=8)
+        quadro.pack(fill="both", expand=True, padx=16, pady=8)
+        lista = tk.Listbox(quadro, activestyle="none", selectmode="browse", exportselection=False, borderwidth=0,
+                           highlightthickness=0, bg=Tema.CAMPO, fg=Tema.TEXTO, selectbackground=Tema.CAMPO,
+                           selectforeground=Tema.TEXTO, font=(Tema.FAMILIA, 12))
+        lista.pack(fill="both", expand=True, padx=8, pady=6)
+        visiveis: list[tuple[str, str]] = []
+
+        def mostrar(*_):
+            procura = _sem_acentos(var_busca.get().strip())
+            visiveis[:] = [(c, n) for c, n in opcoes if procura in _sem_acentos(f"{n} {c}")]
+            lista.delete(0, "end")
+            for codigo, nome in visiveis:
+                lista.insert("end", f"{'☑' if codigo in marcados else '☐'}  {nome} ({codigo})")
+
+        def trocar(indice: int) -> None:
+            if 0 <= indice < len(visiveis):
+                marcados.symmetric_difference_update({visiveis[indice][0]})
+                mostrar()
+                lista.see(indice)
+
+        def aplicar():
+            # mantém o que foi digitado e não está na lista (ex.: um código raro) + os marcados, na ordem da lista
+            digitados = [c for c in normalizar_idiomas(self.var_jf_outros_idiomas.get())
+                         if c not in {o for o, _ in opcoes}]
+            escolhidos = [c for c, _ in opcoes if c in marcados]
+            self.var_jf_outros_idiomas.set(", ".join(digitados + escolhidos))
+            janela.destroy()
+        var_busca.trace_add("write", mostrar)
+        lista.bind("<ButtonRelease-1>", lambda e: trocar(lista.nearest(e.y)))
+        lista.bind("<space>", lambda e: trocar(lista.index("active")))
+        botoes = ctk.CTkFrame(janela, fg_color="transparent")
+        botoes.pack(fill="x", padx=16, pady=(0, 14))
+        self._botao(botoes, "Cancelar", janela.destroy, "secundario").pack(side="left")
+        self._botao(botoes, "Usar estes idiomas", aplicar, "primario").pack(side="right")
+        janela.bind("<Escape>", lambda e: janela.destroy())
+        mostrar()
+        self._janela_idiomas = janela
+        self._idiomas_abertos = (var_busca, marcados, aplicar)        # para os testes
 
     def definir_idiomas_jf(self, texto: str) -> None:
         from jellyfin_tools.legendas import normalizar_idiomas
@@ -1782,6 +1883,7 @@ class JanelaModerna(ctk.CTk):
                   "apagar_pasta_origem": self.var_jf_apagar_pasta, "nomes_episodios": self.var_jf_nomes_ep,
                   "vigiar": self.var_jf_vigiar, "conferir_auto": self.var_jf_conferir_auto,
                   "remover_quebrados": self.var_jf_remover_quebrados, "avisar_versao": self.var_jf_avisar_versao,
+                  "atualizar_sozinho": self.var_jf_atualizar_sozinho,
                   "fechar_na_bandeja": self.var_jf_fechar_bandeja,
                   "gerar_nfo": self.var_jf_nfo, "atualizar_jellyfin": self.var_jf_atualizar,
                   "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar}
@@ -1890,20 +1992,38 @@ class JanelaModerna(ctk.CTk):
             self.tabela_jf.see(iid)
 
     def pastas_vigiadas(self) -> list[str]:
-        return [linha.strip() for linha in self.txt_pastas_vigiadas.get("1.0", "end").splitlines() if linha.strip()]
+        return dividir_pastas(self.txt_pastas_vigiadas.get("1.0", "end"))
+
+    def problemas_nas_vigiadas(self, pastas: list[str]) -> list[str]:
+        """Avisos sobre as pastas vigiadas: as que não existem (são ignoradas pela vigia)."""
+        from pathlib import Path
+        return [f"Não existe: {pasta}" for pasta in pastas if not Path(pasta).is_dir()]
+
+    def atualizar_aviso_vigiadas(self, arrumar: bool = False) -> None:
+        """Mostra embaixo do campo o que está errado. arrumar=True (ao sair do campo): reescreve uma por linha."""
+        pastas = self.pastas_vigiadas()
+        if arrumar and "\n".join(pastas) != self.txt_pastas_vigiadas.get("1.0", "end").strip():
+            self.definir_pastas_vigiadas(pastas)
+        problemas = self.problemas_nas_vigiadas(pastas)
+        self.lb_aviso_vigiadas.configure(text="\n".join(f"⚠ {p}" for p in problemas))
+        if problemas:
+            self.lb_aviso_vigiadas.pack(anchor="w", padx=18, pady=(2, 0), after=self.txt_pastas_vigiadas)
+        else:
+            self.lb_aviso_vigiadas.pack_forget()
 
     def definir_pastas_vigiadas(self, pastas) -> None:
         if isinstance(pastas, str):
-            pastas = pastas.splitlines()
+            pastas = dividir_pastas(pastas)
         self.txt_pastas_vigiadas.delete("1.0", "end")
         self.txt_pastas_vigiadas.insert("1.0", "\n".join(p for p in pastas if p.strip()))
+        self.atualizar_aviso_vigiadas()
 
     def pastas_protegidas(self) -> list[str]:
-        return [linha.strip() for linha in self.txt_pastas_protegidas.get("1.0", "end").splitlines() if linha.strip()]
+        return dividir_pastas(self.txt_pastas_protegidas.get("1.0", "end"))
 
     def definir_pastas_protegidas(self, pastas) -> None:
         if isinstance(pastas, str):
-            pastas = pastas.splitlines()
+            pastas = dividir_pastas(pastas)
         self.txt_pastas_protegidas.delete("1.0", "end")
         self.txt_pastas_protegidas.insert("1.0", "\n".join(p for p in pastas if p.strip()))
 

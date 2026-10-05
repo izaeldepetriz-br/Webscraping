@@ -446,6 +446,13 @@ class ClienteTV:
         return [h for h in self.configuracao().get("TunerHosts") or []
                 if (endereco and h.get("Url") == endereco) or (h.get("FriendlyName") == nome and h.get("Type") == tipo)]
 
+    def outros_sintonizadores(self, endereco: str, nome: str = NOME_SINTONIZADOR) -> list[dict]:
+        """Os sintonizadores do Jellyfin que NÃO são os desta lista (cadastrados à mão no Painel, por exemplo
+        uma lista grande da internet). Os canais deles aparecem junto em TV ao vivo e entram no total."""
+        nossos = {h.get("Id") for h in self.sintonizadores("m3u", endereco, nome)}
+        nossos |= {h.get("Id") for h in self.sintonizadores("hdhomerun", "", f"{nome} antena")}
+        return [h for h in self.configuracao().get("TunerHosts") or [] if h.get("Id") not in nossos]
+
     def remover_sintonizador(self, id_: str) -> None:
         """Tira o sintonizador do Jellyfin. Na próxima atualização do guia, os canais dele somem de TV ao vivo."""
         self._pedir("DELETE", "/LiveTv/TunerHosts", params={"id": id_})
@@ -576,6 +583,12 @@ def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = 
         feito.append("Jellyfin: atualizando o guia (os canais mudam em TV ao vivo em alguns minutos; "
                      "acompanhe em Painel > Tarefas agendadas > Atualizar o guia)")
     return feito
+
+
+def descrever_sintonizador(host: dict) -> str:
+    """'M3U "Minha lista": https://iptv-org.github.io/iptv/index.m3u'."""
+    nome = f' "{host["FriendlyName"]}"' if host.get("FriendlyName") else ""
+    return f'{str(host.get("Type", "?")).upper()}{nome}: {host.get("Url", "")}'
 
 
 def _removidos_sairam(cliente: ClienteTV, removidos: list[Canal], canais: list[Canal], total_antes: int | None,
