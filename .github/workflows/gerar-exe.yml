@@ -61,10 +61,16 @@ jobs:
           $alvo = (Get-ChildItem $inst -Recurse -Filter catalogo_filmes.json | Select-Object -First 1).FullName
           Remove-Item $alvo                                   # "versão velha": falta um arquivo
           $zip = (Resolve-Path videoscraper-windows.zip).Path
-          Start-Process -FilePath (Join-Path $inst 'videoscraper.exe') -ArgumentList '--testar-atualizacao', $zip
+          $p = Start-Process -FilePath (Join-Path $inst 'videoscraper.exe') -ArgumentList '--testar-atualizacao', "`"$zip`"" -PassThru
+          $p.WaitForExit()
+          "o programa fechou com o código $($p.ExitCode)"
+          Get-Content (Join-Path $env:TEMP 'videoscraper-teste-atualizacao.txt') -ErrorAction SilentlyContinue
           for ($i = 0; $i -lt 90 -and -not (Test-Path $alvo); $i++) { Start-Sleep 1 }
           Get-Content (Join-Path $env:TEMP 'videoscraper-atualizacao.log') -ErrorAction SilentlyContinue
-          if (-not (Test-Path $alvo)) { Write-Error "a atualização não trocou os arquivos"; exit 1 }
+          if (-not (Test-Path $alvo)) {
+            Get-Content (Join-Path $env:TEMP 'videoscraper-atualizar.ps1') -ErrorAction SilentlyContinue
+            Write-Error "a atualização não trocou os arquivos"; exit 1
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: videoscraper-windows

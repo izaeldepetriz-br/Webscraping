@@ -181,7 +181,12 @@ def instalar_ao_fechar(zip_: Path, reabrir: bool = True, pasta: Path | None = No
     executavel = str(pasta / "videoscraper.exe") if reabrir else ""
     script = Path(tempfile.gettempdir()) / "videoscraper-atualizar.ps1"
     script.write_text(script_de_instalacao(Path(zip_), pasta, pid or os.getpid(), executavel), encoding="utf-8-sig")
-    flags = 0x00000008 | 0x08000000 if sys.platform == "win32" else 0      # DETACHED_PROCESS | CREATE_NO_WINDOW
-    subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
-                      "-File", str(script)], creationflags=flags, close_fds=True)
+    # O .exe não tem console (nem stdin/stdout): o processo novo NÃO pode herdar essas saídas (o Windows
+    # recusa com "identificador inválido"), por isso todas vão para DEVNULL.
+    opcoes = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+    if sys.platform == "win32":
+        opcoes["creationflags"] = 0x00000008 | 0x00000200      # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    subprocess.Popen([str(powershell) if powershell.exists() else "powershell", "-NoProfile", "-ExecutionPolicy",
+                      "Bypass", "-WindowStyle", "Hidden", "-File", str(script)], **opcoes)
     return script

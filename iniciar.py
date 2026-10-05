@@ -95,8 +95,16 @@ if __name__ == "__main__":
     if "--testar-atualizacao" in sys.argv:          # GitHub: a troca dos arquivos funciona no Windows de verdade?
         from pathlib import Path
         from videoscraper import atualizacao
+        import tempfile
+        import traceback
         zip_ = Path(sys.argv[sys.argv.index("--testar-atualizacao") + 1])
-        atualizacao.instalar_ao_fechar(zip_, reabrir=False)
+        relatorio = Path(tempfile.gettempdir()) / "videoscraper-teste-atualizacao.txt"
+        try:
+            script = atualizacao.instalar_ao_fechar(zip_, reabrir=False)
+            relatorio.write_text(f"script iniciado: {script}\n", encoding="utf-8")
+        except Exception:                           # sem console: o motivo vai para um arquivo
+            relatorio.write_text(traceback.format_exc(), encoding="utf-8")
+            raise SystemExit(1)
         raise SystemExit(0)                         # fecha: o script espera isto para trocar os arquivos
     if "--texto" in sys.argv:
         raise SystemExit(_menu_texto())
