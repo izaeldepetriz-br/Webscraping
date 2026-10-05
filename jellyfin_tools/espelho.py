@@ -30,7 +30,6 @@ import re
 import shutil
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +38,7 @@ from urllib.parse import unquote, urlparse
 import requests
 
 from .nomes import eh_video_da_biblioteca, extrair_titulo_e_ano, marca_de_episodio
+from .paralelo import em_paralelo
 from .organizador import EXTRAS_DO_STRM, PASTA_LOGS, _consultas, _gravar_log, planejar
 
 # etiquetas de lançamento que não fazem parte do nome ("Anjos da Noite 2003 (Dual Audio) PT-BR")
@@ -119,8 +119,9 @@ def verificar_link(url: str, sessao: requests.Session | None = None, timeout: fl
 
 
 def verificar_links(urls: list[str], trabalhadores: int = 8, ao_progresso=None,
-                    respeitar_robots: bool = True) -> dict[str, Verificacao]:
-    """Confere vários links AO MESMO TEMPO (a espera é quase toda da rede). ao_progresso(feitos, total)."""
+                    respeitar_robots: bool = True, parar=None) -> dict[str, Verificacao]:
+    """Confere vários links AO MESMO TEMPO (a espera é quase toda da rede). ao_progresso(feitos, total).
+    parar() verdadeiro: para na hora e devolve só os conferidos."""
     unicos = list(dict.fromkeys(urls))
     if not unicos:
         return {}
@@ -140,13 +141,8 @@ def verificar_links(urls: list[str], trabalhadores: int = 8, ao_progresso=None,
             local.sessao = requests.Session()
         return verificar_link(url, local.sessao, permitido=permitido if robots else None)
 
-    resultado = {}
-    with ThreadPoolExecutor(max_workers=min(trabalhadores, len(unicos))) as executor:
-        for feitos, (url, verificacao) in enumerate(zip(unicos, executor.map(um, unicos)), 1):
-            resultado[url] = verificacao
-            if ao_progresso:
-                ao_progresso(feitos, len(unicos))
-    return resultado
+    feitos = em_paralelo(unicos, um, trabalhadores, ao_progresso, parar)
+    return {unicos[i]: verificacao for i, verificacao in sorted(feitos.items())}
 
 
 def licenca_aberta(licenca: str) -> bool:
@@ -324,14 +320,15 @@ def espelhos_da_biblioteca(*pastas) -> list[tuple[Path, Path]]:
     return sorted(achados, key=lambda ra: (ordem[ra[0]], str(ra[1]).lower()))
 
 
-def conferir_espelhos(*pastas, ao_progresso=None, respeitar_robots: bool = True) -> list[tuple]:
-    """Confere o link de cada .strm: [(raiz, arquivo, url, Verificacao)]."""
+def conferir_espelhos(*pastas, ao_progresso=None, respeitar_robots: bool = True, parar=None) -> list[tuple]:
+    """Confere o link de cada .strm: [(raiz, arquivo, url, Verificacao)]. Com parar(): só os conferidos."""
     espelhos = espelhos_da_biblioteca(*pastas)
     links = {a: ler_strm(a) for _, a in espelhos}
     verificacoes = verificar_links([u for u in links.values() if u], ao_progresso=ao_progresso,
-                                   respeitar_robots=respeitar_robots)
+                                   respeitar_robots=respeitar_robots, parar=parar)
     sem_link = Verificacao(False, "o .strm está vazio")
-    return [(raiz, a, links[a], verificacoes.get(links[a], sem_link)) for raiz, a in espelhos]
+    return [(raiz, a, links[a], verificacoes.get(links[a], sem_link)) for raiz, a in espelhos
+            if not links[a] or links[a] in verificacoes]
 
 
 def remover_espelhos(quebrados: list[tuple]) -> int:
@@ -380,10 +377,10 @@ def mensagem_quebrados(quebrados: list, removidos: int = 0, limite: int = 15) ->
 
 
 def conferir_e_avisar(*pastas, notificador=None, remover: bool = False, ao_progresso=None,
-                      respeitar_robots: bool = True) -> tuple[list, list, int]:
+                      respeitar_robots: bool = True, parar=None) -> tuple[list, list, int]:
     """Confere os .strm, (opcional) remove os quebrados e avisa no Discord/Telegram se algum quebrou.
     Devolve (todos, quebrados, quantos removidos)."""
-    resultado = conferir_espelhos(*pastas, ao_progresso=ao_progresso, respeitar_robots=respeitar_robots)
+    resultado = conferir_espelhos(*pastas, ao_progresso=ao_progresso, respeitar_robots=respeitar_robots, parar=parar)
     quebrados = [r for r in resultado if not r[3].ok]
     removidos = remover_espelhos(quebrados) if quebrados and remover else 0
     if quebrados and notificador is not None and getattr(notificador, "ativo", False):

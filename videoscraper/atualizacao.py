@@ -4,7 +4,9 @@
     Python, vale o __version__ do pacote.
     versão mais nova: GET https://api.github.com/repos/<dono>/<repo>/releases/latest -> tag_name
 
-Nada é baixado nem instalado sozinho: o programa só avisa e abre a página da versão nova.
+Nada é instalado sozinho. Dá para BAIXAR o .zip da versão nova sem fechar o programa (vai para a
+pasta Downloads); trocar a pasta do programa pela nova é com você, com o programa fechado (o Windows
+não deixa substituir um programa que está aberto).
 """
 
 from __future__ import annotations
@@ -43,25 +45,143 @@ def numeros(versao: str) -> tuple[int, ...]:
 @dataclass
 class VersaoNova:
     versao: str
-    url: str
+    url: str                      # a página da versão (Releases)
     notas: str = ""
+    arquivo_url: str = ""         # o .zip do programa para Windows (Assets)
+    arquivo_nome: str = ""
+
+
+class ErroAtualizacao(Exception):
+    pass
+
+
+def ultima_versao(api: str = API, repositorio: str = REPOSITORIO, timeout: float = 6) -> VersaoNova:
+    """A versão mais nova publicada (seja qual for). Lança ErroAtualizacao dizendo o motivo."""
+    try:
+        r = requests.get(f"{api.rstrip('/')}/repos/{repositorio}/releases/latest", timeout=timeout,
+                         headers={"Accept": "application/vnd.github+json"})
+    except requests.RequestException as erro:
+        raise ErroAtualizacao(f"sem conexão com o GitHub ({type(erro).__name__})") from erro
+    if r.status_code == 404:
+        raise ErroAtualizacao("nenhuma versão publicada ainda")
+    if not r.ok:
+        raise ErroAtualizacao(f"o GitHub respondeu HTTP {r.status_code}")
+    try:
+        dados = r.json()
+    except ValueError as erro:
+        raise ErroAtualizacao("resposta inesperada do GitHub") from erro
+    tag = str(dados.get("tag_name") or "")
+    if not tag:
+        raise ErroAtualizacao("a versão publicada não tem número")
+    zip_ = next((a for a in dados.get("assets") or [] if str(a.get("name", "")).lower().endswith(".zip")), {})
+    return VersaoNova(tag, str(dados.get("html_url") or f"https://github.com/{repositorio}/releases/latest"),
+                      str(dados.get("body") or "").strip()[:600], str(zip_.get("browser_download_url") or ""),
+                      str(zip_.get("name") or ""))
 
 
 def verificar(atual: str | None = None, api: str = API, repositorio: str = REPOSITORIO,
               timeout: float = 6) -> VersaoNova | None:
     """A versão mais nova publicada, se for mais nova que esta; None se não houver (ou sem internet)."""
-    atual = atual or versao_atual()
     try:
-        r = requests.get(f"{api.rstrip('/')}/repos/{repositorio}/releases/latest", timeout=timeout,
-                         headers={"Accept": "application/vnd.github+json"})
-        if not r.ok:
-            return None
-        dados = r.json()
-    except (requests.RequestException, ValueError):
+        nova = ultima_versao(api, repositorio, timeout)
+    except ErroAtualizacao:
         return None
-    tag = str(dados.get("tag_name") or "")
-    if not tag or numeros(tag) <= numeros(atual):
-        return None
-    notas = str(dados.get("body") or "").strip()
-    return VersaoNova(tag, str(dados.get("html_url") or f"https://github.com/{repositorio}/releases/latest"),
-                      notas[:600])
+    return nova if numeros(nova.versao) > numeros(atual or versao_atual()) else None
+
+
+def pasta_downloads() -> Path:
+    pasta = Path.home() / "Downloads"
+    return pasta if pasta.is_dir() else Path.home()
+
+
+def baixar(nova: VersaoNova, pasta: Path | None = None, ao_progresso=None, parar=None, timeout: float = 30) -> Path:
+    """Baixa o .zip da versão nova (sem fechar o programa). ao_progresso(baixados, total); parar() -> True
+    interrompe. Devolve o arquivo salvo (ex.: Downloads/videoscraper-windows-v1.6.zip)."""
+    if not nova.arquivo_url:
+        raise ErroAtualizacao("a versão nova não tem o .zip para Windows; use a página de download")
+    pasta = Path(pasta or pasta_downloads())
+    pasta.mkdir(parents=True, exist_ok=True)
+    nome = Path(nova.arquivo_nome or "videoscraper-windows.zip")
+    destino = pasta / f"{nome.stem}-{nova.versao}{nome.suffix or '.zip'}"
+    parcial = destino.with_name(destino.name + ".part")
+    try:
+        with requests.get(nova.arquivo_url, stream=True, timeout=timeout) as r:
+            r.raise_for_status()
+            total, feitos = int(r.headers.get("Content-Length") or 0), 0
+            with open(parcial, "wb") as f:
+                for pedaco in r.iter_content(256 * 1024):
+                    if parar and parar():
+                        raise ErroAtualizacao("download interrompido")
+                    f.write(pedaco)
+                    feitos += len(pedaco)
+                    if ao_progresso:
+                        ao_progresso(feitos, total)
+    except requests.RequestException as erro:
+        parcial.unlink(missing_ok=True)
+        raise ErroAtualizacao(f"o download falhou ({type(erro).__name__})") from erro
+    except ErroAtualizacao:
+        parcial.unlink(missing_ok=True)
+        raise
+    parcial.replace(destino)
+    return destino
+
+
+# ----------------------------------------------------------------- instalar (com o programa FECHADO)
+# Um programa aberto não pode ser substituído no Windows. Por isso a troca é feita por um pequeno script
+# do PowerShell que ESPERA o programa fechar, extrai o .zip por cima da pasta do programa e (se pedido)
+# abre a versão nova. As configurações ficam em C:\Users\<você>\.videoscraper e não são tocadas.
+def pode_instalar_sozinho() -> bool:
+    """Só o .exe no Windows (rodando pelo Python, quem atualiza é o 'Download ZIP' do código)."""
+    return sys.platform == "win32" and bool(getattr(sys, "frozen", False))
+
+
+def pasta_do_programa() -> Path:
+    return Path(sys.executable).resolve().parent
+
+
+def script_de_instalacao(zip_: Path, pasta: Path, pid: int, executavel: str = "") -> str:
+    """O script do PowerShell (texto). executavel vazio = não reabre o programa no fim."""
+    def aspas(texto) -> str:
+        return "'" + str(texto).replace("'", "''") + "'"
+    reabrir = f"Start-Process -FilePath {aspas(executavel)}" if executavel else "# (não reabre)"
+    return f"""$ErrorActionPreference = 'Stop'
+$zip = {aspas(zip_)}
+$pasta = {aspas(pasta)}
+$log = Join-Path $env:TEMP 'videoscraper-atualizacao.log'
+"Atualizando $pasta com $zip" | Out-File $log
+Wait-Process -Id {int(pid)} -ErrorAction SilentlyContinue      # espera o programa fechar
+Start-Sleep -Seconds 1
+$tmp = Join-Path $env:TEMP ('videoscraper-novo-' + [guid]::NewGuid())
+try {{
+    Expand-Archive -Path $zip -DestinationPath $tmp -Force
+    $novo = $tmp
+    if (-not (Test-Path (Join-Path $tmp 'videoscraper.exe'))) {{
+        $novo = (Get-ChildItem $tmp -Directory | Where-Object {{ Test-Path (Join-Path $_.FullName 'videoscraper.exe') }} | Select-Object -First 1).FullName
+    }}
+    if (-not $novo) {{ throw 'o .zip não tem o videoscraper.exe' }}
+    robocopy $novo $pasta /E /R:5 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) {{ throw "robocopy falhou ($LASTEXITCODE)" }}
+    "OK" | Out-File $log -Append
+}} catch {{
+    "ERRO: $_" | Out-File $log -Append
+}} finally {{
+    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+}}
+{reabrir}
+"""
+
+
+def instalar_ao_fechar(zip_: Path, reabrir: bool = True, pasta: Path | None = None, pid: int | None = None) -> Path:
+    """Deixa o script rodando em segundo plano (escondido): ele espera ESTE programa fechar e troca os
+    arquivos. Devolve o caminho do script. Chame logo antes de fechar o programa."""
+    import os
+    import subprocess
+    import tempfile
+    pasta = Path(pasta or pasta_do_programa())
+    executavel = str(pasta / "videoscraper.exe") if reabrir else ""
+    script = Path(tempfile.gettempdir()) / "videoscraper-atualizar.ps1"
+    script.write_text(script_de_instalacao(Path(zip_), pasta, pid or os.getpid(), executavel), encoding="utf-8-sig")
+    flags = 0x00000008 | 0x08000000 if sys.platform == "win32" else 0      # DETACHED_PROCESS | CREATE_NO_WINDOW
+    subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+                      "-File", str(script)], creationflags=flags, close_fds=True)
+    return script

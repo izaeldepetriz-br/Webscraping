@@ -92,6 +92,12 @@ if __name__ == "__main__":
         raise SystemExit(_verificar())
     if "--verificar-navegador" in sys.argv:
         raise SystemExit(_verificar_navegador())
+    if "--testar-atualizacao" in sys.argv:          # GitHub: a troca dos arquivos funciona no Windows de verdade?
+        from pathlib import Path
+        from videoscraper import atualizacao
+        zip_ = Path(sys.argv[sys.argv.index("--testar-atualizacao") + 1])
+        atualizacao.instalar_ao_fechar(zip_, reabrir=False)
+        raise SystemExit(0)                         # fecha: o script espera isto para trocar os arquivos
     if "--texto" in sys.argv:
         raise SystemExit(_menu_texto())
     try:

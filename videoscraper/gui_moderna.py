@@ -431,7 +431,7 @@ class JanelaCanais(ctk.CTkToplevel):
             b.pack(side="left", padx=(0, 6))
         self._dica(topo, "Adicionar: um canal (nome + link do SINAL, ex.: https://.../index.m3u8).  Importar do link: o "
                    "link de uma LISTA de canais (.m3u), não de uma página de site.  Importar arquivo: uma lista .m3u "
-                   "salva no PC.")
+                   "salva no PC.  Clique no TÍTULO de uma coluna para escolher um ou vários valores dela.")
 
         quadro = ctk.CTkFrame(self, fg_color=Tema.CARTAO)
         quadro.pack(fill="both", expand=True, padx=24, pady=6)
@@ -439,11 +439,13 @@ class JanelaCanais(ctk.CTkToplevel):
         quadro.grid_rowconfigure(0, weight=1)
         self.tabela = ttk.Treeview(quadro, columns=[c[0] for c in self.COLUNAS], show="tree headings",
                                    selectmode="extended", style="Moderno.Treeview")
-        self.tabela.heading("#0", text="Canal", anchor="w")
+        # Clique no título de uma coluna: escolher um ou vários valores dela (filtra e seleciona)
+        self._linhas: list = []
+        self._filtros: dict[str, set[str]] = {}
         self.tabela.column("#0", width=230, minwidth=120, anchor="w")
         for chave, texto, largura in self.COLUNAS:
-            self.tabela.heading(chave, text=texto, anchor="w")
             self.tabela.column(chave, width=largura, minwidth=60, stretch=chave == "url", anchor="w")
+        self._titulos_colunas()
         self.tabela.tag_configure("ok", background="#13251b")
         self.tabela.tag_configure("erro", background="#2a1618")
         self.tabela.grid(row=0, column=0, sticky="nsew")
@@ -462,8 +464,11 @@ class JanelaCanais(ctk.CTkToplevel):
                                                  command=self.selecionar_todos, **estilo)
         self.bt_selecionar_fora = ctk.CTkButton(faixa, text="Selecionar os fora do ar", width=170,
                                                 command=self.selecionar_fora_do_ar, **estilo)
+        self.bt_tirar_filtros = ctk.CTkButton(faixa, text="Tirar os filtros", width=110, command=self.limpar_filtros,
+                                              **estilo)
         self.bt_selecionar_todos.pack(side="left", padx=(14, 0))
         self.bt_selecionar_fora.pack(side="left", padx=(4, 0))
+        self.bt_tirar_filtros.pack(side="left", padx=(4, 0))
         m._botao(faixa, "Conferir os links", acoes["conferir"], "secundario").pack(side="right")
         self.bt_remover_todos = m._botao(faixa, "Remover todos", acoes["remover_todos"], "perigo")
         self.bt_remover_todos.pack(side="right", padx=(0, 6))
@@ -507,14 +512,104 @@ class JanelaCanais(ctk.CTkToplevel):
             parte.pack_configure(side="bottom", before=quadro)
         self.bind("<Escape>", lambda e: self.destroy())
 
+    TITULOS = {"#0": "Canal", "grupo": "Grupo", "situacao": "Situação", "url": "Link"}
+
     def preencher(self, linhas: list[tuple[str, str, str, str, str, bool | None]]) -> None:
         """linhas: [(iid, nome, grupo, situação, link, ok)] (ok None = não conferido)."""
+        self._linhas = list(linhas)
+        self._mostrar()
+
+    @staticmethod
+    def valor_na_coluna(coluna: str, linha) -> str:
+        """O que conta para o filtro: o link conta pelo site (todos os canais de exemplo.org juntos)."""
+        _, nome, grupo, situacao, link, _ = linha
+        if coluna == "url":
+            from urllib.parse import urlparse
+            return urlparse(link).netloc or link
+        return {"#0": nome, "grupo": grupo or "(sem grupo)",
+                "situacao": situacao if situacao and situacao != "—" else "(não conferido)"}[coluna]
+
+    def _passa(self, linha) -> bool:
+        return all(self.valor_na_coluna(c, linha) in valores for c, valores in self._filtros.items())
+
+    def _mostrar(self) -> None:
         self.tabela.delete(*self.tabela.get_children())
-        for iid, nome, grupo, situacao, link, ok in linhas:
+        visiveis = [linha for linha in self._linhas if self._passa(linha)]
+        for iid, nome, grupo, situacao, link, ok in visiveis:
             tags = () if ok is None else ("ok" if ok else "erro",)
             self.tabela.insert("", "end", iid=iid, text=nome, values=(grupo, situacao, link), tags=tags)
-        fora = sum(1 for *_, ok in linhas if ok is False)
-        self.lb_resumo.configure(text=f"{len(linhas)} canal(is)" + (f" · {fora} fora do ar" if fora else ""))
+        fora = sum(1 for *_, ok in self._linhas if ok is False)
+        quantos = f"{len(visiveis)} de {len(self._linhas)}" if self._filtros else f"{len(self._linhas)}"
+        self.lb_resumo.configure(text=f"{quantos} canal(is)" + (f" · {fora} fora do ar" if fora else "")
+                                 + (" · filtro ligado" if self._filtros else ""))
+        self._titulos_colunas()
+
+    def _titulos_colunas(self) -> None:
+        for coluna, texto in self.TITULOS.items():
+            marca = " ▼ (filtro)" if coluna in self._filtros else " ▾"
+            self.tabela.heading(coluna, text=texto + marca, anchor="w", command=lambda c=coluna: self.abrir_filtro(c))
+
+    def valores_da_coluna(self, coluna: str) -> list[tuple[str, int]]:
+        """[(valor, quantos canais)] daquela coluna, em ordem."""
+        contagem: dict[str, int] = {}
+        for linha in self._linhas:
+            valor = self.valor_na_coluna(coluna, linha)
+            contagem[valor] = contagem.get(valor, 0) + 1
+        return sorted(contagem.items(), key=lambda vq: _sem_acentos(vq[0]))       # "é" junto do "e"
+
+    def aplicar_filtro(self, coluna: str, escolhidos) -> None:
+        """Mostra só os canais com um dos valores escolhidos nessa coluna e já os SELECIONA (para remover,
+        por exemplo). Todos marcados (ou nenhum) = sem filtro nessa coluna."""
+        escolhidos = set(escolhidos)
+        todos = {v for v, _ in self.valores_da_coluna(coluna)}
+        if not escolhidos or escolhidos >= todos:
+            self._filtros.pop(coluna, None)
+        else:
+            self._filtros[coluna] = escolhidos
+        self._mostrar()
+        if self._filtros:
+            self.selecionar_todos()
+
+    def limpar_filtros(self) -> None:
+        self._filtros.clear()
+        self._mostrar()
+
+    def abrir_filtro(self, coluna: str) -> None:
+        """Janelinha com os valores da coluna, cada um com a sua caixinha (um ou vários)."""
+        janela = ctk.CTkToplevel(self, fg_color=Tema.CARTAO)
+        janela.title(f"Filtrar: {self.TITULOS[coluna]}")
+        janela.transient(self)
+        janela.resizable(False, True)
+        ctk.CTkLabel(janela, text=f"{self.TITULOS[coluna]}: marque um ou vários", font=self.master.f_secao,
+                     text_color=Tema.TEXTO, anchor="w").pack(fill="x", padx=16, pady=(14, 6))
+        lista = ctk.CTkScrollableFrame(janela, fg_color=Tema.CAMPO, width=380,
+                                       height=min(320, 34 * len(self.valores_da_coluna(coluna)) + 10))
+        lista.pack(fill="both", expand=True, padx=16)
+        ativos = self._filtros.get(coluna)
+        marcas = {}
+        for valor, quantos in self.valores_da_coluna(coluna):
+            marcas[valor] = tk.BooleanVar(value=ativos is None or valor in ativos)
+            ctk.CTkCheckBox(lista, text=f"{valor}  ({quantos})", variable=marcas[valor], font=self.master.f_rotulo,
+                            text_color=Tema.TEXTO, fg_color=Tema.PRIMARIA, hover_color=Tema.PRIMARIA_HOVER,
+                            border_color=Tema.CAMPO_BORDA, checkbox_width=16, checkbox_height=16).pack(
+                anchor="w", pady=2, padx=4)
+        botoes = ctk.CTkFrame(janela, fg_color="transparent")
+        botoes.pack(fill="x", padx=16, pady=12)
+        estilo = dict(height=30, corner_radius=6, fg_color="transparent", hover_color=Tema.SECUNDARIA_HOVER,
+                      text_color=Tema.PRIMARIA, font=ctk.CTkFont(Tema.FAMILIA, 12), width=60)
+        ctk.CTkButton(botoes, text="Todos", command=lambda: [v.set(True) for v in marcas.values()], **estilo).pack(side="left")
+        ctk.CTkButton(botoes, text="Nenhum", command=lambda: [v.set(False) for v in marcas.values()],
+                      **estilo).pack(side="left", padx=(4, 0))
+
+        def aplicar():
+            self.aplicar_filtro(coluna, [v for v, var in marcas.items() if var.get()])
+            janela.destroy()
+        self.master._botao(botoes, "Mostrar e selecionar", aplicar, "primario").pack(side="right")
+        janela.bind("<Return>", lambda e: aplicar())
+        janela.bind("<Escape>", lambda e: janela.destroy())
+        janela.update_idletasks()
+        janela.geometry(f"+{self.winfo_pointerx() - 40}+{self.winfo_pointery() + 10}")
+        self._janela_filtro = janela
 
     def selecionados(self) -> list[str]:
         return list(self.tabela.selection())
@@ -661,6 +756,13 @@ class JanelaModerna(ctk.CTk):
             selected_color=Tema.PRIMARIA, selected_hover_color=Tema.PRIMARIA_HOVER,
             unselected_color=Tema.CARTAO, unselected_hover_color=Tema.SECUNDARIA_HOVER, text_color=Tema.TEXTO)
         self.seletor_aba.pack(side="right", pady=(4, 0))
+        # consulta a página Releases na hora (sem fechar o programa)
+        self.bt_atualizacoes = ctk.CTkButton(
+            topo, text="⟳  Verificar atualizações", command=self.ao_verificar_atualizacoes, height=38, width=190,
+            corner_radius=Tema.RAIO_CONTROLE, font=self.f_normal, fg_color="transparent",
+            hover_color=Tema.SECUNDARIA_HOVER, text_color=Tema.TEXTO_SUAVE, border_width=1,
+            border_color=Tema.CAMPO_BORDA)
+        self.bt_atualizacoes.pack(side="right", padx=(0, 12), pady=(4, 0))
 
     def mostrar_aba(self, nome: str) -> None:
         """'Vídeos' ou 'Jellyfin'."""
@@ -1916,6 +2018,9 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_tv_ao_vivo(self) -> None:
+        pass
+
+    def ao_verificar_atualizacoes(self) -> None:
         pass
 
     def ao_relatorio(self) -> None:

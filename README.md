@@ -248,8 +248,14 @@ primeira falha (antes esperava o tempo limite em cada filme).
   vez, apague essa pasta. Com linhas selecionadas, resolve só elas; sem seleção, todos os conflitos.
 - **Pastas protegidas** (seção "Automático"): as pastas do **Sonarr/Radarr** (ou outras): o organizador nunca
   entra nelas (nem organiza, nem apaga, nem põe legenda), nem pela vigia. No script: `PASTAS_PROTEGIDAS`.
-- **Aviso de versão nova**: ao abrir, o programa consulta a página Releases e avisa uma vez cada versão nova
-  ("Abrir a página de download"). A versão aparece no título da janela. Dá para desligar em "Automático".
+- **Aviso de versão nova**: ao abrir (e a cada 6 horas, com o programa aberto) consulta a página Releases e
+  avisa uma vez cada versão nova. A versão aparece no título da janela. Dá para desligar em "Automático".
+  **Verificar atualizações** (no topo, ao lado de Vídeos/Jellyfin) consulta na hora, sem fechar nada.
+  **Baixar agora** baixa o `.zip` em segundo plano (Downloads); dá para continuar usando. Para **instalar**, o
+  programa precisa fechar (o Windows não deixa trocar um programa aberto) e ele avisa isso:
+  **Fechar e atualizar agora** (fecha, troca os arquivos sozinho e abre de novo), **Atualizar quando eu fechar**
+  ou **Depois**. As configurações (`C:\Users\<você>\.videoscraper`) não são tocadas. O GitHub testa essa troca
+  no Windows a cada versão.
 - **Iniciar com o Windows** (seção "Automático"): abre minimizado **perto do relógio**, com a vigia e a
   conferência funcionando sem a janela aberta. Clique no ícone para abrir; "Sair" no menu dele fecha de
   verdade. "Ao fechar (X), continuar rodando perto do relógio" faz o X só esconder a janela. Fica na lista do
@@ -257,7 +263,12 @@ primeira falha (antes esperava o tempo limite em cada filme).
 - **TV ao vivo...** (barra de cima): canais ao vivo no Jellyfin (Painel > TV ao vivo), sem outro programa:
   1. adicione canais (nome + link do sinal `.m3u8`) ou importe uma lista `.m3u` (arquivo ou endereço);
   2. **Conferir os links**: no ar / fora do ar / pede login / link temporário (com token, que expira).
-     **Selecionar os fora do ar** + **Remover selecionados** limpa a lista; **Remover todos** zera. Importar um
+     **Selecionar os fora do ar** + **Remover selecionados** limpa a lista; **Remover todos** zera. Clique no
+     **título de uma coluna** (Canal, Grupo, Situação, Link) para marcar um ou vários valores dela: a lista mostra
+     e seleciona só esses (o Link conta pelo site); "Tirar os filtros" volta tudo. Listas grandes: 32 canais
+     conferidos ao mesmo tempo (no máximo 6 do mesmo servidor), a conexão é reaproveitada e um servidor que não
+     responde não é tentado de novo canal por canal; o rodapé mostra "526 de 11393 · 40/s · faltam ~5 min" e o
+     **Parar** vale na hora (fica o que já foi conferido). Importar um
      link que é uma PÁGINA de site (não uma lista `.m3u`) é recusado com um aviso;
   3. **Salvar e enviar ao Jellyfin**: grava `canais.m3u` e cadastra pela API o sintonizador M3U, o **guia de
      programação** (XMLTV, opcional: sem ele os canais aparecem sem a grade de horários) e uma **antena

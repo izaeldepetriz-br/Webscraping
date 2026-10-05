@@ -103,3 +103,45 @@ def test_pagina_de_site_nao_vira_lista_de_canais(api_falsa, tmp_path):
     (tmp_path / "vazia.m3u").write_text("#EXTM3U\n", encoding="utf-8")
     with pytest.raises(NaoEhLista, match="nenhum canal"):
         importar(str(tmp_path / "vazia.m3u"))
+
+
+def test_parar_e_imediato_e_devolve_so_os_conferidos():
+    import time
+    from jellyfin_tools.paralelo import em_paralelo
+    inicio = time.monotonic()
+    feitos = em_paralelo(list(range(500)), lambda n: time.sleep(0.3) or n, trabalhadores=8,
+                         parar=lambda: time.monotonic() - inicio > 0.5)
+    assert time.monotonic() - inicio < 1.5                              # antes: 500 x 0,3 s / 8 = ~19 s
+    assert 0 < len(feitos) < 500 and all(feitos[i] == i for i in feitos)
+
+
+def test_servidor_que_nao_conecta_nao_e_tentado_de_novo():
+    import time
+    canais = [Canal(f"C{n}", f"http://127.0.0.1:9/canal{n}.m3u8") for n in range(60)]   # porta fechada
+    inicio = time.monotonic()
+    situacoes = conferir_canais(canais)
+    assert len(situacoes) == 60 and not any(s.ok for _, s in situacoes)
+    assert sum("não responde (outros canais dele já falharam)" in s.detalhe for _, s in situacoes) >= 40
+    assert time.monotonic() - inicio < 10
+
+
+def test_muitos_canais_no_mesmo_servidor_vao_rapido_sem_sobrecarregar(api_falsa):
+    import threading
+    import time
+    ao_mesmo_tempo, maximo, trava = [0], [0], threading.Lock()
+
+    def devagar(q):
+        with trava:
+            ao_mesmo_tempo[0] += 1
+            maximo[0] = max(maximo[0], ao_mesmo_tempo[0])
+        time.sleep(0.2)
+        with trava:
+            ao_mesmo_tempo[0] -= 1
+        return 200, b"#EXTM3U\n", {"Content-Type": "application/x-mpegURL"}
+    api_falsa.rotas["/lento.m3u8"] = devagar
+    canais = [Canal(f"C{n}", f"{api_falsa.base}/lento.m3u8?n={n}") for n in range(60)]
+    inicio = time.monotonic()
+    situacoes = conferir_canais(canais)
+    assert all(s.ok for _, s in situacoes)
+    assert time.monotonic() - inicio < 60 * 0.2 / 2                     # bem mais rápido que um por vez
+    assert maximo[0] <= 6                                               # no máximo 6 no mesmo servidor

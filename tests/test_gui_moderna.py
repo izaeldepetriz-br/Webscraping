@@ -1496,3 +1496,119 @@ def test_tv_ao_vivo_selecionar_fora_do_ar_e_remover_todos(app, api_falsa):
     assert len(janela.selecionados()) == 1
     janela.bt_remover_todos.invoke()
     assert app._canais == [] and janela.tabela.get_children() == ()
+
+
+def test_botao_verificar_atualizacoes_em_tempo_real(app, monkeypatch, tmp_path, api_falsa):
+    from videoscraper import atualizacao
+    api_falsa.rotas["/zip"] = lambda q: (200, b"PK" + b"x" * 1000, {"Content-Type": "application/zip"})
+
+    def esperar_fila(vezes=40):
+        for _ in range(vezes):
+            app.update()
+            time.sleep(0.05)
+
+    monkeypatch.setattr(atualizacao, "versao_atual", lambda: "v1.5.1")
+    mesma = atualizacao.VersaoNova("v1.5.1", "https://github.com/x/v1.5.1")
+    monkeypatch.setattr(atualizacao, "ultima_versao", lambda *a, **k: mesma)
+    app.bt_atualizacoes.invoke()
+    esperar_fila()
+    assert app.caixas[-1][1:] == ("Verificar atualizações", "Você já está na versão mais nova (v1.5.1).")
+    nova = atualizacao.VersaoNova("v1.6", "https://github.com/x/v1.6", "", api_falsa.base + "/zip",
+                                  "videoscraper-windows.zip")
+    monkeypatch.setattr(atualizacao, "ultima_versao", lambda *a, **k: nova)
+    monkeypatch.setattr(atualizacao, "pasta_downloads", lambda: tmp_path)
+    escolhas, abertos = [], []
+    app.escolher = lambda t, m, opcoes, **k: (escolhas.append((t, opcoes)), opcoes[0])[1]
+    app._abrir_no_sistema = abertos.append
+    app.bt_atualizacoes.invoke()
+    esperar_fila()
+    esperar(app)
+    esperar_fila(10)
+    assert escolhas[0] == ("Versão nova", ("Baixar agora", "Abrir a página de download"))
+    assert (tmp_path / "videoscraper-windows-v1.6.zip").exists()
+    assert escolhas[-1][0] == "Atualização baixada" and abertos == [str(tmp_path)]
+    def sem_internet(*a, **k):
+        raise atualizacao.ErroAtualizacao("sem conexão com o GitHub (ConnectionError)")
+    monkeypatch.setattr(atualizacao, "ultima_versao", sem_internet)
+    app.bt_atualizacoes.invoke()
+    esperar_fila()
+    assert "sem conexão" in app.caixas[-1][2] and app.bt_atualizacoes.cget("state") == "normal"
+
+
+def test_atualizacao_baixada_avisa_que_precisa_fechar(app, monkeypatch, tmp_path):
+    from videoscraper import atualizacao
+    nova = atualizacao.VersaoNova("v1.6", "https://github.com/x/v1.6")
+    arquivo = tmp_path / "videoscraper-windows-v1.6.zip"
+    monkeypatch.setattr(atualizacao, "pode_instalar_sozinho", lambda: True)
+    instalados, mensagens = [], []
+    monkeypatch.setattr(atualizacao, "instalar_ao_fechar", lambda z, reabrir=True: instalados.append((z, reabrir)))
+    app.escolher = lambda t, m, opcoes, **k: (mensagens.append((t, m, opcoes)), "Atualizar quando eu fechar")[1]
+    app._atualizacao_baixada(nova, arquivo)
+    titulo, texto, opcoes = mensagens[-1]
+    assert titulo == "Atualização pronta para instalar" and "PRECISA SER FECHADO" in texto
+    assert opcoes == ("Fechar e atualizar agora", "Atualizar quando eu fechar")
+    assert not instalados                                               # ainda não: só quando fechar
+    destruida = []
+    monkeypatch.setattr(app, "destroy", lambda: destruida.append(True))
+    app.fechar()
+    assert instalados == [(arquivo, False)] and destruida
+
+
+def test_tv_ao_vivo_filtro_por_coluna(app):
+    """Clique no título da coluna: escolher um ou vários valores (Situação, Grupo, Link pelo site)."""
+    from jellyfin_tools.tv_ao_vivo import Canal, Situacao
+    app.mostrar_aba("Jellyfin")
+    app.bt_tv_ao_vivo.invoke()
+    janela = app.janela_canais
+    app._canais = [Canal("TV Cultura", "https://a.org/1.m3u8", "Abertos"), Canal("TV Brasil", "https://a.org/2.m3u8", "Abertos"),
+                   Canal("Rádio", "https://b.net/r.mp3", "Rádios"), Canal("Velho", "https://b.net/v.m3u8", "Abertos"),
+                   Canal("Novo", "https://c.com/n.m3u8")]
+    app._situacao_canais = {app._canais[0].url: Situacao(True, "no ar"), app._canais[1].url: Situacao(True, "no ar"),
+                            app._canais[2].url: Situacao(False, "fora do ar (HTTP 404)"),
+                            app._canais[3].url: Situacao(False, "é uma página, não o sinal do canal")}
+    app._mostrar_canais()
+    nomes = lambda: [janela.tabela.item(i, "text") for i in janela.tabela.get_children()]   # noqa: E731
+    assert janela.valores_da_coluna("situacao") == [("(não conferido)", 1), ("é uma página, não o sinal do canal", 1),
+                                                    ("fora do ar (HTTP 404)", 1), ("no ar", 2)]
+    janela.aplicar_filtro("situacao", ["fora do ar (HTTP 404)", "é uma página, não o sinal do canal"])   # duas situações
+    assert nomes() == ["Rádio", "Velho"] and len(janela.selecionados()) == 2
+    assert "2 de 5" in janela.lb_resumo.cget("text") and "(filtro)" in janela.tabela.heading("situacao", "text")
+    janela.aplicar_filtro("grupo", ["Abertos"])                         # mais uma coluna: as duas valem juntas
+    assert nomes() == ["Velho"]
+    janela.limpar_filtros()
+    janela.aplicar_filtro("url", ["a.org"])                             # o link conta pelo site
+    assert nomes() == ["TV Cultura", "TV Brasil"]
+    app.perguntar = lambda t, m: True
+    janela.bt_remover.invoke()                                          # remove os filtrados (selecionados)
+    assert [c.nome for c in app._canais] == ["Rádio", "Velho", "Novo"]
+    janela.limpar_filtros()
+    janela.abrir_filtro("grupo")                                        # a janelinha de caixinhas
+    app.update()
+    assert janela._janela_filtro.winfo_exists()
+    janela._janela_filtro.destroy()
+    janela.aplicar_filtro("grupo", ["(sem grupo)", "Abertos", "Rádios"])   # todos marcados = sem filtro
+    assert len(nomes()) == 3 and "filtro" not in janela.lb_resumo.cget("text")
+
+
+def test_parar_a_conferencia_de_canais_e_imediato(app, api_falsa):
+    """Caso real: 11.393 canais e o Parar seguia consultando. Agora volta em ~1 s, com o que já conferiu."""
+    from jellyfin_tools.tv_ao_vivo import Canal
+
+    def devagar(q):
+        time.sleep(0.5)
+        return 200, b"#EXTM3U\n", {"Content-Type": "application/x-mpegURL"}
+    api_falsa.rotas["/lento.m3u8"] = devagar
+    app.mostrar_aba("Jellyfin")
+    app.bt_tv_ao_vivo.invoke()
+    app._canais = [Canal(f"C{n}", f"{api_falsa.base}/lento.m3u8?n={n}") for n in range(400)]
+    app._conferir_canais()
+    fim = time.time() + 1.2
+    while time.time() < fim:
+        app.update()
+        time.sleep(0.05)
+    assert "/s" in app.var_status.get()                                  # mostra a velocidade
+    parou_em = time.time()
+    app.ao_parar()
+    esperar(app)
+    assert time.time() - parou_em < 2.5                                 # antes: ~400 x 0,5 s / 8 = 25 s
+    assert "Parado:" in app.var_status.get() and " de 400 conferidos" in app.var_status.get()

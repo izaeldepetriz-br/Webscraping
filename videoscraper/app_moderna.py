@@ -16,6 +16,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 import traceback
 import webbrowser
 from dataclasses import asdict
@@ -124,6 +125,9 @@ class AppModerna(JanelaModerna):
         self._conflitos_pendentes = None        # "Resolver conflitos": decisões esperando a confirmação
         self._previa_pendente = False
         self._versao_pendente = None            # aviso de versão nova que chegou durante uma tarefa
+        self._atualizacao_pendente = None       # .zip da versão nova baixado (pergunta no fim)
+        self._instalar_ao_sair = None           # (zip, reabrir): troca os arquivos quando o programa fechar
+        self._versao_agendada = None
         self._bandeja = None                    # ícone perto do relógio (quando escondida)
         self.janela_canais = None               # "TV ao vivo..."
         self._canais, self._situacao_canais = [], {}
@@ -431,6 +435,10 @@ class AppModerna(JanelaModerna):
                 self.mostrar_janela()
             elif dado == "sair":
                 self.sair_de_vez()
+        elif tipo == "versao_consultada":
+            self._mostrar_versao_consultada(*dado)
+        elif tipo == "atualizacao_baixada":
+            self._atualizacao_pendente = dado              # pergunta depois do "fim"
         elif tipo == "versao_nova":
             if self.trabalhando:                       # não interrompe uma tarefa: avisa no fim
                 self._versao_pendente = dado
@@ -470,6 +478,9 @@ class AppModerna(JanelaModerna):
             if self._conflitos_pendentes:
                 pendentes, self._conflitos_pendentes = self._conflitos_pendentes, None
                 self.after(50, lambda: self._confirmar_conflitos(*pendentes))
+            if self._atualizacao_pendente:
+                baixada, self._atualizacao_pendente = self._atualizacao_pendente, None
+                self.after(50, lambda: self._atualizacao_baixada(*baixada))
             if self._versao_pendente:
                 nova, self._versao_pendente = self._versao_pendente, None
                 self.after(50, lambda: self._avisar_versao_nova(nova))
@@ -788,8 +799,8 @@ class AppModerna(JanelaModerna):
             resultado, quebrados, removidos = [], [], 0
             if pastas:
                 resultado, quebrados, removidos = conferir_e_avisar(
-                    *pastas, notificador=notificador, remover=o.remover_quebrados,
-                    ao_progresso=lambda f, t: self._avisar_analise(f / t, f"Conferindo espelhos: {f} de {t}"))
+                    *pastas, notificador=notificador, remover=o.remover_quebrados, parar=self.evento_parar.is_set,
+                    ao_progresso=self._progresso_com_velocidade("Conferindo espelhos"))
             linhas = []
             for raiz, arquivo, url, v in resultado:
                 texto = v.problema or v.aviso or "funcionando"
@@ -798,8 +809,8 @@ class AppModerna(JanelaModerna):
                 linhas.append(("/".join(arquivo.relative_to(raiz).parts), v.ok, texto))
             fora = []
             if canais:                                 # canais ao vivo: avisa se algum saiu do ar
-                situacoes = conferir_canais(canais, ao_progresso=lambda f, t: self._avisar_analise(
-                    f / t, f"Conferindo canais ao vivo: {f} de {t}"))
+                situacoes = conferir_canais(canais, parar=self.evento_parar.is_set,
+                                            ao_progresso=self._progresso_com_velocidade("Conferindo canais ao vivo"))
                 fora = [(c, s) for c, s in situacoes if not s.ok]
                 for c, s in situacoes:
                     (self._log.info if s.ok else self._log.warning)("[canal %s] %s (%s)", "ok" if s.ok else "fora do ar",
@@ -865,8 +876,8 @@ class AppModerna(JanelaModerna):
         self.liberar_organizar(False)
 
         def tarefa():
-            resultado = conferir_espelhos(*pastas, ao_progresso=lambda f, t: self._avisar_analise(
-                f / t, f"Conferindo espelhos: {f} de {t}"))
+            resultado = conferir_espelhos(*pastas, parar=self.evento_parar.is_set,
+                                          ao_progresso=self._progresso_com_velocidade("Conferindo espelhos"))
             if not resultado:
                 self.fila.put(("msg", ("Conferir espelhos", "Nenhum .strm nas bibliotecas:\n" + "\n".join(pastas),
                                        "info")))
@@ -1620,8 +1631,8 @@ class AppModerna(JanelaModerna):
             self.after(3000, self.ao_alternar_vigia)
         self.definir_estado_conferencia(self._texto_ultima_conferencia())
         self._conferencia_agendada = self.after(60_000, self._ciclo_conferencia)
-        if self.var_jf_avisar_versao.get() and not os.environ.get("VIDEOSCRAPER_SEM_ATUALIZACAO"):
-            self.after(4000, self.verificar_versao_nova)
+        if not os.environ.get("VIDEOSCRAPER_SEM_ATUALIZACAO"):
+            self.after(4000, self._ciclo_versao)          # ao abrir e depois a cada 6 horas (programa aberto)
 
     # ================================================================== TV ao vivo (canais no Jellyfin)
     @property
@@ -1726,19 +1737,34 @@ class AppModerna(JanelaModerna):
             self._canais = [c for i, c in enumerate(self._canais) if i not in tirar]
             self._guardar_canais()
 
+    def _progresso_com_velocidade(self, texto: str):
+        """ao_progresso(feitos, total) que mostra a velocidade e quanto falta:
+        'Conferindo canais: 526 de 11393 · 41/s · faltam ~4 min'."""
+        inicio = time.monotonic()
+
+        def avisar(feitos: int, total: int) -> None:
+            passou = max(time.monotonic() - inicio, 0.001)
+            por_segundo = feitos / passou
+            falta = (total - feitos) / por_segundo if por_segundo > 0 else 0
+            resto = (f"faltam ~{falta / 60:.0f} min" if falta >= 90 else f"faltam ~{falta:.0f} s") if feitos < total else ""
+            self._avisar_analise(feitos / total, f"{texto}: {feitos} de {total} · {por_segundo:.0f}/s"
+                                 + (f" · {resto}" if resto else ""))
+        return avisar
+
     def _conferir_canais(self) -> None:
         canais = list(self._canais)
         if not canais:
             return
 
         def tarefa():
-            situacoes = conferir_canais(canais, ao_progresso=lambda f, t: self._avisar_analise(
-                f / t, f"Conferindo canais: {f} de {t}"))
+            situacoes = conferir_canais(canais, parar=self.evento_parar.is_set,
+                                        ao_progresso=self._progresso_com_velocidade("Conferindo canais"))
             for c, sit in situacoes:
                 (self._log.info if sit.ok else self._log.warning)("[canal] %s: %s", c.nome, sit.detalhe)
             fora = sum(1 for _, sit in situacoes if not sit.ok)
             self.fila.put(("canais_conferidos", situacoes))
-            self.fila.put(("status_fim", f"Canais: {len(situacoes) - fora} no ar, {fora} fora do ar."))
+            parado = f" Parado: {len(situacoes)} de {len(canais)} conferidos." if len(situacoes) < len(canais) else ""
+            self.fila.put(("status_fim", f"Canais: {len(situacoes) - fora} no ar, {fora} fora do ar.{parado}"))
 
         self._rodar("Conferindo os canais ao vivo...", tarefa)
 
@@ -1810,6 +1836,85 @@ class AppModerna(JanelaModerna):
         self.fechar()
 
     # ================================================================== aviso de versão nova
+    INTERVALO_VERSAO_MS = 6 * 60 * 60 * 1000
+
+    def _ciclo_versao(self) -> None:
+        """Consulta sozinha enquanto o programa está aberto (quem deixa rodando perto do relógio também é avisado)."""
+        self._versao_agendada = self.after(self.INTERVALO_VERSAO_MS, self._ciclo_versao)
+        if self.var_jf_avisar_versao.get():
+            self.verificar_versao_nova()
+
+    def ao_verificar_atualizacoes(self) -> None:
+        """Botão "Verificar atualizações": consulta AGORA, sem fechar o programa, e sempre responde."""
+        self.bt_atualizacoes.configure(state="disabled", text="⟳  Consultando...")
+
+        def consultar():
+            try:
+                nova = atualizacao.ultima_versao()
+                self.fila.put(("versao_consultada", (nova, None)))
+            except atualizacao.ErroAtualizacao as erro:
+                self.fila.put(("versao_consultada", (None, str(erro))))
+        threading.Thread(target=consultar, daemon=True).start()
+
+    def _mostrar_versao_consultada(self, nova, erro) -> None:
+        self.bt_atualizacoes.configure(state="normal", text="⟳  Verificar atualizações")
+        atual = atualizacao.versao_atual()
+        if erro:
+            self.mostrar_mensagem("Verificar atualizações", f"Não consegui consultar agora: {erro}.\n"
+                                  f"Esta é a versão {atual}.", "aviso")
+        elif atualizacao.numeros(nova.versao) > atualizacao.numeros(atual):
+            self._avisar_versao_nova(nova)
+        else:
+            self._log.info("Atualizações: esta é a mais nova (%s; publicada: %s)", atual, nova.versao)
+            self.mostrar_mensagem("Verificar atualizações", f"Você já está na versão mais nova ({atual}).", "sucesso")
+
+    def _baixar_atualizacao(self, nova) -> None:
+        """Baixa o .zip em segundo plano (pode continuar usando o programa) e abre a pasta no fim."""
+        if self.trabalhando:
+            self.mostrar_mensagem("Atualização", "Espere a tarefa atual terminar e clique de novo em "
+                                  "\"Verificar atualizações\".", "aviso")
+            return
+
+        def tarefa():
+            def progresso(feitos, total):
+                if total:
+                    self._avisar_analise(feitos / total, f"Baixando {nova.versao}: {feitos / 1024 ** 2:.0f} de "
+                                                         f"{total / 1024 ** 2:.0f} MB")
+            try:
+                arquivo = atualizacao.baixar(nova, ao_progresso=progresso, parar=self.evento_parar.is_set)
+            except atualizacao.ErroAtualizacao as erro:
+                self.fila.put(("msg", ("Atualização", f"{erro}. Use a página de download:\n{nova.url}", "aviso")))
+                return
+            self._log.info("Atualização %s baixada: %s", nova.versao, arquivo)
+            self.fila.put(("atualizacao_baixada", (nova, arquivo)))
+            self.fila.put(("status_fim", f"Versão {nova.versao} baixada em {arquivo.parent}."))
+
+        self._rodar(f"Baixando a versão {nova.versao}...", tarefa)
+
+    def _atualizacao_baixada(self, nova, arquivo) -> None:
+        """Baixou: avisa que, para concluir, o programa PRECISA FECHAR (o Windows não troca um programa aberto)."""
+        if not atualizacao.pode_instalar_sozinho():           # rodando pelo Python: troca à mão
+            if self.escolher("Atualização baixada",
+                             f"A versão {nova.versao} está em:\n{arquivo}\n\nPara concluir, FECHE o programa, extraia o "
+                             ".zip e troque a pasta do programa pela nova (um programa aberto não pode ser trocado). "
+                             "Configurações, regras e canais continuam valendo.",
+                             ("Abrir a pasta",), cancelar="Depois") == "Abrir a pasta":
+                self._abrir_no_sistema(str(arquivo.parent))
+            return
+        escolha = self.escolher(
+            "Atualização pronta para instalar",
+            f"A versão {nova.versao} foi baixada.\n\nPara concluir a atualização, o programa PRECISA SER FECHADO: o "
+            "Windows não deixa trocar um programa que está aberto. Ele fecha, troca os arquivos sozinho (uns "
+            "segundos) e abre de novo já na versão nova.\n\nConfigurações, regras e canais continuam valendo.",
+            ("Fechar e atualizar agora", "Atualizar quando eu fechar"), cancelar="Depois")
+        if escolha == "Fechar e atualizar agora":
+            self._instalar_ao_sair = (arquivo, True)
+            self.sair_de_vez()
+        elif escolha == "Atualizar quando eu fechar":
+            self._instalar_ao_sair = (arquivo, False)
+            self.definir_status(f"A versão {nova.versao} será instalada quando você fechar o programa.")
+            self._log.info("Atualização %s: instala ao fechar o programa", nova.versao)
+
     def verificar_versao_nova(self, sempre: bool = False) -> None:
         """Consulta a página Releases (em segundo plano). Cada versão nova é avisada uma vez só."""
         ja_avisada = self.var_jf_versao_avisada.get()      # lido aqui: variável do Tk só na thread da janela
@@ -1825,10 +1930,15 @@ class AppModerna(JanelaModerna):
         self._salvar_config()
         self._log.info("Versão nova disponível: %s (esta é %s) %s", nova.versao, atualizacao.versao_atual(), nova.url)
         notas = f"\n\nO que mudou:\n{nova.notas[:400]}" if nova.notas else ""
-        if self.escolher("Versão nova", f"Saiu a versão {nova.versao} do programa (esta é a "
-                         f"{atualizacao.versao_atual()}).\n\nPara atualizar: baixe o .zip na página, extraia e troque "
-                         f"a pasta do programa. Suas configurações continuam valendo.{notas}",
-                         ("Abrir a página de download",), cancelar="Agora não") == "Abrir a página de download":
+        opcoes = (("Baixar agora",) if nova.arquivo_url else ()) + ("Abrir a página de download",)
+        escolha = self.escolher("Versão nova", f"Saiu a versão {nova.versao} do programa (esta é a "
+                                f"{atualizacao.versao_atual()}).\n\n\"Baixar agora\" baixa em segundo plano: dá para "
+                                f"continuar usando. Só para INSTALAR o programa precisa fechar (o Windows não troca um "
+                                f"programa aberto); você escolhe a hora. Suas configurações continuam valendo.{notas}",
+                                opcoes, cancelar="Agora não")
+        if escolha == "Baixar agora":
+            self._baixar_atualizacao(nova)
+        elif escolha == "Abrir a página de download":
             webbrowser.open(nova.url)
 
     def _salvar_config(self) -> None:
@@ -1862,9 +1972,17 @@ class AppModerna(JanelaModerna):
             return
         if self._bandeja is not None:
             self._bandeja.esconder()
+        if self._instalar_ao_sair:                      # a troca dos arquivos começa assim que fechar
+            arquivo, reabrir = self._instalar_ao_sair
+            try:
+                atualizacao.instalar_ao_fechar(arquivo, reabrir=reabrir)
+                self._log.info("Atualizando com %s ao fechar (o programa %s)", arquivo,
+                               "abre de novo sozinho" if reabrir else "abre na versão nova da próxima vez")
+            except OSError as erro:
+                self._log.error("Não consegui iniciar a atualização: %s", erro)
         self._salvar_config()
         self.evento_parar.set()
-        for agendado in (self._vigia_agendada, self._conferencia_agendada):
+        for agendado in (self._vigia_agendada, self._conferencia_agendada, self._versao_agendada):
             if agendado:
                 self.after_cancel(agendado)
         encerrar_log_da_acao(self._log_acao)

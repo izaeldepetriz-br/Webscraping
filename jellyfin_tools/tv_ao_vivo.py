@@ -20,13 +20,13 @@ from __future__ import annotations
 
 import json
 import re
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import requests
 
 from .espelho import _RE_TEMPORARIO
+from .paralelo import em_paralelo
 from .registro import obter_logger
 from .servidor_jellyfin import ErroJellyfin, _cabecalhos
 
@@ -130,9 +130,11 @@ def importar(origem: str, timeout: float = 20) -> list[Canal]:
 class Situacao:
     ok: bool
     detalhe: str = ""
+    servidor_caiu: bool = False     # nem conectou (o servidor inteiro, não só este canal)
 
 
-def conferir_canal(url: str, timeout: float = 10, sessao: requests.Session | None = None) -> Situacao:
+def conferir_canal(url: str, timeout=(4, 8), sessao: requests.Session | None = None) -> Situacao:
+    """timeout: (conectar, esperar a resposta). Um canal que nem conecta em 4 s está fora do ar."""
     sessao = sessao or requests
     aviso = "; link temporário (token/expires): deve parar de funcionar" if _RE_TEMPORARIO.search(url) else ""
     try:
@@ -143,6 +145,8 @@ def conferir_canal(url: str, timeout: float = 10, sessao: requests.Session | Non
                 return Situacao(False, f"fora do ar (HTTP {r.status_code})")
             tipo = r.headers.get("Content-Type", "").lower()
             inicio = next(r.iter_content(2048), b"")
+    except (requests.ConnectionError, requests.ConnectTimeout) as erro:
+        return Situacao(False, f"sem resposta ({type(erro).__name__})", servidor_caiu=True)
     except requests.RequestException as erro:
         return Situacao(False, f"sem resposta ({type(erro).__name__})")
     if ".m3u8" in url.lower() or "mpegurl" in tipo:
@@ -156,20 +160,43 @@ def conferir_canal(url: str, timeout: float = 10, sessao: requests.Session | Non
     return Situacao(True, "no ar" + aviso)
 
 
-def conferir_canais(canais: list[Canal], trabalhadores: int = 8, ao_progresso=None) -> list[tuple[Canal, Situacao]]:
-    feitos = 0
-    resultado: dict[int, Situacao] = {}
+FALHAS_PARA_DESISTIR = 2      # 2 canais do mesmo servidor que nem conectam (e nenhum que respondeu): desiste dele
+POR_SERVIDOR = 6              # no máximo 6 consultas ao MESMO servidor ao mesmo tempo (não sobrecarrega nem é bloqueado)
 
-    def um(indice: int) -> None:
-        nonlocal feitos
-        resultado[indice] = conferir_canal(canais[indice].url)
-        feitos += 1
-        if ao_progresso:
-            ao_progresso(feitos, len(canais))
 
-    with ThreadPoolExecutor(max_workers=max(1, trabalhadores)) as grupo:
-        list(grupo.map(um, range(len(canais))))
-    return [(c, resultado[i]) for i, c in enumerate(canais)]
+def conferir_canais(canais: list[Canal], trabalhadores: int = 32, ao_progresso=None,
+                    parar=None) -> list[tuple[Canal, Situacao]]:
+    """Confere vários canais ao mesmo tempo. Mais rápido em listas grandes:
+      - cada trabalhador reaproveita a conexão (canais do mesmo servidor não reconectam do zero);
+      - no máximo POR_SERVIDOR consultas ao mesmo servidor ao mesmo tempo (as outras vão para outros servidores);
+      - servidor que nunca respondeu e já falhou em 2 canais: os outros canais dele saem "fora do ar" sem esperar.
+    Com parar() verdadeiro, para NA HORA e devolve só os conferidos."""
+    import threading
+    from urllib.parse import urlparse
+    local, trava = threading.local(), threading.Lock()
+    falhas: dict[str, int] = {}
+    responderam: set[str] = set()
+    vagas: dict[str, threading.Semaphore] = {}
+
+    def um(canal: Canal) -> Situacao:
+        servidor = urlparse(canal.url).netloc.lower()
+        with trava:
+            if servidor not in responderam and falhas.get(servidor, 0) >= FALHAS_PARA_DESISTIR:
+                return Situacao(False, f"o servidor {servidor} não responde (outros canais dele já falharam)", True)
+            vaga = vagas.setdefault(servidor, threading.Semaphore(POR_SERVIDOR))
+        if not hasattr(local, "sessao"):
+            local.sessao = requests.Session()
+        with vaga:
+            situacao = conferir_canal(canal.url, sessao=local.sessao)
+        with trava:
+            if situacao.servidor_caiu:
+                falhas[servidor] = falhas.get(servidor, 0) + 1
+            else:
+                responderam.add(servidor)
+        return situacao
+
+    resultado = em_paralelo(canais, um, trabalhadores, ao_progresso, parar)
+    return [(canais[i], resultado[i]) for i in sorted(resultado)]
 
 
 def mensagem_fora_do_ar(fora: list[tuple[Canal, Situacao]], limite: int = 15) -> tuple[str, str]:
