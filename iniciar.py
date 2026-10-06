@@ -120,7 +120,8 @@ if __name__ == "__main__":
         try:
             exe = instalacao.copiar_para_pasta_fixa(atualizacao.pasta_do_programa())
             instalacao.criar_atalhos(exe)
-            relatorio.write_text(f"instalado: {exe}\n", encoding="utf-8")
+            escondido = instalacao.esconder_exe_antigo(exe.parent)
+            relatorio.write_text(f"instalado: {exe}\nvideoscraper.exe escondido: {escondido}\n", encoding="utf-8")
         except Exception:
             relatorio.write_text(traceback.format_exc(), encoding="utf-8")
             raise SystemExit(1)

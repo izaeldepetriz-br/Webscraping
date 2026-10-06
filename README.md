@@ -4,7 +4,8 @@
 
 **Biblioteca do Jellyfin, TV ao vivo e downloads, regidos num lugar só.** O nome técnico continua
 `videoscraper` (o `.exe`, a pasta `.videoscraper` e o `videoscraper-windows.zip`), para as atualizações
-automáticas seguirem funcionando nas instalações que já existem.
+automáticas seguirem funcionando nas instalações que já existem (desde a v2.1.0 o programa que você abre é o
+`Maestro.exe`; o `videoscraper.exe` fica escondido, só para a compatibilidade).
 
 Programa em Python que encontra links de vídeo em páginas web e, se você quiser, baixa os vídeos.
 Funciona em sites simples (só HTML) e também em sites que **montam a página com JavaScript**,
@@ -238,6 +239,14 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 **0,3 s** (nenhuma consulta repetida). Nomes de episódios: **um pedido por temporada**, não um por
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
+
+### Novidades da v2.1.0
+
+- **O programa agora é o `Maestro.exe`**, com o ícone. Os atalhos "Maestro" e o "Iniciar com o Windows"
+  apontam para ele. O `videoscraper.exe` continua na pasta só para as versões antigas conseguirem se
+  atualizar (elas procuram esse nome), e fica **escondido**: na pasta você vê o Maestro.
+- A pasta do programa continua `AppData\Local\Programs\videoscraper` (mudar a pasta de lugar exigiria
+  mover o programa enquanto ele roda; fica para uma próxima etapa, com cuidado).
 
 ### Novidades da v2.0.2
 

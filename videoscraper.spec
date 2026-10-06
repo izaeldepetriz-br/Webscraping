@@ -26,4 +26,8 @@ exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="videoscraper",   # no
           console=False,                       # abre só a janela, sem a tela preta
           icon=icone_exe,                      # ícone do Maestro no Explorer, nos atalhos e na barra
           upx=False)
-coll = COLLECT(exe, a.binaries, a.datas, name="videoscraper", upx=False)
+# Maestro.exe: o que você usa (atalhos, Iniciar com o Windows). O videoscraper.exe continua junto porque as
+# versões antigas, ao se atualizar, procuram esse nome e reabrem por ele (o programa o deixa escondido).
+exe_maestro = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Maestro", console=False, icon=icone_exe,
+                  upx=False)
+coll = COLLECT(exe, exe_maestro, a.binaries, a.datas, name="videoscraper", upx=False)

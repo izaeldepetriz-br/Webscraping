@@ -43,6 +43,8 @@ jobs:
         run: |
           $p = Start-Process -FilePath dist\videoscraper\videoscraper.exe -ArgumentList "--verificar" -Wait -PassThru
           if ($p.ExitCode -ne 0) { Write-Error "autoteste falhou ($($p.ExitCode))"; exit 1 }
+          $m = Start-Process -FilePath dist\videoscraper\Maestro.exe -ArgumentList "--verificar" -Wait -PassThru
+          if ($m.ExitCode -ne 0) { Write-Error "o Maestro.exe não abriu ($($m.ExitCode))"; exit 1 }
       - name: Autoteste do navegador no .exe (baixa o Chromium e abre uma página)
         shell: pwsh
         run: |
@@ -80,7 +82,7 @@ jobs:
           $p = Start-Process -FilePath dist\videoscraper\videoscraper.exe -ArgumentList '--testar-instalacao' -PassThru
           $p.WaitForExit()
           Get-Content (Join-Path $env:TEMP 'videoscraper-teste-instalacao.txt') -ErrorAction SilentlyContinue
-          $exe = Join-Path $env:LOCALAPPDATA 'Programs\videoscraper\videoscraper.exe'
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\videoscraper\Maestro.exe'
           $mesa = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Maestro.lnk'
           $menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'Maestro.lnk'
           if ($p.ExitCode -ne 0 -or -not (Test-Path $exe) -or -not (Test-Path $mesa) -or -not (Test-Path $menu)) {
@@ -90,6 +92,9 @@ jobs:
           "atalho -> $alvo"
           if ($alvo -ne $exe) { Write-Error "o atalho não aponta para o lugar fixo"; exit 1 }
           if (Test-Path $velho) { Write-Error "o atalho antigo 'videoscraper' não foi tirado"; exit 1 }
+          $compat = Join-Path $env:LOCALAPPDATA 'Programs\videoscraper\videoscraper.exe'
+          if (-not (Test-Path $compat)) { Write-Error "faltou o videoscraper.exe (as versões antigas se atualizam por ele)"; exit 1 }
+          if (-not ((Get-Item -Force $compat).Attributes -match 'Hidden')) { Write-Error "o videoscraper.exe não ficou escondido"; exit 1 }
           $v = Start-Process -FilePath $exe -ArgumentList '--verificar' -PassThru -Wait
           if ($v.ExitCode -ne 0) { Write-Error "o programa do lugar fixo não abriu"; exit 1 }
       - uses: actions/upload-artifact@v4

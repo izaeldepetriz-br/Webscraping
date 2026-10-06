@@ -181,7 +181,9 @@ def instalar_ao_fechar(zip_: Path, reabrir: bool = True, pasta: Path | None = No
     import subprocess
     import tempfile
     pasta = Path(pasta or pasta_do_programa())
-    executavel = str(pasta / "videoscraper.exe") if reabrir else ""
+    # reabre o MESMO .exe que está aberto (Maestro.exe; nas versões antigas, videoscraper.exe)
+    nome = Path(sys.executable).name if getattr(sys, "frozen", False) else "videoscraper.exe"
+    executavel = str(pasta / nome) if reabrir else ""
     script = Path(tempfile.gettempdir()) / "videoscraper-atualizar.ps1"
     script.write_text(script_de_instalacao(Path(zip_), pasta, pid or os.getpid(), executavel), encoding="utf-8-sig")
     # O .exe não tem console (nem stdin/stdout): o processo novo NÃO pode herdar essas saídas (o Windows

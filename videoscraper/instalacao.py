@@ -20,6 +20,8 @@ from pathlib import Path
 
 NOME = "videoscraper"            # nome TÉCNICO (pasta, .exe, atualização): fica igual para não quebrar nada
 NOME_ATALHO = "Maestro"          # o nome que aparece (atalhos); o antigo "videoscraper.lnk" é tirado
+EXE_PRINCIPAL = "Maestro.exe"    # o .exe que você usa; o "videoscraper.exe" fica (escondido) só para as
+#                                  versões antigas conseguirem se atualizar (elas procuram esse nome)
 
 
 def pasta_fixa() -> Path:
@@ -27,8 +29,32 @@ def pasta_fixa() -> Path:
     return Path(local) / "Programs" / NOME
 
 
+def executavel_principal(pasta: str | Path) -> Path:
+    """Maestro.exe se existe na pasta (v2.1+); senão o videoscraper.exe (instalações antigas)."""
+    maestro = Path(pasta) / EXE_PRINCIPAL
+    return maestro if maestro.is_file() else Path(pasta) / f"{NOME}.exe"
+
+
 def executavel_fixo() -> Path:
-    return pasta_fixa() / f"{NOME}.exe"
+    return executavel_principal(pasta_fixa())
+
+
+def esconder_exe_antigo(pasta: str | Path, atributos=None) -> bool:
+    """Com o Maestro.exe ao lado, o videoscraper.exe (que só existe para as atualizações das versões antigas)
+    fica ESCONDIDO: na pasta você vê só o Maestro. True = escondeu."""
+    antigo, maestro = Path(pasta) / f"{NOME}.exe", Path(pasta) / EXE_PRINCIPAL
+    if not (antigo.is_file() and maestro.is_file()):
+        return False
+    try:
+        if atributos is None:
+            if sys.platform != "win32":
+                return False
+            import ctypes
+            atributos = ctypes.windll.kernel32
+        FILE_ATTRIBUTE_HIDDEN = 0x2
+        return bool(atributos.SetFileAttributesW(str(antigo), FILE_ATTRIBUTE_HIDDEN))
+    except Exception:
+        return False
 
 
 def esta_na_pasta_fixa(pasta_atual: str | Path) -> bool:
@@ -46,7 +72,7 @@ def copiar_para_pasta_fixa(origem: str | Path, destino: str | Path | None = None
         raise OSError(f"não achei o {NOME}.exe em {origem}")
     destino.mkdir(parents=True, exist_ok=True)
     shutil.copytree(origem, destino, dirs_exist_ok=True)
-    return destino / f"{NOME}.exe"
+    return executavel_principal(destino)
 
 
 def script_atalhos(executavel: str | Path) -> str:

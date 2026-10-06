@@ -132,3 +132,42 @@ def test_aviso_de_icones_ao_windows_sem_apagar_cache():
     assert not instalacao.avisar_windows_icones(Quebrado())          # falhar não derruba os atalhos
     assert "iconcache" not in open(instalacao.__file__, encoding="utf-8").read().lower().replace(
         "cache de ícones", "")                                       # nunca apaga o cache
+
+
+def test_maestro_exe_e_o_principal_e_o_antigo_fica_escondido(tmp_path, monkeypatch):
+    from videoscraper import instalacao
+    pasta = tmp_path / "Programs" / "videoscraper"
+    pasta.mkdir(parents=True)
+    (pasta / "videoscraper.exe").write_bytes(b"x")
+    assert instalacao.executavel_principal(pasta).name == "videoscraper.exe"   # instalação antiga: só ele
+    chamadas = []
+
+    class Kernel32:
+        def SetFileAttributesW(self, caminho, atributos):
+            chamadas.append((caminho, atributos))
+            return 1
+    assert not instalacao.esconder_exe_antigo(pasta, Kernel32())             # sem o Maestro.exe: não esconde
+    (pasta / "Maestro.exe").write_bytes(b"x")
+    assert instalacao.executavel_principal(pasta).name == "Maestro.exe"
+    assert instalacao.esconder_exe_antigo(pasta, Kernel32())
+    assert chamadas == [(str(pasta / "videoscraper.exe"), 0x2)]              # FILE_ATTRIBUTE_HIDDEN
+
+    origem = tmp_path / "Downloads" / "videoscraper"
+    (origem / "_internal").mkdir(parents=True)
+    for nome in ("videoscraper.exe", "Maestro.exe"):
+        (origem / nome).write_bytes(b"novo")
+    assert instalacao.copiar_para_pasta_fixa(origem, tmp_path / "fixo").name == "Maestro.exe"
+
+
+def test_atualizacao_reabre_o_mesmo_exe_que_estava_aberto(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+    from videoscraper import atualizacao
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "linux")                          # o caminho sem as opções do Windows
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: None)          # não roda o PowerShell
+    for aberto in ("Maestro.exe", "videoscraper.exe"):
+        monkeypatch.setattr(sys, "executable", str(tmp_path / aberto))
+        texto = atualizacao.instalar_ao_fechar(tmp_path / "x.zip", pasta=tmp_path, pid=1).read_text(encoding="utf-8-sig")
+        assert f"Start-Process -FilePath '{tmp_path / aberto}'" in texto        # reabre o MESMO que estava aberto
+        assert "'videoscraper.exe'" in texto                                   # o .zip continua conferido por ele

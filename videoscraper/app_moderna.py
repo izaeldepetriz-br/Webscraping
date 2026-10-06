@@ -2146,8 +2146,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
     # ================================================================== Windows: iniciar junto e ícone no relógio
     def ao_alternar_inicializacao(self) -> None:
         ligar = self.var_jf_iniciar_windows.get()
+        no_lugar_fixo = atualizacao.pode_instalar_sozinho() and instalacao.esta_na_pasta_fixa(atualizacao.pasta_do_programa())
         try:
-            inicializacao.ativar(ligar)
+            inicializacao.ativar(ligar, executavel=instalacao.executavel_fixo() if no_lugar_fixo else None)
         except OSError as erro:
             self.var_jf_iniciar_windows.set(inicializacao.ativo())
             self.mostrar_mensagem("Iniciar com o Windows", f"Não deu: {erro}", "aviso")
@@ -2311,8 +2312,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
         dados = config.carregar().get("instalacao", {})
         if instalacao.esta_na_pasta_fixa(pasta):
             versao = atualizacao.versao_atual()
+            instalacao.esconder_exe_antigo(pasta)       # na pasta você vê só o Maestro.exe
             if dados.get("atalhos_versao") != versao:      # instalou ou atualizou: refaz os atalhos (uma vez)
-                exe = sys.executable
+                exe = str(instalacao.executavel_fixo())    # o Maestro.exe (mesmo se abriu pelo nome antigo)
 
                 def refazer():
                     try:
@@ -2323,7 +2325,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 threading.Thread(target=refazer, daemon=True).start()
             if inicializacao.ativo():                     # "Iniciar com o Windows" aponta para o lugar fixo
                 try:
-                    inicializacao.ativar(True)
+                    inicializacao.ativar(True, executavel=instalacao.executavel_fixo())   # o Maestro.exe
                 except OSError:
                     pass
             return
