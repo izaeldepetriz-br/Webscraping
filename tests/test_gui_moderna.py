@@ -78,6 +78,7 @@ def app(monkeypatch, tmp_path):
     a.perguntar = lambda t, m: True
     a.escolher = lambda t, m, opcoes, **k: opcoes[0]        # escolhe o botão principal sozinho
     a._pedir_o_que_completar = lambda pasta, padrao, series: dict(padrao)   # "Completar": a escolha padrão
+    a.escolher_da_lista = lambda *args, **k: None           # lista de opções: "Cancelar"
     a.campo_espera.set(0.5)
     a.var_pasta.set(str(tmp_path / "videos"))
     yield a
@@ -2511,3 +2512,164 @@ def test_sobra_desmarcada_nao_e_apagada(app, tmp_path):
     esperar(app)
     assert "Nenhum arquivo marcado" in avisos[0]
     assert (sobra / "BLUDV.TV.mp4").exists() and (sobra / "The.Office.S01E01.720p-poster.jpg").exists()
+
+
+def test_saude_da_tv_no_painel_e_diagnostico_sem_texto_generico(app, api_falsa):
+    from jellyfin_tools.tv_ao_vivo import Canal
+    total = [11129]
+    api_falsa.rotas["/LiveTv/Info"] = lambda q: (200, {"Services": [{"Name": "Emby", "Status": "Ok"}]})
+    api_falsa.rotas["/LiveTv/Channels"] = lambda q: (200, {"Items": [{"Name": "A"}], "TotalRecordCount": total[0]})
+    api_falsa.rotas["/Plugins"] = lambda q: (200, [])
+    api_falsa.rotas["/System/Configuration/livetv"] = lambda q: (200, {"TunerHosts": [], "ListingProviders": []})
+    api_falsa.rotas["/ScheduledTasks"] = lambda q: (200, [])
+    app.var_jf_url.set(api_falsa.base)
+    app.var_jf_chave_jellyfin.set("chave")
+    app._canais = [Canal("A", "https://a.org/1"), Canal("B", "https://a.org/2")]
+    assert app.item_saude_tv() is None                                   # ainda não consultou: nada
+    assert app.conferir_saude_tv(agora=1000.0)
+    fim = time.time() + 10
+    while time.time() < fim and app._saude_tv_rodando:
+        time.sleep(0.05)
+    assert app.item_saude_tv() == ("TV: 11129 canais no Jellyfin, a lista tem 2", False)
+    assert ("TV: 11129 canais no Jellyfin, a lista tem 2", False) in app.itens_saude()
+    assert not app.conferir_saude_tv(agora=1000.0 + 60)                  # 30 min entre consultas
+    total[0] = 2
+    assert app.conferir_saude_tv(agora=1000.0 + 31 * 60)
+    fim = time.time() + 10
+    while time.time() < fim and app._saude_tv_rodando:
+        time.sleep(0.05)
+    assert app.item_saude_tv() == ("TV: 2 canais (os da sua lista)", True)
+
+    mensagens = []
+    app.escolher = lambda t, m, opcoes, **k: (mensagens.append((m, opcoes)), None)[1]
+    app.ao_diagnostico_tv()
+    esperar(app)
+    for _ in range(20):
+        app.update()
+        time.sleep(0.03)
+    texto, opcoes = next((m, o) for m, o in mensagens if "Tudo certo" in m)
+    assert "Se os canais não são da sua lista" not in texto and opcoes == ("Copiar o diagnóstico",)
+
+
+def test_desmarcados_continuam_desmarcados_ao_previsualizar_de_novo(app, tmp_path):
+    origem = tmp_path / "Baixados"
+    for nome in ("Cidade.de.Deus.2002.1080p.mkv", "Matrix.1999.1080p.mkv", "Up.2009.1080p.mkv"):
+        _video_grande(origem / nome)
+    filmes = tmp_path / "Filmes"
+    filmes.mkdir()
+    app.mostrar_aba("Jellyfin")
+    app.seletor_modo.set("Filmes")
+    app._ao_trocar_modo("Filmes")
+    app.var_jf_origem.set(str(origem))
+    app.var_jf_destino.set(str(filmes))
+    app.var_jf_legendas.set(False)
+
+    def linha(nome):
+        return next(i for i in app._ordem_jf if app.tabela_jf.set(i, "atual") == nome)
+    app.bt_previa.invoke()
+    esperar(app)
+    app.marcar_mover_jf([linha("Matrix.1999.1080p.mkv"), linha("Up.2009.1080p.mkv")], False)
+    app.bt_previa.invoke()                                             # de novo: continuam ☐
+    esperar(app)
+    assert {app.tabela_jf.set(i, "atual") for i in app.nao_mover_jf()} == {"Matrix.1999.1080p.mkv", "Up.2009.1080p.mkv"}
+    app.marcar_mover_jf([linha("Up.2009.1080p.mkv")], True)              # marcou de novo: esquece
+    app.limpar_tabela_jf()                                             # (ex.: abriu o Relatório)
+    app.bt_previa.invoke()
+    esperar(app)
+    assert [app.tabela_jf.set(i, "atual") for i in app.nao_mover_jf()] == ["Matrix.1999.1080p.mkv"]
+
+
+def test_escolher_no_tmdb_quando_ha_series_com_o_mesmo_nome(app, tmdb_gui, tmp_path):
+    """Três 'Tom and Jerry' no TMDB: a pessoa escolhe a de 1940, a escolha vira regra e a prévia refaz."""
+    def busca(q):
+        resultados = [
+            {"id": 230000, "name": "Tom e Jerry na Singapura", "original_name": "Tom and Jerry",
+             "first_air_date": "2023-05-01", "overview": "Em Singapura."},
+            {"id": 2000, "name": "Tom and Jerry", "original_name": "Tom and Jerry", "first_air_date": "1940-02-10",
+             "overview": "Os curtas clássicos."},
+            {"id": 3000, "name": "O Show de Tom e Jerry", "original_name": "The Tom and Jerry Show",
+             "first_air_date": "2014-04-09"}]
+        ano = q.get("first_air_date_year", [None])[0]
+        return 200, {"results": [r for r in resultados if not ano or r["first_air_date"].startswith(ano)]}
+    tmdb_gui.rotas["/3/search/tv"] = busca
+    origem, series = tmp_path / "Baixados", tmp_path / "Series"
+    series.mkdir()
+    _video_grande(origem / "Tom and Jerry" / "Tom and Jerry EP37 Professor Tom.mkv")     # sem o ano: vai na 2023
+    app.mostrar_aba("Jellyfin")
+    app.seletor_modo.set("Séries")
+    app._ao_trocar_modo("Séries")
+    app.var_jf_origem.set(str(origem))
+    app.var_jf_destino.set(str(series))
+    app.var_jf_legendas.set(False)
+    app.var_jf_tmdb.set(True)
+    app.var_jf_chave_tmdb.set("boa")
+    app.bt_previa.invoke()
+    esperar(app)
+    assert "Tom e Jerry na Singapura" in app._movimentos_previa[0].destino_curto
+
+    listas = []
+    app.escolher_da_lista = lambda titulo, msg, itens, botao="", marcado=None: (
+        listas.append((itens, marcado)), next(n for n, i in enumerate(itens) if "(1940)" in i))[1]
+    app.tabela_jf.selection_set(["0"])
+    app.ao_escolher_no_tmdb()
+    esperar(app)
+    fim = time.time() + 20
+    while time.time() < fim and (not listas or app.trabalhando or "1940" not in app._movimentos_previa[0].destino_curto):
+        app.update()
+        time.sleep(0.05)
+    itens, marcado = listas[0]
+    assert len(itens) == 3 and "← a de agora" in itens[marcado] and "Singapura" in itens[marcado]
+    assert any("original: The Tom and Jerry Show" in i for i in itens)
+    assert app._movimentos_previa[0].destino_curto == \
+        "Tom and Jerry (1940)/Season 01/Tom and Jerry S01E37 - Professor Tom.mkv"
+    regra = app.regras_de_nome()[0]
+    assert (regra.titulo, regra.ano, regra.caminho) == ("Tom and Jerry", 1940, str(origem / "Tom and Jerry"))
+
+
+def test_escolher_no_tmdb_sem_selecao_ou_sem_chave(app):
+    app.mostrar_aba("Jellyfin")
+    app.ao_escolher_no_tmdb()
+    assert app.caixas[-1][1] == "Escolher no TMDB" and "Pré-visualize" in app.caixas[-1][2]
+
+
+def test_conferencia_semanal_dos_canais_avisa_os_que_sempre_falham(app, api_falsa):
+    from datetime import datetime, timedelta
+    from jellyfin_tools.tv_ao_vivo import Canal
+    from videoscraper import config
+    api_falsa.rotas["/bom.m3u8"] = lambda q: (200, b"#EXTM3U\n#EXT-X-VERSION:3\nseg.ts\n",
+                                              {"Content-Type": "application/vnd.apple.mpegurl"})
+    api_falsa.rotas["/morto.m3u8"] = lambda q: (404, b"nao")
+    bom, morto = api_falsa.base + "/bom.m3u8", api_falsa.base + "/morto.m3u8"
+    from jellyfin_tools.tv_ao_vivo import salvar_canais
+    app._canais = [Canal("Bom", bom), Canal("Morto", morto)]
+    salvar_canais(app.arquivo_canais, app._canais)
+    app._historico_canais = {morto: [False, False]}                  # já falhou nas 2 últimas
+    agora = datetime(2026, 10, 6, 3, 0)
+    assert not app.conferencia_semanal_tv(agora=agora, relogio=1.0)  # opção desligada: nada
+    tudo = config.carregar()
+    tudo["tv"] = {"semanal": True}
+    config.salvar(tudo)
+    assert not app.conferencia_semanal_tv(agora=agora, relogio=2.0)  # olhou há pouco: espera 10 min
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append(m), opcoes[0])[1]
+    assert app.conferencia_semanal_tv(agora=agora, relogio=1000.0)
+    fim = time.time() + 30
+    while time.time() < fim and app._semanal_resultado is None:
+        app.update()
+        time.sleep(0.05)
+    assert app._semanal_resultado == (2, 1, 1)
+    assert app.historico_canais[morto] == [False, False, False]
+    assert "1 canal(is) falharam em TODAS" in perguntas[0]
+    for _ in range(20):
+        app.update()
+        time.sleep(0.03)
+    janela = app.janela_canais                                        # abriu com o morto selecionado
+    assert [janela.tabela.item(i, "text") for i in janela.tabela.selection()] == ["Morto"]
+    assert app.item_saude_tv() == ("TV: 1 sempre falham", False)
+    assert config.carregar()["tv_semanal"]["quando"] == agora.isoformat(timespec="seconds")
+    assert config.carregar()["tv"]["semanal"] is True                 # a janela aberta não apagou a opção
+    assert not app.conferencia_semanal_tv(agora=agora + timedelta(days=3), relogio=5000.0)   # só depois de 7 dias
+    assert app.conferencia_semanal_tv(agora=agora + timedelta(days=7), relogio=9000.0)
+    fim = time.time() + 30
+    while time.time() < fim and app._semanal_rodando:
+        time.sleep(0.05)

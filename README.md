@@ -233,6 +233,23 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v1.9.3
+
+- **Diagnóstico da TV com resumo:** começa com **"✓ Tudo certo: 144 canais (os da sua lista)"** ou
+  **"⚠ Atenção: ..."** (canais a mais ou plugin de TV ativo). A explicação longa só aparece quando há problema.
+- **TV no painel de saúde** (topo da aba Jellyfin): "✓ TV: 144 canais", conferido em segundo plano a cada
+  30 minutos. Fica laranja se o Jellyfin voltar a ter canais a mais, se aparecer um plugin de TV ativo ou se
+  houver canais que sempre falham.
+- **Escolher no TMDB...** (ao lado de "Corrigir nome..."): quando há vários com o mesmo nome (ex.: "Tom and
+  Jerry" de 1940, 2014 e 2023), lista as opções com ano, nome original e resumo; a escolhida fica guardada como
+  regra para aquela pasta e a prévia roda de novo.
+- **Os desmarcados (☐) continuam desmarcados** ao pré-visualizar de novo (e ao trocar de modo ou abrir o
+  Relatório no meio), enquanto o programa estiver aberto. Marcou de novo (☑): o programa esquece.
+- **Conferir sozinho toda semana** (janela TV ao vivo, embaixo): confere todos os canais 1x por semana, em
+  segundo plano e devagar ("Leve", prioridade baixa). Os que falharam em **todas** as últimas conferências
+  aparecem no painel de saúde, no Discord/Telegram (se configurados) e numa pergunta que abre a lista já com
+  eles selecionados, para você decidir se remove.
+
 ### Novidades da v1.9.2
 
 - **TV ao vivo, os 11.129 canais que não saíam:** o diagnóstico agora lista os **plugins de TV ao vivo**

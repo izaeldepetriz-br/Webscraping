@@ -233,6 +233,65 @@ class DialogoModerno(ctk.CTkToplevel):
         self.destroy()
 
 
+class DialogoLista(ctk.CTkToplevel):
+    """Escolher UM item de uma lista (ex.: qual das séries 'Tom and Jerry' do TMDB). `resposta` = o índice
+    escolhido (None = Cancelar). Duplo clique ou Enter também escolhem."""
+
+    def __init__(self, master, titulo: str, mensagem: str, itens: list[str], botao: str = "Usar esta",
+                 marcado: int | None = None):
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.resposta = None
+        self.title(titulo)
+        self.transient(master)
+        self.geometry("720x460")
+        self.minsize(520, 340)
+        ctk.CTkFrame(self, fg_color=Tema.PRIMARIA, height=4, corner_radius=0).pack(fill="x")
+        ctk.CTkLabel(self, text=titulo, font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"), text_color=Tema.TEXTO,
+                     anchor="w").pack(fill="x", padx=24, pady=(16, 4))
+        ctk.CTkLabel(self, text=mensagem, font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO_SUAVE,
+                     justify="left", anchor="w", wraplength=660).pack(fill="x", padx=24)
+        botoes = ctk.CTkFrame(self, fg_color="transparent")
+        botoes.pack(side="bottom", fill="x", padx=24, pady=(8, 18))      # antes da lista: nunca some
+        quadro = ctk.CTkFrame(self, fg_color=Tema.CAMPO, corner_radius=8)
+        quadro.pack(fill="both", expand=True, padx=24, pady=(10, 0))
+        self.lista = tk.Listbox(quadro, activestyle="none", selectmode="browse", exportselection=False, borderwidth=0,
+                                highlightthickness=0, bg=Tema.CAMPO, fg=Tema.TEXTO, selectbackground=Tema.PRIMARIA,
+                                selectforeground="white", font=(Tema.FAMILIA, 12))
+        rolagem = ctk.CTkScrollbar(quadro, command=self.lista.yview, button_color=Tema.CARTAO_BORDA)
+        self.lista.configure(yscrollcommand=rolagem.set)
+        rolagem.pack(side="right", fill="y", pady=4)
+        self.lista.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=6)
+        if itens:
+            self.lista.insert("end", *itens)
+        escolhido = marcado if marcado is not None and 0 <= marcado < len(itens) else 0
+        if itens:
+            self.lista.selection_set(escolhido)
+            self.lista.see(escolhido)
+        ctk.CTkButton(botoes, text="Cancelar", width=100, height=36, corner_radius=Tema.RAIO_CONTROLE,
+                      fg_color=Tema.SECUNDARIA, hover_color=Tema.SECUNDARIA_HOVER,
+                      font=ctk.CTkFont(Tema.FAMILIA, 13), command=self.destroy).pack(side="left")
+        ctk.CTkButton(botoes, text=botao, height=36, corner_radius=Tema.RAIO_CONTROLE, fg_color=Tema.PRIMARIA,
+                      hover_color=Tema.PRIMARIA_HOVER, font=ctk.CTkFont(Tema.FAMILIA, 13, "bold"),
+                      command=self._ok).pack(side="right")
+        self.lista.bind("<Double-1>", lambda e: self._ok())
+        self.bind("<Return>", lambda e: self._ok())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() - 720) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - 460) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+    def _ok(self) -> None:
+        selecao = self.lista.curselection()
+        if selecao:
+            self.resposta = int(selecao[0])
+            self.destroy()
+
+
 class JanelaEspelhos(ctk.CTkToplevel):
     """Os espelhos (.strm) das bibliotecas agrupados por espelhamento (1, 2, 3...), para tirar
     qualquer um, não só o último: um espelhamento inteiro, um filme ou alguns episódios."""
@@ -849,9 +908,17 @@ class JanelaCanais(ctk.CTkToplevel):
                                                                           pady=(0, 6))
         rodape = ctk.CTkFrame(self, fg_color="transparent")
         rodape.pack(fill="x", padx=24, pady=(4, 16))
+        # 1x por semana, em segundo plano e devagar ("Leve"): avisa os canais que falham em todas as conferências
+        self.var_semanal = tk.BooleanVar(value=False)
+        self.check_semanal = ctk.CTkCheckBox(
+            rodape, text="Conferir sozinho toda semana\n(avisa os que sempre falham)", variable=self.var_semanal,
+            command=acoes.get("semanal", lambda: None), font=m.f_rotulo, text_color=Tema.TEXTO_SUAVE,
+            fg_color=Tema.PRIMARIA, hover_color=Tema.PRIMARIA_HOVER, border_color=Tema.CAMPO_BORDA, checkbox_width=18,
+            checkbox_height=18, corner_radius=4, border_width=2)
+        self.check_semanal.pack(side="left", padx=(0, 14))
         ctk.CTkLabel(rodape, text="O Jellyfin recebe a lista, o guia e a antena pela API (endereço e chave da aba "
                      "Jellyfin) e os canais aparecem em TV ao vivo.", font=m.f_rotulo, text_color=Tema.TEXTO_FRACO,
-                     anchor="w", justify="left", wraplength=480).pack(side="left")
+                     anchor="w", justify="left", wraplength=300).pack(side="left")
         m._botao(rodape, "Fechar", self.destroy, "fantasma", largura=90).pack(side="right")
         m._botao(rodape, "Salvar e enviar ao Jellyfin", acoes["publicar"], "primario").pack(side="right", padx=(0, 8))
         self.bt_exportar = m._botao(rodape, "Exportar (JSON, CSV ou TXT)...", self.ao_exportar, "secundario")
@@ -1028,7 +1095,7 @@ class JanelaCanais(ctk.CTkToplevel):
     def valores(self) -> dict:
         return {"guia": self.var_guia.get().strip(), "antena": self.var_antena.get().strip(),
                 "pasta": self.var_pasta.get().strip(), "no_servidor": self.var_no_servidor.get().strip(),
-                "velocidade": self.var_velocidade.get()}
+                "velocidade": self.var_velocidade.get(), "semanal": bool(self.var_semanal.get())}
 
     def definir_valores(self, dados: dict) -> None:
         for chave, var in (("guia", self.var_guia), ("antena", self.var_antena), ("pasta", self.var_pasta),
@@ -1036,6 +1103,7 @@ class JanelaCanais(ctk.CTkToplevel):
             var.set(dados.get(chave, "") or "")
         if dados.get("velocidade") in ("Leve", "Normal", "Rápida"):
             self.var_velocidade.set(dados["velocidade"])
+        self.var_semanal.set(bool(dados.get("semanal")))
 
 
 # =============================================================================== janela
@@ -1823,6 +1891,9 @@ class JanelaModerna(ctk.CTk):
     def ao_proteger_pasta_jf(self) -> None:
         pass
 
+    def ao_escolher_no_tmdb(self) -> None:
+        pass
+
     def mostrar_todos_jf(self) -> None:
         """Marca todas as caixas do filtro (nada fica escondido)."""
         for var in self.vars_filtro_jf.values():
@@ -1925,21 +1996,24 @@ class JanelaModerna(ctk.CTk):
         cartao = self._cartao(corpo)
         cartao.grid(row=1, column=1, sticky="ew", pady=(0, 14))
         cartao.grid_columnconfigure((1, 2), weight=1, uniform="d")
-        self.lb_detalhe_titulo = ctk.CTkLabel(cartao, text="Antes → Depois  (clique numa linha da tabela)",
+        self.lb_detalhe_titulo = ctk.CTkLabel(cartao, text="Antes → Depois",
                                               font=self.f_secao, text_color=Tema.TEXTO, anchor="w")
         self.lb_detalhe_titulo.grid(row=0, column=0, columnspan=3, sticky="w", padx=18, pady=(10, 4))
         # não identificado? você diz qual é a série/filme e o programa lembra (regra salva)
         acoes = ctk.CTkFrame(cartao, fg_color="transparent")
-        acoes.grid(row=0, column=2, sticky="e", padx=(0, 18), pady=(10, 4))
+        acoes.grid(row=0, column=1, columnspan=2, sticky="e", padx=(0, 18), pady=(10, 4))   # 4 botões: 2 colunas
         self.bt_corrigir_nome = self._botao(acoes, "Corrigir nome...", self.ao_corrigir_nome, "secundario",
-                                            largura=140)
+                                            largura=130)
         # conflito (cópia repetida ou já na biblioteca): fica a melhor, a outra sai (dá para desfazer)
         self.bt_resolver_conflitos = self._botao(acoes, "Resolver conflitos...", self.ao_resolver_conflitos,
-                                                 "secundario", largura=160)
+                                                 "secundario", largura=150)
+        # nome repetido no TMDB (ex.: 'Tom and Jerry' de 1940, 2014, 2023): você escolhe qual é
+        self.bt_escolher_tmdb = self._botao(acoes, "Escolher no TMDB...", self.ao_escolher_no_tmdb, "secundario",
+                                            largura=150)
         # os não identificados juntos por pasta: corrige o grupo inteiro de uma vez
         self.bt_nao_identificados = self._botao(acoes, "Não identificados...", self.ao_nao_identificados,
-                                                "secundario", largura=160)
-        for b in (self.bt_resolver_conflitos, self.bt_corrigir_nome, self.bt_nao_identificados):
+                                                "secundario", largura=150)
+        for b in (self.bt_resolver_conflitos, self.bt_corrigir_nome, self.bt_escolher_tmdb, self.bt_nao_identificados):
             b.configure(height=30)
             b.pack(side="right", padx=(8, 0))
         for coluna, texto in ((1, "Pasta"), (2, "Arquivo")):
@@ -2632,6 +2706,13 @@ class JanelaModerna(ctk.CTk):
         janela = JanelaCorrigirNome(self, tipo, sugestao, onde, regra_atual)
         self.wait_window(janela)
         return janela.resposta
+
+    def escolher_da_lista(self, titulo: str, mensagem: str, itens: list[str], botao: str = "Usar esta",
+                          marcado: int | None = None) -> int | None:
+        """Lista para escolher um item; devolve o índice (None = Cancelar)."""
+        dialogo = DialogoLista(self, titulo, mensagem, itens, botao, marcado)
+        self.wait_window(dialogo)
+        return dialogo.resposta
 
     def escolher(self, titulo: str, mensagem: str, opcoes: tuple[str, ...], cancelar: str = "Cancelar") -> str | None:
         """Pergunta com vários botões; devolve o texto do escolhido (None = Cancelar)."""

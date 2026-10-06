@@ -132,6 +132,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._atualizacao_pendente = None       # .zip da versão nova baixado (pergunta no fim)
         self._tv_outros_pendente = None         # TV ao vivo: outros sintonizadores no Jellyfin (pergunta no fim)
         self._baixar_pendente = None            # vídeos achados pelo "Baixar" sem buscar antes (licença no fim)
+        self._tmdb_opcoes_pendente = None       # "Escolher no TMDB": a lista abre depois do "fim"
         self._instalar_ao_sair = None           # (zip, reabrir): troca os arquivos quando o programa fechar
         self._versao_agendada = None
         self._bandeja = None                    # ícone perto do relógio (quando escondida)
@@ -478,6 +479,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._juntar_canais(dado)
         elif tipo == "canais_conferidos":
             self._receber_conferencia_canais(dado)
+        elif tipo == "tv_semanal":                     # conferência semanal dos canais (segundo plano)
+            self._fim_conferencia_semanal(dado)
         elif tipo == "bandeja":                        # clique no ícone perto do relógio
             if dado == "abrir":
                 self.mostrar_janela()
@@ -501,6 +504,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._tv_outros_pendente = dado                # pergunta depois do "fim"
         elif tipo == "atualizacao_baixada":
             self._atualizacao_pendente = dado              # pergunta depois do "fim"
+        elif tipo == "tmdb_opcoes":
+            self._tmdb_opcoes_pendente = dado              # a lista abre depois do "fim"
         elif tipo == "baixar_depois":
             self._baixar_pendente = dado                   # pergunta a licença depois do "fim"
         elif tipo == "versao_nova":
@@ -554,6 +559,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
             if self._tv_outros_pendente:
                 outros, self._tv_outros_pendente = self._tv_outros_pendente, None
                 self.after(50, lambda: self._oferecer_tirar_sintonizadores(*outros))
+            if getattr(self, "_tmdb_opcoes_pendente", None):
+                opcoes, self._tmdb_opcoes_pendente = self._tmdb_opcoes_pendente, None
+                self.after(50, lambda: self._escolher_opcao_tmdb(*opcoes))
             if self._baixar_pendente:
                 lista, self._baixar_pendente = self._baixar_pendente, None
                 self.after(50, lambda: self._baixar(lista))
@@ -1569,6 +1577,75 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 self._log.info("Regra de nome: %s -> %s", alvo, regra.descricao())
         self.ao_previsualizar()
 
+    def ao_escolher_no_tmdb(self) -> None:
+        """Nome repetido no TMDB ('Tom and Jerry' de 1940, 2014 e 2023; um filme e a refilmagem): lista as
+        opções com o ano e você escolhe. A escolha vira regra (como no "Corrigir nome") e a prévia roda de novo."""
+        if self.trabalhando:
+            return
+        o = self.obter_opcoes_jellyfin()
+        ids = [int(i) for i in self.tabela_jf.selection() if i.isdigit()]
+        movimentos = [self._movimentos_previa[i] for i in ids if 0 <= i < len(self._movimentos_previa)]
+        movimentos = [m for m in movimentos if m.status not in ("limpeza", "pasta_apagada")]
+        if not movimentos:
+            self.mostrar_mensagem("Escolher no TMDB", "Pré-visualize e clique no arquivo (ou episódio) cuja série/filme "
+                                  "veio errada. Ctrl+clique escolhe vários da mesma série.", "aviso")
+            return
+        if not o.chave_tmdb:
+            self.mostrar_mensagem("Escolher no TMDB", "Preencha a chave da API do TMDB (aba Jellyfin, \"Nomes e "
+                                  "metadados\") para ver as opções.", "aviso")
+            return
+        tipo = "serie" if o.modo == "series" else "filme"
+        primeiro = movimentos[0].origem
+        regra = regra_para(primeiro, self.regras_de_nome(), tipo)
+        if tipo == "serie":
+            ep = episodio_do_video(primeiro)
+            termo = ep.serie if ep else (serie_da_pasta(primeiro.parent.name) or ("",))[0]
+        else:
+            termo = extrair_titulo_e_ano(primeiro.name).titulo
+        termo = (regra.titulo if regra else "") or termo
+        if not termo:
+            self.mostrar_mensagem("Escolher no TMDB", "Não achei um nome para procurar: use \"Corrigir nome...\".",
+                                  "aviso")
+            return
+        alvos = list(dict.fromkeys(m.origem.parent if tipo == "serie" else m.origem for m in movimentos))
+        atual = getattr(movimentos[0].filme, "tmdb_id", None)
+
+        def tarefa():
+            try:
+                opcoes = CatalogoTMDB(o.chave_tmdb).opcoes(termo, tipo)
+            except ErroCatalogo as erro:
+                self.fila.put(("msg", ("Escolher no TMDB", f"Não deu para consultar o TMDB: {erro}", "erro")))
+                return
+            self.fila.put(("tmdb_opcoes", (opcoes, alvos, tipo, termo, atual, regra.temporada if regra else None)))
+            self.fila.put(("status_fim", f"TMDB: {len(opcoes)} opção(ões) para \"{termo}\"."))
+
+        self._rodar(f"Procurando \"{termo}\" no TMDB...", tarefa)
+
+    def _escolher_opcao_tmdb(self, opcoes, alvos, tipo, termo, atual, temporada) -> None:
+        if not opcoes:
+            self.mostrar_mensagem("Escolher no TMDB", f"O TMDB não achou nada com \"{termo}\". Use \"Corrigir "
+                                  "nome...\" e escreva o nome certo.", "aviso")
+            return
+        itens = []
+        for op in opcoes:
+            original = f"  ·  original: {op['original']}" if op["original"] and op["original"] != op["titulo"] else ""
+            itens.append(f"{op['titulo']} ({op['ano']}){original}" + ("   ← a de agora" if op["tmdb_id"] == atual
+                                                                       else "")
+                         + (f"   —   {op['resumo'][:70]}…" if op["resumo"] else ""))
+        marcado = next((n for n, op in enumerate(opcoes) if op["tmdb_id"] == atual), None)
+        onde = "\n".join(str(a) for a in alvos[:2]) + (f"\n… e mais {len(alvos) - 2}" if len(alvos) > 2 else "")
+        n = self.escolher_da_lista(
+            "Escolher no TMDB", f"\"{termo}\": {len(opcoes)} opção(ões) no TMDB. Escolha a certa pelo ano e pelo "
+            f"resumo; o programa lembra a escolha para:\n{onde}", itens, "Usar esta", marcado)
+        if n is None:
+            return
+        escolhida = opcoes[n]
+        for alvo in alvos:
+            nova = RegraNome(str(alvo), tipo, escolhida["titulo"], escolhida["ano"], temporada if tipo == "serie" else None)
+            adicionar_regra(self.arquivo_regras, nova)
+            self._log.info("Escolhido no TMDB: %s -> %s (id %s)", alvo, nova.descricao(), escolhida["tmdb_id"])
+        self.ao_previsualizar()
+
     def ao_nao_identificados(self) -> None:
         """Os não identificados da prévia juntos por pasta; um "Corrigir nome" por pasta resolve o grupo todo."""
         grupos = agrupar_nao_identificados(self._movimentos_previa)
@@ -1834,7 +1911,25 @@ class AppModerna(TVAoVivo, JanelaModerna):
             str(m.destino.parent) if m.destino else "", m.destino.name if m.destino else "(fica onde está)",
             extras)
 
+    def _lembrar_desmarcados(self) -> set:
+        """Os ☐ de agora (pelo caminho do arquivo) + os lembrados de antes que nem apareceram nesta lista.
+        Um que você marcou de novo (☑) é esquecido."""
+        anteriores = getattr(self, "_desmarcados_lembrados", set())
+        previa = getattr(self, "_movimentos_previa", [])
+        # só as linhas "vai mover" que estão na tabela (com o Relatório na tela, por exemplo, não há nenhuma)
+        na_tela = {previa[int(i)].origem for i in self._ordem_jf
+                   if self._categoria_jf.get(i) == "mover" and int(i) < len(previa)}
+        agora = {previa[int(i)].origem for i in self.nao_mover_jf() if int(i) < len(previa)}
+        self._desmarcados_lembrados = (anteriores - na_tela) | agora
+        return self._desmarcados_lembrados
+
+    def limpar_tabela_jf(self) -> None:
+        if getattr(self, "_movimentos_previa", None) is not None and hasattr(self, "_ordem_jf"):
+            self._lembrar_desmarcados()               # trocar de modo, Relatório...: os ☐ não se perdem
+        super().limpar_tabela_jf()
+
     def _mostrar_movimentos(self, movimentos) -> None:
+        lembrados = self._lembrar_desmarcados()       # Pré-visualizar de novo não volta tudo para ☑
         self._movimentos_previa = list(movimentos)
         self.limpar_tabela_jf()
         for i, m in enumerate(movimentos):
@@ -1852,6 +1947,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             progresso = "" if m.status in ("simulado", "limpeza") else "—"      # "—": não vai mexer
             self.adicionar_linha_jf(str(i), i + 1, texto, cor, m.origem.name, novo, "", progresso,
                                     categoria=CATEGORIA.get(m.status), fonte=self._texto_fonte(m))
+        if lembrados:
+            self.marcar_mover_jf([str(i) for i, m in enumerate(movimentos) if m.origem in lembrados], False)
 
     def _texto_fonte(self, m) -> str:
         """Coluna 'Nome via'. Com o TMDB ligado: 'TMDB ✓' (identificou) ou 'TMDB ✕ (catálogo/arquivo)'.
@@ -1970,6 +2067,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             itens.append((f"Jellyfin: {jellyfin[6:][:60]}", False))
         else:
             itens.append(("Jellyfin" + (" (conectado)" if jellyfin == "ok" else ""), True))
+        if item_tv := self.item_saude_tv():
+            itens.append(item_tv)
         itens.append(("● Vigia ligada" if self.var_jf_vigiar.get() else "○ Vigia desligada", None))
         if atualizacao.pode_instalar_sozinho():
             fixo = instalacao.esta_na_pasta_fixa(atualizacao.pasta_do_programa())
@@ -1986,6 +2085,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.definir_saude(self.itens_saude())
         except tk.TclError:
             return
+        self.conferir_saude_tv()                      # a cada 30 min, em segundo plano
+        if not os.environ.get("VIDEOSCRAPER_SEM_ATUALIZACAO"):
+            self.conferencia_semanal_tv()             # opção "Conferir sozinho toda semana" (TV ao vivo)
         self.after(15_000, self._ciclo_saude)
 
     # ================================================================== lixeira (.organizador\removidos)

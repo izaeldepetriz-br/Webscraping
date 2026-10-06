@@ -556,6 +556,18 @@ class ClienteTV:
     def plugins(self) -> list[dict]:
         return self._pedir("GET", "/Plugins") or []
 
+    def estado(self) -> dict:
+        """O mínimo para o painel de saúde (3 pedidos pequenos): serviços, plugins e o total de canais."""
+        d: dict = {}
+        for chave, consulta in (("info", lambda: self._pedir("GET", "/LiveTv/Info") or {}),
+                                ("canais", lambda: self._pedir("GET", "/LiveTv/Channels", params={"Limit": 0}) or {}),
+                                ("plugins", self.plugins)):
+            try:
+                d[chave] = consulta()
+            except ErroJellyfin as erro:
+                d[chave] = {"erro": str(erro)}
+        return d
+
     def desativar_plugin(self, plugin: dict) -> None:
         """Desativa (não apaga) o plugin. Vale depois de reiniciar o Jellyfin; volta em Painel > Plugins > Ativar."""
         self._pedir("POST", f"/Plugins/{plugin.get('Id')}/{plugin.get('Version')}/Disable")
@@ -766,9 +778,27 @@ def desativar_plugins_e_limpar(cliente: ClienteTV, plugins: list[dict], parar=No
     return feito, None
 
 
-def texto_diagnostico(d: dict, nomes_da_lista: set[str] = frozenset()) -> str:
-    """O diagnóstico em texto (para mostrar e para a pessoa copiar e mandar)."""
-    linhas = []
+def resumo_tv(d: dict, na_lista: int) -> tuple[bool | None, str]:
+    """(tudo certo?, texto curto) a partir do diagnostico()/estado(). None = não deu para saber.
+    Certo = sem plugin de TV ativo além do Jellyfin e o total de canais perto do da lista."""
+    canais = d.get("canais") or {}
+    if "erro" in canais or canais.get("TotalRecordCount") is None:
+        return None, "não deu para ler os canais do Jellyfin"
+    total = int(canais["TotalRecordCount"])
+    plugins, sem_plugin = plugins_de_tv(d)
+    if plugins or sem_plugin:
+        nomes = [str(p.get("Name")) for p in plugins] + sem_plugin
+        return False, f"plugin de TV ativo ({', '.join(nomes)}): pode impedir a limpeza"
+    if na_lista and total > na_lista + max(10, na_lista // 10):
+        return False, f"{total} canais no Jellyfin, a lista tem {na_lista}"
+    return True, f"{total} canais" + (" (os da sua lista)" if na_lista else "")
+
+
+def texto_diagnostico(d: dict, nomes_da_lista: set[str] = frozenset(), na_lista: int | None = None) -> str:
+    """O diagnóstico em texto (para mostrar e para a pessoa copiar e mandar). Começa pelo resumo:
+    "✓ Tudo certo" ou "⚠ ..." (na_lista: quantos canais a lista tem; padrão = quantos nomes)."""
+    ok, resumo = resumo_tv(d, len(nomes_da_lista) if na_lista is None else na_lista)
+    linhas = ["✓ Tudo certo: " + resumo if ok else f"⚠ Atenção: {resumo}" if ok is False else f"? {resumo}"]
     info, cfg, canais = d.get("info") or {}, d.get("config") or {}, d.get("canais") or {}
     servicos = info.get("Services") or []
     linhas.append(f"Serviços de TV ao vivo: {len(servicos)}")
@@ -788,7 +818,8 @@ def texto_diagnostico(d: dict, nomes_da_lista: set[str] = frozenset()) -> str:
         da_lista = sum(1 for c in itens if c.get("Name") in nomes_da_lista)
         linhas.append(f"Canais no Jellyfin: {canais.get('TotalRecordCount')} (amostra de {len(itens)}: {da_lista} são "
                       "da sua lista)")
-        linhas += [f"  • {c.get('Name')}  [serviço: {c.get('ServiceName') or '?'}]" for c in itens[:10]]
+        linhas += [f"  • {c.get('Name')}" + (f"  [serviço: {c['ServiceName']}]" if c.get("ServiceName") else "")
+                   for c in itens[:10]]
     tarefa = next((t for t in (d.get("tarefas") if isinstance(d.get("tarefas"), list) else [])
                    if t.get("Key") == "RefreshGuide"), None)
     if tarefa:

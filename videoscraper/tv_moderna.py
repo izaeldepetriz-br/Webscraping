@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
 from dataclasses import asdict
+from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog
 
+from jellyfin_tools.notificacoes import Notificador
 from jellyfin_tools.paralelo import prioridade_baixa
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin
 from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, Canal, ClienteTV, NaoEhLista, carregar_canais, carregar_historico,
@@ -19,7 +23,7 @@ from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, Canal, ClienteTV, NaoEhLista
                                        descrever_sintonizador, plugins_de_tv,
                                        importar as importar_canais, limpar_e_reenviar,
                                        publicar as publicar_canais, registrar_no_historico, resumo_historico,
-                                       salvar_canais, salvar_historico, sempre_falha, texto_diagnostico)
+                                       resumo_tv, salvar_canais, salvar_historico, sempre_falha, texto_diagnostico)
 
 from . import config
 from .gui_moderna import DialogoCanal, JanelaCanais, LinhaCanal
@@ -32,6 +36,12 @@ class TVAoVivo:
         self.janela_canais = None               # "TV ao vivo..."
         self._canais, self._situacao_canais = [], {}
         self._historico_canais = None           # {link: [no ar nas últimas conferências]} (lido na 1ª vez)
+        self._saude_tv = None                   # (tudo certo?, texto) da última consulta ao Jellyfin
+        self._saude_tv_quando = 0.0             # time.monotonic() da última consulta (0 = consultar logo)
+        self._saude_tv_rodando = False
+        self._semanal_rodando = False           # conferência semanal dos canais em andamento
+        self._semanal_visto = 0.0               # time.monotonic() da última vez que olhou se estava na hora
+        self._semanal_resultado = None          # (conferidos, fora do ar, sempre falham) da última semanal
 
     def _receber_conferencia_canais(self, situacoes) -> None:
         """Chegou o resultado de uma conferência (na thread da janela): situação, histórico e a tabela."""
@@ -69,7 +79,7 @@ class TVAoVivo:
                 "importar_endereco": self._importar_canais_endereco, "remover": self._remover_canais,
                 "remover_todos": self._remover_todos_canais, "conferir": self._conferir_canais,
                 "publicar": self._publicar_canais, "editar": self._editar_canal, "numerar": self._numerar_canais,
-                "diagnostico": self.ao_diagnostico_tv,
+                "diagnostico": self.ao_diagnostico_tv, "semanal": self._guardar_opcoes_tv,
                 "desfazer": self._desfazer_remocao_canais})
             dados = config.carregar().get("tv", {})
             dados.setdefault("pasta", str(config.ARQUIVO.parent / "tv"))
@@ -379,11 +389,133 @@ class TVAoVivo:
                                                             o.jellyfin_api_key)))
             for linha in feito:
                 self._log.info("TV ao vivo: %s", linha)
+            self._saude_tv_quando = 0.0                   # o painel de saúde confere de novo
             dica = "" if cliente else ("\n\nSem o endereço e a chave do Jellyfin (aba Jellyfin), a lista só foi salva: "
                                        "cadastre-a em Painel > TV ao vivo > Sintonizadores > M3U.")
             self.fila.put(("msg", ("TV ao vivo", "\n".join(feito) + dica, "sucesso")))
 
         self._rodar("Enviando os canais ao Jellyfin (e esperando ele atualizar o guia)...", tarefa)
+
+    INTERVALO_SAUDE_TV = 30 * 60               # segundos entre uma consulta e outra (são 3 pedidos pequenos)
+
+    def item_saude_tv(self):
+        """("TV: 144 canais", True) para o painel de saúde; None se não há lista ou ainda não consultou.
+        Com canais que sempre falham (conferência semanal), fica laranja até você tirá-los."""
+        if not self._saude_tv and not self._semanal_resultado:
+            return None
+        ok, texto = self._saude_tv or (True, "")
+        if self._semanal_resultado and self._semanal_resultado[2]:
+            texto = (texto + " · " if texto else "") + f"{self._semanal_resultado[2]} sempre falham"
+            ok = False if ok is not None else ok
+        return f"TV: {texto}", ok
+
+    # ---- conferência semanal (opção na janela TV ao vivo)
+    DIAS_ENTRE_CONFERENCIAS = 7
+    OLHAR_A_CADA = 10 * 60                     # segundos: de quanto em quanto tempo vê se já está na hora
+
+    def conferencia_semanal_tv(self, agora: datetime | None = None, relogio: float | None = None) -> bool:
+        """Se a opção está ligada e a última foi há 7 dias ou mais: confere TODOS os canais em segundo plano,
+        devagar ("Leve" e prioridade baixa), sem travar a janela nem as outras tarefas. True = começou."""
+        relogio = time.monotonic() if relogio is None else relogio
+        if self._semanal_rodando or (self._semanal_visto and relogio - self._semanal_visto < self.OLHAR_A_CADA):
+            return False
+        self._semanal_visto = relogio
+        tudo = config.carregar()
+        if not tudo.get("tv", {}).get("semanal"):
+            return False
+        agora = agora or datetime.now()
+        quando = tudo.get("tv_semanal", {}).get("quando")
+        try:
+            if quando and agora - datetime.fromisoformat(quando) < timedelta(days=self.DIAS_ENTRE_CONFERENCIAS):
+                return False
+        except ValueError:
+            pass
+        try:
+            canais = list(self._canais) or carregar_canais(self.arquivo_canais)
+        except (OSError, ValueError):
+            canais = []
+        if not canais:
+            return False
+        self._semanal_rodando = True
+        tudo.setdefault("tv_semanal", {})["quando"] = agora.isoformat(timespec="seconds")
+        config.salvar(tudo)
+        self._log.info("TV ao vivo: conferência semanal de %d canais (em segundo plano)", len(canais))
+
+        def conferir():
+            try:
+                with prioridade_baixa():
+                    situacoes = conferir_canais(canais, VELOCIDADES["Leve"])
+                self._registrar_canais(situacoes)
+                self.fila.put(("tv_semanal", situacoes))
+            finally:
+                self._semanal_rodando = False
+        threading.Thread(target=conferir, daemon=True, name="tv-semanal").start()
+        return True
+
+    def _fim_conferencia_semanal(self, situacoes) -> None:
+        """Chegou a semanal: guarda no histórico, mostra no painel de saúde e avisa (Discord/Telegram e, com
+        a janela aberta, uma pergunta) os que falharam em TODAS as últimas conferências."""
+        self._receber_conferencia_canais(situacoes)
+        historico = self.historico_canais
+        canais = self._canais or carregar_canais(self.arquivo_canais)
+        ruins = [c for c in canais if sempre_falha(historico.get(c.url, []))]
+        fora = sum(1 for _, sit in situacoes if not sit.ok)
+        self._semanal_resultado = (len(situacoes), fora, len(ruins))
+        resumo = (f"TV ao vivo, conferência semanal: {len(situacoes) - fora} no ar, {fora} fora do ar"
+                  + (f", {len(ruins)} sempre falham" if ruins else "") + ".")
+        self._log.info("%s", resumo)
+        if ruins:
+            o = self.obter_opcoes_jellyfin()
+            notificador = Notificador(o.discord_webhook, o.telegram_token, o.telegram_chat_id)
+            if notificador.ativo:
+                nomes = ", ".join(c.nome for c in ruins[:10]) + (f" e mais {len(ruins) - 10}" if len(ruins) > 10 else "")
+                threading.Thread(target=notificador.enviar, daemon=True, kwargs={
+                    "discord": f"📺 **{resumo}** Sempre falham: {nomes}",
+                    "telegram": f"📺 <b>{resumo}</b> Sempre falham: {nomes}"}).start()
+            self._oferecer_canais_ruins(len(ruins), resumo)
+
+    def _oferecer_canais_ruins(self, quantos: int, resumo: str) -> None:
+        if self.trabalhando:                          # não interrompe uma tarefa: pergunta depois
+            self.after(60_000, lambda: self._oferecer_canais_ruins(quantos, resumo))
+            return
+        if self.state() in ("withdrawn", "iconic"):   # minimizado na bandeja: fica no painel de saúde e no log
+            return
+        escolha = self.escolher(
+            "TV ao vivo: conferência semanal",
+            f"{resumo}\n\n{quantos} canal(is) falharam em TODAS as últimas conferências: provavelmente saíram do "
+            "ar de vez. Quer ver e decidir se remove? (Um canal que funciona só em alguns horários não entra "
+            "nessa conta.)", ("Abrir e selecionar os que sempre falham",), cancelar="Depois")
+        if escolha:
+            self.ao_tv_ao_vivo()
+            self.janela_canais.selecionar_mortos()
+
+    def conferir_saude_tv(self, agora: float | None = None) -> bool:
+        """Consulta o Jellyfin em segundo plano (sem travar nada) a cada INTERVALO_SAUDE_TV. True = disparou."""
+        import threading
+        import time
+        agora = time.monotonic() if agora is None else agora
+        if self._saude_tv_rodando or (self._saude_tv_quando and agora - self._saude_tv_quando < self.INTERVALO_SAUDE_TV):
+            return False
+        url, chave = self.var_jf_url.get().strip(), self.var_jf_chave_jellyfin.get().strip()
+        try:
+            na_lista = len(self._canais) or len(carregar_canais(self.arquivo_canais))
+        except (OSError, ValueError):
+            na_lista = 0
+        if not (url and chave and na_lista):
+            return False                              # sem Jellyfin ou sem lista: nada a mostrar
+        self._saude_tv_rodando, self._saude_tv_quando = True, agora
+
+        def consultar():
+            try:
+                self._saude_tv = resumo_tv(ClienteTV(url, chave, timeout=15).estado(), na_lista)
+            except ErroJellyfin as erro:
+                self._saude_tv = (None, f"sem resposta ({str(erro)[:40]})")
+            finally:
+                self._saude_tv_rodando = False
+            if self._saude_tv[0] is False:
+                self._log.warning("TV ao vivo (painel de saúde): %s", self._saude_tv[1])
+        threading.Thread(target=consultar, daemon=True, name="saude-tv").start()
+        return True
 
     def _oferecer_tirar_sintonizadores(self, outros: list[dict], url: str, chave: str) -> None:
         """Depois do envio: o Jellyfin tem sintonizadores que não são desta lista (ex.: uma lista grande cadastrada
@@ -441,8 +573,9 @@ class TVAoVivo:
             if total is not None and total > enviados + max(10, enviados // 10):
                 # nem sem a lista os canais saíram: vêm de outra fonte, ou o Jellyfin não está limpando
                 d = cliente.diagnostico()
-                self.fila.put(("tv_diagnostico", ("\n".join(feito), texto_diagnostico(d, enviados_nomes),
-                                                  plugins_de_tv(d)[0], url, chave)))
+                self._saude_tv = resumo_tv(d, enviados)
+                self.fila.put(("tv_diagnostico", ("\n".join(feito), texto_diagnostico(d, enviados_nomes, enviados),
+                                                  plugins_de_tv(d)[0], url, chave, self._saude_tv[0])))
             else:
                 self.fila.put(("msg", ("TV ao vivo", "\n".join(feito) or "Pronto.", "sucesso")))
 
@@ -454,19 +587,24 @@ class TVAoVivo:
         if not (o.jellyfin_url and o.jellyfin_api_key):
             self.mostrar_mensagem("TV ao vivo", "Preencha o endereço e a chave de API do Jellyfin (aba Jellyfin).", "aviso")
             return
-        nomes = {c.nome for c in self._canais}
+        nomes, na_lista = {c.nome for c in self._canais}, len(self._canais)
 
         def tarefa():
             d = ClienteTV(o.jellyfin_url, o.jellyfin_api_key).diagnostico()
-            texto = texto_diagnostico(d, nomes)
+            texto = texto_diagnostico(d, nomes, na_lista)
+            self._saude_tv = resumo_tv(d, na_lista)
             self._log.info("TV ao vivo, diagnóstico:\n%s", texto)
-            self.fila.put(("tv_diagnostico", ("", texto, plugins_de_tv(d)[0], o.jellyfin_url, o.jellyfin_api_key)))
+            self.fila.put(("tv_diagnostico", ("", texto, plugins_de_tv(d)[0], o.jellyfin_url, o.jellyfin_api_key,
+                                              self._saude_tv[0])))
 
         self._rodar("Consultando o Jellyfin (diagnóstico da TV ao vivo)...", tarefa)
 
     def _mostrar_diagnostico_tv(self, antes: str, texto: str, plugins: list[dict] = (), url: str = "",
-                                chave: str = "") -> None:
-        if plugins:
+                                chave: str = "", ok: bool | None = None) -> None:
+        if ok:                                      # tudo certo: sem o texto de "se os canais não são da lista..."
+            explicacao = ""
+            opcoes = ("Copiar o diagnóstico",)
+        elif plugins:
             nomes = " e ".join(str(p.get("Name")) for p in plugins)
             explicacao = (
                 f"\n\nPROVÁVEL CAUSA: os plugins {nomes} estão instalados. Se um deles não está configurado (ou o "

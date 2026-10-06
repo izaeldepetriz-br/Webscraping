@@ -533,3 +533,26 @@ def test_esperar_voltar_desiste_se_o_jellyfin_nao_volta(api_falsa):
     assert not cliente.esperar_voltar(60, dormir=lambda s: relogio.__setitem__(0, relogio[0] + s),
                                       agora=lambda: relogio[0])
     assert relogio[0] >= 60
+
+
+def test_resumo_tv_tudo_certo_ou_atencao():
+    from jellyfin_tools.tv_ao_vivo import resumo_tv, texto_diagnostico
+    certo = {"info": {"Services": [{"Name": "Emby", "Status": "Ok"}]}, "plugins": [],
+             "canais": {"TotalRecordCount": 144, "Items": [{"Name": "ADB TV (1080p)"}]}}
+    assert resumo_tv(certo, 144) == (True, "144 canais (os da sua lista)")
+    assert texto_diagnostico(certo, {"ADB TV (1080p)"}, 144).startswith("✓ Tudo certo: 144 canais")
+    assert resumo_tv(DIAGNOSTICO_REAL, 144)[0] is False and "NextPVR" in resumo_tv(DIAGNOSTICO_REAL, 144)[1]
+    a_mais = {**certo, "canais": {"TotalRecordCount": 11129}}
+    assert resumo_tv(a_mais, 144) == (False, "11129 canais no Jellyfin, a lista tem 144")
+    assert texto_diagnostico(a_mais, set(), 144).startswith("⚠ Atenção: 11129 canais")
+    assert resumo_tv({**certo, "canais": {"erro": "HTTP 500"}}, 144)[0] is None
+    assert resumo_tv({**certo, "canais": {"TotalRecordCount": 150}}, 144)[0] is True      # folga pequena
+
+
+def test_estado_leve_para_o_painel(api_falsa):
+    api_falsa.rotas["/LiveTv/Info"] = lambda q: (200, {"Services": [{"Name": "Emby"}]})
+    api_falsa.rotas["/LiveTv/Channels"] = lambda q: (200, {"Items": [], "TotalRecordCount": 144})
+    api_falsa.rotas["/Plugins"] = lambda q: (200, [])
+    d = ClienteTV(api_falsa.base, "chave").estado()
+    assert d["canais"]["TotalRecordCount"] == 144
+    assert [p["query"].get("Limit") for p in api_falsa.pedidos if p["caminho"] == "/LiveTv/Channels"] == [["0"]]

@@ -348,6 +348,28 @@ class CatalogoTMDB(Catalogo):
             return
         em_paralelo(faltam, lambda t: self._episodios_da_temporada(*t), self.TRABALHADORES, ao_progresso, parar)
 
+    def opcoes(self, titulo: str, tipo: str = "serie", limite: int = 15) -> list[dict]:
+        """Os resultados da busca (para a pessoa ESCOLHER quando há vários com o mesmo nome, ex.: 'Tom and
+        Jerry' de 1940, 2014 e 2023): [{titulo, original, ano, tmdb_id, resumo}], os de nome mais parecido
+        primeiro."""
+        if not titulo:
+            return []
+        k_titulo, k_original, k_data = (("title", "original_title", "release_date") if tipo == "filme"
+                                        else ("name", "original_name", "first_air_date"))
+        achados = []
+        for r in self._pesquisar(titulo, None, tipo):
+            data = r.get(k_data) or ""
+            nome = r.get(k_titulo) or r.get(k_original, "")
+            if len(data) < 4 or not data[:4].isdigit() or not nome:
+                continue
+            filme = Filme(titulo=nome, ano=int(data[:4]), titulo_original=r.get(k_original, ""),
+                          tmdb_id=r.get("id"), tipo=tipo, fonte="TMDB")
+            achados.append((round(_pontuar(filme, titulo, None), 2), {
+                "titulo": nome, "original": r.get(k_original, ""), "ano": int(data[:4]), "tmdb_id": r.get("id"),
+                "resumo": " ".join(str(r.get("overview") or "").split())[:140]}))
+        achados.sort(key=lambda na: -na[0])                     # estável: empate fica na ordem do TMDB
+        return [o for _, o in achados[:limite]]
+
     def buscar_serie_da_epoca(self, titulo: str, ano_episodio: int) -> Filme | None:
         if not titulo:
             return None
