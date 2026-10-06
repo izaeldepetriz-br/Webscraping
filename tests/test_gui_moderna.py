@@ -1855,6 +1855,65 @@ def test_tv_editar_canal_com_duplo_clique(app, monkeypatch):
     assert ler_m3u(gerar_m3u(app._canais))[0].numero == "2"                 # o número vai no tvg-chno
 
 
+
+def test_tv_botao_editar_um_ou_varios_canais(app, monkeypatch):
+    from jellyfin_tools.tv_ao_vivo import Canal
+    janela = _abrir_tv(app, [Canal("Cultura", "https://a.org/1", "Abertos"), Canal("Band", "https://a.org/2", "Abertos"),
+                             Canal("CNN", "https://a.org/3", "Notícias", idioma="English")])
+    janela.tabela.selection_set([])
+    janela.bt_editar.invoke()                                          # nada selecionado: explica
+    assert "Selecione na lista" in app.caixas[-1][2]
+    pedidos = []
+    monkeypatch.setattr(app, "_pedir_dados_canal", lambda dados, *a, **k: (pedidos.append((dados, a)), {
+        **dados, "nome": "TV Cultura", "url": "https://novo.org/1"})[1])
+    janela.tabela.selection_set(["0"])
+    janela.bt_editar.invoke()                                          # um: o diálogo completo
+    assert pedidos[-1][0]["nome"] == "Cultura" and pedidos[-1][1] == ()
+    assert app._canais[0].nome == "TV Cultura" and app._canais[0].url == "https://novo.org/1"
+    monkeypatch.setattr(app, "_pedir_dados_canal", lambda dados, *a, **k: (pedidos.append((dados, a)), {
+        "grupo": "Religiosos", "idioma": "pt"})[1])
+    janela.tabela.selection_set(["0", "1", "2"])
+    janela.bt_editar.invoke()                                          # vários: só grupo e idioma
+    dados, extras = pedidos[-1]
+    assert dados == {"grupo": "", "idioma": ""} and extras[1] == ("grupo", "idioma")
+    assert [(c.grupo, c.idioma) for c in app._canais] == [("Religiosos", "Português")] * 3
+    assert [c.nome for c in app._canais] == ["TV Cultura", "Band", "CNN"]  # nome e link não mudam
+    monkeypatch.setattr(app, "_pedir_dados_canal", lambda dados, *a, **k: {"grupo": "", "idioma": "English"})
+    janela.tabela.selection_set(["1", "2"])
+    janela.bt_editar.invoke()                                          # campo vazio = fica como está
+    assert [(c.grupo, c.idioma) for c in app._canais[1:]] == [("Religiosos", "English")] * 2
+    from videoscraper.gui_moderna import DialogoCanal
+    dialogo = DialogoCanal(janela, {"grupo": "X"}, "Editar 2 canais", ("grupo", "idioma"), "vale para todos")
+    assert set(dialogo.vars) == {"grupo", "idioma"}
+    dialogo._salvar()
+    assert dialogo.resultado == {"grupo": "X", "idioma": ""}
+
+
+def test_tv_programacao_monta_o_channels_xml_e_liga_o_coletor(app, monkeypatch, tmp_path):
+    from jellyfin_tools import epg_iptv
+    from jellyfin_tools.tv_ao_vivo import Canal
+    janela = _abrir_tv(app, [Canal("Agro Mais", "https://a.org/1", id_guia="AgroMais.br"),
+                             Canal("Nenhum", "https://a.org/2", idioma="Português")])
+    janela.var_pasta.set(str(tmp_path / "TV"))
+    janela.var_guia.set("https://outro.org/epg.xml")
+    mapa = [{"channel": "AgroMais.br", "feed": None, "site": "mi.tv", "site_id": "br#agromais",
+             "site_name": "AgroMais", "lang": "pt"}]
+    monkeypatch.setattr(epg_iptv, "baixar_mapa", lambda cache: mapa)
+    monkeypatch.setattr(epg_iptv, "achar_docker", lambda: "docker")
+    iniciados = []
+    monkeypatch.setattr(epg_iptv, "iniciar_container", lambda arquivo: iniciados.append(arquivo))
+    textos = []
+    app.escolher = lambda t, m, opcoes, **k: (textos.append(m), opcoes[0])[1]   # "Iniciar o coletor no Docker"
+    janela.bt_programacao.invoke()
+    esperar(app)
+    esperar(app)
+    assert "1 de 2 canal(is) têm programação" in textos[0] and "Nenhum" in textos[0]
+    arquivo = tmp_path / "TV" / "channels.xml"
+    assert 'site_id="br#agromais"' in arquivo.read_text(encoding="utf-8")
+    assert iniciados == [str(arquivo)]
+    assert janela.var_guia.get() == "http://localhost:3000/guide.xml; https://outro.org/epg.xml"
+    assert "coletor está rodando" in app.caixas[-1][2]
+
 def test_tv_numerar_em_ordem(app):
     from jellyfin_tools.tv_ao_vivo import Canal
     janela = _abrir_tv(app, [Canal(f"C{n}", f"https://a.org/{n}") for n in range(4)])

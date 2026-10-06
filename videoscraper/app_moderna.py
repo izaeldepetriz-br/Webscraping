@@ -596,6 +596,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._juntar_canais(dado)
         elif tipo == "canais_conferidos":
             self._receber_conferencia_canais(dado)
+        elif tipo == "tv_programacao":
+            self._tv_programacao_pendente = dado            # pergunta depois do "fim"
+        elif tipo == "tv_coletor_iniciado":
+            self._tv_coletor_pendente = dado
         elif tipo == "tv_semanal":                     # conferência semanal dos canais (segundo plano)
             self._fim_conferencia_semanal(dado)
         elif tipo == "bandeja":                        # clique no ícone perto do relógio
@@ -673,6 +677,12 @@ class AppModerna(TVAoVivo, JanelaModerna):
             if getattr(self, "_tv_canais_a_mais_pendente", None):
                 a_mais, self._tv_canais_a_mais_pendente = self._tv_canais_a_mais_pendente, None
                 self.after(50, lambda: self._oferecer_limpar_tv(*a_mais))
+            if getattr(self, "_tv_programacao_pendente", None):
+                prog, self._tv_programacao_pendente = self._tv_programacao_pendente, None
+                self.after(50, lambda: self._oferecer_programacao(*prog))
+            if getattr(self, "_tv_coletor_pendente", None):
+                arq, self._tv_coletor_pendente = self._tv_coletor_pendente, None
+                self.after(50, lambda: self._coletor_iniciado(arq))
             if self._tv_outros_pendente:
                 outros, self._tv_outros_pendente = self._tv_outros_pendente, None
                 self.after(50, lambda: self._oferecer_tirar_sintonizadores(*outros))

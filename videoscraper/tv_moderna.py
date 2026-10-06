@@ -80,7 +80,9 @@ class TVAoVivo:
                 "importar_endereco": self._importar_canais_endereco, "remover": self._remover_canais,
                 "remover_todos": self._remover_todos_canais, "conferir": self._conferir_canais,
                 "publicar": self._publicar_canais, "editar": self._editar_canal, "numerar": self._numerar_canais,
+                "editar_selecionados": self._editar_selecionados,
                 "diagnostico": self.ao_diagnostico_tv, "semanal": self._guardar_opcoes_tv,
+                "programacao": self.ao_programacao_tv,
                 "desfazer": self._desfazer_remocao_canais})
             dados = config.carregar().get("tv", {})
             dados.setdefault("pasta", str(config.ARQUIVO.parent / "tv"))
@@ -257,10 +259,42 @@ class TVAoVivo:
             self.historico_canais.pop(atual.url, None)
         self._guardar_canais()
 
-    def _pedir_dados_canal(self, dados: dict) -> dict | None:
-        dialogo = DialogoCanal(self.janela_canais or self, dados)
+    def _pedir_dados_canal(self, dados: dict, titulo: str = "Editar canal", campos=None,
+                           aviso: str = "") -> dict | None:
+        dialogo = DialogoCanal(self.janela_canais or self, dados, titulo, campos, aviso)
         self.wait_window(dialogo)
         return dialogo.resultado
+
+    def _editar_selecionados(self) -> None:
+        """Botão "Editar selecionados...": um canal = tudo (nome, grupo, link...); vários = o grupo e o idioma
+        de todos de uma vez (campo vazio = fica como está)."""
+        janela = self.janela_canais
+        escolhidos = list(janela.tabela.selection()) if janela is not None and janela.winfo_exists() else []
+        indices = sorted(int(i) for i in escolhidos if i.isdigit() and int(i) < len(self._canais))
+        if not indices:
+            self.mostrar_mensagem("TV ao vivo", "Selecione na lista o canal que quer corrigir (ou vários, para "
+                                  "mudar o grupo ou o idioma de todos de uma vez).", "info")
+            return
+        if len(indices) == 1:
+            self._editar_canal(str(indices[0]))
+            return
+        canais = [self._canais[i] for i in indices]
+        comum = {campo: (valores.pop() if len(valores := {getattr(c, campo) for c in canais}) == 1 else "")
+                 for campo in ("grupo", "idioma")}
+        novo = self._pedir_dados_canal(
+            comum, f"Editar {len(indices)} canais", ("grupo", "idioma"),
+            "O que você escrever vale para TODOS os canais selecionados. Campo vazio = fica como está em cada um. "
+            "Nome e link são de cada canal: para eles, edite um por vez.")
+        if not novo:
+            return
+        mudar = {k: (nome_do_idioma(v) if k == "idioma" else v) for k, v in novo.items()
+                 if k in ("grupo", "idioma") and v.strip()}
+        if not mudar:
+            return
+        for i in indices:
+            self._canais[i] = Canal(**{**asdict(self._canais[i]), **mudar})
+        self._guardar_canais()
+        janela.tabela.selection_set([str(i) for i in indices if janela.tabela.exists(str(i))])
 
     def _numerar_canais(self) -> None:
         """Número de cada canal no Jellyfin (tvg-chno): 1, 2, 3... na ordem da lista. Com canais selecionados,
@@ -381,8 +415,12 @@ class TVAoVivo:
 
         def tarefa():
             cliente = ClienteTV(o.jellyfin_url, o.jellyfin_api_key) if o.jellyfin_url and o.jellyfin_api_key else None
+            if linha_epg := self._atualizar_channels_xml(canais, valores["pasta"]):   # canais novos -> coletor
+                self._log.info("TV ao vivo: %s", linha_epg)
             feito = publicar_canais(canais, valores["pasta"], valores["no_servidor"], valores["guia"], cliente,
                                     valores["antena"], parar=self.evento_parar.is_set)
+            if linha_epg:
+                feito.insert(1, linha_epg)
             if cliente is not None:                       # outros sintonizadores somam canais ao total do Jellyfin
                 endereco = valores["no_servidor"].strip() or str(Path(valores["pasta"]) / "canais.m3u")
                 try:
@@ -426,6 +464,100 @@ class TVAoVivo:
             texto = (texto + " · " if texto else "") + f"{self._semanal_resultado[2]} sempre falham"
             ok = False if ok is not None else ok
         return f"TV: {texto}", ok
+
+    # ---- programação de verdade (iptv-org/epg no Docker)
+    @property
+    def arquivo_mapa_epg(self) -> Path:
+        return config.ARQUIVO.parent / "epg_mapa.json"
+
+    def ao_programacao_tv(self) -> None:
+        """Monta o channels.xml do coletor iptv-org/epg com os canais da lista e oferece ligar o coletor no
+        Docker; o endereço dele (http://localhost:3000/guide.xml) entra no campo do guia."""
+        from jellyfin_tools.epg_iptv import ErroEPG, baixar_mapa, gravar_channels_xml
+        if not self._canais:
+            self.mostrar_mensagem("Programação dos canais", "A lista de canais está vazia.", "aviso")
+            return
+        pasta = self.janela_canais.valores()["pasta"] or str(config.ARQUIVO.parent / "tv")
+        canais = list(self._canais)
+
+        def tarefa():
+            try:
+                mapa = baixar_mapa(self.arquivo_mapa_epg)
+            except ErroEPG as erro:
+                self.fila.put(("msg", ("Programação dos canais", str(erro).capitalize() + ".", "erro")))
+                return
+            arquivo, com, sem = gravar_channels_xml(canais, pasta, mapa)
+            self._log.info("Programação: %d de %d canal(is) com guia; channels.xml em %s", com, len(canais), arquivo)
+            self.fila.put(("tv_programacao", (str(arquivo), com, len(canais), [c.nome for c in sem])))
+
+        self._rodar("Procurando a programação dos canais (mapa da iptv-org)...", tarefa)
+
+    def _oferecer_programacao(self, arquivo: str, com: int, total: int, sem: list[str]) -> None:
+        from jellyfin_tools.epg_iptv import URL_GUIA_LOCAL, achar_docker, comando_docker
+        exemplos = ", ".join(sem[:8]) + (f" e mais {len(sem) - 8}" if len(sem) > 8 else "")
+        docker = achar_docker()
+        texto = (f"{com} de {total} canal(is) têm programação nos sites de guia de TV (mapa da iptv-org)."
+                 + (f"\nSem programação em nenhum site: {exemplos} (ficam com o guia de categorias)." if sem else "")
+                 + f"\n\nO coletor (iptv-org/epg) busca a programação todo dia e entrega em {URL_GUIA_LOCAL}. Ele "
+                 "roda no Docker, ligado sozinho com o Docker Desktop. A 1ª coleta leva alguns minutos (com muitos "
+                 "canais, até 1 hora); depois clique em \"Salvar e enviar ao Jellyfin\".\n\nCanais novos: a cada "
+                 "\"Salvar e enviar\" o channels.xml é refeito e eles entram na coleta seguinte.")
+        opcoes = (("Iniciar o coletor no Docker",) if docker else ()) + ("Copiar o comando do Docker",)
+        if not docker:
+            texto += "\n\nO Docker não foi encontrado: instale o Docker Desktop, abra-o e clique de novo."
+        escolha = self.escolher("Programação dos canais", texto, opcoes, cancelar="Fechar")
+        if escolha == "Copiar o comando do Docker":
+            partes = comando_docker(arquivo)
+            self.clipboard_clear()
+            self.clipboard_append(" ".join(f'"{p}"' if " " in p else p for p in partes))
+            self._incluir_guia_local()
+            self.definir_status("Comando copiado: cole no Prompt de Comando (o endereço do guia já está no campo).")
+        elif escolha == "Iniciar o coletor no Docker":
+            self._iniciar_coletor(arquivo)
+
+    def _incluir_guia_local(self) -> None:
+        from jellyfin_tools.epg_iptv import URL_GUIA_LOCAL
+        from jellyfin_tools.tv_ao_vivo import separar_guias
+        janela = self.janela_canais
+        if janela is None or not janela.winfo_exists():
+            return
+        guias = separar_guias(janela.var_guia.get())
+        if URL_GUIA_LOCAL not in guias:
+            janela.var_guia.set("; ".join([URL_GUIA_LOCAL, *guias]))      # o de verdade primeiro
+            self._guardar_opcoes_tv()
+
+    def _iniciar_coletor(self, arquivo: str) -> None:
+        from jellyfin_tools.epg_iptv import ErroEPG, iniciar_container
+
+        def tarefa():
+            try:
+                iniciar_container(arquivo)
+            except ErroEPG as erro:
+                self.fila.put(("msg", ("Programação dos canais", f"O Docker não iniciou o coletor: {erro}\n\n"
+                                       "O Docker Desktop está aberto?", "erro")))
+                return
+            self.fila.put(("tv_coletor_iniciado", arquivo))
+
+        self._rodar("Iniciando o coletor de programação no Docker (a 1ª vez baixa a imagem)...", tarefa)
+
+    def _coletor_iniciado(self, arquivo: str) -> None:
+        from jellyfin_tools.epg_iptv import URL_GUIA_LOCAL
+        self._incluir_guia_local()
+        self.mostrar_mensagem("Programação dos canais", f"Pronto: o coletor está rodando no Docker.\n\nA 1ª coleta "
+                              f"leva alguns minutos. Quando {URL_GUIA_LOCAL} abrir no navegador, clique em \"Salvar e "
+                              "enviar ao Jellyfin\" (o endereço já está no campo do guia). Daí em diante a programação "
+                              "é atualizada todo dia sozinha.", "sucesso")
+
+    def _atualizar_channels_xml(self, canais, pasta) -> str:
+        """No "Salvar e enviar": se o coletor já está montado (channels.xml existe), refaz com a lista atual."""
+        from jellyfin_tools.epg_iptv import ARQUIVO_CANAIS_EPG, ErroEPG, baixar_mapa, gravar_channels_xml
+        if not (Path(pasta) / ARQUIVO_CANAIS_EPG).is_file():
+            return ""
+        try:
+            _, com, _ = gravar_channels_xml(canais, pasta, baixar_mapa(self.arquivo_mapa_epg))
+        except (ErroEPG, OSError) as erro:
+            return f"programação: o channels.xml não foi refeito ({erro})"
+        return f"programação: channels.xml refeito ({com} de {len(canais)} canal(is) com guia)"
 
     # ---- guia de categorias: cobre 30 dias; regravado por aqui toda semana (o Jellyfin relê o arquivo sozinho)
     def renovar_guia_categorias(self, agora: float | None = None, dias: int = 7) -> bool:

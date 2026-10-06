@@ -63,18 +63,21 @@ def test_publicar_cadastra_sintonizador_guia_e_antena_sem_duplicar(tmp_path, api
     api_falsa.rotas["/LiveTv/ListingProviders"] = guia
     api_falsa.rotas["/ScheduledTasks"] = lambda q: (200, [{"Key": "RefreshGuide", "Id": "abc"}])
     api_falsa.rotas["/ScheduledTasks/Running/abc"] = lambda q: (204, b"")
+    api_falsa.rotas["/guia.xml"] = lambda q: (200, b"<tv></tv>", {"Content-Type": "application/xml"})
+    url_guia = api_falsa.base + "/guia.xml"
     canais = ler_m3u(LISTA)
     cliente = ClienteTV(api_falsa.base, "chave")
-    feito = publicar(canais, tmp_path / "TV", "E:\\TV\\canais.m3u", "https://exemplo.org/guia.xml", cliente,
+    feito = publicar(canais, tmp_path / "TV", "E:\\TV\\canais.m3u", url_guia, cliente,
                      antena="192.168.0.50")
     assert (tmp_path / "TV" / "canais.m3u").read_text(encoding="utf-8").count("#EXTINF") == 2
     assert any("sintonizador M3U -> E:\\TV\\canais.m3u" in f for f in feito)
     assert [(t["Type"], t["Url"]) for t in config["TunerHosts"]] == [("m3u", "E:\\TV\\canais.m3u"),
                                                                       ("hdhomerun", "192.168.0.50")]
-    assert [g["Path"] for g in config["ListingProviders"]] == ["https://exemplo.org/guia.xml",
+    assert [g["Path"] for g in config["ListingProviders"]] == [url_guia,
                                                                "E:\\TV\\guia_categorias.xml"]   # o de categorias por último
     assert any(p["caminho"] == "/ScheduledTasks/Running/abc" for p in api_falsa.pedidos)
-    assert all(p["headers"].get("X-Emby-Token") == "chave" for p in api_falsa.pedidos)
+    assert all(p["headers"].get("X-Emby-Token") == "chave" for p in api_falsa.pedidos
+               if p["caminho"] != "/guia.xml")
     publicar(canais, tmp_path / "TV", "E:\\TV\\canais.m3u", "", cliente)          # de novo: atualiza, não duplica
     assert len(config["TunerHosts"]) == 2
 
@@ -604,13 +607,20 @@ def test_publicar_sem_guia_cadastra_o_de_categorias_e_tira_quando_ha_guia_de_ver
     assert (tmp_path / "guia_categorias.xml").is_file()
     assert [g["Path"] for g in guias] == [r"E:\TV\guia_categorias.xml"]       # como o SERVIDOR enxerga
     assert any("1 de 2 canal(is) com" in f for f in feito)
-    feito = publicar(canais, tmp_path, caminho_no_servidor=r"E:\TV\canais.m3u",
-                     guia="https://guia/epg.xml; https://outro/epg2.xml.gz", cliente=cliente)
+    for nome in ("epg.xml", "epg2.xml.gz"):
+        api_falsa.rotas[f"/{nome}"] = lambda q: (200, b"<tv></tv>", {"Content-Type": "application/xml"})
+    um, dois = api_falsa.base + "/epg.xml", api_falsa.base + "/epg2.xml.gz"
+    feito = publicar(canais, tmp_path, caminho_no_servidor=r"E:\TV\canais.m3u", guia=f"{um}; {dois}", cliente=cliente)
     # vários guias de verdade, e o de categorias sempre POR ÚLTIMO (o Jellyfin usa o 1º que tem o canal)
-    assert [g["Path"] for g in guias] == ["https://guia/epg.xml", "https://outro/epg2.xml.gz", r"E:\TV\guia_categorias.xml"]
+    assert [g["Path"] for g in guias] == [um, dois, r"E:\TV\guia_categorias.xml"]
     assert apagados == ["g1"] and any("por último" in f for f in feito)
+    # o coletor do Docker antes da 1ª coleta (404): não é cadastrado (um guia com erro trava a limpeza)
+    feito = publicar(canais, tmp_path, caminho_no_servidor=r"E:\TV\canais.m3u",
+                     guia=api_falsa.base + "/ainda_nao.xml", cliente=cliente)
+    assert any("NÃO cadastrado agora (HTTP 404)" in f for f in feito)
+    assert api_falsa.base + "/ainda_nao.xml" not in [g["Path"] for g in guias]
     publicar([], tmp_path, caminho_no_servidor=r"E:\TV\canais.m3u", cliente=cliente)          # lista vazia: sai
-    assert [g["Path"] for g in guias] == ["https://guia/epg.xml", "https://outro/epg2.xml.gz"]
+    assert [g["Path"] for g in guias] == [um, dois]
 
 
 def test_separar_guias():

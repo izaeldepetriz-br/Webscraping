@@ -794,8 +794,9 @@ class LinhaCanal(NamedTuple):
 
 
 class DialogoCanal(ctk.CTkToplevel):
-    """Editar um canal (duplo clique na tabela): nome, número, grupo, link, logo e o ID do guia.
-    `resultado` vira um dict com os campos (None = Cancelar)."""
+    """Editar um canal (duplo clique na tabela ou o botão Editar): nome, número, grupo, link, logo e o ID do guia.
+    `campos` limita o que aparece (vários canais de uma vez: só grupo e idioma); `aviso` é um texto acima dos
+    campos. `resultado` vira um dict com os campos (None = Cancelar)."""
 
     CAMPOS = (("nome", "Nome do canal", "ex.: TV Cultura"),
               ("numero", "Número no Jellyfin (opcional)", "ex.: 2  (vazio = o Jellyfin numera sozinho)"),
@@ -805,7 +806,7 @@ class DialogoCanal(ctk.CTkToplevel):
               ("id_guia", "ID no guia XMLTV (opcional)", "o tvg-id que liga o canal à programação"),
               ("idioma", "Idioma (opcional)", "ex.: Português, English, Español (vazio = o programa deduz)"))
 
-    def __init__(self, master, dados: dict, titulo: str = "Editar canal"):
+    def __init__(self, master, dados: dict, titulo: str = "Editar canal", campos=None, aviso: str = ""):
         super().__init__(master, fg_color=Tema.CARTAO)
         self.resultado = None
         self.title(titulo)
@@ -816,8 +817,13 @@ class DialogoCanal(ctk.CTkToplevel):
         corpo.pack(fill="both", expand=True, padx=24, pady=(18, 6))
         ctk.CTkLabel(corpo, text=titulo, font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"), text_color=Tema.TEXTO,
                      anchor="w").pack(fill="x", pady=(0, 8))
+        if aviso:
+            ctk.CTkLabel(corpo, text=aviso, font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO_SUAVE,
+                         anchor="w", justify="left", wraplength=460).pack(fill="x")
         self.vars = {}
         for chave, rotulo, dica in self.CAMPOS:
+            if campos is not None and chave not in campos:
+                continue
             app._rotulo(corpo, rotulo).pack(fill="x", pady=(6, 2))
             self.vars[chave] = tk.StringVar(value=str(dados.get(chave, "") or ""))
             app._entrada(corpo, self.vars[chave], dica, altura=32, width=460).pack(fill="x")
@@ -844,7 +850,7 @@ class DialogoCanal(ctk.CTkToplevel):
 class JanelaCanais(ctk.CTkToplevel):
     """TV ao vivo no Jellyfin: a lista de canais (.m3u), o guia (XMLTV) e a antena (HDHomeRun).
     acoes: {'adicionar', 'importar_arquivo', 'importar_endereco', 'remover', 'remover_todos', 'conferir',
-            'publicar', 'editar' (iid), 'numerar', 'desfazer'}."""
+            'publicar', 'editar' (iid), 'editar_selecionados', 'numerar', 'desfazer'}."""
 
     COLUNAS = (("numero", "Nº", 44), ("grupo", "Grupo", 100), ("idioma", "Idioma", 90), ("situacao", "Situação", 170),
                ("historico", "Últimas", 205), ("url", "Link", 240))
@@ -925,16 +931,24 @@ class JanelaCanais(ctk.CTkToplevel):
         self.bt_tirar_filtros = ctk.CTkButton(selecao, text="Tirar os filtros", command=self.limpar_filtros, **estilo)
         self.bt_diagnostico = ctk.CTkButton(selecao, text="Diagnóstico do Jellyfin",
                                             command=acoes.get("diagnostico", lambda: None), **estilo)
+        # a programação de verdade (o que passa ao longo do dia), pelo coletor iptv-org/epg no Docker
+        self.bt_programacao = ctk.CTkButton(selecao, text="Programação dos canais...",
+                                            command=acoes.get("programacao", lambda: None), **estilo)
         for botao in (self.bt_selecionar_todos, self.bt_selecionar_fora, self.bt_selecionar_mortos,
                       self.bt_selecionar_duplicados):
             botao.pack(side="left")
         self.bt_tirar_filtros.pack(side="right")
         self.bt_diagnostico.pack(side="right", padx=(0, 8))
+        self.bt_programacao.pack(side="right", padx=(0, 8))
 
         acoes_linha = ctk.CTkFrame(faixa, fg_color="transparent")
         acoes_linha.pack(fill="x", pady=(4, 0))
         self.bt_numerar = m._botao(acoes_linha, "Numerar em ordem...", acoes["numerar"], "secundario")
         self.bt_numerar.pack(side="left")
+        # corrigir nome, grupo, link... de um canal; com vários selecionados, o grupo e o idioma de todos
+        self.bt_editar = m._botao(acoes_linha, "Editar selecionados...",
+                                  acoes.get("editar_selecionados", lambda: None), "secundario")
+        self.bt_editar.pack(side="left", padx=(6, 0))
         self.bt_desfazer = m._botao(acoes_linha, "Desfazer remoção", acoes["desfazer"], "secundario")
         self.bt_desfazer.pack(side="left", padx=(6, 0))
         self.bt_conferir = m._botao(acoes_linha, "Conferir todos", acoes["conferir"], "secundario")
@@ -957,6 +971,7 @@ class JanelaCanais(ctk.CTkToplevel):
         self.tabela.bind("<Control-a>", lambda e: (self.selecionar_todos(), "break")[1])
         # duplo clique numa linha (não no título): editar o canal
         self.tabela.bind("<Double-1>", lambda e: self._ao_duplo_clique(e, acoes["editar"]))
+        self.tabela.bind("<F2>", lambda e: acoes.get("editar_selecionados", lambda: None)())
 
         campos = ctk.CTkFrame(self, fg_color="transparent")
         campos.pack(fill="x", padx=24, pady=(10, 0))

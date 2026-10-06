@@ -240,6 +240,23 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.3.0
+
+- **Programação de verdade dos canais (o que passa ao longo do dia).** Botão **"Programação dos canais..."** na
+  TV ao vivo: o Maestro baixa o mapa da [iptv-org](https://github.com/iptv-org/epg) (que canal tem grade em qual
+  site de guia de TV: mi.tv, meuguia.tv...), acha os canais da SUA lista e grava o `channels.xml` ao lado do
+  `canais.m3u`. Depois liga o **coletor** (o programa da iptv-org que busca a grade) no Docker:
+  `http://localhost:3000/guide.xml` entra sozinho no campo do guia, como o primeiro.
+  - **Automático:** o coletor busca a grade ao ligar e todo dia às 06:00 (UTC), e volta sozinho sempre que o
+    Docker Desktop abre. O Jellyfin relê o guia na atualização diária dele.
+  - **Canais novos:** a cada "Salvar e enviar ao Jellyfin" o `channels.xml` é refeito com a lista atual; eles
+    entram na próxima coleta. Os canais sem grade em nenhum site ficam com o guia de categorias.
+  - Um guia que ainda não responde (ex.: o coletor na 1ª coleta) não é cadastrado naquele envio, para não
+    atrapalhar a limpeza dos canais antigos no Jellyfin; entra no envio seguinte.
+- **Editar canais pela tela da TV ao vivo:** botão **"Editar selecionados..."** (ou F2). Um canal: corrige nome,
+  número, grupo, link do sinal, logo, ID do guia e idioma. Vários canais: muda o **Grupo** e/ou o **Idioma** de
+  todos de uma vez (campo vazio = fica como está em cada um). O duplo clique continua editando um canal.
+
 ### Novidades da v2.2.0
 
 - **TV ao vivo: categorias no Jellyfin (Filmes, Esportes, Notícias, Infantil, Séries).** O Jellyfin lê o Grupo

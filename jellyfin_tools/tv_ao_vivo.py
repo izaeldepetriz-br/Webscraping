@@ -241,6 +241,18 @@ def gerar_guia_categorias(canais: list[Canal], agora=None, dias: int = 30) -> st
     return "\n".join(linhas) + "\n"
 
 
+def guia_fora_do_ar(endereco: str, timeout: float = 10) -> str:
+    """Um guia de ENDEREÇO (http) responde? '' = sim (ou é arquivo: quem lê é o servidor). Ex.: o coletor do
+    Docker antes da 1ª coleta responde 404."""
+    if not re.match(r"https?://", endereco or "", re.I):
+        return ""
+    try:
+        with requests.get(endereco, stream=True, timeout=timeout) as r:
+            return "" if r.ok else f"HTTP {r.status_code}"
+    except requests.RequestException as erro:
+        return f"não respondeu: {str(erro)[:80]}"
+
+
 def separar_guias(texto: str) -> list[str]:
     """O campo "Guia de programação" aceita VÁRIOS guias, separados por ; ou espaço/linha
     ('https://a/epg.xml; E:\\TV\\guia.xml')."""
@@ -825,6 +837,10 @@ def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = 
         cliente.cadastrar_sintonizador("hdhomerun", antena.strip(), f"{NOME_SINTONIZADOR} antena")
         feito.append(f"Jellyfin: sintonizador de antena HDHomeRun -> {antena.strip()}")
     for endereco_guia in separar_guias(guia):
+        if motivo := guia_fora_do_ar(endereco_guia):
+            # com erro num guia, a atualização do guia falha e o Jellyfin NÃO apaga os canais velhos
+            feito.append(f"Jellyfin: guia {endereco_guia} NÃO cadastrado agora ({motivo}); envie de novo depois")
+            continue
         cliente.cadastrar_guia(endereco_guia)
         feito.append(f"Jellyfin: guia de programação (XMLTV) -> {endereco_guia}")
     try:                                             # o guia de categorias é um extra: falhar não derruba o envio
