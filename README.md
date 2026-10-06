@@ -239,6 +239,13 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.0.1
+
+- Depois de refazer os atalhos, o programa **avisa o Windows que os ícones mudaram** (o mesmo aviso que os
+  instaladores dão): a Área de Trabalho e o Menu Iniciar mostram o ícone do Maestro sem esperar reiniciar.
+  Ele **não apaga** o cache de ícones (apagar com o Windows aberto deixa os ícones de todos os programas em
+  branco até reiniciar).
+
 ### Novidades da v2.0.0: agora é **Maestro**
 
 - **Nome e ícone novos:** o "M" cuja perna vira a batuta do maestro, com a ponta verde (o "no ar" da TV ao

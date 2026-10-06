@@ -81,6 +81,24 @@ def criar_atalhos(executavel: str | Path, rodar=subprocess.run) -> None:
                       capture_output=True, text=True, timeout=60, creationflags=0x08000000)   # CREATE_NO_WINDOW
     if resultado.returncode != 0:
         raise OSError((resultado.stderr or resultado.stdout or "o PowerShell recusou").strip()[:300])
+    avisar_windows_icones()
+
+
+def avisar_windows_icones(shell32=None) -> bool:
+    """Avisa o Windows que ícones mudaram (o mesmo aviso que os instaladores dão), para a Área de Trabalho e o
+    Menu Iniciar mostrarem o ícone novo sem esperar reiniciar. NÃO apaga o cache de ícones (apagar com o
+    Explorer aberto deixa os ícones de TODOS os programas em branco até reiniciar). True = avisou."""
+    try:
+        if shell32 is None:
+            if sys.platform != "win32":
+                return False
+            import ctypes
+            shell32 = ctypes.windll.shell32
+        SHCNE_ASSOCCHANGED, SHCNF_IDLIST = 0x08000000, 0x0000
+        shell32.SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None)
+        return True
+    except Exception:                                # sem o aviso, o ícone novo aparece depois de reiniciar
+        return False
 
 
 def abrir(executavel: str | Path) -> None:

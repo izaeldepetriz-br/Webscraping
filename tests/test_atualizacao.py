@@ -114,3 +114,21 @@ def test_iniciar_com_o_windows_apontando_para_exe_antigo_e_corrigido(tmp_path, m
     assert inicializacao.corrigir_se_preciso(fixo, Reg()) is False          # já está certo: não mexe
     registro.clear()
     assert inicializacao.corrigir_se_preciso(fixo, Reg()) is False and registro == {}   # desligado: continua
+
+
+def test_aviso_de_icones_ao_windows_sem_apagar_cache():
+    from videoscraper import instalacao
+    chamadas = []
+
+    class Shell32:
+        def SHChangeNotify(self, *args):
+            chamadas.append(args)
+    assert instalacao.avisar_windows_icones(Shell32())
+    assert chamadas == [(0x08000000, 0, None, None)]                  # SHCNE_ASSOCCHANGED: "ícones mudaram"
+
+    class Quebrado:
+        def SHChangeNotify(self, *args):
+            raise OSError("sem shell")
+    assert not instalacao.avisar_windows_icones(Quebrado())          # falhar não derruba os atalhos
+    assert "iconcache" not in open(instalacao.__file__, encoding="utf-8").read().lower().replace(
+        "cache de ícones", "")                                       # nunca apaga o cache
