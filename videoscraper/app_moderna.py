@@ -1679,16 +1679,21 @@ class AppModerna(TVAoVivo, JanelaModerna):
             return
 
         def tarefa():
+            from jellyfin_tools.servidor_jellyfin import escanear_e_conferir, texto_do_scan_conferido
             try:
-                atualizar_biblioteca(o.jellyfin_url, o.jellyfin_api_key)
+                r = escanear_e_conferir(o.jellyfin_url, o.jellyfin_api_key, parar=self.evento_parar.is_set,
+                                        ao_andamento=lambda pct: self._avisar_analise(
+                                            pct / 100, f"Jellyfin escaneando a biblioteca: {pct:.0f}%"))
             except ErroJellyfin as erro:
                 self.fila.put(("msg", ("Jellyfin", str(erro).capitalize() + ".", "erro")))
                 return
-            self.fila.put(("msg", ("Jellyfin", "Pronto: o Jellyfin está escaneando as bibliotecas. Séries e filmes novos "
-                                   "aparecem em alguns minutos (acompanhe em Painel > Tarefas agendadas > Escanear "
-                                   "biblioteca).", "sucesso")))
+            texto = texto_do_scan_conferido(r)
+            self._log.info("Atualizar a biblioteca: %s", texto.replace("\n", " "))
+            self.fila.put(("status_fim", texto.split("\n")[0]))
+            self.fila.put(("msg", ("Jellyfin", texto, "erro" if r["status"] in ("Failed", "Aborted") else
+                                   "sucesso" if r["terminou"] else "info")))
 
-        self._rodar("Pedindo ao Jellyfin para atualizar a biblioteca...", tarefa)
+        self._rodar("Jellyfin: escaneando a biblioteca e conferindo (pode levar alguns minutos)...", tarefa)
 
     def ao_testar_avisos(self) -> None:
         o = self.obter_opcoes_jellyfin()
@@ -2311,6 +2316,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self.conferir_saude_tv()                      # a cada 30 min, em segundo plano
         if not os.environ.get("VIDEOSCRAPER_SEM_ATUALIZACAO"):
             self.conferencia_semanal_tv()             # opção "Conferir sozinho toda semana" (TV ao vivo)
+            if not getattr(self, "_guia_renovado", False):  # uma vez por abertura (e o arquivo vale 30 dias)
+                self._guia_renovado = True
+                self.renovar_guia_categorias()
         self.after(15_000, self._ciclo_saude)
 
     # ================================================================== lixeira (.organizador\removidos)

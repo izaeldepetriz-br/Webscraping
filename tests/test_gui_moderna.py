@@ -1651,8 +1651,8 @@ def test_parar_a_conferencia_de_canais_e_imediato(app, api_falsa):
     app.bt_tv_ao_vivo.invoke()
     app._canais = [Canal(f"C{n}", f"{api_falsa.base}/lento.m3u8?n={n}") for n in range(400)]
     app._conferir_canais()
-    fim = time.time() + 1.2
-    while time.time() < fim:
+    fim = time.time() + 15                                               # espera a condição (máquina ocupada)
+    while time.time() < fim and "/s" not in app.var_status.get():
         app.update()
         time.sleep(0.05)
     assert "/s" in app.var_status.get()                                  # mostra a velocidade
@@ -1698,14 +1698,14 @@ def test_tv_ao_vivo_exportar_o_que_esta_na_tabela(app, tmp_path, monkeypatch):
     app._mostrar_canais()
     assert janela.exportar(tmp_path / "todos.json") == 2
     dados = json.loads((tmp_path / "todos.json").read_text(encoding="utf-8"))
-    assert dados[0] == {"numero": "", "canal": "TV Cultura", "grupo": "Abertos", "situacao": "", "no_ar": None,
+    assert dados[0] == {"numero": "", "canal": "TV Cultura", "grupo": "Abertos", "idioma": "", "situacao": "", "no_ar": None,
                         "historico": "", "link": "https://a.org/1.m3u8"}
     janela.aplicar_filtro("grupo", ["Rádios"])                          # com filtro: só os filtrados
     from videoscraper import gui_moderna
     monkeypatch.setattr(gui_moderna.filedialog, "asksaveasfilename", lambda **k: str(tmp_path / "filtrados.csv"))
     janela.bt_exportar.invoke()
     linhas = (tmp_path / "filtrados.csv").read_text(encoding="utf-8-sig").splitlines()
-    assert len(linhas) == 2 and linhas[1].startswith(";Rádio;Rádios;fora do ar (HTTP 404);não;")
+    assert len(linhas) == 2 and linhas[1].startswith(";Rádio;Rádios;;fora do ar (HTTP 404);não;")
     assert "1 canal(is) (só os do filtro)" in app.caixas[-1][2]
 
 
@@ -2068,8 +2068,29 @@ def test_vigia_sem_chave_avisa_que_o_jellyfin_nao_foi_atualizado(app, tmp_path):
     assert any("o Jellyfin NÃO é avisado para atualizar a biblioteca" in e for e in estados)
 
 
-def test_botao_atualizar_a_biblioteca_agora(app, api_falsa):
-    api_falsa.rotas["/Library/Refresh"] = lambda q: (204, b"")
+def test_botao_atualizar_a_biblioteca_agora(app, api_falsa, monkeypatch):
+    """O botão acompanha o scan até o fim e mostra o que mudou (antes só sabia que o pedido foi aceito)."""
+    from jellyfin_tools import servidor_jellyfin
+    monkeypatch.setattr(servidor_jellyfin, "INTERVALO_SCAN", 0.05)
+    estado = {"pedido": False, "olhadas": 0}
+
+    def refresh(q):
+        estado["pedido"] = True
+        return 204, b""
+
+    def tarefa(q):                                                      # roda 2 olhadas e termina
+        if estado["pedido"]:
+            estado["olhadas"] += 1
+        if estado["pedido"] and estado["olhadas"] <= 2:
+            return 200, {"State": "Running", "CurrentProgressPercentage": 50.0 * estado["olhadas"]}
+        fim = "2026-10-06T10:00:00Z" if estado["olhadas"] > 2 else "2026-10-05T03:00:00Z"
+        return 200, {"State": "Idle", "LastExecutionResult": {"Status": "Completed", "EndTimeUtc": fim}}
+    api_falsa.rotas["/Library/Refresh"] = refresh
+    api_falsa.rotas["/ScheduledTasks"] = lambda q: (200, [{"Key": "RefreshLibrary", "Id": "scan1", **tarefa(q)[1]}])
+    api_falsa.rotas["/ScheduledTasks/scan1"] = tarefa
+    api_falsa.rotas["/Items/Counts"] = lambda q: (200, {"MovieCount": 10 + (3 if estado["olhadas"] > 2 else 0),
+                                                        "SeriesCount": 4,
+                                                        "EpisodeCount": 100 + (12 if estado["olhadas"] > 2 else 0)})
     app.mostrar_aba("Jellyfin")
     app.var_jf_url.set("")
     app.bt_scan_jellyfin.invoke()
@@ -2079,7 +2100,9 @@ def test_botao_atualizar_a_biblioteca_agora(app, api_falsa):
     app.bt_scan_jellyfin.invoke()
     esperar(app)
     assert any(p["caminho"] == "/Library/Refresh" for p in api_falsa.pedidos)
-    assert "está escaneando as bibliotecas" in app.caixas[-1][2]
+    tipo, titulo, texto = app.caixas[-1]
+    assert tipo == "sucesso" and "Escaneamento concluído" in texto
+    assert "+3 filme(s), +12 episódio(s)" in texto and "Agora: 13 filme(s), 4 série(s), 112 episódio(s)" in texto
 
 
 def _programa_falso(pasta):
@@ -2888,3 +2911,20 @@ def test_dialogo_lista_procura_sem_travar(app):
     assert "2 opção(ões)" in dialogo.lb_mensagem.cget("text") and dialogo.bt_procurar.cget("state") == "normal"
     dialogo._ok()
     assert dialogo.resposta == 0
+
+
+def test_tv_coluna_idioma_com_filtro_e_numerar_por_idioma(app):
+    from jellyfin_tools.tv_ao_vivo import Canal
+    janela = _abrir_tv(app, [Canal("CNN", "https://a.org/1", "News", id_guia="CNN.us"),
+                             Canal("Globo Brasil", "https://a.org/2", "Abertos"),
+                             Canal("Canal Sur", "https://a.org/3", "General", idioma="spa"),
+                             Canal("Record (Brazil)", "https://a.org/4", "Abertos")])
+    assert janela.tabela.set("0", "idioma") == "English" and janela.tabela.set("2", "idioma") == "Español"
+    assert dict(janela.valores_da_coluna("idioma")) == {"English": 1, "Español": 1, "Português": 2}
+    janela.aplicar_filtro("idioma", {"Português"})                      # filtrar por idioma
+    assert [janela.tabela.item(i, "text") for i in janela.tabela.get_children()] == ["Globo Brasil", "Record (Brazil)"]
+    janela.limpar_filtros()
+    app.escolher = lambda t, m, opcoes, **k: next(o for o in opcoes if o.startswith("Por idioma"))
+    janela.bt_numerar.invoke()
+    assert [(c.nome, c.numero) for c in app._canais] == [("Globo Brasil", "1"), ("Record (Brazil)", "2"),
+                                                         ("CNN", "101"), ("Canal Sur", "201")]

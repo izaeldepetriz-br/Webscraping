@@ -44,6 +44,7 @@ class Canal:
     logo: str = ""         # tvg-logo
     id_guia: str = ""      # tvg-id: liga o canal à programação do guia (XMLTV)
     numero: str = ""       # tvg-chno: o número do canal no Jellyfin (vazio = o Jellyfin numera sozinho)
+    idioma: str = ""       # tvg-language ("Português"); vazio = o programa deduz (idioma_do_canal)
 
 
 # ----------------------------------------------------------------- a lista (.m3u)
@@ -73,7 +74,8 @@ def ler_m3u(texto: str) -> list[Canal]:
             nome = linha.rsplit(",", 1)[-1].strip() if "," in linha else ""
             info = Canal(nome or atributos.get("tvg-name", ""), "", atributos.get("group-title", ""),
                          atributos.get("tvg-logo", ""), atributos.get("tvg-id", ""),
-                         atributos.get("tvg-chno", "") or atributos.get("channel-number", ""))
+                         atributos.get("tvg-chno", "") or atributos.get("channel-number", ""),
+                         nome_do_idioma(re.split(r"[;,]", atributos.get("tvg-language", ""))[0]))
         elif linha and not linha.startswith("#"):
             if not _RE_LINK.match(linha):            # HTML, texto solto...: não é canal
                 info = None
@@ -86,23 +88,170 @@ def ler_m3u(texto: str) -> list[Canal]:
     return canais
 
 
+def _ids_e_numeros(canais: list[Canal]) -> list[tuple[str, str]]:
+    """(tvg-id, número) de cada canal como vão no .m3u: o repetido fica vazio (o 1º continua ligado ao guia)."""
+    ids_usados, numeros_usados, saida = set(), set(), []
+    for c in canais:
+        id_guia = c.id_guia if c.id_guia and c.id_guia.lower() not in ids_usados else ""
+        numero = c.numero if c.numero and c.numero not in numeros_usados else ""
+        ids_usados.add(id_guia.lower())
+        numeros_usados.add(numero)
+        saida.append((id_guia, numero))
+    return saida
+
+
 def gerar_m3u(canais: list[Canal], guia: str = "") -> str:
     """A lista .m3u para o Jellyfin. tvg-id e número NÃO se repetem: o mesmo tvg-id em dois canais (comum em
     listas da internet: a versão HD e a SD do mesmo canal) pode dar erro na atualização do guia, e com erro
     o Jellyfin não apaga os canais velhos. O repetido fica sem tvg-id (o 1º continua ligado ao guia)."""
     cabecalho = f'#EXTM3U url-tvg="{guia}"' if guia else "#EXTM3U"
     linhas = [cabecalho]
-    ids_usados, numeros_usados = set(), set()
-    for c in canais:
-        id_guia = c.id_guia if c.id_guia and c.id_guia.lower() not in ids_usados else ""
-        numero = c.numero if c.numero and c.numero not in numeros_usados else ""
-        ids_usados.add(id_guia.lower())
-        numeros_usados.add(numero)
+    for c, (id_guia, numero) in zip(canais, _ids_e_numeros(canais)):
         atributos = " ".join(f'{chave}="{valor}"' for chave, valor in
                              (("tvg-id", id_guia), ("tvg-chno", numero), ("tvg-name", c.nome),
-                              ("tvg-logo", c.logo), ("group-title", c.grupo)) if valor)
+                              ("tvg-logo", c.logo), ("tvg-language", c.idioma), ("group-title", c.grupo)) if valor)
         linhas += [f"#EXTINF:-1 {atributos},{c.nome}".replace("-1 ,", "-1,"), c.url]
     return "\n".join(linhas) + "\n"
+
+
+# ----------------------------------------------------------------- idioma do canal
+# O Jellyfin não separa canais por idioma (não existe essa categoria). O programa descobre o idioma de cada
+# canal, mostra numa coluna (com filtro), põe no guia como gênero e numera em faixas por idioma (Português
+# 1-99, English 101-199...): assim os canais aparecem separados em qualquer aplicativo.
+IDIOMAS_TV = {"pt": "Português", "en": "English", "es": "Español", "fr": "Français", "it": "Italiano",
+              "de": "Deutsch", "ja": "日本語", "ar": "العربية", "ru": "Русский", "zh": "中文", "hi": "हिन्दी",
+              "ko": "한국어", "nl": "Nederlands", "tr": "Türkçe", "pl": "Polski"}
+_APELIDOS_IDIOMA = {"por": "pt", "portuguese": "pt", "portugues": "pt", "eng": "en", "english": "en", "ingles": "en",
+                    "spa": "es", "spanish": "es", "espanol": "es", "fra": "fr", "fre": "fr", "french": "fr",
+                    "frances": "fr", "ita": "it", "italian": "it", "deu": "de", "ger": "de", "german": "de",
+                    "alemao": "de", "jpn": "ja", "japanese": "ja", "ara": "ar", "arabic": "ar", "rus": "ru",
+                    "russian": "ru", "zho": "zh", "chi": "zh", "chinese": "zh", "hin": "hi", "hindi": "hi",
+                    "kor": "ko", "korean": "ko", "nld": "nl", "dut": "nl", "dutch": "nl", "tur": "tr", "turkish": "tr",
+                    "pol": "pl", "polish": "pl"}
+_PAIS_IDIOMA = {"br": "pt", "pt": "pt", "ao": "pt", "mz": "pt", "us": "en", "uk": "en", "gb": "en", "ca": "en",
+                "au": "en", "ie": "en", "nz": "en", "es": "es", "mx": "es", "ar": "es", "co": "es", "cl": "es",
+                "pe": "es", "ve": "es", "uy": "es", "py": "es", "bo": "es", "ec": "es", "cr": "es", "do": "es",
+                "gt": "es", "hn": "es", "sv": "es", "ni": "es", "pa": "es", "cu": "es", "pr": "es", "fr": "fr",
+                "it": "it", "de": "de", "at": "de", "jp": "ja", "ru": "ru", "cn": "zh", "tw": "zh", "in": "hi",
+                "kr": "ko", "nl": "nl", "tr": "tr", "pl": "pl", "sa": "ar", "ae": "ar", "eg": "ar", "qa": "ar"}
+_NOME_IDIOMA = ((re.compile(r"\b(brazil|brasil|portugal|portugues[ae]?)\b", re.I), "pt"),
+                (re.compile(r"\b(latin america|latam|latino|mexico|méxico|argentina|españa|espana|colombia|"
+                            r"chile|peru|perú|venezuela)\b", re.I), "es"),
+                (re.compile(r"\b(usa|us|uk|english)\b", re.I), "en"))
+
+
+def nome_do_idioma(texto: str) -> str:
+    """'por', 'pt', 'Portuguese', 'Português' -> 'Português'; desconhecido -> o texto como veio."""
+    import unicodedata
+    simples = "".join(c for c in unicodedata.normalize("NFD", (texto or "").strip().lower())
+                      if unicodedata.category(c) != "Mn")
+    if not simples:
+        return ""
+    codigo = simples if simples in IDIOMAS_TV else _APELIDOS_IDIOMA.get(simples, "")
+    return IDIOMAS_TV.get(codigo, texto.strip())
+
+
+def idioma_do_canal(c: Canal) -> str:
+    """O idioma do canal: o da lista (tvg-language); senão o país do tvg-id ('AMCBrasil.br@SD' -> Português);
+    senão o nome ('A&E Latin America Brazil' -> Português); senão o domínio do link (.br, .pt). Vazio = não sei."""
+    if c.idioma:
+        return nome_do_idioma(c.idioma)
+    if m := re.search(r"\.([a-z]{2})(?:@|$)", (c.id_guia or "").lower()):
+        if codigo := _PAIS_IDIOMA.get(m.group(1)):
+            return IDIOMAS_TV[codigo]
+    for padrao, codigo in _NOME_IDIOMA:
+        if padrao.search(c.nome or ""):
+            return IDIOMAS_TV[codigo]
+    from urllib.parse import urlparse
+    dominio = (urlparse(c.url).hostname or "").lower()
+    if m := re.search(r"\.(br|pt)$", dominio):
+        return IDIOMAS_TV[_PAIS_IDIOMA[m.group(1)]]
+    return ""
+
+
+def numerar_por_idioma(canais: list[Canal]) -> list[Canal]:
+    """Reordena por idioma (o com mais canais primeiro; "sem idioma" por último), grupo e nome, e numera em
+    FAIXAS: cada idioma começa na centena seguinte (Português 1-57, English 101-140...). Devolve a lista nova."""
+    from collections import Counter
+    idiomas = [idioma_do_canal(c) for c in canais]
+    contagem = Counter(i for i in idiomas if i)
+    ordem = {idioma: n for n, (idioma, _) in enumerate(sorted(contagem.items(),                      # empate: Português antes
+                                                              key=lambda iq: (-iq[1], iq[0] != "Português", iq[0])))}
+    pares = sorted(zip(canais, idiomas), key=lambda ci: (ordem.get(ci[1], len(ordem)), (ci[0].grupo or "~").lower(),
+                                                          ci[0].nome.lower()))
+    numero, anterior, saida = 0, object(), []
+    for c, idioma in pares:
+        if idioma != anterior:                       # idioma novo: próxima centena
+            numero = (numero // 100 + 1) * 100 if numero else 0
+            anterior = idioma
+        numero += 1
+        c.numero = str(numero)
+        saida.append(c)
+    return saida
+
+
+# ----------------------------------------------------------------- guia de categorias
+# O Jellyfin LÊ o group-title da lista, mas não usa para nada: as categorias que os aplicativos mostram (Filmes,
+# Esportes, Notícias, Infantil, Séries) vêm SÓ do guia de programação (XMLTV), pela categoria dos programas.
+# Sem guia, todo canal fica "sem categoria" (só a lista numerada). Sem um guia de verdade, o programa gera um
+# simples: um "programa" por dia em cada canal, com a categoria tirada do Grupo do canal.
+ARQUIVO_GUIA_CATEGORIAS = "guia_categorias.xml"
+CATEGORIAS_DO_GRUPO = (    # (categoria que o Jellyfin entende, palavras do grupo que levam a ela)
+    ("movie", ("filme", "filmes", "movie", "movies", "cinema")),
+    ("sports", ("esporte", "esportes", "sport", "sports", "futebol", "football", "soccer")),
+    ("news", ("noticia", "noticias", "news", "jornalismo", "journalism", "documentario", "documentary")),
+    ("kids", ("infantil", "kids", "children", "crianca", "criancas", "desenho", "desenhos", "cartoon",
+              "cartoons", "animation", "animacao", "family", "familia")),
+    ("series", ("serie", "series", "seriado", "seriados")))
+
+
+def categoria_do_grupo(grupo: str) -> str | None:
+    """'Sports' -> 'sports'; 'Filmes;Ação' -> 'movie'; 'Religious' -> None (o Jellyfin não tem essa)."""
+    import unicodedata
+    texto = "".join(c for c in unicodedata.normalize("NFD", (grupo or "").lower()) if unicodedata.category(c) != "Mn")
+    palavras = set(re.findall(r"[a-z]+", texto))
+    return next((cat for cat, chaves in CATEGORIAS_DO_GRUPO if palavras & set(chaves)), None)
+
+
+def gerar_guia_categorias(canais: list[Canal], agora=None, dias: int = 30) -> str:
+    """XMLTV com um "programa" por dia em cada canal (título = o canal, gênero = o Grupo e a categoria que o
+    Jellyfin entende). Os canais ligam pelo tvg-id ou, sem ele, pelo nome (como o Jellyfin faz)."""
+    from datetime import datetime, timedelta, timezone
+    from xml.sax.saxutils import escape, quoteattr
+    agora = agora or datetime.now(timezone.utc)
+    inicio = agora.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    linhas = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="Maestro (categorias pelo Grupo)">']
+    ids = [id_guia or f"maestro.{n}" for n, (id_guia, _) in enumerate(_ids_e_numeros(canais), 1)]
+    for c, cid in zip(canais, ids):
+        linhas.append(f"  <channel id={quoteattr(cid)}><display-name>{escape(c.nome)}</display-name></channel>")
+    for c, cid in zip(canais, ids):
+        categoria = categoria_do_grupo(c.grupo)
+        idioma = idioma_do_canal(c)
+        generos = [g for g in (categoria, *(p.strip() for p in re.split(r"[;,/|]", c.grupo or "")), idioma) if g]
+        for dia in range(dias + 1):
+            de, ate = inicio + timedelta(days=dia), inicio + timedelta(days=dia + 1)
+            linhas.append(f'  <programme start="{de:%Y%m%d%H%M%S} +0000" stop="{ate:%Y%m%d%H%M%S} +0000" '
+                          f'channel={quoteattr(cid)}><title>{escape(c.nome)}</title>'
+                          + (f"<desc>{escape(' · '.join(t for t in (c.grupo, idioma) if t))}</desc>"
+                             if c.grupo or idioma else "")
+                          + "".join(f"<category>{escape(g)}</category>" for g in dict.fromkeys(generos))
+                          + (f'<episode-num system="xmltv_ns">0.{dia}.</episode-num>' if categoria == "series" else "")
+                          + "</programme>")
+    linhas.append("</tv>")
+    return "\n".join(linhas) + "\n"
+
+
+def separar_guias(texto: str) -> list[str]:
+    """O campo "Guia de programação" aceita VÁRIOS guias, separados por ; ou espaço/linha
+    ('https://a/epg.xml; E:\\TV\\guia.xml')."""
+    partes = re.split(r"\s*[;\n]\s*|\s+(?=(?:https?://|[a-zA-Z]:\\\\|\\\\\\\|/))", texto or "")
+    return list(dict.fromkeys(p.strip() for p in partes if p and p.strip()))
+
+
+def caminho_irmao(caminho: str, nome: str) -> str:
+    """Outro arquivo na MESMA pasta, no jeito de escrever do caminho (Windows ou não): 'E:\\TV\\canais.m3u' ->
+    'E:\\TV\\guia_categorias.xml'."""
+    return re.sub(r"[^\\/]*$", lambda m: nome, caminho.strip(), count=1)
 
 
 def carregar_canais(arquivo: str | Path) -> list[Canal]:
@@ -390,7 +539,8 @@ def exportar_tabela(linhas: list[dict], caminho) -> Path:
     import csv
     caminho = Path(caminho)
     tipo = caminho.suffix.lower()
-    titulos = {"numero": "Nº", "canal": "Canal", "grupo": "Grupo", "situacao": "Situação", "no_ar": "No ar",
+    titulos = {"numero": "Nº", "canal": "Canal", "grupo": "Grupo", "idioma": "Idioma", "situacao": "Situação",
+               "no_ar": "No ar",
                "historico": "Últimas", "link": "Link"}
     linhas = [{**dict.fromkeys(titulos, ""), **linha} for linha in linhas]
 
@@ -481,6 +631,17 @@ class ClienteTV:
         corpo = {**(existente or {}), "Type": "xmltv", "Path": endereco, "EnableAllTuners": True}
         return self._pedir("POST", "/LiveTv/ListingProviders", json=corpo,
                            params={"validateListings": "false", "validateLogin": "false"}) or corpo
+
+    def remover_guias_de_categorias(self, exceto: str = "") -> int:
+        """Tira do Jellyfin os guias de categorias gerados pelo programa (outro caminho antigo, ou porque agora há
+        um guia de verdade). Devolve quantos tirou."""
+        tirados = 0
+        for p in self.configuracao().get("ListingProviders") or []:
+            caminho = str(p.get("Path") or "")
+            if caminho.replace("\\", "/").rsplit("/", 1)[-1] == ARQUIVO_GUIA_CATEGORIAS and caminho != exceto and p.get("Id"):
+                self._pedir("DELETE", "/LiveTv/ListingProviders", params={"id": p["Id"]})
+                tirados += 1
+        return tirados
 
     def _tarefa(self, id_: str) -> dict:
         return self._pedir("GET", f"/ScheduledTasks/{id_}") or {}
@@ -629,12 +790,19 @@ def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = 
     removidos = [c for c in antigos if c.url not in urls_novas]
     entraram = len(urls_novas - urls_antigas)
     arquivo.parent.mkdir(parents=True, exist_ok=True)
-    arquivo.write_text(gerar_m3u(canais, guia), encoding="utf-8")
+    arquivo.write_text(gerar_m3u(canais, ",".join(separar_guias(guia))), encoding="utf-8")
     feito.append(f"lista salva: {arquivo} ({len(canais)} canal(is))"
                  + (f"; {len(removidos)} canal(is) saíram da lista" if removidos else ""))
+    endereco = caminho_no_servidor.strip() or str(arquivo)
+    guia_categorias = ""
+    if canais:                                       # o de categorias (Filmes, Esportes...) pelo Grupo
+        (Path(pasta) / ARQUIVO_GUIA_CATEGORIAS).write_text(gerar_guia_categorias(canais), encoding="utf-8")
+        guia_categorias = caminho_irmao(endereco, ARQUIVO_GUIA_CATEGORIAS)
+        com_categoria = sum(1 for c in canais if categoria_do_grupo(c.grupo))
+        feito.append(f"guia de categorias salvo ({com_categoria} de {len(canais)} canal(is) com Filmes/Esportes/"
+                     "Notícias/Infantil/Séries pelo Grupo)")
     if cliente is None:
         return feito
-    endereco = caminho_no_servidor.strip() or str(arquivo)
     nossos = cliente.sintonizadores("m3u", endereco)
     total_antes = cliente.quantos_canais() if removidos and nossos and canais else None
     if not canais:
@@ -656,9 +824,20 @@ def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = 
     if antena.strip():
         cliente.cadastrar_sintonizador("hdhomerun", antena.strip(), f"{NOME_SINTONIZADOR} antena")
         feito.append(f"Jellyfin: sintonizador de antena HDHomeRun -> {antena.strip()}")
-    if guia.strip():
-        cliente.cadastrar_guia(guia.strip())
-        feito.append(f"Jellyfin: guia de programação (XMLTV) -> {guia.strip()}")
+    for endereco_guia in separar_guias(guia):
+        cliente.cadastrar_guia(endereco_guia)
+        feito.append(f"Jellyfin: guia de programação (XMLTV) -> {endereco_guia}")
+    try:                                             # o guia de categorias é um extra: falhar não derruba o envio
+        # Para cada canal o Jellyfin usa o PRIMEIRO guia que tem programação dele: o de categorias vai sempre
+        # por ÚLTIMO (sai e entra de novo), e só cobre os canais que os guias de verdade não têm.
+        if cliente.remover_guias_de_categorias() and not guia_categorias:
+            feito.append("Jellyfin: guia de categorias retirado")
+        if guia_categorias:
+            cliente.cadastrar_guia(guia_categorias)
+            feito.append(f"Jellyfin: guia de categorias -> {guia_categorias}" + (
+                " (por último: os guias de verdade valem primeiro)" if guia.strip() else ""))
+    except ErroJellyfin as erro:
+        feito.append(f"Jellyfin: o guia de categorias não foi cadastrado ({erro})")
 
     def atualizar() -> bool:
         tarefa = cliente.atualizar_guia()

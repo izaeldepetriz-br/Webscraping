@@ -42,6 +42,81 @@ def atualizar_biblioteca(jellyfin_url: str, api_key: str, timeout: float = 20,
     log.info("Jellyfin: escaneamento da biblioteca iniciado (%s)", jellyfin_url)
 
 
+def _pedir_json(sessao, metodo: str, url: str, api_key: str, timeout: float, **extra):
+    try:
+        r = (sessao or requests).request(metodo, url, headers=_cabecalhos(api_key), timeout=timeout, **extra)
+    except requests.RequestException as erro:
+        raise ErroJellyfin(f"não consegui falar com o Jellyfin: {erro}") from erro
+    if r.status_code in (401, 403):
+        raise ErroJellyfin("o Jellyfin recusou a chave de API")
+    if not r.ok:
+        raise ErroJellyfin(f"o Jellyfin respondeu HTTP {r.status_code} em {url}")
+    try:
+        return r.json() if r.content else {}
+    except ValueError:
+        return {}
+
+
+def contagem_da_biblioteca(jellyfin_url: str, api_key: str, timeout: float = 20, sessao=None) -> dict:
+    """Quantos filmes, séries e episódios o Jellyfin tem agora (GET /Items/Counts)."""
+    dados = _pedir_json(sessao, "GET", jellyfin_url.rstrip("/") + "/Items/Counts", api_key, timeout) or {}
+    return {"filmes": int(dados.get("MovieCount") or 0), "series": int(dados.get("SeriesCount") or 0),
+            "episodios": int(dados.get("EpisodeCount") or 0)}
+
+
+INTERVALO_SCAN = 3.0                  # segundos entre uma olhada e outra na tarefa de scan
+
+
+def escanear_e_conferir(jellyfin_url: str, api_key: str, limite: float = 1800, parar=None,
+                        intervalo: float | None = None, ao_andamento=None, sessao=None) -> dict:
+    """Pede o scan E ACOMPANHA a tarefa "Escanear biblioteca" (RefreshLibrary) até ela terminar; conta filmes,
+    séries e episódios antes e depois. Devolve {terminou, status, erro, antes, depois, segundos}.
+    (Antes, o botão só sabia que o Jellyfin ACEITOU o pedido, não se o scan rodou de fato.)"""
+    import time
+    intervalo = INTERVALO_SCAN if intervalo is None else intervalo
+    base = jellyfin_url.rstrip("/")
+    antes = contagem_da_biblioteca(jellyfin_url, api_key, sessao=sessao)
+    tarefas = _pedir_json(sessao, "GET", base + "/ScheduledTasks", api_key, 20) or []
+    tarefa = next((t for t in tarefas if t.get("Key") == "RefreshLibrary"), None) if isinstance(tarefas, list) else None
+    fim_antes = ((tarefa or {}).get("LastExecutionResult") or {}).get("EndTimeUtc")
+    inicio = time.monotonic()
+    atualizar_biblioteca(jellyfin_url, api_key, sessao=sessao)
+    resultado = {"terminou": False, "status": "", "erro": "", "antes": antes, "depois": antes, "segundos": 0.0}
+    if tarefa and tarefa.get("Id"):
+        viu_rodando = False
+        while time.monotonic() - inicio < limite and not (parar and parar()):
+            time.sleep(intervalo)
+            info = _pedir_json(sessao, "GET", f"{base}/ScheduledTasks/{tarefa['Id']}", api_key, 20) or {}
+            estado, ultimo = info.get("State", "Idle"), info.get("LastExecutionResult") or {}
+            if estado != "Idle":
+                viu_rodando = True
+                if ao_andamento and info.get("CurrentProgressPercentage") is not None:
+                    ao_andamento(float(info["CurrentProgressPercentage"]))
+            elif viu_rodando or (ultimo.get("EndTimeUtc") and ultimo.get("EndTimeUtc") != fim_antes):
+                resultado.update(terminou=True, status=ultimo.get("Status", ""),
+                                 erro=ultimo.get("ErrorMessage") or "")
+                break
+    resultado["segundos"] = time.monotonic() - inicio
+    resultado["depois"] = contagem_da_biblioteca(jellyfin_url, api_key, sessao=sessao)
+    return resultado
+
+
+def texto_do_scan_conferido(r: dict) -> str:
+    """'Terminou em 2 min: +3 filme(s), +12 episódio(s).' / 'nada novo' / erro / ainda rodando."""
+    dif = {k: r["depois"][k] - r["antes"][k] for k in ("filmes", "series", "episodios")}
+    nomes = {"filmes": "filme(s)", "series": "série(s)", "episodios": "episódio(s)"}
+    mudou = ", ".join(f"{'+' if v > 0 else ''}{v} {nomes[k]}" for k, v in dif.items() if v)
+    tempo = f"{r['segundos'] / 60:.0f} min" if r["segundos"] >= 90 else f"{r['segundos']:.0f} s"
+    agora = (f"Agora: {r['depois']['filmes']} filme(s), {r['depois']['series']} série(s), "
+             f"{r['depois']['episodios']} episódio(s).")
+    if not r["terminou"]:
+        return (f"O Jellyfin aceitou o pedido e ainda está escaneando ({tempo} até agora). "
+                + (f"Até aqui: {mudou}. " if mudou else "") + "Acompanhe em Painel > Tarefas agendadas.")
+    if r["status"] in ("Failed", "Aborted"):
+        return f"O escaneamento terminou com ERRO ({r['status']}): {r['erro'] or 'veja Painel > Logs'}."
+    return f"Escaneamento concluído em {tempo}: " + (mudou + "." if mudou else "nada novo (já estava em dia).") + f"\n{agora}"
+
+
 def testar_conexao(jellyfin_url: str, api_key: str, timeout: float = 10,
                    sessao: requests.Session | None = None) -> str:
     """Confere endereço e chave (GET /System/Info). Devolve 'Nome do servidor (versão)'."""

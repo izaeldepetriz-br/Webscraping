@@ -240,6 +240,25 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.2.0
+
+- **TV ao vivo: categorias no Jellyfin (Filmes, Esportes, Notícias, Infantil, Séries).** O Jellyfin lê o Grupo
+  da lista mas não usa: as categorias que os aplicativos (Moonfin, TV, celular) mostram vêm só do guia de
+  programação. Agora o Maestro gera um **guia de categorias** (`guia_categorias.xml`, junto da lista) com a
+  categoria tirada do Grupo de cada canal ("Sports" -> Esportes, "Movies" -> Filmes, "News" -> Notícias,
+  "Kids"/"Desenhos" -> Infantil, "Séries" -> Séries) e o cadastra sozinho no "Salvar e enviar". Grupos sem
+  categoria no Jellyfin (ex.: "Religious") entram como gênero.
+- **Vários guias de programação:** o campo aceita mais de um (separe com `;`). Para cada canal o Jellyfin usa o
+  primeiro guia que tem a programação dele; o de categorias fica sempre por último, só para os que faltam.
+- **Idioma dos canais:** nova coluna **Idioma** (com filtro), lida do `tvg-language` da lista ou deduzida pelo
+  país do `tvg-id` (`.br` -> Português), pelo nome ("Brazil", "Latin America") ou pelo link (`.br`, `.pt`).
+  Dá para corrigir no duplo clique. **"Numerar em ordem..." -> "Por idioma e grupo"**: cada idioma ganha uma
+  faixa (Português 1-99, English 101-199...), e os canais aparecem separados por idioma em qualquer aplicativo
+  (o Jellyfin não tem categoria de idioma). O idioma também vai no guia.
+- **"Atualizar a biblioteca agora" confere de verdade:** acompanha a tarefa "Escanear biblioteca" do Jellyfin
+  até o fim (com a porcentagem) e mostra o que mudou: "concluído em 2 min: +3 filme(s), +12 episódio(s)", ou o
+  erro, se o scan falhar.
+
 ### Novidades da v2.1.1
 
 - **Escolher no TMDB, mais esperto:**

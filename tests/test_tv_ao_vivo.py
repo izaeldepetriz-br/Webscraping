@@ -55,7 +55,7 @@ def test_publicar_cadastra_sintonizador_guia_e_antena_sem_duplicar(tmp_path, api
 
     def guia(q):
         corpo = json.loads(api_falsa.pedidos[-1]["corpo"])
-        config["ListingProviders"] = [corpo]
+        config["ListingProviders"] = [g for g in config["ListingProviders"] if g["Path"] != corpo["Path"]] + [corpo]
         return 200, corpo
 
     api_falsa.rotas["/System/Configuration/livetv"] = lambda q: (200, config)
@@ -71,7 +71,8 @@ def test_publicar_cadastra_sintonizador_guia_e_antena_sem_duplicar(tmp_path, api
     assert any("sintonizador M3U -> E:\\TV\\canais.m3u" in f for f in feito)
     assert [(t["Type"], t["Url"]) for t in config["TunerHosts"]] == [("m3u", "E:\\TV\\canais.m3u"),
                                                                       ("hdhomerun", "192.168.0.50")]
-    assert config["ListingProviders"][0]["Path"] == "https://exemplo.org/guia.xml"
+    assert [g["Path"] for g in config["ListingProviders"]] == ["https://exemplo.org/guia.xml",
+                                                               "E:\\TV\\guia_categorias.xml"]   # o de categorias por último
     assert any(p["caminho"] == "/ScheduledTasks/Running/abc" for p in api_falsa.pedidos)
     assert all(p["headers"].get("X-Emby-Token") == "chave" for p in api_falsa.pedidos)
     publicar(canais, tmp_path / "TV", "E:\\TV\\canais.m3u", "", cliente)          # de novo: atualiza, não duplica
@@ -250,10 +251,10 @@ def test_exportar_tabela(tmp_path):
     assert [{k: d[k] for k in linhas[0]} for d in dados] == linhas and dados[0]["numero"] == ""
     exportar_tabela(linhas, tmp_path / "c.csv")
     tabela = list(csv.reader((tmp_path / "c.csv").open(encoding="utf-8-sig"), delimiter=";"))
-    assert tabela[0] == ["Nº", "Canal", "Grupo", "Situação", "No ar", "Últimas", "Link"]
-    assert tabela[1][4] == "sim" and tabela[2][4] == ""
+    assert tabela[0] == ["Nº", "Canal", "Grupo", "Idioma", "Situação", "No ar", "Últimas", "Link"]
+    assert tabela[1][5] == "sim" and tabela[2][5] == ""
     texto = exportar_tabela(linhas, tmp_path / "c.txt").read_text(encoding="utf-8").splitlines()
-    assert texto[1].split("\t") == ["", "TV Cultura", "Abertos", "no ar", "sim", "", "https://a.org/1.m3u8"]
+    assert texto[1].split("\t") == ["", "TV Cultura", "Abertos", "", "no ar", "sim", "", "https://a.org/1.m3u8"]
     with pytest.raises(ValueError):
         exportar_tabela(linhas, tmp_path / "c.xls")
 
@@ -556,3 +557,96 @@ def test_estado_leve_para_o_painel(api_falsa):
     d = ClienteTV(api_falsa.base, "chave").estado()
     assert d["canais"]["TotalRecordCount"] == 144
     assert [p["query"].get("Limit") for p in api_falsa.pedidos if p["caminho"] == "/LiveTv/Channels"] == [["0"]]
+
+
+def test_categoria_pelo_grupo_e_guia_de_categorias():
+    """O Jellyfin só põe canal em Filmes/Esportes/Notícias/Infantil/Séries pela programação do guia: sem guia
+    de verdade, o programa gera um com a categoria tirada do Grupo."""
+    import xml.etree.ElementTree as ET
+    from datetime import datetime, timezone
+    from jellyfin_tools.tv_ao_vivo import caminho_irmao, categoria_do_grupo, gerar_guia_categorias
+    assert [categoria_do_grupo(g) for g in ("Sports", "Filmes;Ação", "Notícias", "Desenhos Animados", "Séries",
+                                            "Religious", "")] == ["sports", "movie", "news", "kids", "series", None, None]
+    canais = [Canal("ESPN & Co", "http://a/1", "Sports", id_guia="ESPN.br"), Canal("ESPN 2", "http://a/2", "Sports",
+              id_guia="espn.br"), Canal("Rede Fé", "http://a/3", "Religious"), Canal("Série X", "http://a/4", "Séries")]
+    xml = ET.fromstring(gerar_guia_categorias(canais, agora=datetime(2026, 10, 6, 15, tzinfo=timezone.utc), dias=2))
+    ids = [c.get("id") for c in xml.findall("channel")]
+    assert ids == ["ESPN.br", "maestro.2", "maestro.3", "maestro.4"]          # tvg-id repetido: liga pelo nome
+    espn = [p for p in xml.findall("programme") if p.get("channel") == "ESPN.br"]
+    assert len(espn) == 3 and espn[0].get("start") == "20261005000000 +0000"   # de ontem a +2 dias
+    assert [c.text for c in espn[0].findall("category")] == ["sports", "Sports", "Português"]   # .br
+    fe = next(p for p in xml.findall("programme") if p.get("channel") == "maestro.3")
+    assert [c.text for c in fe.findall("category")] == ["Religious"]           # sem categoria do Jellyfin: só o gênero
+    serie = next(p for p in xml.findall("programme") if p.get("channel") == "maestro.4")
+    assert serie.find("episode-num") is not None                               # o Jellyfin marca "Séries" assim
+    assert caminho_irmao(r"E:\TV\canais.m3u", "guia_categorias.xml") == r"E:\TV\guia_categorias.xml"
+
+
+def test_publicar_sem_guia_cadastra_o_de_categorias_e_tira_quando_ha_guia_de_verdade(tmp_path, api_falsa):
+    hosts, canais_jf = _jellyfin_falso(api_falsa, limpa_sozinho=True)
+    guias, apagados, proximo = [], [], [0]
+
+    def provedores(q):
+        pedido = api_falsa.pedidos[-1]
+        if pedido["metodo"] == "DELETE":
+            apagados.append(q["id"][0])
+            guias[:] = [g for g in guias if g["Id"] != q["id"][0]]
+            return 204, b""
+        proximo[0] += 1
+        corpo = {**json.loads(pedido["corpo"]), "Id": f"g{proximo[0]}"}
+        guias.append(corpo)
+        return 200, corpo
+    api_falsa.rotas["/LiveTv/ListingProviders"] = provedores
+    api_falsa.rotas["/System/Configuration/livetv"] = lambda q: (200, {"TunerHosts": hosts, "ListingProviders": guias})
+    cliente = ClienteTV(api_falsa.base, "chave")
+    canais = [Canal("ESPN", "http://a/1", "Sports"), Canal("Globo", "http://a/2", "Abertos")]
+    feito = publicar(canais, tmp_path, caminho_no_servidor=r"E:\TV\canais.m3u", cliente=cliente)
+    assert (tmp_path / "guia_categorias.xml").is_file()
+    assert [g["Path"] for g in guias] == [r"E:\TV\guia_categorias.xml"]       # como o SERVIDOR enxerga
+    assert any("1 de 2 canal(is) com" in f for f in feito)
+    feito = publicar(canais, tmp_path, caminho_no_servidor=r"E:\TV\canais.m3u",
+                     guia="https://guia/epg.xml; https://outro/epg2.xml.gz", cliente=cliente)
+    # vários guias de verdade, e o de categorias sempre POR ÚLTIMO (o Jellyfin usa o 1º que tem o canal)
+    assert [g["Path"] for g in guias] == ["https://guia/epg.xml", "https://outro/epg2.xml.gz", r"E:\TV\guia_categorias.xml"]
+    assert apagados == ["g1"] and any("por último" in f for f in feito)
+    publicar([], tmp_path, caminho_no_servidor=r"E:\TV\canais.m3u", cliente=cliente)          # lista vazia: sai
+    assert [g["Path"] for g in guias] == ["https://guia/epg.xml", "https://outro/epg2.xml.gz"]
+
+
+def test_separar_guias():
+    from jellyfin_tools.tv_ao_vivo import separar_guias
+    assert separar_guias("https://a/epg.xml; https://b/x.xml.gz\nE:\\TV\\g.xml") == [
+        "https://a/epg.xml", "https://b/x.xml.gz", "E:\\TV\\g.xml"]
+    assert separar_guias("https://a/epg.xml https://b/2.xml") == ["https://a/epg.xml", "https://b/2.xml"]
+    assert separar_guias("") == [] and separar_guias("https://a/epg.xml;https://a/epg.xml") == ["https://a/epg.xml"]
+
+
+def test_idioma_do_canal_e_numerar_por_idioma():
+    from jellyfin_tools.tv_ao_vivo import idioma_do_canal, nome_do_idioma, numerar_por_idioma
+    assert [nome_do_idioma(t) for t in ("por", "pt", "Portuguese", "Português", "spa", "eng", "Klingon", "")] == [
+        "Português", "Português", "Português", "Português", "Español", "English", "Klingon", ""]
+    canais = [Canal("A&E Latin America Brazil (720p)", "http://170.83.16.50/AeE/index.m3u8", "Entertainment"),
+              Canal("ADB TV (1080p)", "https://live-tv.waytv.pt/adbtv/playlist.m3u8", "Religious"),
+              Canal("AMC Latin America (720p)", "http://1.2.3.4/amc.m3u8", "Movies"),
+              Canal("CNN", "http://1.2.3.4/cnn.m3u8", "News", id_guia="CNN.us"),
+              Canal("Canal Sur", "http://1.2.3.4/sur.m3u8", "General", idioma="spa"),
+              Canal("Misterioso", "http://1.2.3.4/x.m3u8", "General")]
+    assert [idioma_do_canal(c) for c in canais] == ["Português", "Português", "Español", "English", "Español", ""]
+    ordem = numerar_por_idioma(canais)
+    assert [(c.nome.split(" (")[0], c.numero) for c in ordem] == [
+        ("A&E Latin America Brazil", "1"), ("ADB TV", "2"),               # empate 2 x 2: Português primeiro
+        ("Canal Sur", "101"), ("AMC Latin America", "102"),               # dentro do idioma: por grupo
+        ("CNN", "201"), ("Misterioso", "301")]                             # sem idioma: por último
+    lidos = ler_m3u('#EXTINF:-1 tvg-language="Portuguese;English" group-title="News",X\nhttp://a/b\n')
+    assert lidos[0].idioma == "Português" and 'tvg-language="Português"' in gerar_m3u(lidos)
+
+
+def test_texto_do_scan_conferido():
+    from jellyfin_tools.servidor_jellyfin import texto_do_scan_conferido
+    base = {"antes": {"filmes": 5, "series": 2, "episodios": 30}, "depois": {"filmes": 5, "series": 2, "episodios": 30}}
+    assert "nada novo" in texto_do_scan_conferido({**base, "terminou": True, "status": "Completed", "erro": "",
+                                                   "segundos": 40})
+    assert "terminou com ERRO (Failed): disco" in texto_do_scan_conferido({**base, "terminou": True, "status": "Failed",
+                                                                          "erro": "disco", "segundos": 40})
+    assert "ainda está escaneando (30 min" in texto_do_scan_conferido({**base, "terminou": False, "status": "",
+                                                                      "erro": "", "segundos": 1800})

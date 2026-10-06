@@ -23,7 +23,8 @@ from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, Canal, ClienteTV, NaoEhLista
                                        descrever_sintonizador, plugins_de_tv,
                                        importar as importar_canais, limpar_e_reenviar,
                                        publicar as publicar_canais, registrar_no_historico, resumo_historico,
-                                       resumo_tv, salvar_canais, salvar_historico, sempre_falha, texto_diagnostico)
+                                       resumo_tv, salvar_canais, salvar_historico, sempre_falha, texto_diagnostico, idioma_do_canal,
+                                       numerar_por_idioma, nome_do_idioma)
 
 from . import config
 from .gui_moderna import DialogoCanal, JanelaCanais, LinhaCanal
@@ -99,7 +100,7 @@ class TVAoVivo:
             ultimas = historico.get(c.url, [])
             linhas.append(LinhaCanal(str(i), c.nome, c.grupo, situacao.detalhe if situacao else "—", c.url,
                                      situacao.ok if situacao else None, c.numero, resumo_historico(ultimas),
-                                     sempre_falha(ultimas)))
+                                     sempre_falha(ultimas), idioma_do_canal(c)))
         self.janela_canais.preencher(linhas, manter_selecao)
         self.janela_canais.bt_desfazer.configure(state="normal" if self._lixeira_canais() else "disabled")
 
@@ -248,6 +249,8 @@ class TVAoVivo:
             self.mostrar_mensagem("TV ao vivo", "O número do canal precisa ser um número (ex.: 2 ou 2.1).", "aviso")
             return
         campos = set(Canal.__dataclass_fields__)
+        if "idioma" in novo:
+            novo["idioma"] = nome_do_idioma(novo["idioma"])      # "pt", "portuguese" -> "Português"
         self._canais[indice] = Canal(**{**asdict(atual), **{k: v for k, v in novo.items() if k in campos}})
         if url != atual.url:                               # outro link: a situação antiga não vale mais
             self._situacao_canais.pop(atual.url, None)
@@ -268,14 +271,29 @@ class TVAoVivo:
         if not indices:
             return
         if escolhidos is None:
+            por_idioma = "Por idioma e grupo (faixas: 1-99, 101-199...)"
+            escolha = self.escolher(
+                "Numerar os canais", f"Numerar os {len(indices)} canal(is)?\n\n• Na ordem da lista: 1, 2, 3...\n"
+                "• Por idioma e grupo: a lista é reordenada e cada idioma ganha uma faixa de números (Português "
+                "1-99, English 101-199...). O Jellyfin não tem categoria de idioma: com as faixas, os canais "
+                "aparecem separados por idioma em qualquer aplicativo (Moonfin, TV, celular).\n\nO número aparece "
+                "no Jellyfin (TV ao vivo e guia). Dá para mudar um por um com duplo clique no canal.",
+                ("Na ordem da lista", por_idioma))
+            if escolha is None:
+                return
+            if escolha == por_idioma:
+                self._canais = numerar_por_idioma(self._canais)
+                self._guardar_canais()
+                return
             inicio, alvo = 1, f"os {len(indices)} canal(is), de 1 a {len(indices)}"
         else:
             outros = [float(c.numero) for i, c in enumerate(self._canais)
                       if i not in set(indices) and c.numero.replace(".", "", 1).isdigit()]
             inicio = int(max(outros, default=0)) + 1
             alvo = f"os {len(indices)} selecionado(s), de {inicio} a {inicio + len(indices) - 1}"
-        if not self.perguntar("TV ao vivo", f"Numerar {alvo}, na ordem da lista?\n\nO número aparece no Jellyfin "
-                              "(TV ao vivo e guia). Dá para mudar um por um com duplo clique no canal."):
+        if escolhidos is not None and not self.perguntar(
+                "TV ao vivo", f"Numerar {alvo}, na ordem da lista?\n\nO número aparece no Jellyfin (TV ao vivo e "
+                "guia). Dá para mudar um por um com duplo clique no canal."):
             return
         for n, i in enumerate(indices, inicio):
             self._canais[i].numero = str(n)
@@ -409,6 +427,26 @@ class TVAoVivo:
             ok = False if ok is not None else ok
         return f"TV: {texto}", ok
 
+    # ---- guia de categorias: cobre 30 dias; regravado por aqui toda semana (o Jellyfin relê o arquivo sozinho)
+    def renovar_guia_categorias(self, agora: float | None = None, dias: int = 7) -> bool:
+        """Se o guia_categorias.xml existe e tem mais de `dias` dias, regrava com a lista salva. True = regravou."""
+        import time as _time
+        from jellyfin_tools.tv_ao_vivo import ARQUIVO_GUIA_CATEGORIAS, gerar_guia_categorias
+        pasta = config.carregar().get("tv", {}).get("pasta") or str(config.ARQUIVO.parent / "tv")
+        arquivo = Path(pasta) / ARQUIVO_GUIA_CATEGORIAS
+        try:
+            if not arquivo.is_file() or (agora or _time.time()) - arquivo.stat().st_mtime < dias * 86400:
+                return False
+            canais = carregar_canais(self.arquivo_canais)
+            if not canais:
+                return False
+            arquivo.write_text(gerar_guia_categorias(canais), encoding="utf-8")
+        except OSError as erro:
+            self._log.warning("Guia de categorias: não deu para regravar (%s)", erro)
+            return False
+        self._log.info("Guia de categorias regravado (%d canais): %s", len(canais), arquivo)
+        return True
+
     # ---- conferência semanal (opção na janela TV ao vivo)
     DIAS_ENTRE_CONFERENCIAS = 7
     OLHAR_A_CADA = 10 * 60                     # segundos: de quanto em quanto tempo vê se já está na hora
@@ -508,7 +546,8 @@ class TVAoVivo:
         def consultar():
             try:
                 self._saude_tv = resumo_tv(ClienteTV(url, chave, timeout=15).estado(), na_lista)
-            except ErroJellyfin as erro:
+            except Exception as erro:                 # qualquer falha: mostra "sem resposta", nunca some calado
+                self._log.warning("TV ao vivo (painel de saúde): %s", erro)
                 self._saude_tv = (None, f"sem resposta ({str(erro)[:40]})")
             finally:
                 self._saude_tv_rodando = False
