@@ -18,7 +18,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-NOME = "videoscraper"
+NOME = "videoscraper"            # nome TÉCNICO (pasta, .exe, atualização): fica igual para não quebrar nada
+NOME_ATALHO = "Maestro"          # o nome que aparece (atalhos); o antigo "videoscraper.lnk" é tirado
 
 
 def pasta_fixa() -> Path:
@@ -49,25 +50,28 @@ def copiar_para_pasta_fixa(origem: str | Path, destino: str | Path | None = None
 
 
 def script_atalhos(executavel: str | Path) -> str:
-    """PowerShell que cria (ou refaz) o atalho na Área de Trabalho e no Menu Iniciar."""
+    """PowerShell que cria (ou refaz) o atalho "Maestro" na Área de Trabalho e no Menu Iniciar e tira o atalho
+    antigo "videoscraper" (de antes do nome novo), para não ficarem dois."""
     def aspas(texto) -> str:
         return "'" + str(texto).replace("'", "''") + "'"
     exe = Path(executavel)
     return f"""$ErrorActionPreference = 'Stop'
 $ws = New-Object -ComObject WScript.Shell
 foreach ($pasta in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs'))) {{
-    $atalho = $ws.CreateShortcut((Join-Path $pasta {aspas(NOME + '.lnk')}))
+    $antigo = Join-Path $pasta {aspas(NOME + '.lnk')}
+    if (Test-Path -LiteralPath $antigo) {{ Remove-Item -LiteralPath $antigo -Force }}
+    $atalho = $ws.CreateShortcut((Join-Path $pasta {aspas(NOME_ATALHO + '.lnk')}))
     $atalho.TargetPath = {aspas(exe)}
     $atalho.WorkingDirectory = {aspas(exe.parent)}
     $atalho.IconLocation = {aspas(str(exe) + ',0')}
-    $atalho.Description = 'videoscraper: organizar a biblioteca do Jellyfin'
+    $atalho.Description = 'Maestro: biblioteca do Jellyfin, TV ao vivo e downloads'
     $atalho.Save()
 }}
 """
 
 
 def criar_atalhos(executavel: str | Path, rodar=subprocess.run) -> None:
-    """Atalho "videoscraper" na Área de Trabalho e no Menu Iniciar apontando para o .exe. Lança OSError se falhar."""
+    """Atalho "Maestro" na Área de Trabalho e no Menu Iniciar apontando para o .exe. Lança OSError se falhar."""
     if sys.platform != "win32":
         raise OSError("atalhos só no Windows")
     powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / \

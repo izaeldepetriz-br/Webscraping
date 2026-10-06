@@ -14,10 +14,16 @@ for pacote in ("imageio_ffmpeg", "playwright", "pystray"):                    # 
     d, b, h = collect_all(pacote)
     datas, binaries, hiddenimports = datas + d, binaries + b, hiddenimports + h
 
+import sys  # noqa: E402
+sys.path.insert(0, os.path.abspath("."))
+from videoscraper.icone import salvar_ico  # noqa: E402
+icone_exe = str(salvar_ico(os.path.join("build", "maestro.ico")))           # o "M" com a batuta, no .exe
+
 a = Analysis(["iniciar.py"], pathex=[], binaries=binaries, datas=datas, hiddenimports=hiddenimports,
              excludes=["pytest", "PyInstaller"], noarchive=False)
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="videoscraper",
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="videoscraper",   # nome técnico (atualização)
           console=False,                       # abre só a janela, sem a tela preta
+          icon=icone_exe,                      # ícone do Maestro no Explorer, nos atalhos e na barra
           upx=False)
 coll = COLLECT(exe, a.binaries, a.datas, name="videoscraper", upx=False)

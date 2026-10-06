@@ -1614,8 +1614,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             return
 
         def tarefa():
-            ok = notificador.enviar(discord="✅ **Teste do videoscraper:** os avisos estão funcionando.",
-                                    telegram="✅ <b>Teste do videoscraper:</b> os avisos estão funcionando.")
+            ok = notificador.enviar(discord="✅ **Teste do Maestro:** os avisos estão funcionando.",
+                                    telegram="✅ <b>Teste do Maestro:</b> os avisos estão funcionando.")
             if ok:
                 self.fila.put(("msg", ("Avisos", "Aviso de teste enviado. Confira o Discord/Telegram.", "sucesso")))
             else:
@@ -2114,7 +2114,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         """Some da barra de tarefas e fica perto do relógio (sem a bandeja, só minimiza)."""
         if self._bandeja is None and bandeja.disponivel():
             self._bandeja = bandeja.Bandeja(lambda acao: self.fila.put(("bandeja", acao)),
-                                            f"videoscraper {atualizacao.versao_atual()}")
+                                            f"Maestro {atualizacao.versao_atual()}")
         if self._bandeja is not None:
             try:
                 self._bandeja.mostrar()
@@ -2285,7 +2285,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         escolha = self.escolher(
             "Instalar no lugar fixo",
             f"O programa está rodando de:\n{pasta}\n\nInstalar num lugar FIXO?\n{instalacao.pasta_fixa()}\n\n"
-            "• cria o atalho \"videoscraper\" na Área de Trabalho e no Menu Iniciar;\n"
+            "• cria o atalho \"Maestro\" na Área de Trabalho e no Menu Iniciar;\n"
             "• as atualizações vão sempre para lá (sem cópias espalhadas pelos Downloads);\n"
             "• configurações, regras e canais continuam os mesmos.\n\nDepois, a cópia antiga pode ser apagada.",
             ("Instalar no lugar fixo", "Não perguntar de novo"), cancelar="Agora não")
@@ -2328,7 +2328,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
     def _instalado_fixo(self, exe: str, avisos: list[str]) -> None:
         """Instalou: avisa, abre o programa do lugar fixo e fecha esta cópia."""
         self.mostrar_mensagem("Instalado", f"Pronto: o programa agora fica em\n{Path(exe).parent}\n\nUse o atalho "
-                              "\"videoscraper\" da Área de Trabalho ou do Menu Iniciar. Ele vai abrir de lá agora; a "
+                              "\"Maestro\" da Área de Trabalho ou do Menu Iniciar. Ele vai abrir de lá agora; a "
                               "cópia antiga (esta) pode ser apagada." + ("\n\n" + "\n".join(avisos) if avisos else ""),
                               "sucesso")
         try:

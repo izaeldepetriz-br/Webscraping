@@ -1,4 +1,10 @@
-# videoscraper: extrair e baixar vídeos públicos
+<img src="docs/maestro.png" width="96" align="left" alt="ícone do Maestro">
+
+# Maestro (antigo videoscraper)
+
+**Biblioteca do Jellyfin, TV ao vivo e downloads, regidos num lugar só.** O nome técnico continua
+`videoscraper` (o `.exe`, a pasta `.videoscraper` e o `videoscraper-windows.zip`), para as atualizações
+automáticas seguirem funcionando nas instalações que já existem.
 
 Programa em Python que encontra links de vídeo em páginas web e, se você quiser, baixa os vídeos.
 Funciona em sites simples (só HTML) e também em sites que **montam a página com JavaScript**,
@@ -232,6 +238,16 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 **0,3 s** (nenhuma consulta repetida). Nomes de episódios: **um pedido por temporada**, não um por
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
+
+### Novidades da v2.0.0: agora é **Maestro**
+
+- **Nome e ícone novos:** o "M" cuja perna vira a batuta do maestro, com a ponta verde (o "no ar" da TV ao
+  vivo), em roxo vivo. Aparece no topo do programa, na barra de título e de tarefas, em todas as janelas, no
+  ícone perto do relógio e no próprio `.exe`.
+- **Atalho "Maestro"** na Área de Trabalho e no Menu Iniciar; o atalho antigo "videoscraper" é tirado sozinho
+  na primeira vez que a versão nova abre (para não ficarem dois).
+- **Nada se perde:** configurações, chaves, canais, regras, histórico e a memória de downloads continuam na
+  mesma pasta (`.videoscraper`), e o "Iniciar com o Windows" segue funcionando.
 
 ### Novidades da v1.9.4
 

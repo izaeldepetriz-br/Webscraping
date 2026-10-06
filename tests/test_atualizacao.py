@@ -65,6 +65,7 @@ def test_script_dos_atalhos_aponta_para_o_lugar_fixo(monkeypatch, tmp_path):
     script = instalacao.script_atalhos(r"C:\Users\Ana's\AppData\Local\Programs\videoscraper\videoscraper.exe")
     assert "GetFolderPath('Desktop')" in script and "GetFolderPath('Programs')" in script
     assert "'C:\\Users\\Ana''s\\AppData" in script                      # aspas simples escapadas
+    assert "'Maestro.lnk'" in script and "'videoscraper.lnk'" in script and "Remove-Item" in script   # o antigo sai
     origem = tmp_path / "Downloads"
     with __import__("pytest").raises(OSError):
         instalacao.copiar_para_pasta_fixa(origem, tmp_path / "fixo")      # sem o .exe: recusa

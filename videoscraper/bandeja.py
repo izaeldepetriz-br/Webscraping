@@ -20,20 +20,15 @@ def disponivel() -> bool:
 
 
 def imagem_do_icone(tamanho: int = 64):
-    """Um círculo roxo com um 'play' branco (as cores do programa)."""
-    from PIL import Image, ImageDraw
-    imagem = Image.new("RGBA", (tamanho, tamanho), (0, 0, 0, 0))
-    desenho = ImageDraw.Draw(imagem)
-    desenho.ellipse((2, 2, tamanho - 2, tamanho - 2), fill=(124, 92, 255, 255))
-    t = tamanho
-    desenho.polygon([(t * 0.40, t * 0.28), (t * 0.40, t * 0.72), (t * 0.74, t * 0.50)], fill=(255, 255, 255, 255))
-    return imagem
+    """O ícone do Maestro (o "M" com a batuta), o mesmo da janela e do .exe."""
+    from .icone import desenhar
+    return desenhar(tamanho)
 
 
 class Bandeja:
     """pedir(acao): põe "abrir" ou "sair" na fila do programa (a janela atende)."""
 
-    def __init__(self, pedir, titulo: str = "videoscraper", fabrica=None):
+    def __init__(self, pedir, titulo: str = "Maestro", fabrica=None):
         self.pedir = pedir
         self.titulo = titulo
         self._fabrica = fabrica                 # testes: um ícone de mentira no lugar do pystray

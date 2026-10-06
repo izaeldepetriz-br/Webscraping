@@ -75,7 +75,7 @@ class App:
         self.trabalhando = False
         self._stdout, self._stderr = sys.stdout, sys.stderr
 
-        raiz.title("videoscraper - vídeos públicos")
+        raiz.title("Maestro - vídeos públicos")
         raiz.minsize(940, 660)
         raiz.geometry("1040x800")
         raiz.protocol("WM_DELETE_WINDOW", self.fechar)

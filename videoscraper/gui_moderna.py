@@ -23,6 +23,23 @@ from tkinter import filedialog, ttk
 
 import customtkinter as ctk
 
+from . import icone
+
+
+def _icone_do_maestro(self) -> None:
+    """O CustomTkinter põe o ícone DELE em cada janela/diálogo 200 ms depois de abrir (no Windows), a menos
+    que o programa já tenha posto um: aqui, o do Maestro."""
+    try:
+        if not getattr(self, "_iconbitmap_method_called", False):
+            icone.aplicar(self)
+    except Exception:
+        pass
+
+
+for _classe in (ctk.CTk, ctk.CTkToplevel):
+    if hasattr(_classe, "_windows_set_titlebar_icon"):
+        _classe._windows_set_titlebar_icon = _icone_do_maestro
+
 
 # =============================================================================== tema
 class Tema:
@@ -1122,7 +1139,8 @@ class JanelaModerna(ctk.CTk):
         ctk.set_appearance_mode("dark")
         super().__init__(fg_color=Tema.FUNDO)
         from .atualizacao import versao_atual
-        self.title(f"videoscraper {versao_atual()} - vídeos públicos")
+        self.title(f"{icone.NOME_APP} {versao_atual()}")
+        icone.aplicar(self)                            # o "M" com a batuta (barra de título e de tarefas)
         altura = min(900, max(700, self.winfo_screenheight() - 90))
         self.geometry(f"1320x{altura}")
         self.minsize(1100, 680)
@@ -1214,6 +1232,12 @@ class JanelaModerna(ctk.CTk):
     def _montar_cabecalho(self) -> None:
         topo = ctk.CTkFrame(self, fg_color="transparent")
         topo.grid(row=0, column=0, sticky="ew", padx=28, pady=(18, 0))
+        try:                                           # o ícone do Maestro ao lado do título
+            self._imagem_icone = ctk.CTkImage(light_image=icone.desenhar(128), dark_image=icone.desenhar(128),
+                                              size=(54, 54))
+            ctk.CTkLabel(topo, text="", image=self._imagem_icone).pack(side="left", padx=(0, 14), anchor="n")
+        except Exception:                              # sem Pillow: só o texto
+            pass
         textos = ctk.CTkFrame(topo, fg_color="transparent")
         textos.pack(side="left")
         self.lb_titulo = ctk.CTkLabel(textos, text=self.TITULOS["Vídeos"], font=self.f_titulo,

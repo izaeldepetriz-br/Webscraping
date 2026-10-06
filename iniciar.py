@@ -16,7 +16,7 @@ def _avisar(mensagem: str) -> None:
             from tkinter import messagebox
             raiz = tk.Tk()
             raiz.withdraw()
-            messagebox.showerror("videoscraper", mensagem)
+            messagebox.showerror("Maestro", mensagem)
             raiz.destroy()
         except Exception:
             pass

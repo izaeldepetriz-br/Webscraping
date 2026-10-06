@@ -15,7 +15,7 @@ def sim(texto: str) -> bool:
 
 
 def main() -> int:
-    print("=== videoscraper: vídeos públicos ===")
+    print("=== Maestro: vídeos públicos ===")
     print("1) Listar links de vídeo de uma página")
     print("2) Baixar vídeos de uma página")
     print("3) Ver o que seria baixado (sem baixar)")
