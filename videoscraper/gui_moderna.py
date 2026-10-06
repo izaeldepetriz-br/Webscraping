@@ -946,7 +946,7 @@ class JanelaCanais(ctk.CTkToplevel):
         self.bt_numerar = m._botao(acoes_linha, "Numerar em ordem...", acoes["numerar"], "secundario")
         self.bt_numerar.pack(side="left")
         # corrigir nome, grupo, link... de um canal; com vários selecionados, o grupo e o idioma de todos
-        self.bt_editar = m._botao(acoes_linha, "Editar selecionados...",
+        self.bt_editar = m._botao(acoes_linha, "Editar...",
                                   acoes.get("editar_selecionados", lambda: None), "secundario")
         self.bt_editar.pack(side="left", padx=(6, 0))
         self.bt_desfazer = m._botao(acoes_linha, "Desfazer remoção", acoes["desfazer"], "secundario")

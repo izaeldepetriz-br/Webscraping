@@ -240,6 +240,11 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.3.1
+
+- Corrigido: na TV ao vivo, o texto do botão "Remover selecionados" ficava cortado depois que o botão
+  "Editar..." entrou na mesma linha.
+
 ### Novidades da v2.3.0
 
 - **Programação de verdade dos canais (o que passa ao longo do dia).** Botão **"Programação dos canais..."** na
@@ -253,7 +258,7 @@ primeira falha (antes esperava o tempo limite em cada filme).
     entram na próxima coleta. Os canais sem grade em nenhum site ficam com o guia de categorias.
   - Um guia que ainda não responde (ex.: o coletor na 1ª coleta) não é cadastrado naquele envio, para não
     atrapalhar a limpeza dos canais antigos no Jellyfin; entra no envio seguinte.
-- **Editar canais pela tela da TV ao vivo:** botão **"Editar selecionados..."** (ou F2). Um canal: corrige nome,
+- **Editar canais pela tela da TV ao vivo:** botão **"Editar..."** (ou F2), com os canais selecionados. Um canal: corrige nome,
   número, grupo, link do sinal, logo, ID do guia e idioma. Vários canais: muda o **Grupo** e/ou o **Idioma** de
   todos de uma vez (campo vazio = fica como está em cada um). O duplo clique continua editando um canal.
 
