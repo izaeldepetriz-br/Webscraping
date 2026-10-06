@@ -606,7 +606,7 @@ def test_publicar_sem_guia_cadastra_o_de_categorias_e_tira_quando_ha_guia_de_ver
     feito = publicar(canais, tmp_path, caminho_no_servidor=r"E:\TV\canais.m3u", cliente=cliente)
     assert (tmp_path / "guia_categorias.xml").is_file()
     assert [g["Path"] for g in guias] == [r"E:\TV\guia_categorias.xml"]       # como o SERVIDOR enxerga
-    assert any("1 de 2 canal(is) com" in f for f in feito)
+    assert any("Tipos pelo Grupo: Esportes 1; sem tipo: 1 (Abertos 1)" in f for f in feito)
     for nome in ("epg.xml", "epg2.xml.gz"):
         api_falsa.rotas[f"/{nome}"] = lambda q: (200, b"<tv></tv>", {"Content-Type": "application/xml"})
     um, dois = api_falsa.base + "/epg.xml", api_falsa.base + "/epg2.xml.gz"
@@ -660,3 +660,55 @@ def test_texto_do_scan_conferido():
                                                                           "erro": "disco", "segundos": 40})
     assert "ainda está escaneando (30 min" in texto_do_scan_conferido({**base, "terminou": False, "status": "",
                                                                       "erro": "", "segundos": 1800})
+
+
+def test_tipos_dos_grupos_com_a_escolha_da_pessoa():
+    from jellyfin_tools.tv_ao_vivo import categoria_do_grupo, gerar_guia_categorias, tipos_dos_canais
+    assert categoria_do_grupo("Entertainment") is None                             # o Jellyfin não tem esse tipo
+    mapa = {"Entertainment": "series", "Sports": ""}                              # Sports: "Nenhum" de propósito
+    assert categoria_do_grupo("Entertainment", mapa) == "series"
+    assert categoria_do_grupo("Sports", mapa) is None and categoria_do_grupo("Movies", mapa) == "movie"
+    canais = [Canal("A", "http://a", "Entertainment"), Canal("B", "http://b", "Movies"),
+              Canal("C", "http://c", "Religious"), Canal("D", "http://d", "Entertainment")]
+    assert tipos_dos_canais(canais) == ({"Filmes": 1}, {"Entertainment": 2, "Religious": 1})
+    assert tipos_dos_canais(canais, mapa) == ({"Séries": 2, "Filmes": 1}, {"Religious": 1})
+    xml = gerar_guia_categorias(canais[:1], mapa=mapa, dias=0)
+    assert "<category>series</category>" in xml and "episode-num" in xml           # vira Série no Jellyfin
+
+
+def test_envio_mostra_o_andamento_em_porcentagem_e_os_programas_por_tipo(tmp_path, api_falsa):
+    config = {"TunerHosts": [], "ListingProviders": []}
+
+    def guarda(lista):
+        def rota(q):
+            corpo = json.loads(api_falsa.pedidos[-1]["corpo"])
+            config[lista] = [x for x in config[lista] if x.get("Path", x.get("Url")) != corpo.get("Path", corpo.get(
+                "Url"))] + [{**corpo, "Id": "x"}]
+            return 200, {**corpo, "Id": "x"}
+        return rota
+    estados = iter([{"State": "Idle"},                                             # antes do pedido
+                    {"State": "Running", "CurrentProgressPercentage": 37.5},
+                    {"State": "Idle", "LastExecutionResult": {"EndTimeUtc": "novo", "Status": "Completed"}}])
+    contagens = {"IsMovie": 230, "IsSeries": 50, "IsSports": 80, "IsNews": 400, "IsKids": 120}
+    api_falsa.rotas["/System/Configuration/livetv"] = lambda q: (200, config)
+    api_falsa.rotas["/LiveTv/TunerHosts"] = guarda("TunerHosts")
+    api_falsa.rotas["/LiveTv/ListingProviders"] = guarda("ListingProviders")
+    api_falsa.rotas["/ScheduledTasks"] = lambda q: (200, [{"Key": "RefreshGuide", "Id": "abc"}])
+    api_falsa.rotas["/ScheduledTasks/Running/abc"] = lambda q: (204, b"")
+    api_falsa.rotas["/ScheduledTasks/abc"] = lambda q: (200, next(estados, {"State": "Idle"}))
+    api_falsa.rotas["/LiveTv/Channels"] = lambda q: (200, {"Items": [], "TotalRecordCount": 2})
+    api_falsa.rotas["/LiveTv/Programs"] = lambda q: (200, {"Items": [], "TotalRecordCount": next(
+        n for chave, n in contagens.items() if chave in q)})
+    passos = []
+    canais = [Canal("Filmes 24h", "http://a/1.m3u8", "Movies"), Canal("Show", "http://a/2.m3u8", "Entertainment")]
+    feito = publicar(canais, tmp_path / "TV", "", "", ClienteTV(api_falsa.base, "chave"),
+                     ao_andamento=lambda f, t: passos.append((round(f, 2), t)), mapa_tipos={"Entertainment": "series"})
+    textos = [t for _, t in passos]
+    assert textos[0].startswith("1/5") and "4/5 Jellyfin atualizando o guia: 38%" in textos
+    assert textos[-1] == "Envio concluído" and [f for f, _ in passos] == sorted(f for f, _ in passos)
+    assert any("Tipos pelo Grupo: Filmes 1, Séries 1" in f for f in feito)
+    assert any("Filmes 230, Séries 50, Esportes 80, Notícias 400, Infantil 120" in f for f in feito)
+    guia = config["ListingProviders"][-1]                                          # o de categorias
+    assert "filme" in guia["MovieCategories"] and "esporte" in guia["SportsCategories"]   # palavras em português
+    assert "infantil" in guia["KidsCategories"] and "notícias" in guia["NewsCategories"]
+    assert "movie" in guia["MovieCategories"]                                      # as de fábrica continuam

@@ -2113,6 +2113,43 @@ def test_tv_conferir_programacao_preenche_a_coluna(app, monkeypatch, tmp_path):
     assert "Programação" in destino.read_text(encoding="utf-8-sig") and "✓ 48 programas" in destino.read_text(
         encoding="utf-8-sig")
 
+
+def test_tv_tipos_dos_grupos_e_envio_com_andamento(app, monkeypatch, tmp_path):
+    from jellyfin_tools.tv_ao_vivo import Canal
+    from videoscraper import tv_moderna
+    from videoscraper.gui_moderna import DialogoTipos
+    janela = _abrir_tv(app, [Canal("A", "https://a.org/1", "Entertainment"), Canal("B", "https://a.org/2", "Movies"),
+                             Canal("C", "https://a.org/3", "Entertainment")])
+    pedidos = []
+    monkeypatch.setattr(app, "_pedir_tipos", lambda grupos, atual: (pedidos.append((grupos, atual)),
+                                                                    {"Entertainment": "series"})[1])
+    janela.bt_tipos.invoke()
+    assert pedidos[0] == ([("Entertainment", 2, None), ("Movies", 1, "movie")], {})   # do maior para o menor
+    assert app.tipos_dos_grupos == {"Entertainment": "series"} and "Salvar e enviar" in app.caixas[-1][2]
+
+    dialogo = DialogoTipos(janela, pedidos[0][0], {"Entertainment": "series"})   # a janelinha de verdade
+    assert dialogo.vars["Entertainment"].get() == "Séries"
+    assert dialogo.vars["Movies"].get() == "Automático (Filmes)"
+    dialogo.vars["Movies"].set("Nenhum")
+    dialogo._salvar()
+    assert dialogo.resultado == {"Entertainment": "series", "Movies": ""}
+
+    recebidos = {}
+
+    def publicar_falso(canais, pasta, *a, **k):
+        recebidos.update(k)
+        k["ao_andamento"](0.5, "4/5 Jellyfin atualizando o guia: 50%")
+        return ["lista salva"]
+    monkeypatch.setattr(tv_moderna, "publicar_canais", publicar_falso)
+    janela.var_pasta.set(str(tmp_path / "TV"))
+    rodape = []
+    original = app.definir_progresso_total
+    monkeypatch.setattr(app, "definir_progresso_total", lambda f, t="": (rodape.append(t), original(f, t)))
+    app._publicar_canais()                                             # "Salvar e enviar ao Jellyfin"
+    esperar(app)
+    assert recebidos["mapa_tipos"] == {"Entertainment": "series"}
+    assert "4/5 Jellyfin atualizando o guia: 50%" in rodape
+
 def test_tv_numerar_em_ordem(app):
     from jellyfin_tools.tv_ao_vivo import Canal
     janela = _abrir_tv(app, [Canal(f"C{n}", f"https://a.org/{n}") for n in range(4)])

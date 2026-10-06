@@ -240,6 +240,24 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.9.0
+
+- **Separação por tipo (Filmes, Séries, Esportes, Notícias, Infantil) mais certeira:**
+  - O Jellyfin decide o tipo de cada programa comparando as categorias do guia com listas de palavras que,
+    de fábrica, só têm inglês ("movie", "sports"...). Os guias brasileiros (mi.tv, meuguia.tv) mandam
+    "Filme", "Esporte", "Infantil"..., e nada caía em tipo nenhum. Agora cada guia é cadastrado com as
+    palavras em **português** (e espanhol) também, somadas às de fábrica.
+  - **"Tipos..."** (botão novo na TV ao vivo): o Jellyfin e os aplicativos (Moonfin...) só têm esses **5
+    tipos**, e não dá para criar outros, como "Entertainment". Nessa janela você escolhe em qual dos 5 cada
+    Grupo entra (por exemplo **Entertainment → Séries**), ou nenhum. Vale no próximo "Salvar e enviar".
+- **Envio com andamento em %:** o rodapé mostra o passo e a porcentagem: "1/5 Salvando a lista...", "2/5
+  Cadastrando a lista...", "3/5 Cadastrando os guias...", "4/5 Jellyfin atualizando o guia: 37%", "5/5
+  Conferindo...". A espera pela atualização do guia vai até 10 minutos (o "Parar" interrompe).
+- **Relatório do envio mais preciso:** quantos canais ficaram em cada tipo pelo Grupo, quais grupos ficaram sem
+  tipo, e quantos **programas de cada tipo** o Jellyfin tem de fato no guia depois do envio. Esses números são
+  o que os aplicativos usam para separar.
+- "Numerar em ordem..." agora se chama **"Numerar..."** (mesma função; abre espaço para "Tipos...").
+
 ### Novidades da v2.8.0
 
 - **TV ao vivo: coluna "Programação"** (com filtro e na exportação). Mostra, canal por canal:

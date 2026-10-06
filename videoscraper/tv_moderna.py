@@ -27,7 +27,7 @@ from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, Canal, ClienteTV, NaoEhLista
                                        numerar_por_idioma, nome_do_idioma)
 
 from . import config
-from .gui_moderna import DialogoCanal, JanelaCanais, LinhaCanal
+from .gui_moderna import DialogoCanal, DialogoTipos, JanelaCanais, LinhaCanal
 
 
 class TVAoVivo:
@@ -83,6 +83,7 @@ class TVAoVivo:
                 "editar_selecionados": self._editar_selecionados,
                 "diagnostico": self.ao_diagnostico_tv, "semanal": self._guardar_opcoes_tv,
                 "programacao": self.ao_programacao_tv, "conferir_programacao": self.ao_conferir_programacao,
+                "tipos": self._escolher_tipos,
                 "desfazer": self._desfazer_remocao_canais})
             dados = config.carregar().get("tv", {})
             dados.setdefault("pasta", str(config.ARQUIVO.parent / "tv"))
@@ -414,13 +415,15 @@ class TVAoVivo:
         self._guardar_canais()
         o = self.obter_opcoes_jellyfin()
         canais = list(self._canais)
+        tipos = self.tipos_dos_grupos
 
         def tarefa():
             cliente = ClienteTV(o.jellyfin_url, o.jellyfin_api_key) if o.jellyfin_url and o.jellyfin_api_key else None
             if linha_epg := self._atualizar_channels_xml(canais, valores["pasta"]):   # canais novos -> coletor
                 self._log.info("TV ao vivo: %s", linha_epg)
             feito = publicar_canais(canais, valores["pasta"], valores["no_servidor"], valores["guia"], cliente,
-                                    valores["antena"], parar=self.evento_parar.is_set)
+                                    valores["antena"], parar=self.evento_parar.is_set, mapa_tipos=tipos,
+                                    ao_andamento=lambda fracao, texto: self.fila.put(("jf_analise", (fracao, texto))))
             if linha_epg:
                 feito.insert(1, linha_epg)
             if cliente is not None:                       # outros sintonizadores somam canais ao total do Jellyfin
@@ -453,6 +456,39 @@ class TVAoVivo:
             self.fila.put(("msg", ("TV ao vivo", "\n".join(feito) + dica, "sucesso")))
 
         self._rodar("Enviando os canais ao Jellyfin (e esperando ele atualizar o guia)...", tarefa)
+
+    # ---- Grupo -> tipo do Jellyfin (os 5 que existem): a escolha da pessoa, guardada à parte da janela
+    @property
+    def tipos_dos_grupos(self) -> dict:
+        return dict(config.carregar().get("tv_tipos", {}) or {})
+
+    def _pedir_tipos(self, grupos: list, atual: dict) -> dict | None:
+        dialogo = DialogoTipos(self.janela_canais or self, grupos, atual)
+        self.wait_window(dialogo)
+        return dialogo.resultado
+
+    def _escolher_tipos(self) -> None:
+        """Botão "Tipos...": em qual tipo do Jellyfin cada Grupo entra (Entertainment -> Séries, por exemplo)."""
+        from jellyfin_tools.tv_ao_vivo import categoria_do_grupo
+        quantos: dict[str, int] = {}
+        for c in self._canais:
+            grupo = (c.grupo or "").strip()
+            if grupo:
+                quantos[grupo] = quantos.get(grupo, 0) + 1
+        if not quantos:
+            self.mostrar_mensagem("Tipos no Jellyfin", "Nenhum canal tem Grupo: edite os canais (\"Editar...\") "
+                                  "e preencha o Grupo primeiro.", "info")
+            return
+        grupos = [(g, q, categoria_do_grupo(g)) for g, q in sorted(quantos.items(), key=lambda gq: (-gq[1], gq[0]))]
+        novo = self._pedir_tipos(grupos, self.tipos_dos_grupos)
+        if novo is None:
+            return
+        tudo = config.carregar()
+        tudo["tv_tipos"] = novo
+        config.salvar(tudo)
+        self._log.info("TV ao vivo: tipos dos grupos -> %s", novo or "todos automáticos")
+        self.mostrar_mensagem("Tipos no Jellyfin", "Salvo. Clique em \"Salvar e enviar ao Jellyfin\" para valer "
+                              "(o guia de categorias é refeito com esses tipos).", "sucesso")
 
     INTERVALO_SAUDE_TV = 30 * 60               # segundos entre uma consulta e outra (são 3 pedidos pequenos)
 
@@ -630,7 +666,7 @@ class TVAoVivo:
             canais = carregar_canais(self.arquivo_canais)
             if not canais:
                 return False
-            arquivo.write_text(gerar_guia_categorias(canais), encoding="utf-8")
+            arquivo.write_text(gerar_guia_categorias(canais, mapa=self.tipos_dos_grupos), encoding="utf-8")
         except OSError as erro:
             self._log.warning("Guia de categorias: não deu para regravar (%s)", erro)
             return False

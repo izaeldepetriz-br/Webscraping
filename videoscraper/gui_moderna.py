@@ -851,13 +851,77 @@ class DialogoCanal(ctk.CTkToplevel):
         self.destroy()
 
 
+class DialogoTipos(ctk.CTkToplevel):
+    """Grupo -> tipo do Jellyfin. grupos: [(grupo, quantos canais, tipo automático ou None)]; atual: a escolha
+    salva ({grupo: "series" | "" (nenhum)}). `resultado`: o novo mapa (só o que saiu do automático); None = Cancelar."""
+
+    NOMES = {"movie": "Filmes", "series": "Séries", "sports": "Esportes", "news": "Notícias", "kids": "Infantil"}
+
+    def __init__(self, master, grupos: list[tuple[str, int, str | None]], atual: dict):
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.resultado = None
+        self.title("Tipos no Jellyfin")
+        self.geometry("620x600")
+        self.transient(master)
+        app = master.master if not hasattr(master, "_entrada") else master
+        ctk.CTkLabel(self, text="Tipo de cada Grupo no Jellyfin", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
+                     text_color=Tema.TEXTO, anchor="w").pack(fill="x", padx=24, pady=(18, 4))
+        ctk.CTkLabel(self, text="O Jellyfin e os aplicativos (Moonfin, TV, celular) só conhecem 5 tipos: Filmes, Séries, "
+                     "Esportes, Notícias e Infantil. Não dá para criar outros (\"Entertainment\", \"Religious\"...): "
+                     "escolha em qual dos 5 cada grupo entra, ou nenhum. Vale no próximo \"Salvar e enviar\".",
+                     font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left",
+                     wraplength=570).pack(fill="x", padx=24, pady=(0, 8))
+        lista = ctk.CTkScrollableFrame(self, fg_color=Tema.CAMPO, height=380)
+        lista.pack(fill="both", expand=True, padx=24, pady=4)
+        lista.grid_columnconfigure(0, weight=1)
+        self.vars: dict[str, tk.StringVar] = {}
+        self._automatico: dict[str, str] = {}
+        for n, (grupo, quantos, automatico) in enumerate(grupos):
+            auto = f"Automático ({self.NOMES.get(automatico, 'sem tipo')})"
+            self._automatico[grupo] = auto
+            if grupo in atual:
+                inicial = self.NOMES.get(atual[grupo], "Nenhum") if atual[grupo] else "Nenhum"
+            else:
+                inicial = auto
+            ctk.CTkLabel(lista, text=f"{grupo}  ({quantos} canal(is))", font=app.f_rotulo, text_color=Tema.TEXTO,
+                         anchor="w").grid(row=n, column=0, sticky="ew", padx=(8, 8), pady=3)
+            self.vars[grupo] = tk.StringVar(value=inicial)
+            ctk.CTkOptionMenu(lista, values=[auto, *self.NOMES.values(), "Nenhum"], variable=self.vars[grupo],
+                              width=190, height=28, fg_color=Tema.CARTAO, button_color=Tema.CAMPO_BORDA,
+                              button_hover_color=Tema.SECUNDARIA_HOVER, text_color=Tema.TEXTO, font=app.f_rotulo,
+                              dropdown_font=app.f_rotulo).grid(row=n, column=1, padx=(0, 8), pady=3)
+        botoes = ctk.CTkFrame(self, fg_color="transparent")
+        botoes.pack(fill="x", padx=24, pady=(10, 18))
+        app._botao(botoes, "Cancelar", self.destroy, "secundario").pack(side="left")
+        app._botao(botoes, "Salvar", self._salvar, "primario").pack(side="right")
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.update_idletasks()                          # no meio da janela da TV
+        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_width()) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - self.winfo_height()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+    def _salvar(self) -> None:
+        codigos = {nome: codigo for codigo, nome in self.NOMES.items()}
+        self.resultado = {}
+        for grupo, var in self.vars.items():
+            escolha = var.get()
+            if escolha == self._automatico[grupo]:
+                continue
+            self.resultado[grupo] = "" if escolha == "Nenhum" else codigos[escolha]
+        self.destroy()
+
+
 class JanelaCanais(ctk.CTkToplevel):
     """TV ao vivo no Jellyfin: a lista de canais (.m3u), o guia (XMLTV) e a antena (HDHomeRun).
     acoes: {'adicionar', 'importar_arquivo', 'importar_endereco', 'remover', 'remover_todos', 'conferir',
             'publicar', 'editar' (iid), 'editar_selecionados', 'numerar', 'desfazer'}."""
 
     COLUNAS = (("numero", "Nº", 44), ("grupo", "Grupo", 100), ("idioma", "Idioma", 90),
-               ("programacao", "Programação", 170), ("situacao", "Situação", 150), ("historico", "Últimas", 185),
+               ("programacao", "Programação", 185), ("situacao", "Situação", 140), ("historico", "Últimas", 185),
                ("url", "Link", 220))
 
     def __init__(self, master, acoes: dict):
@@ -952,12 +1016,15 @@ class JanelaCanais(ctk.CTkToplevel):
 
         acoes_linha = ctk.CTkFrame(faixa, fg_color="transparent")
         acoes_linha.pack(fill="x", pady=(4, 0))
-        self.bt_numerar = m._botao(acoes_linha, "Numerar em ordem...", acoes["numerar"], "secundario")
+        self.bt_numerar = m._botao(acoes_linha, "Numerar...", acoes["numerar"], "secundario")
         self.bt_numerar.pack(side="left")
         # corrigir nome, grupo, link... de um canal; com vários selecionados, o grupo e o idioma de todos
         self.bt_editar = m._botao(acoes_linha, "Editar...",
                                   acoes.get("editar_selecionados", lambda: None), "secundario")
         self.bt_editar.pack(side="left", padx=(6, 0))
+        # em qual dos 5 tipos do Jellyfin (Filmes, Séries, Esportes, Notícias, Infantil) cada Grupo entra
+        self.bt_tipos = m._botao(acoes_linha, "Tipos...", acoes.get("tipos", lambda: None), "secundario")
+        self.bt_tipos.pack(side="left", padx=(6, 0))
         self.bt_desfazer = m._botao(acoes_linha, "Desfazer remoção", acoes["desfazer"], "secundario")
         self.bt_desfazer.pack(side="left", padx=(6, 0))
         self.bt_conferir = m._botao(acoes_linha, "Conferir todos", acoes["conferir"], "secundario")

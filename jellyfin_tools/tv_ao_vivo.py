@@ -205,15 +205,39 @@ CATEGORIAS_DO_GRUPO = (    # (categoria que o Jellyfin entende, palavras do grup
     ("series", ("serie", "series", "seriado", "seriados")))
 
 
-def categoria_do_grupo(grupo: str) -> str | None:
-    """'Sports' -> 'sports'; 'Filmes;Ação' -> 'movie'; 'Religious' -> None (o Jellyfin não tem essa)."""
+# Os únicos tipos que o Jellyfin (e os aplicativos, como o Moonfin) conhecem. Não dá para criar outros
+# ("Entertainment", "Religious"...): é fixo no código do Jellyfin. Um grupo sem tipo pode ser LIGADO a um destes.
+TIPOS_DO_JELLYFIN = {"movie": "Filmes", "series": "Séries", "sports": "Esportes", "news": "Notícias",
+                     "kids": "Infantil"}
+
+
+def categoria_do_grupo(grupo: str, mapa: dict | None = None) -> str | None:
+    """'Sports' -> 'sports'; 'Filmes;Ação' -> 'movie'; 'Religious' -> None (o Jellyfin não tem essa).
+    mapa: a escolha da pessoa para um grupo inteiro ({"Entertainment": "series", "Religious": ""}): vale
+    primeiro; "" = sem tipo de propósito."""
+    if mapa and (grupo or "").strip() in mapa:
+        return mapa[(grupo or "").strip()] or None
     import unicodedata
     texto = "".join(c for c in unicodedata.normalize("NFD", (grupo or "").lower()) if unicodedata.category(c) != "Mn")
     palavras = set(re.findall(r"[a-z]+", texto))
     return next((cat for cat, chaves in CATEGORIAS_DO_GRUPO if palavras & set(chaves)), None)
 
 
-def gerar_guia_categorias(canais: list[Canal], agora=None, dias: int = 30) -> str:
+def tipos_dos_canais(canais: list[Canal], mapa: dict | None = None) -> tuple[dict[str, int], dict[str, int]]:
+    """({"Filmes": 12, ...}, {grupo sem tipo: quantos}): quantos canais vão em cada tipo pelo Grupo."""
+    por_tipo: dict[str, int] = {}
+    sem_tipo: dict[str, int] = {}
+    for c in canais:
+        if categoria := categoria_do_grupo(c.grupo, mapa):
+            nome = TIPOS_DO_JELLYFIN[categoria]
+            por_tipo[nome] = por_tipo.get(nome, 0) + 1
+        else:
+            grupo = (c.grupo or "").strip() or "(sem grupo)"
+            sem_tipo[grupo] = sem_tipo.get(grupo, 0) + 1
+    return por_tipo, sem_tipo
+
+
+def gerar_guia_categorias(canais: list[Canal], agora=None, dias: int = 30, mapa: dict | None = None) -> str:
     """XMLTV com um "programa" por dia em cada canal (título = o canal, gênero = o Grupo e a categoria que o
     Jellyfin entende). Os canais ligam pelo tvg-id ou, sem ele, pelo nome (como o Jellyfin faz)."""
     from datetime import datetime, timedelta, timezone
@@ -225,7 +249,7 @@ def gerar_guia_categorias(canais: list[Canal], agora=None, dias: int = 30) -> st
     for c, cid in zip(canais, ids):
         linhas.append(f"  <channel id={quoteattr(cid)}><display-name>{escape(c.nome)}</display-name></channel>")
     for c, cid in zip(canais, ids):
-        categoria = categoria_do_grupo(c.grupo)
+        categoria = categoria_do_grupo(c.grupo, mapa)
         idioma = idioma_do_canal(c)
         generos = [g for g in (categoria, *(p.strip() for p in re.split(r"[;,/|]", c.grupo or "")), idioma) if g]
         for dia in range(dias + 1):
@@ -589,6 +613,21 @@ def mensagem_fora_do_ar(fora: list[tuple[Canal, Situacao]], limite: int = 15) ->
 
 
 # ----------------------------------------------------------------- cadastrar no Jellyfin
+# O Jellyfin decide o tipo de cada PROGRAMA comparando as <category> do guia com estas listas (uma por guia
+# cadastrado, letras maiúsculas/minúsculas tanto faz, acento conta). As de fábrica só têm inglês ("movie",
+# "sports"...): os guias brasileiros (mi.tv, meuguia.tv) mandam "Filme", "Esporte"... e nada caía em tipo nenhum.
+PALAVRAS_DOS_TIPOS = {
+    "MovieCategories": ["movie", "movies", "film", "filme", "filmes", "cinema", "película", "pelicula", "películas"],
+    "SportsCategories": ["sports", "sport", "basketball", "baseball", "football", "soccer", "esporte", "esportes",
+                         "futebol", "deporte", "deportes"],
+    "NewsCategories": ["news", "journalism", "documentary", "current affairs", "notícias", "noticias", "notícia",
+                       "jornalismo", "telejornal", "documentário", "documentario", "documentários", "informativo"],
+    "KidsCategories": ["kids", "family", "children", "childrens", "disney", "infantil", "infantis", "crianças",
+                       "criancas", "desenho", "desenhos", "desenho animado", "animação", "animacao", "animation",
+                       "cartoon", "cartoons", "niños", "infantiles"],
+}
+
+
 class ClienteTV:
     """Painel -> TV ao vivo, pela API (a chave de API do Painel é de administrador)."""
 
@@ -638,10 +677,13 @@ class ClienteTV:
         return self._pedir("POST", "/LiveTv/TunerHosts", json=corpo) or corpo
 
     def cadastrar_guia(self, endereco: str) -> dict:
-        """Guia XMLTV (arquivo ou endereço .xml/.xml.gz), para todos os sintonizadores."""
+        """Guia XMLTV (arquivo ou endereço .xml/.xml.gz), para todos os sintonizadores. Junto vão as palavras
+        de cada tipo (PALAVRAS_DOS_TIPOS), somadas às que já estavam lá."""
         existente = next((p for p in self.configuracao().get("ListingProviders") or []
                           if p.get("Type") == "xmltv" and p.get("Path") == endereco), None)
         corpo = {**(existente or {}), "Type": "xmltv", "Path": endereco, "EnableAllTuners": True}
+        for chave, palavras in PALAVRAS_DOS_TIPOS.items():
+            corpo[chave] = list(dict.fromkeys([*((existente or {}).get(chave) or []), *palavras]))
         return self._pedir("POST", "/LiveTv/ListingProviders", json=corpo,
                            params={"validateListings": "false", "validateLogin": "false"}) or corpo
 
@@ -676,7 +718,24 @@ class ClienteTV:
         self._pedir("POST", f"/ScheduledTasks/Running/{tarefa['Id']}")
         return str(tarefa["Id"])
 
-    def esperar_tarefa(self, id_: str, limite: float = 180, parar=None, intervalo: float = 2) -> bool:
+    def programas_por_tipo(self) -> dict[str, int]:
+        """{"Filmes": 230, "Séries": 50, ...}: quantos programas de cada tipo o Jellyfin tem AGORA no guia (é
+        o que os aplicativos usam para separar). Tipos que não deram para consultar ficam de fora."""
+        filtros = {"Filmes": "IsMovie", "Séries": "IsSeries", "Esportes": "IsSports", "Notícias": "IsNews",
+                   "Infantil": "IsKids"}
+        resultado = {}
+        for nome, filtro in filtros.items():
+            try:
+                dados = self._pedir("GET", "/LiveTv/Programs", params={filtro: "true", "Limit": 0,
+                                                                        "EnableTotalRecordCount": "true"}) or {}
+            except ErroJellyfin:
+                continue
+            if isinstance(dados.get("TotalRecordCount"), int):
+                resultado[nome] = dados["TotalRecordCount"]
+        return resultado
+
+    def esperar_tarefa(self, id_: str, limite: float = 180, parar=None, intervalo: float = 2,
+                       ao_progresso=None) -> bool:
         """Espera a tarefa pedida em atualizar_guia() TERMINAR (até `limite` segundos). True = terminou.
         Antes bastava ela aparecer "parada" (Idle), e logo depois do pedido ela ainda nem tinha começado: o
         programa contava os canais ANTIGOS. Agora só vale um fim mais novo que o de antes do pedido (ou tê-la
@@ -695,6 +754,8 @@ class ClienteTV:
             estado = info.get("State", "Idle")
             ultimo = info.get("LastExecutionResult") or {}
             viu_rodando = viu_rodando or estado != "Idle"
+            if ao_progresso and estado == "Running" and info.get("CurrentProgressPercentage") is not None:
+                ao_progresso(float(info["CurrentProgressPercentage"]))
             if estado == "Idle" and ("LastExecutionResult" not in info          # Jellyfin antigo: sem o histórico
                                      or viu_rodando or (ultimo.get("EndTimeUtc") and ultimo.get("EndTimeUtc") != antes)):
                 if ultimo.get("Status") in ("Failed", "Aborted"):
@@ -782,7 +843,8 @@ class ClienteTV:
 
 
 def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = "", guia: str = "",
-             cliente: ClienteTV | None = None, antena: str = "", parar=None, esperar_guia: float = 180) -> list[str]:
+             cliente: ClienteTV | None = None, antena: str = "", parar=None, esperar_guia: float = 600,
+             ao_andamento=None, mapa_tipos: dict | None = None) -> list[str]:
     """Grava '<pasta>/canais.m3u' e (com o cliente) cadastra no Jellyfin: a lista, o guia e a antena.
     caminho_no_servidor: como o SERVIDOR do Jellyfin enxerga o arquivo, se for outro computador
     (ex.: 'E:\\TV\\canais.m3u' lá, '\\\\Servidor\\e\\TV\\canais.m3u' aqui). Vazio = o mesmo caminho.
@@ -792,8 +854,14 @@ def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = 
       2. o sintonizador M3U é atualizado no lugar e o guia é atualizado (o Jellyfin relê a lista);
       3. o programa confere se os removidos sumiram. Só se continuarem lá (ou se não der para conferir)
          o sintonizador é recriado, e aí os favoritos desses canais precisam ser marcados de novo;
-      4. lista vazia: o nosso sintonizador M3U é retirado do Jellyfin."""
+      4. lista vazia: o nosso sintonizador M3U é retirado do Jellyfin.
+    ao_andamento(fração 0-1, texto): em que passo está ("4/5 Jellyfin atualizando o guia: 37%").
+    mapa_tipos: a escolha da pessoa de Grupo -> tipo do Jellyfin (categoria_do_grupo)."""
+    def andamento(fracao: float, texto: str) -> None:
+        if ao_andamento:
+            ao_andamento(fracao, texto)
     feito = []
+    andamento(0.02, "1/5 Salvando a lista e o guia de categorias")
     arquivo = Path(pasta) / "canais.m3u"
     try:
         antigos = ler_m3u(arquivo.read_text(encoding="utf-8", errors="replace"))
@@ -809,13 +877,20 @@ def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = 
     endereco = caminho_no_servidor.strip() or str(arquivo)
     guia_categorias = ""
     if canais:                                       # o de categorias (Filmes, Esportes...) pelo Grupo
-        (Path(pasta) / ARQUIVO_GUIA_CATEGORIAS).write_text(gerar_guia_categorias(canais), encoding="utf-8")
+        (Path(pasta) / ARQUIVO_GUIA_CATEGORIAS).write_text(gerar_guia_categorias(canais, mapa=mapa_tipos),
+                                                           encoding="utf-8")
         guia_categorias = caminho_irmao(endereco, ARQUIVO_GUIA_CATEGORIAS)
-        com_categoria = sum(1 for c in canais if categoria_do_grupo(c.grupo))
-        feito.append(f"guia de categorias salvo ({com_categoria} de {len(canais)} canal(is) com Filmes/Esportes/"
-                     "Notícias/Infantil/Séries pelo Grupo)")
+        por_tipo, sem_tipo = tipos_dos_canais(canais, mapa_tipos)
+        feito.append("guia de categorias salvo. Tipos pelo Grupo: "
+                     + (", ".join(f"{n} {por_tipo[n]}" for n in TIPOS_DO_JELLYFIN.values() if n in por_tipo)
+                        or "nenhum")
+                     + (f"; sem tipo: {sum(sem_tipo.values())} ("
+                        + ", ".join(f"{g} {q}" for g, q in sorted(sem_tipo.items(), key=lambda gq: -gq[1])[:6])
+                        + (", ..." if len(sem_tipo) > 6 else "") + ")" if sem_tipo else ""))
     if cliente is None:
+        andamento(1.0, "Lista salva (sem o Jellyfin)")
         return feito
+    andamento(0.1, "2/5 Cadastrando a lista (sintonizador) no Jellyfin")
     nossos = cliente.sintonizadores("m3u", endereco)
     total_antes = cliente.quantos_canais() if removidos and nossos and canais else None
     if not canais:
@@ -837,6 +912,7 @@ def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = 
     if antena.strip():
         cliente.cadastrar_sintonizador("hdhomerun", antena.strip(), f"{NOME_SINTONIZADOR} antena")
         feito.append(f"Jellyfin: sintonizador de antena HDHomeRun -> {antena.strip()}")
+    andamento(0.2, "3/5 Cadastrando os guias de programação")
     for endereco_guia in separar_guias(guia):
         if motivo := guia_fora_do_ar(endereco_guia):
             # com erro num guia, a atualização do guia falha e o Jellyfin NÃO apaga os canais velhos
@@ -857,8 +933,11 @@ def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = 
         feito.append(f"Jellyfin: o guia de categorias não foi cadastrado ({erro})")
 
     def atualizar() -> bool:
+        andamento(0.3, "4/5 Jellyfin atualizando o guia: começando")
         tarefa = cliente.atualizar_guia()
-        return bool(tarefa and esperar_guia and cliente.esperar_tarefa(tarefa, esperar_guia, parar))
+        return bool(tarefa and esperar_guia and cliente.esperar_tarefa(
+            tarefa, esperar_guia, parar,
+            ao_progresso=lambda pct: andamento(0.3 + 0.65 * pct / 100, f"4/5 Jellyfin atualizando o guia: {pct:.0f}%")))
 
     terminou = atualizar()
     if canais and removidos and nossos:
@@ -872,14 +951,21 @@ def publicar(canais: list[Canal], pasta: str | Path, caminho_no_servidor: str = 
                          f"{len(removidos)} canal(is) (os favoritos destes canais precisam ser marcados de novo)")
             terminou = atualizar()
     if terminou:
+        andamento(0.97, "5/5 Conferindo o que chegou no Jellyfin")
         total = cliente.quantos_canais()
         erro = getattr(cliente, "erro_da_tarefa", "")
         feito.append("Jellyfin: guia atualizado" + (f" -> agora TV ao vivo tem {total} canal(is)"
                                                     if total is not None else "")
                      + (f" (a tarefa terminou com erro: {erro})" if erro else ""))
+        if tipos := cliente.programas_por_tipo():
+            feito.append("Jellyfin: programas por tipo no guia (o que os aplicativos usam para separar): "
+                         + ", ".join(f"{n} {q}" for n, q in tipos.items())
+                         + (" -> NENHUM programa com tipo: confira o Grupo dos canais" if not any(tipos.values())
+                            else ""))
     elif cliente is not None:
         feito.append("Jellyfin: atualizando o guia (os canais mudam em TV ao vivo em alguns minutos; "
                      "acompanhe em Painel > Tarefas agendadas > Atualizar o guia)")
+    andamento(1.0, "Envio concluído")
     return feito
 
 
