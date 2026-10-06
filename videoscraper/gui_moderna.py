@@ -1455,7 +1455,7 @@ class JanelaModerna(ctk.CTk):
         self.campo_prof = self._numero(lateral, "Seguir links (níveis):", 0, 0, 5, 1)
         self.campo_maxp = self._numero(lateral, "Máx. de páginas:", 30, 1, MAXIMO_ITENS, 10)
         self.campo_limite = self._numero(lateral, "Máx. de vídeos (0 = todos):", 0, 0, MAXIMO_ITENS, 1)
-        self.campo_espera = self._numero(lateral, "Espera média entre pedidos (s):", 5.0, 0.5, 10, 0.5, True)
+        self.campo_espera = self._numero(lateral, "Espera média (s):", 5.0, 0.5, 10, 0.5, True)
 
         self._separador(lateral)
         self._rotulo(lateral, "Salvar vídeos em:", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)

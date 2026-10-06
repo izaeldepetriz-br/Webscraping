@@ -254,7 +254,7 @@ primeira falha (antes esperava o tempo limite em cada filme).
 - Em todos os casos as pausas entre os pedidos continuam, e plataformas como YouTube, Instagram, TikTok,
   Facebook, Netflix e Vimeo **nunca** têm o robots.txt ignorado (nem com `--ignorar-robots` na linha de comando).
 - **Pedidos mais espaçados e com pausas (mais estável e mais gentil com o site):** o campo vira **"Espera
-  média entre pedidos"** (padrão **5 s**) e cada espera é sorteada entre 60% e 140% dela (`random.uniform`:
+  média (s)"** entre pedidos (padrão **5 s**) e cada espera é sorteada entre 60% e 140% dela (`random.uniform`:
   com 5 s, de **3 a 7 s**). A cada **20 pedidos**, uma **pausa preventiva** maior, sorteada entre 6 e 12 vezes
   a espera (com 5 s, de **30 a 60 s**). O "Parar" interrompe as pausas na hora. As novas tentativas continuam
   como antes: em erro de rede, timeout ou HTTP 429/5xx, espera 2 s, depois 4 s... (dobrando) antes de desistir.
