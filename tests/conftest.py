@@ -42,6 +42,38 @@ LISTA = """<html><body>
 <a class="outra" href="/m/x.mp4">ignorado</a></body></html>"""
 
 # A lista só existe depois que o JavaScript roda: o HTML 'cru' não tem nenhum vídeo.
+# Players que só carregam o vídeo com um clique (o "play" em cima do poster)
+_ESTILO_PLAYER = "position:relative;width:480px;height:270px;background:#000"
+PLAYERS_DE_CLIQUE = {
+    # o <video> só é CRIADO quando clicam no botão de play
+    "/clique-cria-video": f"""<html><body><div id="player" style="{_ESTILO_PLAYER}">
+<button class="vjs-big-play-button" style="position:absolute;left:200px;top:105px;width:80px;height:60px">▶</button>
+</div><script>
+document.querySelector('.vjs-big-play-button').addEventListener('click', () => {{
+  const v = document.createElement('video'); v.src = '/m/clicado.mp4'; v.width = 480;
+  document.getElementById('player').appendChild(v); v.play().catch(() => {{}});
+}});
+</script></body></html>""",
+    # o <video> existe (preload="none": só o poster) e uma camada POR CIMA recebe o clique e manda tocar
+    "/poster-sobreposto": f"""<html><body><div style="{_ESTILO_PLAYER}">
+<video id="v" preload="none" src="/m/poster.mp4" width="480" height="270"></video>
+<div id="capa" style="position:absolute;inset:0;z-index:2;cursor:pointer"></div>
+</div><script>
+document.getElementById('capa').addEventListener('click', () => {{
+  document.getElementById('capa').remove(); document.getElementById('v').play().catch(() => {{}});
+}});
+</script></body></html>""",
+    # a camada por cima é um LINK para outra página: não pode clicar (sairia da página)
+    "/poster-com-link": f"""<html><body><div style="{_ESTILO_PLAYER}">
+<video preload="none" src="/m/linkado.mp4" width="480" height="270"></video>
+<a href="/outra-pagina" style="position:absolute;inset:0;z-index:2"></a>
+</div></body></html>""",
+    # um botão de play que não faz nada: a espera tem limite
+    "/play-mudo": f"""<html><body><div style="{_ESTILO_PLAYER}">
+<button class="vjs-big-play-button" style="position:absolute;left:200px;top:105px;width:80px;height:60px">▶</button>
+</div></body></html>""",
+}
+
 COM_JS = """<html><body><div id="lista"></div>
 <script>
 fetch('/api/lista.json').then(r => r.json()).then(d => {
@@ -126,6 +158,8 @@ def servidor(tmp_path_factory):
                 r = (200, "text/html; charset=utf-8", BUSCA_SHADOW.encode())
             elif caminho == "/menu-e-resultados":
                 r = (200, "text/html", MENU_E_RESULTADOS.encode())
+            elif caminho in PLAYERS_DE_CLIQUE:                     # vídeos que só carregam com um clique
+                r = (200, "text/html; charset=utf-8", PLAYERS_DE_CLIQUE[caminho].encode())
             elif caminho == "/proibido/videos":                   # o robots.txt proíbe /proibido
                 r = (200, "text/html", b'<html><body><a href="/m/meu-video.mp4">Meu video</a></body></html>')
             elif caminho.startswith("/menu"):

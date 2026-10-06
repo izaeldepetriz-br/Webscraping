@@ -240,6 +240,19 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.5.0
+
+- **Modo navegador: vídeos que só carregam com um clique.** Muitos players mostram só o poster e criam ou
+  carregam o vídeo quando alguém clica no "play". Agora, depois de abrir a página, o Maestro dá um **clique
+  de mouse de verdade no centro** de cada `<video>` que ainda só tem o poster e dos botões de play conhecidos
+  (Video.js, Plyr, JW Player, MediaElement, Flowplayer, `aria-label="Play"`...). Depois de cada clique ele
+  **espera até 5 s**, checando a cada 0,25 s, a mídia mudar de estado (metadados, começou a baixar, buffer) ou
+  chegar pela rede, e só então lê a página.
+  - **Travas:** não clica em links (sairia da página; os links o rastreador já segue), nem em players de
+    outros sites (iframes); fecha janelas de anúncio abertas pelo clique; para o vídeo depois; no máximo 8
+    cliques por página; vídeo com proteção contra cópia (DRM) não entra na lista; e endereços de YouTube,
+    Instagram, TikTok e outras plataformas protegidas nunca são capturados.
+
 ### Novidades da v2.4.0
 
 - **Busca de vídeos: opção "Ignorar o robots.txt"** (aba Vídeos, em Opções), para testar sites seus ou com

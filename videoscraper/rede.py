@@ -26,10 +26,16 @@ def site_de(url: str) -> str:
     return urlparse(url).netloc.lower()
 
 
+def eh_plataforma_protegida(url_ou_site: str) -> bool:
+    """True para as plataformas grandes (e os subdomínios delas), dado um endereço ou só o site."""
+    site = urlparse(url_ou_site).netloc if "://" in url_ou_site else url_ou_site
+    host = site.split(":")[0].lower().strip(".")
+    return any(host == p or host.endswith("." + p) for p in PLATAFORMAS_PROTEGIDAS)
+
+
 def pode_ignorar_robots(site: str) -> bool:
     """False para as plataformas grandes (e os subdomínios delas)."""
-    host = site.split(":")[0].lower().strip(".")
-    return bool(host) and not any(host == p or host.endswith("." + p) for p in PLATAFORMAS_PROTEGIDAS)
+    return bool(site.split(":")[0].strip(".")) and not eh_plataforma_protegida(site)
 
 
 class ClienteHTTP:
