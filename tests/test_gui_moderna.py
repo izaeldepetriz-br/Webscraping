@@ -1062,6 +1062,55 @@ def test_espelhar_videos_comuns_numa_pasta_escolhida(app, tmp_path, monkeypatch)
     app.ao_espelhar_jellyfin()
     assert "nada a espelhar" in app.caixas[-1][2]
 
+
+def test_modo_hibrido_espelha_em_vez_de_baixar_e_clicar_no_play(app, tmp_path, monkeypatch):
+    from jellyfin_tools.espelho import Verificacao
+    from videoscraper import servico
+    from videoscraper.extracao import LinkVideo
+    monkeypatch.setattr(app_moderna, "verificar_links", lambda urls, **k: {u: Verificacao(True) for u in urls})
+    base = "https://meusite.com.br/videos/"
+    app._mostrar_links([LinkVideo(base + "nosferatu.mp4", "o", "meusite", "Nosferatu (1922)"),
+                        LinkVideo(base + "metropolis.mp4", "o", "meusite", "Metropolis (1927)")])
+    app._destinos.update({"Filmes": str(tmp_path / "Filmes"), "Séries": str(tmp_path / "Series")})
+    app.var_jf_destino.set(str(tmp_path / "Filmes"))
+    app.var_jf_legendas.set(False)
+    app.escolher = lambda t, m, opcoes, **k: opcoes[1]                 # "Todos os identificados"
+    assert app.bt_baixar_todos.cget("text") == "Baixar todos"
+    app.var_espelhar.set(True)
+    app._ajustar_botoes_baixar()
+    assert (app.bt_baixar_sel.cget("text"), app.bt_baixar_todos.cget("text")) == ("Espelhar selecionados",
+                                                                                 "Espelhar todos")
+    app.tabela.selection_set("1")
+    app.bt_baixar_sel.invoke()                                         # só o selecionado vira .strm
+    esperar(app)
+    assert [p.name for p in tmp_path.rglob("*.strm")] == ["Metropolis (1927).strm"]
+    app.bt_baixar_todos.invoke()                                       # e "todos" espelha o resto
+    esperar(app)
+    assert sorted(p.name for p in tmp_path.rglob("*.strm")) == ["Metropolis (1927).strm", "Nosferatu (1922).strm"]
+    assert not (tmp_path / "videos").exists() or not any((tmp_path / "videos").iterdir())   # nada foi baixado
+    app.var_espelhar.set(False)
+    app._ajustar_botoes_baixar()
+    assert app.bt_baixar_todos.cget("text") == "Baixar todos"          # desmarcado: o download de sempre
+
+    criados = []
+
+    class NavegadorFalso:                                              # sem abrir o Chromium no teste
+        def __init__(self, **k):
+            criados.append(k)
+
+        def abrir(self):
+            pass
+
+        def fechar(self):
+            pass
+    monkeypatch.setattr(servico, "Navegador", NavegadorFalso)
+    app.var_nav.set(True)
+    assert app.obter_opcoes().clicar_play is True                      # marcada por padrão
+    app._novo_trabalho(app.obter_opcoes()).fechar()
+    app.var_clicar_play.set(False)
+    app._novo_trabalho(app.obter_opcoes()).fechar()
+    assert [k["ativar_midias"] for k in criados] == [True, False]
+
 def test_botao_testar_chaves_das_legendas(app, api_falsa, monkeypatch):
     from jellyfin_tools import ProvedorOpenSubtitles, ProvedorSubDL
     base = api_falsa.base

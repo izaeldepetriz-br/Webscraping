@@ -93,6 +93,8 @@ class OpcoesInterface:
     espera: float
     pasta: str
     ignorar_robots: bool = False      # só sites seus/autorizados; o programa confirma a cada busca
+    clicar_play: bool = True          # com o navegador: clica no poster/play e espera o vídeo carregar
+    espelhar: bool = False            # modo híbrido: os botões "Baixar" criam .strm no Jellyfin em vez de baixar
 
 
 @dataclass
@@ -1438,6 +1440,14 @@ class JanelaModerna(ctk.CTk):
                            ("Mostrar a janela do navegador", self.var_visivel),
                            ("Pausar para eu resolver verificações", self.var_pausar)):
             self._checkbox(lateral, texto, var, self._ajustar_checks)
+        # players que só carregam o vídeo com um clique no poster/play (só com o navegador)
+        self.var_clicar_play = tk.BooleanVar(value=True)
+        self.check_clicar_play = self._checkbox(lateral, "Clicar no play sozinho\n(com o navegador)",
+                                                self.var_clicar_play)
+        # modo híbrido: os botões "Baixar" viram "Espelhar" (.strm no Jellyfin); desmarcado, baixam como sempre
+        self.var_espelhar = tk.BooleanVar(value=False)
+        self.check_espelhar = self._checkbox(lateral, "Espelhar em vez de baixar\n(.strm no Jellyfin)",
+                                             self.var_espelhar, self._ajustar_botoes_baixar)
         # para testar sites seus (ou com autorização do dono): pergunta antes de cada busca/download
         self.var_ignorar_robots = tk.BooleanVar(value=False)
         self.check_ignorar_robots = self._checkbox(lateral, "Ignorar o robots.txt\n(pergunta a cada busca)",
@@ -2246,7 +2256,8 @@ class JanelaModerna(ctk.CTk):
             profundidade=int(self.campo_prof.get()),
             max_paginas=int(self.campo_maxp.get()), limite=int(self.campo_limite.get()),
             espera=float(self.campo_espera.get()), pasta=self.var_pasta.get().strip() or self._pasta_padrao,
-            ignorar_robots=self.var_ignorar_robots.get())
+            ignorar_robots=self.var_ignorar_robots.get(), clicar_play=self.var_clicar_play.get(),
+            espelhar=self.var_espelhar.get())
 
     def obter_opcoes_jellyfin(self) -> OpcoesJellyfin:
         self._destinos[self._modo_atual] = self.var_jf_destino.get()
@@ -2936,6 +2947,12 @@ class JanelaModerna(ctk.CTk):
                 vazio.place_forget()
             else:
                 vazio.place(relx=0.5, rely=0.55, anchor="center")
+
+    def _ajustar_botoes_baixar(self) -> None:
+        """Modo híbrido: com "Espelhar em vez de baixar", os botões dizem o que vão fazer."""
+        verbo = "Espelhar" if self.var_espelhar.get() else "Baixar"
+        self.bt_baixar_sel.configure(text=f"{verbo} selecionados")
+        self.bt_baixar_todos.configure(text=f"{verbo} todos")
 
     def _ajustar_checks(self) -> None:
         if self.var_pausar.get() or self.var_visivel.get():

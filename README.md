@@ -240,6 +240,16 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.7.0
+
+- **Modo híbrido: "Espelhar em vez de baixar"** (aba Vídeos, em Opções). Marcada, os botões viram **"Espelhar
+  selecionados"** e **"Espelhar todos"** e criam os `.strm` no Jellyfin, com o mesmo fluxo do "Espelhar no Jellyfin
+  (.strm)...": Filmes, Séries, vídeos comuns, licença, conferência dos links e Desfazer. Desmarcada, os botões
+  voltam a **baixar** os arquivos como sempre. Com filtro nas colunas, "todos" são só os que estão à vista. Os
+  links de plataformas como o YouTube continuam fora, porque são páginas e não arquivos.
+- **"Clicar no play sozinho"** (Opções, marcada por padrão): liga ou desliga o clique automático no poster/play
+  da v2.5.0 quando "Usar navegador" está marcado.
+
 ### Novidades da v2.6.0
 
 - **Espelhar no Jellyfin: vídeos comuns, além de Filmes e Séries.** Links sem ano nem temporada/episódio (aulas,

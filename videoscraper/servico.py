@@ -30,7 +30,8 @@ class Trabalho:
     def __init__(self, espera: float = 1.5, ignorar_robots: bool = False,
                  navegador: bool = False, visivel: bool = False, pausar: bool = False,
                  perfil: str = PERFIL_PADRAO, chrome: str | None = None,
-                 aguardar_usuario=aguardar_no_terminal, parar=None, sites_sem_robots=()):
+                 aguardar_usuario=aguardar_no_terminal, parar=None, sites_sem_robots=(),
+                 clicar_play: bool = True):
         # espera sorteada em volta da média (±40%: média 5 s = de 3 a 7 s) e, a cada 20 pedidos, uma pausa maior
         self.cliente = ClienteHTTP(espera=espera, respeitar_robots=not ignorar_robots,
                                    sites_sem_robots=sites_sem_robots, variacao=0.4, pausa_longa_a_cada=20)
@@ -38,7 +39,7 @@ class Trabalho:
         self.cliente.parar = self.parar              # as pausas entre pedidos também param na hora
         if navegador or visivel or pausar:
             nav = Navegador(perfil=perfil, visivel=visivel, pausar=pausar, executavel=chrome,
-                            aguardar_usuario=aguardar_usuario)
+                            aguardar_usuario=aguardar_usuario, ativar_midias=clicar_play)
             self.fonte = FonteNavegador(self.cliente, nav)
         else:
             self.fonte = FonteRequests(self.cliente)

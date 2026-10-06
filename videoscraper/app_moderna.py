@@ -209,6 +209,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
     def ao_baixar_selecionados(self) -> None:
         ids = self.selecionados()
+        if ids and self.var_espelhar.get():           # modo híbrido: .strm no Jellyfin em vez de baixar
+            self.ao_espelhar_jellyfin([int(i) for i in ids])
+            return
         if not ids:
             self.mostrar_mensagem("Nada selecionado", "Clique nos vídeos da lista (Ctrl+clique para vários) "
                                   "e tente de novo, ou use 'Baixar todos'.", "aviso")
@@ -217,6 +220,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
     def ao_baixar_todos(self) -> None:
         """Com filtro nas colunas, "todos" = os que estão À VISTA (o escondido pelo filtro não é baixado)."""
+        if self.var_espelhar.get():                   # modo híbrido: .strm no Jellyfin em vez de baixar
+            visiveis = self.visiveis_videos() if self._filtros_videos else range(len(self.links))
+            self.ao_espelhar_jellyfin([int(i) for i in visiveis if int(i) < len(self.links)])
+            return
         if self._filtros_videos:
             self._baixar([self.links[int(i)] for i in self.visiveis_videos() if int(i) < len(self.links)])
             return
@@ -506,7 +513,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
         return Trabalho(espera=o.espera, navegador=o.navegador, visivel=o.visivel, pausar=o.pausar,
                         ignorar_robots=ignorar_robots,
                         perfil=PERFIL_PADRAO, aguardar_usuario=self._aguardar_usuario,
-                        parar=self.evento_parar.is_set, sites_sem_robots=set(self.sites_sem_robots))
+                        parar=self.evento_parar.is_set, sites_sem_robots=set(self.sites_sem_robots),
+                        clicar_play=getattr(o, "clicar_play", True))
 
     def _aguardar_usuario(self, mensagem: str) -> None:
         """Chamado pela thread: pede à janela um aviso e espera o OK do usuário."""
@@ -939,10 +947,12 @@ class AppModerna(TVAoVivo, JanelaModerna):
         return afetados
 
     # ================================================================== espelhar no Jellyfin (.strm)
-    def ao_espelhar_jellyfin(self) -> None:
+    def ao_espelhar_jellyfin(self, indices: list[int] | None = None) -> None:
         """Links da aba Vídeos -> .strm nas bibliotecas de Filmes e Séries da aba Jellyfin
-        (+ legendas, pôster, .nfo e scan, como no Organizar). Selecionados; sem seleção, todos."""
-        indices = [int(i) for i in self.tabela.selection()] or list(range(len(self.links)))
+        (+ legendas, pôster, .nfo e scan, como no Organizar). Selecionados; sem seleção, todos.
+        `indices`: os links escolhidos pelos botões "Espelhar selecionados/todos" (modo híbrido)."""
+        if indices is None:
+            indices = [int(i) for i in self.tabela.selection()] or list(range(len(self.links)))
         if not indices:
             self.mostrar_mensagem("Espelhar no Jellyfin", "Busque os vídeos primeiro.", "aviso")
             return
