@@ -66,7 +66,8 @@ def adicionar_regra(arquivo: str | Path, nova: RegraNome) -> list[RegraNome]:
 
 
 def regra_para(video: Path, regras, tipo: str) -> RegraNome | None:
-    """A regra que vale para o vídeo: filme = o próprio arquivo; série = a pasta mais de dentro que tem regra."""
+    """A regra que vale para o vídeo: filme = o próprio arquivo; série = o próprio arquivo ou a pasta mais de
+    dentro que tem regra."""
     if not regras:
         return None
     alvo = _chave(video)
@@ -75,8 +76,8 @@ def regra_para(video: Path, regras, tipo: str) -> RegraNome | None:
         if regra.tipo != tipo:
             continue
         base = _chave(regra.caminho)
-        if tipo == "filme":
-            if alvo == base:
+        if tipo == "filme" or alvo == base:            # filme: o arquivo; série: o arquivo também vale (o
+            if alvo == base:                               # "Escolher no TMDB" numa pasta com séries misturadas)
                 return regra
         elif alvo.startswith(base.rstrip("\\/") + os.sep) and (melhor is None or len(base) > len(_chave(melhor.caminho))):
             melhor = regra

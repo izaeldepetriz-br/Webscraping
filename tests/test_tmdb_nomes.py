@@ -286,10 +286,30 @@ def test_tom_and_jerry_classico_mantem_nome_do_episodio_e_acha_a_serie_da_epoca(
     tmdb = _tmdb(api_falsa)
     assert tmdb.buscar("Tom and Jerry", None, "serie").ano == 2023
     assert tmdb.buscar_serie_da_epoca("Tom and Jerry", 2024).ano == 2023     # a mais perto antes do ano
-    assert tmdb.buscar_serie_da_epoca("Tom and Jerry", 1930).ano == 2023     # nenhuma antes: a melhor
+    assert tmdb.buscar_serie_da_epoca("Tom and Jerry", 1930) is None          # nenhuma da época: nenhuma
 
 
 def test_ano_do_episodio():
     from jellyfin_tools.organizador import ano_do_episodio
     assert ano_do_episodio("Tom and Jerry EP37 Professor Tom (1948).mkv") == 1948
     assert ano_do_episodio("Dark S01E01.mkv") is None
+
+
+
+def test_tom_and_jerry_sem_serie_da_epoca_no_tmdb_fica_com_o_nome_do_arquivo(api_falsa, tmp_path):
+    """Caso real (de novo): no TMDB os curtas de 1940-1958 não estão como série; só as de 1975, 2014 e 2023.
+    O episódio de 1948 NÃO pode ir para a de 2023: fica "Tom and Jerry", com o nome do episódio, para conferir."""
+    api_falsa.rotas["/3/search/tv"] = lambda q: (200, {"results": [
+        {"id": 230000, "name": "Tom e Jerry na Singapura", "original_name": "Tom and Jerry",
+         "first_air_date": "2023-05-01"},
+        {"id": 3000, "name": "O Show de Tom e Jerry", "original_name": "The Tom and Jerry Show",
+         "first_air_date": "2014-04-09"},
+        {"id": 3001, "name": "O Show de Tom e Jerry", "original_name": "The Tom and Jerry Show",
+         "first_air_date": "1975-09-06"}]})
+    origem, series = tmp_path / "DESENHOS" / "Tom e Jerry", tmp_path / "Series"
+    origem.mkdir(parents=True)
+    (origem / "Tom and Jerry EP37 Professor Tom (1948).mkv").write_bytes(b"v")
+    [m] = organizar_pasta(origem, series, _tmdb(api_falsa), modo="series", nomes_episodios=True)
+    assert m.destino_curto == "Tom and Jerry/Season 01/Tom and Jerry S01E37 - Professor Tom.mkv"
+    assert m.status == "simulado" and "existia em 1948" in m.detalhe          # "vai mover (confira)"
+    assert "Singapura" not in str(m.destino)

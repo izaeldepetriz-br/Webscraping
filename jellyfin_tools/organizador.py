@@ -325,11 +325,14 @@ def _achar_serie(catalogo, ep, video: Path, raiz: Path | None = None):
         if serie and serie.ano == dica:
             return serie, detalhe
     if not ep.ano and catalogo is not None and (epoca := ano_do_episodio(video.name)):
-        try:                                   # 'Tom and Jerry EP37 Professor Tom (1948)': a série de 1940
+        try:                                   # 'Tom and Jerry EP37 Professor Tom (1948)': a série da época
             if serie := catalogo.buscar_serie_da_epoca(ep.serie, epoca):
                 return serie, ""
         except ErroCatalogo as erro:
             return None, f"catálogo indisponível: {erro}"
+        # NÃO cai na busca sem ano (ela traria a refilmagem de hoje, ex.: a de 2023 para um episódio de 1948)
+        return None, (f"nenhuma série \"{ep.serie}\" do catálogo existia em {epoca} (ano do episódio): ficou o nome "
+                      "do arquivo; confira (ou use \"Escolher no TMDB\"/\"Corrigir nome\")")
     return _consultar(catalogo, ep.serie, ep.ano, "serie")   # ano da pasta era outro (ex.: da temporada)
 
 

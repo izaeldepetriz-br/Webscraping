@@ -410,9 +410,13 @@ class CatalogoTMDB(Catalogo):
         if nota_melhor < self.minimo:
             return None
         if ate:
-            empatados = [f for f, n in candidatos if n >= nota_melhor - 0.02 and f.ano <= ate]
-            if empatados:
-                return max(empatados, key=lambda f: f.ano)       # o que estreou mais perto (antes) do episódio
+            # Só vale uma série que JÁ EXISTIA no ano do episódio (1 ano de folga: estreia em outro país). Os
+            # curtas de 1948 do "Tom and Jerry" não são da série de 2023: sem nenhuma da época, nenhuma (o nome
+            # do arquivo fica, marcado para conferir), em vez da mais popular de hoje.
+            da_epoca = [(f, n) for f, n in candidatos if n >= self.minimo and f.ano <= ate + 1]
+            if not da_epoca:
+                return None
+            return max(da_epoca, key=lambda fn: (round(fn[1], 2), fn[0].ano))[0]   # mais parecido; empate: o mais perto
         return melhor
 
 

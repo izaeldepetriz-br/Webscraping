@@ -2619,7 +2619,7 @@ def test_escolher_no_tmdb_quando_ha_series_com_o_mesmo_nome(app, tmdb_gui, tmp_p
     assert "Tom e Jerry na Singapura" in app._movimentos_previa[0].destino_curto
 
     listas = []
-    app.escolher_da_lista = lambda titulo, msg, itens, botao="", marcado=None: (
+    app.escolher_da_lista = lambda titulo, msg, itens, botao="", marcado=None, **k: (
         listas.append((itens, marcado)), next(n for n, i in enumerate(itens) if "(1940)" in i))[1]
     app.tabela_jf.selection_set(["0"])
     app.ao_escolher_no_tmdb()
@@ -2729,14 +2729,14 @@ def test_videos_memoria_de_downloads_e_filtro_por_coluna(app):
     assert app.visiveis_videos() == ["0", "1", "2", "3", "4"] and "▾" in app.tabela.heading("licenca", "text")
 
     # memória por período: apaga os de mais de 90 dias (o ep1, de 200 dias)
-    app.escolher_da_lista = lambda t, m, itens, botao="", marcado=None: next(
+    app.escolher_da_lista = lambda t, m, itens, botao="", marcado=None, **k: next(
         n for n, i in enumerate(itens) if "mais de 90 dias" in i)
     app.ao_memoria_downloads()
     assert app.memoria_downloads.baixado(links[0]) is None and app.memoria_downloads.baixado(links[1]) is not None
     assert "já baixado" not in app.tabela.set("0", "status") and "já baixado" in app.tabela.set("1", "status")
     # selecionados: esquece o ep2
     app.tabela.selection_set(["1"])
-    app.escolher_da_lista = lambda t, m, itens, botao="", marcado=None: (
+    app.escolher_da_lista = lambda t, m, itens, botao="", marcado=None, **k: (
         0 if itens[0].startswith("Esquecer os 1 selecionado") else None)
     app.ao_memoria_downloads()
     assert app.memoria_downloads.baixado(links[1]) is None and app.tabela.set("1", "status") == ""
@@ -2804,3 +2804,87 @@ def test_pasta_dos_videos_nunca_cai_na_pasta_do_windows(app, tmp_path, monkeypat
     config.salvar(tudo)
     app._carregar_config()
     assert app.var_jf_origem.get() == padrao                                 # a origem salva também é consertada
+
+
+def test_escolher_no_tmdb_procura_outro_nome_e_vincula_todos_os_arquivos(app, tmdb_gui, tmp_path):
+    """Caso real: 'Juni Lee S01E04.mkv' (nome curto) = 'A Vida e Aventuras de Juniper Lee'. A busca por "Juni Lee"
+    não acha; procurando "Juniper Lee" na própria lista acha. A escolha vale para TODOS os "Juni Lee" (a pasta da
+    série inteira, e só o arquivo solto na pasta misturada) e só eles são analisados de novo."""
+    juniper = {"id": 1100, "name": "A Vida e Aventuras de Juniper Lee",
+               "original_name": "The Life and Times of Juniper Lee", "first_air_date": "2005-05-30"}
+
+    def busca(q):
+        termo = q["query"][0].lower()
+        if "juniper" in termo:
+            return 200, {"results": [juniper]}
+        if "pica" in termo:
+            return 200, {"results": [{"id": 77, "name": "Pica-Pau", "original_name": "Woody Woodpecker",
+                                      "first_air_date": "1957-10-03"}]}
+        return 200, {"results": []}
+    tmdb_gui.rotas["/3/search/tv"] = busca
+    origem, series = tmp_path / "DESENHOS", tmp_path / "Series"
+    series.mkdir()
+    for nome in ("Juni Lee S01E04.mkv", "Juni Lee S01E05.mkv"):
+        _video_grande(origem / "Juni Lee" / "Season 01" / nome)
+    _video_grande(origem / "Juni Lee S01E06.mkv")                       # solto, junto com outra série
+    _video_grande(origem / "Pica-Pau S01E01.mkv")
+    app.mostrar_aba("Jellyfin")
+    app.seletor_modo.set("Séries")
+    app._ao_trocar_modo("Séries")
+    app.var_jf_origem.set(str(origem))
+    app.var_jf_destino.set(str(series))
+    app.var_jf_legendas.set(False)
+    app.var_jf_tmdb.set(True)
+    app.var_jf_chave_tmdb.set("boa")
+    app.bt_previa.invoke()
+    esperar(app)
+    linha = next(str(i) for i, m in enumerate(app._movimentos_previa) if m.origem.name == "Juni Lee S01E04.mkv")
+
+    vistos = []
+
+    def escolher(titulo, msg, itens, botao="", marcado=None, procurar=None, termo=""):
+        vistos.append((msg, list(itens), termo))
+        novos = procurar("Juniper Lee")                                  # o campo "Procurar" da lista
+        vistos.append(novos)
+        return 0
+    app.escolher_da_lista = escolher
+    app.tabela_jf.selection_set([linha])                                  # só UM selecionado
+    app.ao_escolher_no_tmdb()
+    esperar(app)
+    fim = time.time() + 20
+    while time.time() < fim and (len(vistos) < 2 or app.trabalhando or "analisados de novo" not in app.var_status.get()):
+        app.update()
+        time.sleep(0.05)
+    msg, itens, termo = vistos[0]
+    assert termo == "Juni Lee" and itens == [] and "não achou nada" in msg and "3 arquivo(s)" in msg
+    assert vistos[1][0].startswith("A Vida e Aventuras de Juniper Lee (2005)")
+    destinos = {m.origem.name: m.destino_curto for m in app._movimentos_previa}
+    for ep in ("04", "05", "06"):
+        assert destinos[f"Juni Lee S01E{ep}.mkv"].startswith("A Vida e Aventuras de Juniper Lee (2005)/Season 01/")
+    assert destinos["Pica-Pau S01E01.mkv"].startswith("Pica-Pau (1957)/")    # a outra série não mudou
+    assert "3 arquivo(s) analisados de novo" in app.var_status.get()
+    caminhos = sorted(r.caminho for r in app.regras_de_nome())
+    assert caminhos == sorted([str(origem / "Juni Lee" / "Season 01"), str(origem / "Juni Lee S01E06.mkv")])
+
+
+def test_dialogo_lista_procura_sem_travar(app):
+    from videoscraper.gui_moderna import DialogoLista
+    pedidos = []
+
+    def procurar(texto):
+        pedidos.append(texto)
+        time.sleep(0.2)                                               # como uma consulta ao TMDB
+        return [f"{texto} (2005)", f"{texto} (2010)"]
+    dialogo = DialogoLista(app, "Escolher no TMDB", "nada achado", [], procurar=procurar, termo="Juni Lee")
+    assert dialogo.var_termo.get() == "Juni Lee" and dialogo.lista.size() == 0
+    dialogo.var_termo.set("Juniper Lee")
+    dialogo.procurar()
+    assert dialogo.bt_procurar.cget("state") == "disabled"             # procurando (a janela continua viva)
+    fim = time.time() + 5
+    while time.time() < fim and dialogo.lista.size() == 0:
+        app.update()
+        time.sleep(0.03)
+    assert pedidos == ["Juniper Lee"] and dialogo.lista.get(0) == "Juniper Lee (2005)"
+    assert "2 opção(ões)" in dialogo.lb_mensagem.cget("text") and dialogo.bt_procurar.cget("state") == "normal"
+    dialogo._ok()
+    assert dialogo.resposta == 0

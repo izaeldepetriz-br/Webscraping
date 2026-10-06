@@ -240,6 +240,22 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.1.1
+
+- **Escolher no TMDB, mais esperto:**
+  - **Procurar outro nome** na própria lista: "Juni Lee" não acha nada? Digite "Juniper Lee" e clique em
+    Procurar, sem fechar.
+  - **Vincula todos os arquivos com o mesmo nome** da prévia de uma vez (não só o selecionado), em
+    qualquer pasta. A escolha vale para a pasta da série inteira; numa pasta com séries misturadas (ou na
+    própria pasta de origem), vale só para aqueles arquivos.
+- **Corrigido: "Tom and Jerry EP37 Professor Tom (1948)" ia para "Tom e Jerry na Singapura (2023)".** Quando
+  nenhuma série com esse nome existia no ano do episódio (no TMDB, os curtas clássicos não estão como série),
+  o programa caía na mais popular de hoje. Agora fica o nome do arquivo ("Tom and Jerry S01E37 - Professor
+  Tom"), marcado **"vai mover (confira)"**, e nunca uma série que estreou décadas depois.
+- **Depois de "Escolher no TMDB" ou "Corrigir nome", só os arquivos afetados são analisados de novo** (antes,
+  a prévia inteira era refeita: com 700 arquivos e o TMDB, minutos). O Organizar continua conferindo tudo na
+  hora de mover.
+
 ### Novidades da v2.1.0
 
 - **O programa agora é o `Maestro.exe`**, com o ícone. Os atalhos "Maestro" e o "Iniciar com o Windows"

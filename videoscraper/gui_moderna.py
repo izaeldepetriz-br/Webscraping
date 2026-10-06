@@ -255,9 +255,12 @@ class DialogoLista(ctk.CTkToplevel):
     escolhido (None = Cancelar). Duplo clique ou Enter também escolhem."""
 
     def __init__(self, master, titulo: str, mensagem: str, itens: list[str], botao: str = "Usar esta",
-                 marcado: int | None = None):
+                 marcado: int | None = None, procurar=None, termo: str = ""):
+        """procurar(texto) -> novos itens (roda numa thread): mostra um campo para procurar outro nome."""
         super().__init__(master, fg_color=Tema.CARTAO)
         self.resposta = None
+        self._procurar = procurar
+        self._rodape_mensagem = "\n".join(mensagem.splitlines()[1:])   # ex.: "a escolha vale para N arquivos"
         self.title(titulo)
         self.transient(master)
         self.geometry("720x460")
@@ -265,8 +268,21 @@ class DialogoLista(ctk.CTkToplevel):
         ctk.CTkFrame(self, fg_color=Tema.PRIMARIA, height=4, corner_radius=0).pack(fill="x")
         ctk.CTkLabel(self, text=titulo, font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"), text_color=Tema.TEXTO,
                      anchor="w").pack(fill="x", padx=24, pady=(16, 4))
-        ctk.CTkLabel(self, text=mensagem, font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO_SUAVE,
-                     justify="left", anchor="w", wraplength=660).pack(fill="x", padx=24)
+        self.lb_mensagem = ctk.CTkLabel(self, text=mensagem, font=ctk.CTkFont(Tema.FAMILIA, 12),
+                                        text_color=Tema.TEXTO_SUAVE, justify="left", anchor="w", wraplength=660)
+        self.lb_mensagem.pack(fill="x", padx=24)
+        if procurar is not None:                         # procurar outro nome sem fechar a lista
+            busca = ctk.CTkFrame(self, fg_color="transparent")
+            busca.pack(fill="x", padx=24, pady=(10, 0))
+            self.var_termo = tk.StringVar(value=termo)
+            self.campo_termo = ctk.CTkEntry(busca, textvariable=self.var_termo, height=34, fg_color=Tema.CAMPO,
+                                            border_color=Tema.CAMPO_BORDA, text_color=Tema.TEXTO)
+            self.campo_termo.pack(side="left", fill="x", expand=True)
+            self.bt_procurar = ctk.CTkButton(busca, text="Procurar", width=100, height=34,
+                                             corner_radius=Tema.RAIO_CONTROLE, fg_color=Tema.SECUNDARIA,
+                                             hover_color=Tema.SECUNDARIA_HOVER, command=self.procurar)
+            self.bt_procurar.pack(side="left", padx=(8, 0))
+            self.campo_termo.bind("<Return>", lambda e: (self.procurar(), "break")[1])
         botoes = ctk.CTkFrame(self, fg_color="transparent")
         botoes.pack(side="bottom", fill="x", padx=24, pady=(8, 18))      # antes da lista: nunca some
         quadro = ctk.CTkFrame(self, fg_color=Tema.CAMPO, corner_radius=8)
@@ -291,7 +307,9 @@ class DialogoLista(ctk.CTkToplevel):
                       hover_color=Tema.PRIMARIA_HOVER, font=ctk.CTkFont(Tema.FAMILIA, 13, "bold"),
                       command=self._ok).pack(side="right")
         self.lista.bind("<Double-1>", lambda e: self._ok())
-        self.bind("<Return>", lambda e: self._ok())
+        self.lista.bind("<Return>", lambda e: self._ok())
+        if procurar is None:
+            self.bind("<Return>", lambda e: self._ok())
         self.bind("<Escape>", lambda e: self.destroy())
         self.update_idletasks()
         x = master.winfo_rootx() + (master.winfo_width() - 720) // 2
@@ -307,6 +325,45 @@ class DialogoLista(ctk.CTkToplevel):
         if selecao:
             self.resposta = int(selecao[0])
             self.destroy()
+
+    def procurar(self) -> None:
+        """Procura o nome digitado (numa thread: a janela não trava) e troca a lista pelo resultado."""
+        import threading
+        texto = self.var_termo.get().strip()
+        if not texto or self._procurar is None:
+            return
+        self.bt_procurar.configure(state="disabled", text="Procurando...")
+        resultado = {}
+
+        def buscar():
+            try:
+                resultado["itens"] = self._procurar(texto)
+            except Exception as erro:                 # sem internet, chave recusada...
+                resultado["erro"] = str(erro)
+
+        def esperar():
+            if not self.winfo_exists():
+                return
+            if not resultado:
+                self.after(100, esperar)
+                return
+            self.bt_procurar.configure(state="normal", text="Procurar")
+            if "erro" in resultado:
+                self.lb_mensagem.configure(text=f"Não deu para procurar \"{texto}\": {resultado['erro'][:120]}")
+                return
+            self.mostrar_itens(resultado["itens"], f"\"{texto}\": {len(resultado['itens'])} opção(ões).")
+        threading.Thread(target=buscar, daemon=True).start()
+        self.after(100, esperar)
+
+    def mostrar_itens(self, itens: list[str], mensagem: str = "") -> None:
+        self.lista.delete(0, "end")
+        if itens:
+            self.lista.insert("end", *itens)
+            self.lista.selection_set(0)
+            self.lista.see(0)
+        if mensagem:
+            self.lb_mensagem.configure(text=mensagem + ("" if itens else " Tente outro nome.")
+                                       + (f"\n{self._rodape_mensagem}" if self._rodape_mensagem else ""))
 
 
 class JanelaEspelhos(ctk.CTkToplevel):
@@ -2820,9 +2877,10 @@ class JanelaModerna(ctk.CTk):
         return janela.resposta
 
     def escolher_da_lista(self, titulo: str, mensagem: str, itens: list[str], botao: str = "Usar esta",
-                          marcado: int | None = None) -> int | None:
-        """Lista para escolher um item; devolve o índice (None = Cancelar)."""
-        dialogo = DialogoLista(self, titulo, mensagem, itens, botao, marcado)
+                          marcado: int | None = None, procurar=None, termo: str = "") -> int | None:
+        """Lista para escolher um item; devolve o índice (None = Cancelar). procurar: campo para buscar outro
+        nome (a lista é trocada pelo resultado; o índice devolvido é na lista nova)."""
+        dialogo = DialogoLista(self, titulo, mensagem, itens, botao, marcado, procurar, termo)
         self.wait_window(dialogo)
         return dialogo.resposta
 

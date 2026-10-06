@@ -743,12 +743,18 @@ class AppModerna(TVAoVivo, JanelaModerna):
         return self.links[int(foco if foco in ids else ids[0])]
 
     # ================================================================== aba Jellyfin
-    def ao_previsualizar(self) -> None:
+    def ao_previsualizar(self, so=None) -> None:
+        """so: só esses arquivos (depois de "Corrigir nome"/"Escolher no TMDB"): analisa de novo apenas eles e
+        encaixa na lista que já está na tela, em vez de refazer os 700 (com o TMDB, minutos). Sem prévia
+        válida na tela, faz a completa. O Organizar sempre confere tudo de novo na hora de mover."""
         o = self._validar_jellyfin()
         if not o:
             return
         self._salvar_config()
         assinatura = self._assinatura(o)
+        if so and self._movimentos_previa and self._previa == assinatura:
+            self._previsualizar_alguns(o, assinatura, set(so))
+            return
 
         self.definir_progresso_total(None)
         self._tmdb_ativo = o.tmdb
@@ -789,6 +795,43 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 self.fila.put(("sugerir_series", (len(episodios), len(movimentos), series)))  # depois do "fim"
 
         self._rodar("Pré-visualizando...", tarefa)
+
+    def _previsualizar_alguns(self, o, assinatura, so: set) -> None:
+        anteriores = list(self._movimentos_previa)
+
+        def tarefa():
+            self._log.info("Pré-visualizando de novo só %d arquivo(s) (o resto da lista fica como está)", len(so))
+            parcial = organizar_pasta(o.origem, o.destino, self._catalogo(o), aplicar=False,
+                                      incluir_tmdbid=o.incluir_tmdbid, exigir_catalogo=o.exigir_catalogo,
+                                      modo=o.modo, limpar_lixo=o.limpar_lixo, apagar_pasta_origem=False,
+                                      nomes_episodios=o.nomes_episodios, protegidas=o.pastas_protegidas,
+                                      regras=self.regras_de_nome(), ao_analisar=self._avisar_analise,
+                                      filtro=lambda v: v in so, parar=self.evento_parar.is_set)
+            novos = {m.origem: m for m in parcial if m.status not in ("limpeza", "pasta_apagada")}
+            for m in novos.values():
+                self._log.info("%s", m)
+            movimentos = [novos.get(m.origem, m) for m in anteriores]
+            quantos = sum(m.status == "simulado" for m in movimentos)
+            sobras = sum(m.status == "limpeza" for m in movimentos)
+            self.fila.put(("jf_movimentos", movimentos))
+            self.fila.put(("jf_previa", (assinatura, quantos + sobras)))
+            self.fila.put(("status_fim", f"Pré-visualização atualizada: {len(novos)} arquivo(s) analisados de novo "
+                                         f"(os outros {len(movimentos) - len(novos)} ficaram como estavam). "
+                                         f"{quantos} para mover. Nada foi movido."))
+
+        self._rodar(f"Analisando de novo {len(so)} arquivo(s)...", tarefa)
+
+    def _afetados_por(self, alvos) -> set:
+        """Os arquivos da prévia que uma regra nova afeta: o próprio arquivo ou tudo dentro da pasta."""
+        chaves = [os.path.normcase(os.path.abspath(str(a))) for a in alvos]
+        afetados = set()
+        for m in self._movimentos_previa:
+            if m.status in ("limpeza", "pasta_apagada"):
+                continue
+            caminho = os.path.normcase(os.path.abspath(str(m.origem)))
+            if any(caminho == c or caminho.startswith(c.rstrip("\\/") + os.sep) for c in chaves):
+                afetados.add(m.origem)
+        return afetados
 
     # ================================================================== espelhar no Jellyfin (.strm)
     def ao_espelhar_jellyfin(self) -> None:
@@ -1710,11 +1753,20 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                   resposta.get("temporada") if tipo == "serie" else None)
                 adicionar_regra(self.arquivo_regras, regra)
                 self._log.info("Regra de nome: %s -> %s", alvo, regra.descricao())
-        self.ao_previsualizar()
+        self.ao_previsualizar(so=self._afetados_por(alvos))           # só os afetados (não os 700)
+
+    def _nome_do_arquivo(self, video, tipo: str) -> str:
+        """O nome que veio no arquivo (sem regra): 'Juni Lee S01E04.mkv' -> 'Juni Lee'."""
+        if tipo == "serie":
+            ep = episodio_do_video(video)
+            return ep.serie if ep else (serie_da_pasta(video.parent.name) or ("",))[0]
+        return extrair_titulo_e_ano(video.name).titulo
 
     def ao_escolher_no_tmdb(self) -> None:
-        """Nome repetido no TMDB ('Tom and Jerry' de 1940, 2014 e 2023; um filme e a refilmagem): lista as
-        opções com o ano e você escolhe. A escolha vira regra (como no "Corrigir nome") e a prévia roda de novo."""
+        """Nome repetido no TMDB ('Tom and Jerry' de 1940, 2014 e 2023) ou nome curto/errado no arquivo ('Juni
+        Lee' = 'A Vida e Aventuras de Juniper Lee'): lista as opções, dá para PROCURAR outro nome ali mesmo, e
+        a escolha vale para TODOS os arquivos da prévia com o mesmo nome (não só o selecionado). Fica guardada
+        como regra e só esses arquivos são analisados de novo."""
         if self.trabalhando:
             return
         o = self.obter_opcoes_jellyfin()
@@ -1723,63 +1775,93 @@ class AppModerna(TVAoVivo, JanelaModerna):
         movimentos = [m for m in movimentos if m.status not in ("limpeza", "pasta_apagada")]
         if not movimentos:
             self.mostrar_mensagem("Escolher no TMDB", "Pré-visualize e clique no arquivo (ou episódio) cuja série/filme "
-                                  "veio errada. Ctrl+clique escolhe vários da mesma série.", "aviso")
+                                  "veio errada. Os outros com o mesmo nome entram juntos.", "aviso")
             return
         if not o.chave_tmdb:
             self.mostrar_mensagem("Escolher no TMDB", "Preencha a chave da API do TMDB (aba Jellyfin, \"Nomes e "
                                   "metadados\") para ver as opções.", "aviso")
             return
         tipo = "serie" if o.modo == "series" else "filme"
+        nomes = {normalizar(self._nome_do_arquivo(m.origem, tipo)) for m in movimentos} - {""}
         primeiro = movimentos[0].origem
         regra = regra_para(primeiro, self.regras_de_nome(), tipo)
-        if tipo == "serie":
-            ep = episodio_do_video(primeiro)
-            termo = ep.serie if ep else (serie_da_pasta(primeiro.parent.name) or ("",))[0]
-        else:
-            termo = extrair_titulo_e_ano(primeiro.name).titulo
-        termo = (regra.titulo if regra else "") or termo
+        termo = (regra.titulo if regra else "") or self._nome_do_arquivo(primeiro, tipo)
         if not termo:
             self.mostrar_mensagem("Escolher no TMDB", "Não achei um nome para procurar: use \"Corrigir nome...\".",
                                   "aviso")
             return
-        alvos = list(dict.fromkeys(m.origem.parent if tipo == "serie" else m.origem for m in movimentos))
+        # os outros arquivos da prévia com o MESMO nome (ex.: todos os "Juni Lee", em qualquer pasta)
+        validos = [m for m in self._movimentos_previa if m.status not in ("limpeza", "pasta_apagada")]
+        nome_de = {m.origem: normalizar(self._nome_do_arquivo(m.origem, tipo)) for m in validos}
+        escolhidos = {m.origem for m in movimentos} | {v for v, n in nome_de.items() if n and n in nomes}
+        raizes = {Path(r) for r in [o.origem, o.destino, *self.pastas_vigiadas()] if r}
+        alvos = self._alvos_da_escolha(escolhidos, nome_de, tipo, raizes)
         atual = getattr(movimentos[0].filme, "tmdb_id", None)
+        chave = o.chave_tmdb
 
         def tarefa():
             try:
-                opcoes = CatalogoTMDB(o.chave_tmdb).opcoes(termo, tipo)
+                opcoes = CatalogoTMDB(chave).opcoes(termo, tipo)
             except ErroCatalogo as erro:
                 self.fila.put(("msg", ("Escolher no TMDB", f"Não deu para consultar o TMDB: {erro}", "erro")))
                 return
-            self.fila.put(("tmdb_opcoes", (opcoes, alvos, tipo, termo, atual, regra.temporada if regra else None)))
+            self.fila.put(("tmdb_opcoes", (opcoes, alvos, tipo, termo, atual, regra.temporada if regra else None,
+                                           chave, len(escolhidos))))
             self.fila.put(("status_fim", f"TMDB: {len(opcoes)} opção(ões) para \"{termo}\"."))
 
         self._rodar(f"Procurando \"{termo}\" no TMDB...", tarefa)
 
-    def _escolher_opcao_tmdb(self, opcoes, alvos, tipo, termo, atual, temporada) -> None:
-        if not opcoes:
-            self.mostrar_mensagem("Escolher no TMDB", f"O TMDB não achou nada com \"{termo}\". Use \"Corrigir "
-                                  "nome...\" e escreva o nome certo.", "aviso")
-            return
+    @staticmethod
+    def _alvos_da_escolha(arquivos: set, nome_de: dict, tipo: str, raizes=frozenset()) -> list:
+        """Onde guardar a escolha: a PASTA, se todos os vídeos dela na prévia têm o mesmo nome (vale também para
+        episódios que chegarem depois); senão cada ARQUIVO (pasta "DESENHOS" com séries misturadas: a escolha
+        não pode valer para as outras séries). A pasta de origem (ou uma vigiada/biblioteca) nunca: ali entram
+        séries novas o tempo todo."""
+        if tipo != "serie":
+            return sorted(arquivos)
+        raizes = {os.path.normcase(os.path.abspath(str(r))) for r in raizes}
+        alvos = []
+        for pasta in sorted({v.parent for v in arquivos}):
+            da_pasta = [v for v in nome_de if v.parent == pasta]
+            if os.path.normcase(os.path.abspath(str(pasta))) not in raizes and all(v in arquivos for v in da_pasta):
+                alvos.append(pasta)
+            else:
+                alvos += sorted(v for v in da_pasta if v in arquivos)
+        return alvos
+
+    @staticmethod
+    def _itens_tmdb(opcoes, atual) -> list[str]:
         itens = []
         for op in opcoes:
             original = f"  ·  original: {op['original']}" if op["original"] and op["original"] != op["titulo"] else ""
             itens.append(f"{op['titulo']} ({op['ano']}){original}" + ("   ← a de agora" if op["tmdb_id"] == atual
                                                                        else "")
                          + (f"   —   {op['resumo'][:70]}…" if op["resumo"] else ""))
+        return itens
+
+    def _escolher_opcao_tmdb(self, opcoes, alvos, tipo, termo, atual, temporada, chave="", arquivos=0) -> None:
+        estado = {"opcoes": list(opcoes)}
+
+        def procurar(texto: str) -> list[str]:          # roda numa thread (o campo "Procurar" da lista)
+            estado["opcoes"] = CatalogoTMDB(chave).opcoes(texto.strip(), tipo) if texto.strip() else []
+            return self._itens_tmdb(estado["opcoes"], atual)
+
+        pastas = sum(1 for a in alvos if Path(a).suffix == "")
+        onde = (f"{arquivos} arquivo(s) com \"{termo}\" no nome" + (f" ({pastas} pasta(s))" if pastas else ""))
         marcado = next((n for n, op in enumerate(opcoes) if op["tmdb_id"] == atual), None)
-        onde = "\n".join(str(a) for a in alvos[:2]) + (f"\n… e mais {len(alvos) - 2}" if len(alvos) > 2 else "")
-        n = self.escolher_da_lista(
-            "Escolher no TMDB", f"\"{termo}\": {len(opcoes)} opção(ões) no TMDB. Escolha a certa pelo ano e pelo "
-            f"resumo; o programa lembra a escolha para:\n{onde}", itens, "Usar esta", marcado)
-        if n is None:
+        texto = (f"\"{termo}\": {len(opcoes)} opção(ões) no TMDB." if opcoes else
+                 f"O TMDB não achou nada com \"{termo}\". Digite outro nome (ex.: o nome completo) e clique em "
+                 "Procurar.") + f"\nA escolha vale para {onde}; só eles são analisados de novo."
+        n = self.escolher_da_lista("Escolher no TMDB", texto, self._itens_tmdb(opcoes, atual), "Usar esta", marcado,
+                                   procurar=procurar if chave else None, termo=termo)
+        if n is None or n >= len(estado["opcoes"]):
             return
-        escolhida = opcoes[n]
+        escolhida = estado["opcoes"][n]
         for alvo in alvos:
             nova = RegraNome(str(alvo), tipo, escolhida["titulo"], escolhida["ano"], temporada if tipo == "serie" else None)
             adicionar_regra(self.arquivo_regras, nova)
             self._log.info("Escolhido no TMDB: %s -> %s (id %s)", alvo, nova.descricao(), escolhida["tmdb_id"])
-        self.ao_previsualizar()
+        self.ao_previsualizar(so=self._afetados_por(alvos))
 
     def ao_nao_identificados(self) -> None:
         """Os não identificados da prévia juntos por pasta; um "Corrigir nome" por pasta resolve o grupo todo."""
