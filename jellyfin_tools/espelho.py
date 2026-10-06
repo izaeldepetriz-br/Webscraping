@@ -10,7 +10,9 @@ Os nomes saem da MESMA lógica do organizador (planejar): catálogo local/TMDB, 
 Cada link é classificado em:
     "serie"  -> tem marca forte de episódio no título ou no arquivo (S01E02, 1x02, Temporada 1 Episódio 2)
     "filme"  -> tem ano (no título, no nome do arquivo ou nos metadados do item)
-    "outro"  -> nem um nem outro: fica de fora (não dá para nomear com segurança)
+    "outro"  -> nem um nem outro: um VÍDEO COMUM (aula, clipe, vídeo pessoal...). Fica de fora, a não ser que
+                a pessoa escolha uma pasta para eles (pasta_outros): aí vira "<pasta>/<Título>.strm", com o nome
+                do próprio link (uma biblioteca do Jellyfin do tipo "Vídeos caseiros e fotos" ou "Conteúdo misto")
 
 Outros sites (não só o archive.org): o .strm só funciona bem se o link for DIRETO (o arquivo, não
 a página), PERMANENTE (links "assinados" expiram em horas) e PÚBLICO (o Jellyfin não tem o seu
@@ -180,12 +182,41 @@ def _video_virtual(link, tipo: str) -> Path:
     return _VIRTUAL / f"{titulo}.mkv"
 
 
+_RE_PROIBIDOS = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
+
+
+def nome_de_video_comum(link) -> str:
+    """O nome do .strm de um vídeo comum: o título do link (sem etiquetas de lançamento), válido no Windows."""
+    titulo = _RE_ETIQUETAS.sub(" ", nome_do_link(link))
+    titulo = re.sub(r"\(\s*\)|\[\s*\]", " ", _RE_PROIBIDOS.sub(" ", titulo))
+    titulo = re.sub(r"\s+", " ", titulo).strip(" .-")
+    return titulo[:120].rstrip(" .") or "Vídeo"
+
+
+def _destino_comum(item: "ItemEspelho", pasta: Path, destinos_vistos: set[str]) -> None:
+    """'<pasta>/<Título>.strm'. Se o nome já existe com OUTRO link: 'Título (2).strm'; com o MESMO: já existe."""
+    base = nome_de_video_comum(item.link)
+    for n in range(1, 1000):
+        destino = pasta / f"{base if n == 1 else f'{base} ({n})'}{EXTENSAO}"
+        if str(destino).lower() in destinos_vistos:
+            continue
+        if destino.exists():
+            if ler_strm(destino) == item.link.url:
+                item.destino, item.status = destino, "ja_existe"
+                return
+            continue
+        item.destino, item.status = destino, "criar"
+        return
+    item.status, item.detalhe = "erro", "nomes demais iguais nessa pasta"
+
+
 def planejar_espelho(links: list, pasta_filmes: str | Path | None, pasta_series: str | Path | None,
                      catalogo=None, so_licenca_aberta: bool = False, incluir_tmdbid: bool = False,
                      nomes_episodios: bool = False, verificacoes: dict | None = None,
-                     indice_jellyfin=None) -> list[ItemEspelho]:
+                     indice_jellyfin=None, pasta_outros: str | Path | None = None) -> list[ItemEspelho]:
     """Decide o .strm de cada link (não cria nada). `verificacoes`: o resultado de verificar_links().
-    `indice_jellyfin`: o que o servidor já tem (servidor_jellyfin.indice_da_biblioteca): não duplica."""
+    `indice_jellyfin`: o que o servidor já tem (servidor_jellyfin.indice_da_biblioteca): não duplica.
+    `pasta_outros`: onde vão os vídeos comuns (sem ano nem episódio); None = ficam de fora."""
     itens = [ItemEspelho(link, classificar(link)) for link in links]
     if catalogo is not None:                                  # TMDB: todas as buscas de uma vez
         for tipo, modo in (("filme", "filmes"), ("serie", "series")):
@@ -194,7 +225,7 @@ def planejar_espelho(links: list, pasta_filmes: str | Path | None, pasta_series:
                 catalogo.pre_buscar(_consultas(videos, modo))
     destinos_vistos: set[str] = set()
     for item in itens:
-        if item.tipo == "outro":
+        if item.tipo == "outro" and not pasta_outros:
             item.status, item.detalhe = "ignorado", "sem ano nem episódio no título: não dá para nomear"
             continue
         if so_licenca_aberta and not licenca_aberta(getattr(item.link, "licenca", "")):
@@ -204,6 +235,14 @@ def planejar_espelho(links: list, pasta_filmes: str | Path | None, pasta_series:
         verificacao = (verificacoes or {}).get(item.link.url)
         if verificacao is not None and not verificacao.ok:
             item.status, item.detalhe = "link_ruim", verificacao.problema
+            continue
+        if item.tipo == "outro":                              # vídeo comum: o nome do próprio link
+            item.raiz, item.fonte_nome = Path(pasta_outros), "arquivo"
+            _destino_comum(item, Path(pasta_outros), destinos_vistos)
+            if item.status == "criar" and verificacao is not None and verificacao.aviso:
+                item.detalhe = verificacao.aviso
+            if item.destino is not None:
+                destinos_vistos.add(str(item.destino).lower())
             continue
         pasta = pasta_filmes if item.tipo == "filme" else pasta_series
         if not pasta:

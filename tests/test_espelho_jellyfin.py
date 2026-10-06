@@ -377,3 +377,24 @@ def test_bibliotecas_uma_dentro_da_outra_nao_repetem_o_espelho(tmp_path):
     achados = espelhos_da_biblioteca(filmes, series)
     assert [(raiz, a.name) for raiz, a in achados] == [(filmes, "ThunderCats - Exodus (1985).strm")]
     assert len(espelhos_da_biblioteca(series, filmes)) == 1
+
+
+
+def test_videos_comuns_numa_pasta_propria(tmp_path):
+    from types import SimpleNamespace as Link
+    from jellyfin_tools.espelho import aplicar_espelho, nome_de_video_comum, planejar_espelho
+    from jellyfin_tools.organizador import desfazer, ultimo_log
+    links = [Link(url="https://a.org/v/1.mp4", titulo="Aula 3: Funções / Parte \"2\" (HD)", licenca=""),
+             Link(url="https://a.org/v/2.mp4", titulo="Aula 3: Funções / Parte \"2\"", licenca=""),
+             Link(url="https://a.org/v/meu%20clipe.mp4", titulo="", licenca="")]
+    assert nome_de_video_comum(links[0]) == "Aula 3 Funções Parte 2"
+    itens = planejar_espelho(links, None, None)                         # sem pasta: ficam de fora (como antes)
+    assert [i.status for i in itens] == ["ignorado"] * 3
+    pasta = tmp_path / "Videos"
+    itens = aplicar_espelho(planejar_espelho(links, None, None, pasta_outros=pasta))
+    assert [i.destino.name for i in itens] == ["Aula 3 Funções Parte 2.strm", "Aula 3 Funções Parte 2 (2).strm",
+                                               "meu clipe.strm"]                 # mesmo nome, outro link: (2)
+    assert [i.status for i in itens] == ["criado"] * 3
+    de_novo = planejar_espelho(links, None, None, pasta_outros=pasta)
+    assert [i.status for i in de_novo] == ["ja_existe"] * 3                     # mesmo link: não duplica
+    assert desfazer(ultimo_log(pasta)) and not list(pasta.glob("*.strm"))      # "Desfazer" apaga o que criou

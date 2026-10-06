@@ -79,6 +79,7 @@ def app(monkeypatch, tmp_path):
     a.escolher = lambda t, m, opcoes, **k: opcoes[0]        # escolhe o botão principal sozinho
     a._pedir_o_que_completar = lambda pasta, padrao, series: dict(padrao)   # "Completar": a escolha padrão
     a.escolher_da_lista = lambda *args, **k: None           # lista de opções: "Cancelar"
+    a._pedir_pasta = lambda titulo, inicial="": ""          # janela de pastas: "Cancelar"
     a.campo_espera.set(0.5)
     a.var_pasta.set(str(tmp_path / "videos"))
     yield a
@@ -997,16 +998,17 @@ def test_espelhar_links_no_jellyfin_pela_janela(app, tmp_path, monkeypatch):
     app.var_jf_destino.set(str(tmp_path / "Filmes"))
     app.var_jf_legendas.set(False)
     perguntas = []
-    app.escolher = lambda t, m, opcoes: (perguntas.append(m), opcoes[0])[1]   # "Só domínio público / CC"
+    # vídeos comuns: "Deixar de fora"; depois "Só domínio público / CC"
+    app.escolher = lambda t, m, opcoes: (perguntas.append(m), opcoes[-1] if t == "Vídeos comuns" else opcoes[0])[1]
     app.ao_espelhar_jellyfin()
     esperar(app)
-    assert "2 filme(s), 1 episódio(s), 1 sem ano/episódio" in perguntas[-1]
+    assert "2 filme(s), 1 episódio(s), 1 vídeo(s) comum(ns) (sem ano/episódio: ficam de fora)" in perguntas[-1]
     assert sorted(p.name for p in tmp_path.rglob("*.strm")) == ["Nosferatu (1922).strm"]
     situacoes = [app.tabela.item(i, "values")[1] for i in app.tabela.get_children()]
     assert situacoes[0].endswith("espelhado") and situacoes[1].endswith("sem licença aberta")
-    assert app.caixas[-1][1] == "Espelho no Jellyfin" and "Criados: 1 (1 filme(s), 0 episódio(s))" in app.caixas[-1][2]
+    assert app.caixas[-1][1] == "Espelho no Jellyfin" and "Criados: 1 (1 filme(s), 0 episódio(s)" in app.caixas[-1][2]
 
-    app.escolher = lambda t, m, opcoes: opcoes[1]                    # "Todos os identificados"
+    app.escolher = lambda t, m, opcoes: opcoes[-1] if t == "Vídeos comuns" else opcoes[1]   # "Todos os identificados"
     app.ao_espelhar_jellyfin()
     esperar(app)
     assert sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*.strm")) == [
@@ -1014,6 +1016,51 @@ def test_espelhar_links_no_jellyfin_pela_janela(app, tmp_path, monkeypatch):
         "Series/Dark (2017)/Season 01/Dark S01E02.strm"]
     assert app.tabela.item("0", "values")[1].endswith("já espelhado")
 
+
+
+def test_espelhar_videos_comuns_numa_pasta_escolhida(app, tmp_path, monkeypatch):
+    from jellyfin_tools.espelho import Verificacao
+    from videoscraper.extracao import LinkVideo
+    monkeypatch.setattr(app_moderna, "verificar_links", lambda urls, **k: {u: Verificacao(True) for u in urls})
+    base = "https://meusite.com.br/videos/"
+    app._mostrar_links([LinkVideo(base + "aula1.mp4", "o", "meusite", "Aula 1: Variáveis"),
+                        LinkVideo(base + "clipe.mp4", "o", "meusite", "Clipe da viagem"),
+                        LinkVideo(base + "nosferatu.mp4", "o", "meusite", "Nosferatu (1922)")])
+    app._destinos.update({"Filmes": str(tmp_path / "Filmes"), "Séries": str(tmp_path / "Series")})
+    app.var_jf_destino.set(str(tmp_path / "Filmes"))
+    app.var_jf_legendas.set(False)
+    comuns = tmp_path / "Videos comuns"
+    perguntas, respostas = [], {"Vídeos comuns": "Escolher a pasta...", "Espelhar no Jellyfin": "Todos os identificados"}
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append((t, opcoes)), respostas.get(t))[1]
+
+    app.ao_espelhar_jellyfin()                                         # fechou a janela de pastas: nada acontece
+    assert [t for t, _ in perguntas] == ["Vídeos comuns"] and not list(tmp_path.rglob("*.strm"))
+    app._pedir_pasta = lambda titulo, inicial="": str(comuns)          # escolheu uma pasta nova
+    app.ao_espelhar_jellyfin()
+    esperar(app)
+    assert perguntas[-2][1] == ("Escolher a pasta...", "Deixar de fora")
+    assert sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*.strm")) == [
+        "Filmes/Nosferatu (1922)/Nosferatu (1922).strm", "Videos comuns/Aula 1 Variáveis.strm",
+        "Videos comuns/Clipe da viagem.strm"]
+    assert (comuns / "Clipe da viagem.strm").read_text(encoding="utf-8").strip() == base + "clipe.mp4"
+    assert app.pasta_videos_comuns == str(comuns)                      # lembrada para a próxima vez
+    assert "0 episódio(s), 2 vídeo(s) comum(ns))" in app.caixas[-1][2]
+
+    respostas["Vídeos comuns"] = "Usar esta pasta"                     # de novo: oferece a pasta de sempre
+    app.ao_espelhar_jellyfin()
+    esperar(app)
+    assert perguntas[-2][1] == ("Usar esta pasta", "Escolher outra pasta...", "Deixar de fora")
+    assert len(list(comuns.glob("*.strm"))) == 2                       # já existiam: não duplica
+    assert str(comuns) in app._bibliotecas() and app._bibliotecas()[str(comuns)] == "Vídeos comuns"
+
+    app.ao_desfazer()                                                  # o último espelho, nas DUAS pastas
+    esperar(app)
+    assert not list(comuns.glob("*.strm")) and not list(tmp_path.rglob("*.strm"))
+
+    app._mostrar_links([LinkVideo(base + "clipe.mp4", "o", "meusite", "Clipe da viagem")])
+    respostas["Vídeos comuns"] = "Deixar de fora"                      # só vídeos comuns e "de fora": avisa
+    app.ao_espelhar_jellyfin()
+    assert "nada a espelhar" in app.caixas[-1][2]
 
 def test_botao_testar_chaves_das_legendas(app, api_falsa, monkeypatch):
     from jellyfin_tools import ProvedorOpenSubtitles, ProvedorSubDL

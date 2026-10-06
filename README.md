@@ -240,6 +240,20 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.6.0
+
+- **Espelhar no Jellyfin: vídeos comuns, além de Filmes e Séries.** Links sem ano nem temporada/episódio (aulas,
+  clipes, vídeos pessoais...) não ficam mais só "de fora". O Maestro pergunta onde guardá-los:
+  - **"Usar esta pasta"** (a de sempre), **"Escolher outra pasta..."** ou, na primeira vez, **"Escolher a
+    pasta..."**: a pasta escolhida fica lembrada;
+  - **"Deixar de fora"**: como antes.
+
+  Cada um vira `<pasta>/<Título do link>.strm`. Se dois vídeos têm o mesmo título, o segundo vira
+  `Título (2).strm`. No Jellyfin, a pasta deve ser uma biblioteca do tipo **"Vídeos caseiros e fotos"** (ou
+  "Conteúdo misto"). Os vídeos comuns entram no **Conferir espelhos**, na janela **Espelhos...** e no
+  **Desfazer última**, que agora desfaz o espelhamento inteiro, em todas as pastas onde ele criou arquivos.
+  Legendas, pôster e .nfo continuam só para filmes e episódios (o TMDB não conhece um vídeo comum).
+
 ### Novidades da v2.5.0
 
 - **Modo navegador: vídeos que só carregam com um clique.** Muitos players mostram só o poster e criam ou

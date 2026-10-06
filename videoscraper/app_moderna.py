@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import contextlib
+import json
 import logging
 import os
 import queue
@@ -950,24 +951,32 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._destinos[self._modo_atual] = self.var_jf_destino.get()
         pasta_filmes, pasta_series = self._destinos.get("Filmes", ""), self._destinos.get("Séries", "")
         tipos = [classificar(l) for l in links]
-        filmes, series = tipos.count("filme"), tipos.count("serie")
+        filmes, series, comuns = tipos.count("filme"), tipos.count("serie"), tipos.count("outro")
         faltam = [n for n, (qtd, pasta) in (("Filmes", (filmes, pasta_filmes)), ("Séries", (series, pasta_series)))
                   if qtd and not pasta]
         if faltam:
             self.mostrar_mensagem("Espelhar no Jellyfin", f"Escolha a biblioteca de {' e de '.join(faltam)} na aba "
                                   "Jellyfin (troque Filmes/Séries no topo dela) e tente de novo.", "aviso")
             return
-        if not filmes + series:
+        pasta_comuns = ""
+        if comuns:                                   # vídeos sem ano nem episódio: pasta própria ou de fora
+            pasta_comuns = self._escolher_pasta_videos_comuns(comuns)
+            if pasta_comuns is None:
+                return
+        if not filmes + series and not pasta_comuns:
             self.mostrar_mensagem("Espelhar no Jellyfin", "Nenhum link tem ano (filme) ou temporada/episódio "
-                                  "(série) no título: não dá para nomear com segurança.", "aviso")
+                                  "(série) no título, e os vídeos comuns ficaram de fora: nada a espelhar.", "aviso")
             return
-        abertos = sum(licenca_aberta(getattr(l, "licenca", "")) for l, t in zip(links, tipos) if t != "outro")
+        abertos = sum(licenca_aberta(getattr(l, "licenca", "")) for l, t in zip(links, tipos)
+                      if t != "outro" or pasta_comuns)
         legendas = f"legendas ({o.idioma}) pela fonte \"{o.fonte_legenda}\"" if o.legendas else "sem legendas"
         escolha = self.escolher(
             "Espelhar no Jellyfin",
             f"{len(links)} link(s){' selecionado(s)' if self.tabela.selection() else ''}: {filmes} filme(s), "
-            f"{series} episódio(s), {len(links) - filmes - series} sem ano/episódio (ficam de fora).\n\n"
-            f"Filmes: {pasta_filmes or '—'}\nSéries: {pasta_series or '—'}\n\n"
+            f"{series} episódio(s), {comuns} vídeo(s) comum(ns) (sem ano/episódio"
+            f"{'' if pasta_comuns else ': ficam de fora'}).\n\n"
+            f"Filmes: {pasta_filmes or '—'}\nSéries: {pasta_series or '—'}\n"
+            f"Vídeos comuns: {pasta_comuns or '— (de fora)'}\n\n"
             "Cada um vira um arquivo .strm com o link: o Jellyfin toca direto do site, sem baixar. Depois: "
             f"{legendas}, pôster/.nfo e scan do Jellyfin.\n\n"
             f"Licença: {abertos} com domínio público ou Creative Commons. Os demais podem ser cópias sem "
@@ -980,7 +989,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
         def tarefa():
             # 1) cada link serve para .strm? (direto, permanente, público) - vários ao mesmo tempo
-            candidatos = [l.url for l, t in zip(links, tipos) if t != "outro"
+            candidatos = [l.url for l, t in zip(links, tipos) if (t != "outro" or pasta_comuns)
                           and (not so_abertos or licenca_aberta(getattr(l, "licenca", "")))]
             self._log.info("Conferindo %d link(s) (direto, permanente, público?)", len(candidatos))
             verificacoes = verificar_links(candidatos, parar=self.evento_parar.is_set,
@@ -1002,7 +1011,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                     self._log.warning("Não consegui consultar o Jellyfin (%s); sigo sem essa conferência", erro)
             # 3) nomes e 4) .strm
             itens = planejar_espelho(links, pasta_filmes, pasta_series, self._catalogo(o), so_abertos,
-                                     o.incluir_tmdbid, o.nomes_episodios, verificacoes, indice)
+                                     o.incluir_tmdbid, o.nomes_episodios, verificacoes, indice,
+                                     pasta_outros=pasta_comuns or None)
             aplicar_espelho(itens)
             for item in itens:
                 destino = f" -> {item.destino}" if item.destino else ""
@@ -1012,22 +1022,31 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.fila.put(("espelho", [(i, SITUACAO_ESPELHO.get(item.status, (item.status, None)))
                                        for i, item in zip(indices, itens)]))
             criados = [item for item in itens if item.status == "criado"]
+            # legendas, pôster e .nfo só para filmes e episódios (o TMDB não conhece um vídeo comum)
+            com_metadados = [item for item in criados if item.tipo != "outro"]
             resultados = []
-            if criados:
-                self._log.info("Legendas, pôster/.nfo e scan para %d item(ns) espelhado(s)", len(criados))
-                resultados = self._pos_processar(o, [item.como_item_da_biblioteca() for item in criados],
-                                                 [f"espelho-{k}" for k in range(len(criados))], "Espelho",
+            if com_metadados:
+                self._log.info("Legendas, pôster/.nfo e scan para %d item(ns) espelhado(s)", len(com_metadados))
+                resultados = self._pos_processar(o, [item.como_item_da_biblioteca() for item in com_metadados],
+                                                 [f"espelho-{k}" for k in range(len(com_metadados))], "Espelho",
                                                  legendas=o.legendas, notificar=True)
+            elif criados and o.atualizar_jellyfin and o.jellyfin_url and o.jellyfin_api_key:
+                try:                                   # só vídeos comuns: basta avisar o Jellyfin
+                    atualizar_biblioteca(o.jellyfin_url, o.jellyfin_api_key)
+                    self._ultimo_scan = "pedido"
+                except ErroJellyfin as erro:
+                    self._log.warning("Jellyfin: scan não pedido (%s)", erro)
             baixadas = sum(1 for r in resultados for le in (r.legendas or {"": r.legenda}).values()
                            if le and le.status == "baixada")
             contagem = {s: sum(item.status == s for item in itens) for s in SITUACAO_ESPELHO}
             self.fila.put(("status_fim", f"Espelho: {len(criados)} .strm criado(s), {baixadas} legenda(s)."))
             self.fila.put(("msg", ("Espelho no Jellyfin",
                                    f"Criados: {len(criados)} ({sum(i.tipo == 'filme' for i in criados)} filme(s), "
-                                   f"{sum(i.tipo == 'serie' for i in criados)} episódio(s))\n"
+                                   f"{sum(i.tipo == 'serie' for i in criados)} episódio(s), "
+                                   f"{sum(i.tipo == 'outro' for i in criados)} vídeo(s) comum(ns))\n"
                                    f"Já existiam: {contagem['ja_existe'] + contagem['tem_video']}\n"
                                    f"Já estavam no Jellyfin (pulados): {contagem['no_jellyfin']}\n"
-                                   f"Sem ano/episódio: {contagem['ignorado']}\n"
+                                   f"Sem ano/episódio (de fora): {contagem['ignorado']}\n"
                                    f"Sem licença aberta (pulados): {contagem['sem_licenca']}\n"
                                    f"Link que não serve para .strm (página, temporário, login, fora do ar): "
                                    f"{contagem['link_ruim']}\n"
@@ -1040,6 +1059,44 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._rodar("Espelhando no Jellyfin...", tarefa)
 
     OPCOES_ESPELHO = ("Só domínio público / CC", "Todos os identificados")
+
+    # ---- vídeos comuns (sem ano nem episódio): uma pasta própria, lembrada entre as vezes
+    @property
+    def pasta_videos_comuns(self) -> str:
+        return str(config.carregar().get("espelho", {}).get("pasta_videos_comuns", "") or "")
+
+    def _guardar_pasta_videos_comuns(self, pasta: str) -> None:
+        tudo = config.carregar()
+        tudo.setdefault("espelho", {})["pasta_videos_comuns"] = pasta
+        config.salvar(tudo)
+
+    def _pedir_pasta(self, titulo: str, inicial: str = "") -> str:
+        return filedialog.askdirectory(title=titulo, initialdir=inicial or None, mustexist=False) or ""
+
+    def _escolher_pasta_videos_comuns(self, quantos: int) -> str | None:
+        """Onde criar os .strm dos vídeos comuns: a pasta de sempre, outra (escolhida agora e lembrada) ou de
+        fora. Devolve a pasta, "" (ficam de fora) ou None (Cancelar)."""
+        atual = self.pasta_videos_comuns
+        usar, outra, nova, fora = "Usar esta pasta", "Escolher outra pasta...", "Escolher a pasta...", "Deixar de fora"
+        texto = (f"{quantos} link(s) sem ano nem temporada/episódio no título: vídeos comuns (aulas, clipes, "
+                 "vídeos pessoais...). Eles não vão para Filmes nem Séries: ficam numa pasta própria, com o nome "
+                 "do próprio link.\n\n"
+                 + (f"Pasta dos vídeos comuns: {atual}\n\n" if atual else "Ainda não há uma pasta para eles.\n\n")
+                 + "No Jellyfin, essa pasta precisa ser uma biblioteca do tipo \"Vídeos caseiros e fotos\" (ou "
+                 "\"Conteúdo misto\"): Painel > Bibliotecas > Adicionar biblioteca.")
+        escolha = self.escolher("Vídeos comuns", texto, (usar, outra, fora) if atual else (nova, fora))
+        if escolha is None:
+            return None
+        if escolha == fora:
+            return ""
+        if escolha == usar:
+            return atual
+        pasta = self._pedir_pasta("Pasta dos vídeos comuns (biblioteca do Jellyfin)", atual)
+        if not pasta:
+            return None                              # fechou a janela de pastas: não faz nada
+        self._guardar_pasta_videos_comuns(pasta)
+        self._log.info("Pasta dos vídeos comuns: %s", pasta)
+        return pasta
 
     # ================================================================== pasta vigiada
     def ao_alternar_vigia(self) -> None:
@@ -1195,8 +1252,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.definir_estado_conferencia(f"{self._texto_ultima_conferencia()} Próxima: {proxima:%d/%m %H:%M}.")
             return
         self._destinos[self._modo_atual] = self.var_jf_destino.get()
-        pastas = [p for p in dict.fromkeys((self._destinos.get("Filmes"), self._destinos.get("Séries")))
-                  if p and Path(p).is_dir()]
+        pastas = [p for p in dict.fromkeys((self._destinos.get("Filmes"), self._destinos.get("Séries"),
+                                            self.pasta_videos_comuns)) if p and Path(p).is_dir()]
         canais = carregar_canais(self.arquivo_canais)
         if not pastas and not canais:
             self._log.warning("Conferência automática: escolha as bibliotecas de Filmes/Séries")
@@ -1276,8 +1333,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
     def ao_conferir_espelhos(self) -> None:
         """Confere o link de cada .strm das bibliotecas de Filmes e Séries (o site ainda tem o vídeo?)."""
         self._destinos[self._modo_atual] = self.var_jf_destino.get()
-        pastas = [p for p in dict.fromkeys((self._destinos.get("Filmes"), self._destinos.get("Séries")))
-                  if p and Path(p).is_dir()]
+        pastas = [p for p in dict.fromkeys((self._destinos.get("Filmes"), self._destinos.get("Séries"),
+                                            self.pasta_videos_comuns)) if p and Path(p).is_dir()]
         if not pastas:
             self.mostrar_mensagem("Conferir espelhos", "Escolha a biblioteca de Filmes e/ou de Séries.", "aviso")
             return
@@ -1309,18 +1366,19 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
     # ================================================================== "Espelhos...": remover qualquer um
     def _bibliotecas(self) -> dict[str, str]:
-        """{pasta: "Filmes"/"Séries"} das bibliotecas escolhidas que existem."""
+        """{pasta: "Filmes"/"Séries"/"Vídeos comuns"} das bibliotecas escolhidas que existem."""
         self._destinos[self._modo_atual] = self.var_jf_destino.get()
         pastas = {}
-        for tipo in ("Filmes", "Séries"):
-            pasta = self._destinos.get(tipo)
+        for tipo, pasta in (("Filmes", self._destinos.get("Filmes")), ("Séries", self._destinos.get("Séries")),
+                            ("Vídeos comuns", self.pasta_videos_comuns)):
             if pasta and Path(pasta).is_dir():
                 pastas.setdefault(pasta, tipo)
         return pastas
 
     def ao_gerenciar_espelhos(self) -> None:
         if not self._bibliotecas():
-            self.mostrar_mensagem("Espelhos", "Escolha a biblioteca de Filmes e/ou de Séries.", "aviso")
+            self.mostrar_mensagem("Espelhos", "Escolha a biblioteca de Filmes e/ou de Séries (ou espelhe vídeos "
+                                  "comuns numa pasta).", "aviso")
             return
         if self.janela_espelhos is None or not self.janela_espelhos.winfo_exists():
             self.janela_espelhos = JanelaEspelhos(self, self._remover_espelhos_escolhidos,
@@ -2080,10 +2138,14 @@ class AppModerna(TVAoVivo, JanelaModerna):
         o = self._validar_jellyfin(precisa_origem=False)
         if not o:
             return
-        log = ultimo_log(o.destino) if Path(o.destino).is_dir() else None
+        # o mais recente entre a biblioteca da aba e a pasta dos vídeos comuns (espelho só de vídeos comuns)
+        logs = [lg for pasta in (o.destino, self.pasta_videos_comuns)
+                if pasta and Path(pasta).is_dir() and (lg := ultimo_log(pasta))]
+        log = max(logs, key=lambda lg: lg.name) if logs else None
         if not log:
             self.mostrar_mensagem("Nada para desfazer", f"Não há organização registrada em:\n{o.destino}", "info")
             return
+        todos = self._logs_do_mesmo_espelhamento(log)          # um espelho grava 1 log por pasta: desfaz todos
         if not self.perguntar("Desfazer", "Devolver os arquivos da última organização para onde estavam?\n\n"
                               "Legendas baixadas depois continuam na biblioteca."):
             return
@@ -2091,8 +2153,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self.liberar_organizar(False)
 
         def tarefa():
-            self._log.info("Desfazendo: %s", log.name)
-            mensagens = desfazer(log)
+            mensagens = []
+            for um in todos:
+                self._log.info("Desfazendo: %s", um)
+                mensagens += desfazer(um)
             for m in mensagens:
                 self._log.info("%s", m)
             voltaram = sum(m.startswith("voltou") for m in mensagens)
@@ -2104,6 +2168,27 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.fila.put(("msg", ("Desfeito", texto, "sucesso")))
 
         self._rodar("Desfazendo...", tarefa)
+
+    def _logs_do_mesmo_espelhamento(self, log: Path) -> list[Path]:
+        """O log escolhido e, se ele é de um espelho, os logs do MESMO espelhamento nas outras bibliotecas
+        (Filmes, Séries, vídeos comuns): o espelho de uma lista mista cria um log em cada uma."""
+        try:
+            marca = json.loads(log.read_text(encoding="utf-8")).get("espelhamento")
+        except (OSError, ValueError, AttributeError):
+            marca = None
+        if not marca:
+            return [log]
+        todos = [log]
+        for pasta in self._bibliotecas():
+            outro = ultimo_log(pasta)
+            if outro is None or outro.resolve() in {t.resolve() for t in todos}:
+                continue
+            try:
+                if json.loads(outro.read_text(encoding="utf-8")).get("espelhamento") == marca:
+                    todos.append(outro)
+            except (OSError, ValueError, AttributeError):
+                pass
+        return todos
 
     def ao_abrir_biblioteca(self) -> None:
         destino = self.obter_opcoes_jellyfin().destino
