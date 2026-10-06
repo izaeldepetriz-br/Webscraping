@@ -25,6 +25,9 @@ def test_versao_do_exe_vem_do_arquivo_gravado_pelo_github(tmp_path, monkeypatch)
     (tmp_path / "videoscraper").mkdir()
     (tmp_path / "videoscraper" / "versao_build.txt").write_text("v1.7", encoding="utf-8")
     assert atualizacao.versao_atual() == "v1.7"
+    # atualização pela metade: a _internal diz v99 mas o código (dentro do .exe) é este: vale o menor
+    (tmp_path / "videoscraper" / "versao_build.txt").write_text("v99.0", encoding="utf-8")
+    assert atualizacao.versao_atual() == "v" + atualizacao.__version__
 
 
 def test_ultima_versao_e_baixar_o_zip(api_falsa, tmp_path):
@@ -52,6 +55,9 @@ def test_script_de_instalacao_espera_fechar_e_troca_os_arquivos():
     texto = atualizacao.script_de_instalacao(Path(r"C:\Users\Ana\Downloads\v.zip"), Path(r"C:\Prog's\videoscraper"),
                                              4321, r"C:\Prog's\videoscraper\videoscraper.exe")
     assert "Wait-Process -Id 4321" in texto                            # espera o programa fechar
+    assert "Get-Process" in texto and "Stop-Process" in texto           # e as outras janelas dele (bandeja)
+    assert texto.index("Stop-Process") < texto.index("robocopy")
+    assert "$prefixo = $pasta.TrimEnd('\\') + '\\'" in texto            # só os .exe DESTA pasta
     assert "Expand-Archive" in texto and "robocopy" in texto
     assert "'C:\\Prog''s\\videoscraper'" in texto                     # aspas do PowerShell escapadas
     assert "Start-Process -FilePath 'C:\\Prog''s\\videoscraper\\videoscraper.exe'" in texto

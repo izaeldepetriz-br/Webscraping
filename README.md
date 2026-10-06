@@ -240,6 +240,14 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.3.2
+
+- **Corrigido: atualização pela metade.** Com outra janela do Maestro aberta (por exemplo, a da bandeja, do
+  "Iniciar com o Windows"), o Windows não deixava trocar o `Maestro.exe`: só a pasta `_internal` mudava. O
+  programa dizia "versão nova", mas as telas continuavam as antigas. Agora a atualização espera essas janelas
+  fecharem (até 30 s) e fecha as que sobrarem antes de trocar os arquivos. E se o `.exe` e a `_internal`
+  discordarem, o Maestro mostra a versão mais antiga das duas e oferece a atualização de novo.
+
 ### Novidades da v2.3.1
 
 - Corrigido: na TV ao vivo, o texto do botão "Remover selecionados" ficava cortado depois que o botão

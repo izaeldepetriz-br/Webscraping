@@ -25,13 +25,17 @@ API = "https://api.github.com"
 
 
 def versao_atual() -> str:
-    """A versão deste programa (a do .exe, gravada pelo GitHub ao gerar; senão a do código)."""
+    """A versão deste programa (a do .exe, gravada pelo GitHub ao gerar; senão a do código).
+
+    O número gravado fica na pasta _internal, mas o código das telas fica DENTRO do Maestro.exe. Se uma
+    atualização trocou a _internal e não conseguiu trocar o .exe (outra janela do Maestro aberta o segurava), os
+    dois discordam: vale o MENOR, para o programa não se dizer atualizado e oferecer a versão nova de novo."""
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
     for arquivo in (base / "videoscraper" / "versao_build.txt", Path(__file__).with_name("versao_build.txt")):
         try:
             texto = arquivo.read_text(encoding="utf-8").strip()
             if texto:
-                return texto
+                return texto if numeros(texto) <= numeros(__version__) else "v" + __version__
         except OSError:
             continue
     return __version__
@@ -150,6 +154,15 @@ $pasta = {aspas(pasta)}
 $log = Join-Path $env:TEMP 'videoscraper-atualizacao.log'
 "Atualizando $pasta com $zip" | Out-File $log
 Wait-Process -Id {int(pid)} -ErrorAction SilentlyContinue      # espera o programa fechar
+# Outra janela do programa aberta (ex.: a da bandeja, do "Iniciar com o Windows") segura o .exe: o Windows não
+# deixa trocá-lo, e só a pasta _internal mudaria. Espera até 30 s e depois fecha as que sobraram.
+$prefixo = $pasta.TrimEnd('\\') + '\\'
+function Abertos {{ @(Get-Process -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -and $_.Path.StartsWith($prefixo, [StringComparison]::OrdinalIgnoreCase) }}) }}
+for ($i = 0; $i -lt 30 -and (Abertos).Count -gt 0; $i++) {{ Start-Sleep -Seconds 1 }}
+foreach ($p in Abertos) {{
+    "Fechando $($p.Path) (processo $($p.Id))" | Out-File $log -Append
+    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+}}
 Start-Sleep -Seconds 1
 $tmp = Join-Path $env:TEMP ('videoscraper-novo-' + [guid]::NewGuid())
 try {{
