@@ -122,6 +122,17 @@ def test_buscar_selecionar_e_baixar(app, servidor):
     assert app.caixas[-1][:2] == ("sucesso", "Downloads concluídos")
     assert "Filme" in app.log.get("1.0", "end")
 
+    # memória: numa busca nova, o baixado aparece como "já baixado" e "Baixar" pergunta antes
+    assert app.memoria_downloads.baixado(app.links[0])["arquivo"].endswith("Filme Ação 1.mp4")
+    app.bt_buscar.invoke()
+    esperar(app)
+    assert "já baixado (" in app.tabela.item("0", "values")[1] and app.tabela.item("1", "values")[1] == ""
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append(t), None)[1]   # Cancelar
+    app.tabela.selection_set("0")
+    app.bt_baixar_sel.invoke()
+    assert perguntas == ["Já baixados"] and not app.trabalhando
+
 
 def test_baixar_todos_com_falha_e_robots(app, servidor):
     app.definir_url(servidor.base + "/lista")
@@ -2673,3 +2684,90 @@ def test_conferencia_semanal_dos_canais_avisa_os_que_sempre_falham(app, api_fals
     fim = time.time() + 30
     while time.time() < fim and app._semanal_rodando:
         time.sleep(0.05)
+
+
+def test_videos_memoria_de_downloads_e_filtro_por_coluna(app):
+    from datetime import datetime, timedelta
+    from videoscraper.extracao import LinkVideo
+    app.mostrar_aba("Vídeos")
+    app.definir_url("https://archive.org/details/serie")
+    links = [LinkVideo(f"https://archive.org/download/serie/ep{n}.mkv", "https://archive.org/details/serie",
+                       "archive.org", f"Episódio 1x0{n}", licenca="Domínio público" if n < 4 else "") for n in range(1, 6)]
+    app.memoria_downloads.registrar(links[0], "C:/v/ep1.mkv", quando=datetime.now() - timedelta(days=200))
+    app.memoria_downloads.registrar(links[1], "C:/v/ep2.mkv")
+    app._mostrar_links(links)
+    assert app.tabela.set("0", "status").endswith("já baixado (" + (datetime.now() - timedelta(days=200)).strftime("%d/%m/%Y") + ")")
+    assert app.valor_video("status", "0") == "já baixado" and app.valor_video("status", "2") == "(não baixado)"
+
+    # baixar: pergunta se pula os já baixados
+    perguntas, baixou = [], []
+    respostas = iter(["Pular os 2 já baixados"])
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append((t, m)), next(respostas))[1]
+    app._rodar = lambda status, tarefa: baixou.append(status)
+    app._filtrar_por_licenca = lambda lista: lista                     # (a licença tem teste próprio)
+    escolhidos = app._filtrar_ja_baixados(links[:3])
+    assert escolhidos == [links[2]] and "2 de 3 vídeo(s) já foram baixados" in perguntas[0][1]
+
+    # filtro por coluna: só os "(não baixado)" da Situação e a Licença
+    assert "▾" in app.tabela.heading("status", "text")
+    app.abrir_filtro_videos("status")
+    texto, marcados, aplicar = app._filtro_aberto_videos
+    marcados.discard("já baixado")
+    aplicar()
+    app.update()
+    assert app.visiveis_videos() == ["2", "3", "4"] and app.tabela.heading("status", "text") == "Situação ▼"
+    assert app._extras_tabela[str(app.tabela)][0].cget("text") == "3 de 5"
+    app.aplicar_filtro_videos("licenca", {"Domínio público"})
+    assert app.visiveis_videos() == ["2"]
+    app.tabela.selection_set(["2"])
+    perguntas.clear()
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append((t, m)), opcoes[0])[1]
+    app.ao_baixar_todos()                                              # com filtro: só o que está à vista
+    assert baixou == ["Baixando vídeos..."] and perguntas == []
+    app.atualizar_situacao("0", "baixado", "ok")                       # linha escondida: não quebra
+    app.tirar_filtros_videos()
+    assert app.visiveis_videos() == ["0", "1", "2", "3", "4"] and "▾" in app.tabela.heading("licenca", "text")
+
+    # memória por período: apaga os de mais de 90 dias (o ep1, de 200 dias)
+    app.escolher_da_lista = lambda t, m, itens, botao="", marcado=None: next(
+        n for n, i in enumerate(itens) if "mais de 90 dias" in i)
+    app.ao_memoria_downloads()
+    assert app.memoria_downloads.baixado(links[0]) is None and app.memoria_downloads.baixado(links[1]) is not None
+    assert "já baixado" not in app.tabela.set("0", "status") and "já baixado" in app.tabela.set("1", "status")
+    # selecionados: esquece o ep2
+    app.tabela.selection_set(["1"])
+    app.escolher_da_lista = lambda t, m, itens, botao="", marcado=None: (
+        0 if itens[0].startswith("Esquecer os 1 selecionado") else None)
+    app.ao_memoria_downloads()
+    assert app.memoria_downloads.baixado(links[1]) is None and app.tabela.set("1", "status") == ""
+    app._mostrar_links(links)                                          # busca nova: nenhum filtro sobra
+    assert len(app.visiveis_videos()) == 5
+
+
+def test_vigia_nao_mexe_no_que_voce_desmarcou(app, tmp_path):
+    origem, filmes = tmp_path / "Downloads", tmp_path / "Filmes"
+    origem.mkdir()
+    for nome in ("Matrix.1999.mkv", "Up.2009.mkv"):
+        (origem / nome).write_bytes(b"v")
+        os.utime(origem / nome, (time.time() - 3600, time.time() - 3600))
+    app.mostrar_aba("Jellyfin")
+    app.seletor_modo.set("Filmes")
+    app._ao_trocar_modo("Filmes")
+    app.var_jf_origem.set(str(origem))
+    app.var_jf_destino.set(str(filmes))
+    app.var_jf_legendas.set(False)
+    app.bt_previa.invoke()
+    esperar(app)
+    up = next(i for i in app._ordem_jf if app.tabela_jf.set(i, "atual") == "Up.2009.mkv")
+    app.marcar_mover_jf([up], False)                                   # ☐ Up: não mexer
+    app.var_jf_vigiar.set(True)
+    app.ao_alternar_vigia()
+    fim = time.time() + 30
+    while not (filmes / "Matrix (1999)" / "Matrix (1999).mkv").exists() and time.time() < fim:
+        app.update()
+        time.sleep(0.05)
+    esperar(app)
+    app.var_jf_vigiar.set(False)
+    app.ao_alternar_vigia()
+    assert (filmes / "Matrix (1999)" / "Matrix (1999).mkv").exists()
+    assert (origem / "Up.2009.mkv").exists() and not (filmes / "Up (2009)").exists()

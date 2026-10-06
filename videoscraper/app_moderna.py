@@ -34,6 +34,7 @@ from jellyfin_tools.legendas import normalizar_idiomas
 from jellyfin_tools.nomes import extrair_episodio, extrair_titulo_e_ano, normalizar, serie_da_pasta
 from jellyfin_tools.metadados import ClienteTMDB
 from jellyfin_tools.notificacoes import Notificador
+from .memoria_downloads import MemoriaDownloads, texto_quando
 from jellyfin_tools.espelho import (aplicar_espelho, classificar, conferir_e_avisar, conferir_espelhos,
                                     desfazer_ultima_remocao, intervalo_em_segundos, licenca_aberta,
                                     lotes_de_espelhos, nome_do_link, planejar_espelho, remover_espelhos,
@@ -177,6 +178,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._baixar([self.links[int(i)] for i in ids])
 
     def ao_baixar_todos(self) -> None:
+        """Com filtro nas colunas, "todos" = os que estão À VISTA (o escondido pelo filtro não é baixado)."""
+        if self._filtros_videos:
+            self._baixar([self.links[int(i)] for i in self.visiveis_videos() if int(i) < len(self.links)])
+            return
         self._baixar(list(self.links))
 
     def ao_fazer_login(self) -> None:
@@ -238,6 +243,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
         escolhidos = self._filtrar_por_licenca(escolhidos)
         if escolhidos is None:
             return
+        escolhidos = self._filtrar_ja_baixados(escolhidos)
+        if escolhidos is None:
+            return
         if opcoes.limite:
             escolhidos = escolhidos[:opcoes.limite]
 
@@ -252,14 +260,18 @@ class AppModerna(TVAoVivo, JanelaModerna):
                     if not lista:
                         self._explicar_resultado(t, lista)
                         return
-                    if self._sem_licenca_aberta(lista):   # pergunta no fim e baixa o que for escolhido
+                    if self._sem_licenca_aberta(lista) or any(map(self.memoria_downloads.baixado, lista)):
+                        # pergunta no fim (licença, já baixados) e baixa o que for escolhido
                         self.fila.put(("baixar_depois", lista))
                         self.fila.put(("status_fim", f"{len(lista)} vídeo(s) encontrados: escolha a licença."))
                         return
                     if opcoes.limite:
                         lista = lista[:opcoes.limite]
-                resumo = t.baixar(lista, opcoes.pasta,
-                                  ao_terminar_item=lambda l, st, det: self.fila.put(("item", (l.url, st))))
+                def terminou(link, status, detalhe):
+                    if status == "ok":                    # memória: numa busca futura aparece "já baixado"
+                        self.memoria_downloads.registrar(link, detalhe)
+                    self.fila.put(("item", (link.url, status)))
+                resumo = t.baixar(lista, opcoes.pasta, ao_terminar_item=terminou)
                 self.fila.put(("msg", ("Downloads concluídos",
                                        f"Baixados: {resumo.ok}\nPulados: {resumo.pulados}\n"
                                        f"Com erro: {resumo.falhas}\n\nPasta: {opcoes.pasta}",
@@ -268,6 +280,83 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._rodar("Baixando vídeos...", tarefa)
 
     OPCOES_LICENCA = ("Só domínio público / CC", "Todos (tenho certeza)")
+
+    @property
+    def memoria_downloads(self) -> MemoriaDownloads:
+        if getattr(self, "_memoria_downloads", None) is None:
+            self._memoria_downloads = MemoriaDownloads(config.ARQUIVO.parent / "baixados.json")
+        return self._memoria_downloads
+
+    def _filtrar_ja_baixados(self, links: list[LinkVideo]) -> list[LinkVideo] | None:
+        """Os que já foram baixados antes (mesmo em outra busca, outro dia): pergunta se pula ou baixa de novo.
+        Devolve a lista a baixar, ou None se cancelou (ou se não sobrou nada)."""
+        ja = [lk for lk in links if self.memoria_downloads.baixado(lk)]
+        if not ja:
+            return links
+        exemplos = "\n".join(f"• {lk.titulo or lk.url} ({texto_quando(self.memoria_downloads.baixado(lk))})"
+                              for lk in ja[:5]) + (f"\n… e mais {len(ja) - 5}" if len(ja) > 5 else "")
+        pular = f"Pular os {len(ja)} já baixados"
+        escolha = self.escolher(
+            "Já baixados", f"{len(ja)} de {len(links)} vídeo(s) já foram baixados antes:\n\n{exemplos}\n\n"
+            "Pular evita baixar duas vezes. (Para o programa esquecer downloads: botão \"Memória de "
+            "downloads...\", embaixo da lista.)", (pular, "Baixar de novo"))
+        if escolha is None:
+            return None
+        if escolha == pular:
+            restantes = [lk for lk in links if lk not in ja]
+            if not restantes:
+                self.mostrar_mensagem("Já baixados", "Todos os escolhidos já foram baixados: nada novo para baixar.",
+                                      "info")
+                return None
+            return restantes
+        return links
+
+    PERIODOS_MEMORIA = ((30, "baixados há mais de 30 dias"), (90, "baixados há mais de 90 dias"),
+                        (365, "baixados há mais de 1 ano"), (0, "todos (a memória inteira)"))
+
+    @staticmethod
+    def _tamanho_curto(tamanho: int) -> str:
+        return tamanho_legivel(tamanho) if tamanho >= 1024 ** 2 else f"{max(1, round(tamanho / 1024))} KB" if tamanho else "0 KB"
+
+    def ao_memoria_downloads(self) -> None:
+        """Memória de downloads: esquecer os selecionados ou limpar por período (o arquivo cresce com o tempo).
+        O que sai da memória volta a ser baixado sem a pergunta "já baixado"; os vídeos no disco não mudam."""
+        memoria = self.memoria_downloads
+        ids = [i for i in self.tabela.selection() if i.isdigit() and int(i) < len(self.links)]
+        selecionados = [self.links[int(i)] for i in ids]
+        ja = [lk for lk in selecionados if memoria.baixado(lk)]
+        opcoes, itens = [], []
+        if ja:
+            opcoes.append(("selecionados", 0))
+            itens.append(f"Esquecer os {len(ja)} selecionado(s) que já foram baixados")
+        for dias, texto in self.PERIODOS_MEMORIA:
+            quantos = memoria.quantos_antigos(dias)
+            opcoes.append(("periodo", dias))
+            itens.append(f"Apagar os {texto}: {quantos} registro(s)")
+        n = self.escolher_da_lista(
+            "Memória de downloads", f"A memória guarda {len(memoria)} download(s) ({self._tamanho_curto(memoria.tamanho())}) "
+            "para avisar \"já baixado\" nas próximas buscas. Apagar só esquece: os vídeos baixados continuam no "
+            "disco.", itens, "Apagar")
+        if n is None:
+            return
+        tipo, dias = opcoes[n]
+        if tipo == "selecionados":
+            saiu = memoria.esquecer(ja)
+        else:
+            quantos = memoria.quantos_antigos(dias)
+            if not quantos:
+                self.mostrar_mensagem("Memória de downloads", "Nada nesse período.", "info")
+                return
+            if not self.perguntar("Memória de downloads", f"Apagar {quantos} registro(s) da memória ("
+                                  f"{dict(self.PERIODOS_MEMORIA)[dias]})? Esses vídeos voltam a ser baixados sem a "
+                                  "pergunta \"já baixado\". Os arquivos no disco não mudam."):
+                return
+            saiu = memoria.esquecer_antigos(dias)
+        for i, lk in enumerate(self.links):           # a lista na tela acompanha
+            if "já baixado" in self.tabela.set(str(i), "status") and not memoria.baixado(lk):
+                self.atualizar_situacao(str(i), "", "", rolar=False)
+        self._log.info("Memória de downloads: %d registro(s) apagado(s)", saiu)
+        self.definir_status(f"Memória de downloads: {saiu} registro(s) apagado(s); ficaram {len(memoria)}.")
 
     @staticmethod
     def _sem_licenca_aberta(links: list[LinkVideo]) -> list[LinkVideo]:
@@ -595,6 +684,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             titulo = l.titulo or unquote(os.path.basename(urlparse(l.url).path)) or l.url
             self.adicionar_video(str(i), i + 1, "", titulo, ORIGENS.get(l.tipo, l.tipo), l.url,
                                  TIPOS_CONTEUDO[classificar(l)], getattr(l, "licenca", "") or "—")
+            if registro := self.memoria_downloads.baixado(l):        # baixado numa busca anterior
+                self.atualizar_situacao(str(i), f"já baixado ({texto_quando(registro)})", "ok", rolar=False)
 
     def _marcar_item(self, url: str, status: str) -> None:
         for i, l in enumerate(self.links):
@@ -825,13 +916,14 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._log.warning("Vigia: escolha as pastas vigiadas (ou a de origem) e as bibliotecas de Filmes/Séries")
             return
         self._vigia_conferindo = True
+        fora = frozenset(self._lembrar_desmarcados())   # o que você desmarcou (☐) na prévia: a vigia não mexe
 
         def conferir():                              # na thread: a janela não trava
             novos = 0
             for pasta in pastas:
                 try:
                     previa = organizar_misto(pasta, filmes, series, CatalogoLocal.padrao(), filtro=filtro_prontos(),
-                                             protegidas=o.pastas_protegidas, regras=self.regras_de_nome())
+                                             protegidas=o.pastas_protegidas, regras=self.regras_de_nome(), fora=fora)
                     novos += sum(m.status == "simulado" for m in previa)
                 except Exception as erro:
                     self._log.error("Vigia: não consegui olhar %s: %s", pasta, erro)
@@ -852,6 +944,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._tmdb_ativo = o.tmdb
         self._previa = None
         self.liberar_organizar(False)
+        fora = frozenset(self._lembrar_desmarcados())
 
         def tarefa():
             todos = []
@@ -860,7 +953,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                          aplicar=True, incluir_tmdbid=o.incluir_tmdbid,
                                          exigir_catalogo=o.exigir_catalogo, limpar_lixo=o.limpar_lixo,
                                          apagar_pasta_origem=o.apagar_pasta_origem, nomes_episodios=o.nomes_episodios,
-                                         protegidas=o.pastas_protegidas, regras=self.regras_de_nome())
+                                         protegidas=o.pastas_protegidas, regras=self.regras_de_nome(), fora=fora)
             for m in todos:
                 nivel = {"erro": self._log.error, "movido": self._log.info}.get(m.status, self._log.warning)
                 nivel("%s", m)

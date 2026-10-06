@@ -233,6 +233,19 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v1.9.4
+
+- **Memória dos downloads (aba Vídeos):** cada vídeo baixado fica guardado em `.videoscraper\baixados.json`.
+  Numa busca nova (hoje ou daqui a meses), ele aparece como **"já baixado (data)"** e o "Baixar" pergunta se
+  pula os já baixados. Sites que mudam o link a cada visita são reconhecidos pela página + título.
+- **"Memória de downloads..."** (embaixo da lista): esquecer os selecionados ou **limpar por período**
+  (mais de 30 dias, 90 dias, 1 ano ou tudo), mostrando quantos registros e o tamanho do arquivo. Só esquece:
+  os vídeos no disco não mudam.
+- **Filtro em cada coluna da lista de vídeos** (Situação, Título, Tipo, Licença, Origem, Link), como na TV ao
+  vivo: clique no título, digite ou marque. Com filtro, **"Baixar todos" baixa só o que está à vista**; botão
+  "Tirar os filtros" no topo.
+- **Pasta vigiada respeita os desmarcados (☐):** o que você desmarcou na prévia a vigia também não mexe.
+
 ### Novidades da v1.9.3
 
 - **Diagnóstico da TV com resumo:** começa com **"✓ Tudo certo: 144 canais (os da sua lista)"** ou

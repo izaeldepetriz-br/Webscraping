@@ -1433,7 +1433,10 @@ class JanelaModerna(ctk.CTk):
                                                        command=self.selecionar_filmes_e_series, width=130, **estilo)
         self.bt_selecionar_todos = ctk.CTkButton(topo, text="Selecionar todos", command=self.selecionar_todos,
                                                  width=120, **estilo)
-        for b in (self.bt_limpar_selecao, self.bt_selecionar_espelhaveis, self.bt_selecionar_todos):
+        self.bt_tirar_filtros_videos = ctk.CTkButton(topo, text="Tirar os filtros", command=self.tirar_filtros_videos,
+                                                     width=100, **estilo)
+        for b in (self.bt_tirar_filtros_videos, self.bt_limpar_selecao, self.bt_selecionar_espelhaveis,
+                  self.bt_selecionar_todos):
             b.pack(side="right", padx=(4, 0))
         # Seletor: "1-5, 8" (números da coluna #) ou parte do nome ("1x0"); Enter marca (soma ao que já está)
         self.campo_selecionar = ctk.CTkEntry(topo, width=170, height=26,
@@ -1449,13 +1452,20 @@ class JanelaModerna(ctk.CTk):
         self.tabela.heading("n", text=f"{self.CAIXA[False]} #", command=self.alternar_todos)
         self.tabela.bind("<Button-1>", self._ao_clicar_tabela)
         self.tabela.bind("<<TreeviewSelect>>", lambda e: self._atualizar_selecao())
+        self._ordem_videos: list[str] = []        # todas as linhas, na ordem (à vista ou escondidas pelo filtro)
+        self._ocultos_videos: set[str] = set()
+        self._filtros_videos: dict[str, set[str]] = {}
+        self._janela_filtro_videos = None
+        self._titulos_videos()
         self.tabela.bind("<Control-a>", lambda e: (self.selecionar_todos(), "break")[1])
         self.tabela.bind("<Control-A>", lambda e: (self.selecionar_todos(), "break")[1])
         self.bt_abrir_link = self._botao(acoes, "Abrir link", self.ao_abrir_link, "fantasma")
         self.bt_copiar_link = self._botao(acoes, "Copiar link", self.ao_copiar_link, "fantasma")
         self.bt_salvar_lista = self._botao(acoes, "Salvar lista (CSV/JSON/TXT)...", self.ao_salvar_lista, "fantasma")
         self.bt_abrir_pasta = self._botao(acoes, "Abrir pasta dos vídeos", self.ao_abrir_pasta, "fantasma")
-        for b in (self.bt_abrir_link, self.bt_copiar_link, self.bt_salvar_lista, self.bt_abrir_pasta):
+        # memória de downloads: esquecer os selecionados ou limpar por período
+        self.bt_esquecer = self._botao(acoes, "Memória de downloads...", self.ao_memoria_downloads, "fantasma")
+        for b in (self.bt_abrir_link, self.bt_copiar_link, self.bt_salvar_lista, self.bt_abrir_pasta, self.bt_esquecer):
             b.pack(side="left", padx=(0, 6))
         # .strm: o Jellyfin toca direto do link, sem baixar (filmes e séries separados, com legendas)
         self.bt_espelhar = self._botao(acoes, "Espelhar no Jellyfin (.strm)...", self.ao_espelhar_jellyfin)
@@ -1892,6 +1902,9 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_escolher_no_tmdb(self) -> None:
+        pass
+
+    def ao_memoria_downloads(self) -> None:
         pass
 
     def mostrar_todos_jf(self) -> None:
@@ -2479,7 +2492,12 @@ class JanelaModerna(ctk.CTk):
         self.var_nav.set(True)
 
     def limpar_tabela(self) -> None:
-        self.tabela.delete(*self.tabela.get_children())
+        self.tabela.delete(*(self._ordem_videos or self.tabela.get_children()))   # as escondidas também
+        self._ordem_videos.clear()
+        self._ocultos_videos.clear()
+        if self._filtros_videos:                       # lista nova: os valores do filtro antigo não valem mais
+            self._filtros_videos.clear()
+            self._titulos_videos()
         self._atualizar_contador(self.tabela)
         self._atualizar_selecao()
 
@@ -2489,19 +2507,89 @@ class JanelaModerna(ctk.CTk):
         listra = "par" if len(self.tabela.get_children()) % 2 == 0 else "impar"
         self.tabela.insert("", "end", iid=iid, values=(f"{self.CAIXA[False]} {numero}", situacao, titulo, origem,
                                                        link, conteudo, licenca), tags=(listra,))
+        self._ordem_videos.append(iid)
+        if self._filtros_videos and not self._visivel_video(iid):
+            self.tabela.detach(iid)
+            self._ocultos_videos.add(iid)
         self._atualizar_contador(self.tabela)
 
-    def atualizar_situacao(self, iid: str, texto: str, tipo: str) -> None:
-        """tipo: 'ok' (verde), 'erro' (vermelho) ou 'pulado' (amarelo)."""
+    def atualizar_situacao(self, iid: str, texto: str, tipo: str, rolar: bool = True) -> None:
+        """tipo: 'ok' (verde), 'erro' (vermelho), 'pulado' (amarelo) ou '' (volta ao normal)."""
         if not self.tabela.exists(iid):
             return
         valores = list(self.tabela.item(iid, "values"))
         simbolo = self.SIMBOLO_SITUACAO.get(tipo, "")
         valores[1] = f"{simbolo}  {texto}" if simbolo else texto
-        self.tabela.item(iid, values=valores, tags=(tipo,))
-        self.tabela.see(iid)
+        listra = "par" if int(iid) % 2 == 0 else "impar" if iid.isdigit() else "par"
+        self.tabela.item(iid, values=valores, tags=(tipo or listra,))
+        if rolar and iid not in self._ocultos_videos:         # escondida pelo filtro: não dá para rolar até ela
+            self.tabela.see(iid)
 
-    DICA_SELECAO = "Clique para marcar ☑ (vários)"
+    DICA_SELECAO = ""                  # sem nada selecionado: a caixa ☐ da coluna # já explica (falta espaço)
+
+    # ---- filtro por coluna na lista de vídeos (como na TV ao vivo): clique no título da coluna
+    TITULOS_VIDEOS = {"status": "Situação", "titulo": "Título", "conteudo": "Tipo", "licenca": "Licença",
+                      "tipo": "Origem", "url": "Link"}
+
+    def _titulos_videos(self) -> None:
+        for coluna, texto in self.TITULOS_VIDEOS.items():
+            marca = " ▼" if coluna in self._filtros_videos else " ▾"     # colunas estreitas: só a seta cheia
+            self.tabela.heading(coluna, text=texto + marca, anchor="w",
+                                command=lambda c=coluna: self.abrir_filtro_videos(c))
+
+    def valor_video(self, coluna: str, iid: str) -> str:
+        valor = str(self.tabela.set(iid, coluna)).strip()
+        if coluna == "status":                          # sem o símbolo; "já baixado (05/10/2026)" = "já baixado"
+            valor = re.sub(r"^[\u2713\u2715\u21b7]\s+", "", valor)
+            valor = re.sub(r"\s*\(\d{2}/\d{2}/\d{4}\)$", "", valor)
+            return valor or "(não baixado)"
+        return valor if valor and valor != "—" else "(vazio)"
+
+    def valores_videos(self, coluna: str) -> list[tuple[str, int]]:
+        contagem: dict[str, int] = {}
+        for iid in self._ordem_videos:
+            valor = self.valor_video(coluna, iid)
+            contagem[valor] = contagem.get(valor, 0) + 1
+        return sorted(contagem.items(), key=lambda vq: _sem_acentos(vq[0]))
+
+    def _visivel_video(self, iid: str) -> bool:
+        return all(self.valor_video(c, iid) in valores for c, valores in self._filtros_videos.items())
+
+    def aplicar_filtro_videos(self, coluna: str | None = None, escolhidos=None) -> None:
+        """Mostra só os vídeos com um dos valores escolhidos (todos ou nenhum = sem filtro nessa coluna).
+        O escondido pelo filtro não é baixado nem pelo "Baixar todos"."""
+        if coluna is not None:
+            escolhidos = set(escolhidos or ())
+            if not escolhidos or escolhidos >= {v for v, _ in self.valores_videos(coluna)}:
+                self._filtros_videos.pop(coluna, None)
+            else:
+                self._filtros_videos[coluna] = escolhidos
+        self.tabela.detach(*self._ordem_videos)
+        self._ocultos_videos = set()
+        for iid in self._ordem_videos:
+            if self._visivel_video(iid):
+                self.tabela.move(iid, "", "end")
+            else:
+                self._ocultos_videos.add(iid)
+        if self._ocultos_videos:                        # escondido não fica selecionado (nem é baixado)
+            self.tabela.selection_remove(*[i for i in self.tabela.selection() if i in self._ocultos_videos])
+        self._titulos_videos()
+        self._atualizar_contador(self.tabela)
+        self._atualizar_selecao()
+
+    def abrir_filtro_videos(self, coluna: str) -> None:
+        if self._janela_filtro_videos is not None and self._janela_filtro_videos.winfo_exists():
+            self._janela_filtro_videos.destroy()
+        self._janela_filtro_videos, self._filtro_aberto_videos = janela_de_filtro(
+            self, self, self.TITULOS_VIDEOS[coluna], self.valores_videos(coluna), self._filtros_videos.get(coluna),
+            lambda escolhidos: self.aplicar_filtro_videos(coluna, escolhidos), botao="Mostrar")
+
+    def tirar_filtros_videos(self) -> None:
+        self._filtros_videos.clear()
+        self.aplicar_filtro_videos()
+
+    def visiveis_videos(self) -> list[str]:
+        return [i for i in self._ordem_videos if i not in self._ocultos_videos]
 
     def selecionar_todos(self) -> None:
         self.tabela.selection_set(self.tabela.get_children())
@@ -2723,7 +2811,9 @@ class JanelaModerna(ctk.CTk):
     def _atualizar_contador(self, tabela) -> None:
         contador, vazio = self._extras_tabela[str(tabela)]
         visiveis = len(tabela.get_children())
-        total = len(self._ordem_jf) if str(tabela) == str(getattr(self, "tabela_jf", "")) else visiveis
+        total = (len(self._ordem_jf) if str(tabela) == str(getattr(self, "tabela_jf", ""))
+                 else len(getattr(self, "_ordem_videos", ())) or visiveis if str(tabela) == str(getattr(self, "tabela", ""))
+                 else visiveis)
         texto = str(total) if visiveis == total else f"{visiveis} de {total}"
         # Velocidade: com milhares de linhas isto roda a cada linha; redesenhar o rótulo do CTk
         # (e trocar a largura) só quando o texto muda de verdade.
