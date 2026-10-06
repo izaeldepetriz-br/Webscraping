@@ -239,6 +239,14 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.0.2
+
+- **Corrigido: "Acesso negado" em `C:\Windows\system32\videos_baixados` ao baixar.** Aberto pelo "Iniciar
+  com o Windows", a pasta atual do programa é a do sistema, e a pasta padrão dos vídeos era calculada a partir
+  dela. Agora a pasta padrão é fixa: a `videos_baixados` ao lado do programa (se já existe) ou
+  **Vídeos\Maestro**. Um caminho dentro da pasta do Windows é trocado sozinho pelo padrão.
+- A pasta dos vídeos que você escolher fica **lembrada** entre uma abertura e outra.
+
 ### Novidades da v2.0.1
 
 - Depois de refazer os atalhos, o programa **avisa o Windows que os ícones mudaram** (o mesmo aviso que os

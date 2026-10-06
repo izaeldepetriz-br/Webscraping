@@ -26,7 +26,8 @@ from .extracao import LinkVideo
 from .navegador import PERFIL_PADRAO, PlaywrightAusente
 from .servico import MENSAGEM_ROBOTS, Trabalho, fazer_login
 
-PASTA_PADRAO = os.path.abspath("videos_baixados")
+# Lugar fixo (não a pasta atual: aberto pelo Windows, ela é System32 e gravar lá dá "Acesso negado")
+PASTA_PADRAO = os.path.join(os.path.expanduser("~"), "Videos", "Maestro")
 
 # Nomes amigáveis para a coluna "Origem" (de onde o link saiu).
 ORIGENS = {"video_tag": "vídeo da página", "source_tag": "vídeo da página", "iframe": "player embutido",

@@ -2771,3 +2771,36 @@ def test_vigia_nao_mexe_no_que_voce_desmarcou(app, tmp_path):
     app.ao_alternar_vigia()
     assert (filmes / "Matrix (1999)" / "Matrix (1999).mkv").exists()
     assert (origem / "Up.2009.mkv").exists() and not (filmes / "Up (2009)").exists()
+
+
+def test_pasta_dos_videos_nunca_cai_na_pasta_do_windows(app, tmp_path, monkeypatch):
+    """Caso real: aberto pelo "Iniciar com o Windows", a pasta atual é C:\\Windows\\System32 e o download dava
+    PermissionError em C:\\WINDOWS\\system32\\videos_baixados."""
+    windows = tmp_path / "WINDOWS"
+    monkeypatch.setenv("SystemRoot", str(windows))
+    padrao = app_moderna.PASTA_PADRAO
+    assert os.path.isabs(padrao)                                           # nunca relativo à pasta atual
+    assert app_moderna.pasta_segura(str(windows / "system32" / "videos_baixados"), padrao) == padrao
+    assert app_moderna.pasta_segura(str(windows), padrao) == padrao
+    assert app_moderna.pasta_segura("", padrao) == padrao
+    assert app_moderna.pasta_segura("filmes", padrao) == str(Path.home() / "Videos" / "filmes")   # relativo
+    assert app_moderna.pasta_segura(str(tmp_path / "WINDOWS2" / "x"), padrao) == str(tmp_path / "WINDOWS2" / "x")
+    boa = str(tmp_path / "meus_videos")
+    assert app_moderna.pasta_segura(boa, padrao) == boa
+
+    app.var_pasta.set(str(windows / "system32" / "videos_baixados"))
+    o = app.obter_opcoes()
+    assert o.pasta == padrao and app.var_pasta.get() == padrao              # trocou, e a tela mostra
+    app.var_pasta.set(boa)
+    assert app.obter_opcoes().pasta == boa
+    from videoscraper import config
+    assert config.carregar()["videos"]["pasta"] == boa                       # lembrada para a próxima vez
+    app.var_pasta.set("")
+    app._carregar_config()                                                  # ao abrir de novo
+    assert app.var_pasta.get() == boa
+
+    tudo = config.carregar()
+    tudo.setdefault("jellyfin", {})["origem"] = str(windows / "system32" / "videos_baixados")
+    config.salvar(tudo)
+    app._carregar_config()
+    assert app.var_jf_origem.get() == padrao                                 # a origem salva também é consertada

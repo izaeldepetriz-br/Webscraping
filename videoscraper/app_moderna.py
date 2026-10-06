@@ -64,7 +64,35 @@ from .tv_moderna import TVAoVivo
 from .navegador import PERFIL_PADRAO, PlaywrightAusente
 from .servico import MENSAGEM_ROBOTS, Trabalho, fazer_login
 
-PASTA_PADRAO = os.path.abspath("videos_baixados")
+def pasta_padrao_videos() -> str:
+    """Onde os vídeos baixados ficam por padrão. ANTES era "videos_baixados" dentro da pasta ATUAL do processo;
+    aberto pelo "Iniciar com o Windows", a pasta atual é C:\\Windows\\System32 (proibida) e o download dava
+    "Acesso negado". Agora é um lugar FIXO: a pasta antiga ao lado do programa (se já existe, para não espalhar
+    os vídeos) ou Vídeos\\Maestro do seu usuário."""
+    if getattr(sys, "frozen", False):
+        antiga = atualizacao.pasta_do_programa() / "videos_baixados"
+        if antiga.is_dir():
+            return str(antiga)
+    return str(Path.home() / "Videos" / "Maestro")
+
+
+def pasta_segura(pasta: str, padrao: str) -> str:
+    """Caminho completo e fora da pasta do Windows. Relativo ("videos") vira Vídeos\\videos; dentro de
+    C:\\Windows (onde o programa não pode gravar) vira o padrão."""
+    texto = os.path.expandvars(os.path.expanduser((pasta or "").strip()))
+    if not texto:
+        return padrao
+    caminho = Path(texto)
+    if not caminho.is_absolute():
+        caminho = Path.home() / "Videos" / caminho
+    windows = os.path.normcase(os.path.abspath(os.environ.get("SystemRoot", r"C:\Windows")))
+    completo = os.path.normcase(os.path.abspath(str(caminho)))
+    if completo == windows or completo.startswith(windows.rstrip("\\/") + os.sep):
+        return padrao
+    return str(caminho)
+
+
+PASTA_PADRAO = pasta_padrao_videos()
 TEXTOS_SITUACAO = {"ok": "baixado", "pulado": "pulado", "erro": "erro"}
 # Status do organizador -> categoria do filtro "Mostrar" da tabela
 CATEGORIA = {"simulado": "mover", "movido": "movido", "organizado": "organizado", "conflito": "conflito",
@@ -666,6 +694,20 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
 
     # ================================================================== auxiliares
+    def obter_opcoes(self):
+        """As opções da aba Vídeos, com a pasta dos vídeos SEMPRE completa e gravável (e lembrada)."""
+        o = super().obter_opcoes()
+        segura = pasta_segura(o.pasta, PASTA_PADRAO)
+        if segura != o.pasta:
+            self._log.warning("Pasta dos vídeos \"%s\" trocada por %s (não dá para gravar lá)", o.pasta, segura)
+            self.var_pasta.set(segura)
+            o.pasta = segura
+        tudo = config.carregar()
+        if tudo.get("videos", {}).get("pasta") != segura:          # da próxima vez abre com a mesma pasta
+            tudo.setdefault("videos", {})["pasta"] = segura
+            config.salvar(tudo)
+        return o
+
     def _validar(self, exigir_url: bool = True):
         url = self.obter_url()
         if url and not url.startswith(("http://", "https://")):
@@ -2055,6 +2097,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
     # --- configurações (pastas e opções lembradas entre execuções)
     def _carregar_config(self) -> None:
+        pasta_videos = config.carregar().get("videos", {}).get("pasta")
+        if pasta_videos:                              # a pasta dos vídeos que você usou da última vez
+            self.var_pasta.set(pasta_segura(pasta_videos, PASTA_PADRAO))
         dados = config.carregar().get("jellyfin", {})
         dados.setdefault("chave_tmdb", os.environ.get("TMDB_API_KEY", ""))
         dados.setdefault("chave_opensubtitles", os.environ.get("OPENSUBTITLES_API_KEY", ""))
@@ -2064,6 +2109,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                 ("telegram_chat_id", "TELEGRAM_CHAT_ID")):
             dados.setdefault(chave, os.environ.get(variavel, ""))
         dados.setdefault("origem", PASTA_PADRAO)
+        if dados.get("origem"):                       # salva quando o programa abria pelo Windows (System32)
+            dados["origem"] = pasta_segura(dados["origem"], PASTA_PADRAO)
         self.definir_opcoes_jellyfin(dados)
         try:                                  # "Iniciar com o Windows" apontando para um .exe antigo/apagado? conserta
             if atualizacao.pode_instalar_sozinho() and inicializacao.corrigir_se_preciso(instalacao.executavel_fixo()):
