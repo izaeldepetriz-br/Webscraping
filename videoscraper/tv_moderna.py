@@ -82,7 +82,7 @@ class TVAoVivo:
                 "publicar": self._publicar_canais, "editar": self._editar_canal, "numerar": self._numerar_canais,
                 "editar_selecionados": self._editar_selecionados,
                 "diagnostico": self.ao_diagnostico_tv, "semanal": self._guardar_opcoes_tv,
-                "programacao": self.ao_programacao_tv,
+                "programacao": self.ao_programacao_tv, "conferir_programacao": self.ao_conferir_programacao,
                 "desfazer": self._desfazer_remocao_canais})
             dados = config.carregar().get("tv", {})
             dados.setdefault("pasta", str(config.ARQUIVO.parent / "tv"))
@@ -91,6 +91,7 @@ class TVAoVivo:
         self._canais = carregar_canais(self.arquivo_canais)
         self._mostrar_canais()
         self.janela_canais.lift()
+        self.ao_conferir_programacao(avisar=False)        # a coluna Programação, em segundo plano
 
     def _mostrar_canais(self, manter_selecao: bool = False) -> None:
         if self.janela_canais is None or not self.janela_canais.winfo_exists():
@@ -102,7 +103,8 @@ class TVAoVivo:
             ultimas = historico.get(c.url, [])
             linhas.append(LinhaCanal(str(i), c.nome, c.grupo, situacao.detalhe if situacao else "—", c.url,
                                      situacao.ok if situacao else None, c.numero, resumo_historico(ultimas),
-                                     sempre_falha(ultimas), idioma_do_canal(c)))
+                                     sempre_falha(ultimas), idioma_do_canal(c),
+                                     self._programacao_canais.get(c.url, "")))
         self.janela_canais.preencher(linhas, manter_selecao)
         self.janela_canais.bt_desfazer.configure(state="normal" if self._lixeira_canais() else "disabled")
 
@@ -515,6 +517,61 @@ class TVAoVivo:
         elif escolha == "Iniciar o coletor no Docker":
             self._iniciar_coletor(arquivo)
 
+    # ---- conferir o coletor: está rodando? o guia já chegou? quais canais têm a grade?
+    @property
+    def _programacao_canais(self) -> dict:
+        if not hasattr(self, "_programacao_por_canal"):
+            self._programacao_por_canal = {}
+        return self._programacao_por_canal
+
+    def ao_conferir_programacao(self, avisar: bool = True) -> None:
+        """Botão "Conferir programação": confere o container, o guia que ele entrega e o Jellyfin, e preenche a
+        coluna Programação. avisar=False: só a coluna, em segundo plano (ao abrir a janela)."""
+        from jellyfin_tools.epg_iptv import ARQUIVO_CANAIS_EPG, URL_GUIA_LOCAL
+        from jellyfin_tools.tv_ao_vivo import separar_guias
+        janela = self.janela_canais
+        if janela is None or not janela.winfo_exists():
+            return
+        valores = janela.valores()
+        arquivo = Path(valores["pasta"] or str(config.ARQUIVO.parent / "tv")) / ARQUIVO_CANAIS_EPG
+        if not arquivo.is_file():
+            if avisar:
+                self.mostrar_mensagem("Conferir programação", "O coletor ainda não foi montado: clique em "
+                                      "\"Programação dos canais...\" e depois em \"Iniciar o coletor no Docker\".",
+                                      "info")
+            return
+        canais = list(self._canais)
+        guia_no_campo = URL_GUIA_LOCAL in separar_guias(valores.get("guia", ""))
+        url, chave = self.var_jf_url.get().strip(), self.var_jf_chave_jellyfin.get().strip()
+
+        def tarefa():
+            from jellyfin_tools import epg_iptv
+            estado = epg_iptv.estado_do_coletor()
+            programas = epg_iptv.programas_do_guia()
+            por_canal = epg_iptv.programacao_por_canal(canais, epg_iptv.ler_channels_xml(arquivo), programas)
+            no_jellyfin = None
+            if avisar and url and chave:
+                try:
+                    guias = ClienteTV(url, chave, timeout=15).configuracao().get("ListingProviders") or []
+                    no_jellyfin = any(g.get("Path") == URL_GUIA_LOCAL for g in guias)
+                except Exception as erro:              # sem Jellyfin: confere o resto mesmo assim
+                    self._log.warning("Conferir programação: não consultei o Jellyfin (%s)", erro)
+            texto = epg_iptv.resumo_do_coletor(estado, programas, por_canal, guia_no_campo, no_jellyfin)
+            self._log.info("Conferir programação:\n%s", texto)
+            self.fila.put(("tv_epg_estado", (por_canal, texto if avisar else None)))
+
+        if avisar:
+            self._rodar("Conferindo o coletor de programação...", tarefa)
+        else:
+            threading.Thread(target=tarefa, daemon=True, name="conferir-programacao").start()
+
+    def _mostrar_estado_programacao(self, por_canal: dict, texto: str | None) -> None:
+        self._programacao_canais.clear()
+        self._programacao_canais.update(por_canal)
+        self._mostrar_canais(manter_selecao=True)
+        if texto:
+            self.mostrar_mensagem("Conferir programação", texto, "info")
+
     def _incluir_guia_local(self) -> None:
         from jellyfin_tools.epg_iptv import URL_GUIA_LOCAL
         from jellyfin_tools.tv_ao_vivo import separar_guias
@@ -543,6 +600,7 @@ class TVAoVivo:
     def _coletor_iniciado(self, arquivo: str) -> None:
         from jellyfin_tools.epg_iptv import URL_GUIA_LOCAL
         self._incluir_guia_local()
+        self.ao_conferir_programacao(avisar=False)        # a coluna já mostra "aguardando coleta"
         self.mostrar_mensagem("Programação dos canais", f"Pronto: o coletor está rodando no Docker.\n\nA 1ª coleta "
                               f"leva alguns minutos. Quando {URL_GUIA_LOCAL} abrir no navegador, clique em \"Salvar e "
                               "enviar ao Jellyfin\" (o endereço já está no campo do guia). Daí em diante a programação "

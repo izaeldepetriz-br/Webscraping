@@ -551,7 +551,8 @@ def exportar_tabela(linhas: list[dict], caminho) -> Path:
     import csv
     caminho = Path(caminho)
     tipo = caminho.suffix.lower()
-    titulos = {"numero": "Nº", "canal": "Canal", "grupo": "Grupo", "idioma": "Idioma", "situacao": "Situação",
+    titulos = {"numero": "Nº", "canal": "Canal", "grupo": "Grupo", "idioma": "Idioma", "programacao": "Programação",
+               "situacao": "Situação",
                "no_ar": "No ar",
                "historico": "Últimas", "link": "Link"}
     linhas = [{**dict.fromkeys(titulos, ""), **linha} for linha in linhas]

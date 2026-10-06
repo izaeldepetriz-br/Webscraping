@@ -15,12 +15,15 @@ de novo na próxima coleta).
 
 from __future__ import annotations
 
+import gzip
+import io
 import json
 import re
 import shutil
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from xml.sax.saxutils import escape, quoteattr
 
@@ -175,3 +178,116 @@ def iniciar_container(channels_xml: str | Path, rodar=subprocess.run, docker: st
     if r.returncode != 0:
         raise ErroEPG((r.stderr or r.stdout or "o Docker recusou").strip()[:400])
     return (r.stdout or "").strip()
+
+
+# ----------------------------------------------------------------- conferir: o coletor está funcionando?
+def estado_do_coletor(rodar=subprocess.run, docker: str | None = None) -> str:
+    """O container do coletor: 'rodando', 'parado (...)', 'não criado', 'Docker fechado' ou 'sem Docker'."""
+    docker = docker or achar_docker()
+    if not docker:
+        return "sem Docker"
+    extra = {"creationflags": 0x08000000} if sys.platform == "win32" else {}      # sem janela preta
+    try:
+        r = rodar([docker, "inspect", "-f", "{{.State.Status}}", NOME_CONTAINER], capture_output=True, text=True,
+                  timeout=30, **extra)
+    except (OSError, subprocess.SubprocessError):
+        return "Docker fechado"
+    if r.returncode != 0:
+        return "não criado" if "no such" in (r.stderr or r.stdout or "").lower() else "Docker fechado"
+    situacao = (r.stdout or "").strip()
+    return "rodando" if situacao == "running" else f"parado ({situacao or '?'})"
+
+
+def programas_do_guia(endereco: str = URL_GUIA_LOCAL, sessao=None, timeout: float = 30) -> dict[str, int] | None:
+    """{id do canal: quantos programas} no guia que o coletor entrega. None = o guia ainda não está lá (o
+    coletor está desligado ou não terminou a 1ª coleta)."""
+    try:
+        r = (sessao or requests).get(endereco, timeout=timeout)
+    except requests.RequestException:
+        return None
+    if r.status_code != 200 or not r.content:
+        return None
+    dados = r.content
+    if dados[:2] == b"\x1f\x8b":                                   # .xml.gz
+        try:
+            dados = gzip.decompress(dados)
+        except OSError:
+            return None
+    contagem: dict[str, int] = {}
+    try:
+        for _, el in ET.iterparse(io.BytesIO(dados), events=("end",)):
+            if el.tag == "programme" and el.get("channel"):
+                contagem[el.get("channel")] = contagem.get(el.get("channel"), 0) + 1
+            elif el.tag == "channel" and el.get("id"):
+                contagem.setdefault(el.get("id"), 0)
+            el.clear()
+    except ET.ParseError:
+        return None
+    return contagem or None                                         # guia vazio = ainda não coletou
+
+
+def ler_channels_xml(arquivo: str | Path) -> list[tuple[str, str, str]]:
+    """[(nome do canal, xmltv_id, site)] do channels.xml montado pelo programa."""
+    try:
+        raiz = ET.parse(arquivo).getroot()
+    except (OSError, ET.ParseError):
+        return []
+    return [((c.text or "").strip(), c.get("xmltv_id") or "", c.get("site") or "") for c in raiz.iter("channel")]
+
+
+def programacao_por_canal(canais, entradas: list[tuple[str, str, str]],
+                          programas: dict[str, int] | None) -> dict[str, str]:
+    """{link do canal: o que mostrar na coluna Programação}:
+        "✓ 57 programas · mi.tv"      o guia do coletor tem a grade desse canal
+        "aguardando coleta · mi.tv"    o canal está no channels.xml, mas o guia ainda não chegou
+        "sem programas · mi.tv"        o guia chegou, mas o site não trouxe nada para esse canal
+        "só categoria"                 nenhum site de guia tem esse canal (fica com o guia de categorias)"""
+    por_nome: dict[str, tuple[str, str]] = {}
+    for nome, xmltv_id, site in entradas:
+        por_nome.setdefault(nome, (xmltv_id, site))
+    resultado = {}
+    for c in canais:
+        if c.nome not in por_nome:
+            resultado[c.url] = "só categoria"
+            continue
+        xmltv_id, site = por_nome[c.nome]
+        if programas is None:
+            resultado[c.url] = f"aguardando coleta · {site}"
+        elif programas.get(xmltv_id):
+            resultado[c.url] = f"✓ {programas[xmltv_id]} programas · {site}"
+        else:
+            resultado[c.url] = f"sem programas · {site}"
+    return resultado
+
+
+def resumo_do_coletor(estado: str, programas: dict[str, int] | None, por_canal: dict[str, str],
+                      guia_no_campo: bool, guia_no_jellyfin: bool | None) -> str:
+    """O texto do "Conferir programação": o que está funcionando e o que falta fazer."""
+    linhas = []
+    dicas = {"rodando": "rodando ✓", "não criado": "não existe ainda: clique em \"Programação dos canais...\" e "
+             "em \"Iniciar o coletor no Docker\"", "Docker fechado": "o Docker Desktop está fechado: abra-o (o "
+             "coletor volta sozinho)", "sem Docker": "o Docker não foi encontrado neste PC"}
+    linhas.append(f"1. Coletor no Docker: {dicas.get(estado, estado + ': abra o Docker Desktop e confira')}")
+    if programas is None:
+        linhas.append(f"2. Guia em {URL_GUIA_LOCAL}: ainda não respondeu" + (
+            " (a 1ª coleta leva de alguns minutos até 1 hora; acompanhe no Docker Desktop > Containers > "
+            f"{NOME_CONTAINER} > Logs)" if estado == "rodando" else ""))
+    else:
+        linhas.append(f"2. Guia em {URL_GUIA_LOCAL}: {len(programas)} canal(is), "
+                      f"{sum(programas.values())} programa(s) ✓")
+    valores = list(por_canal.values())
+    com = sum(v.startswith("✓") for v in valores)
+    aguardando = sum(v.startswith("aguardando") for v in valores)
+    sem = sum(v.startswith("sem programas") for v in valores)
+    categoria = sum(v == "só categoria" for v in valores)
+    linhas.append(f"3. Seus {len(valores)} canais: {com} com programação, {aguardando} aguardando a coleta, "
+                  f"{sem} sem programas no site, {categoria} só com o guia de categorias")
+    if not guia_no_campo:
+        linhas.append(f"4. O endereço {URL_GUIA_LOCAL} NÃO está no campo \"Guia de programação\": coloque-o lá")
+    elif guia_no_jellyfin is False:
+        linhas.append("4. Jellyfin: o guia do coletor ainda não está cadastrado" + (
+            ": clique em \"Salvar e enviar ao Jellyfin\"" if programas is not None else
+            " (envie depois que o guia responder)"))
+    elif guia_no_jellyfin:
+        linhas.append("4. Jellyfin: o guia do coletor está cadastrado ✓ (ele relê a grade todo dia)")
+    return "\n".join(linhas) + "\n\nA coluna \"Programação\" mostra a situação de cada canal (dá para filtrar)."

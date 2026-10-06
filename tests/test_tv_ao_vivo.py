@@ -254,10 +254,10 @@ def test_exportar_tabela(tmp_path):
     assert [{k: d[k] for k in linhas[0]} for d in dados] == linhas and dados[0]["numero"] == ""
     exportar_tabela(linhas, tmp_path / "c.csv")
     tabela = list(csv.reader((tmp_path / "c.csv").open(encoding="utf-8-sig"), delimiter=";"))
-    assert tabela[0] == ["Nº", "Canal", "Grupo", "Idioma", "Situação", "No ar", "Últimas", "Link"]
-    assert tabela[1][5] == "sim" and tabela[2][5] == ""
+    assert tabela[0] == ["Nº", "Canal", "Grupo", "Idioma", "Programação", "Situação", "No ar", "Últimas", "Link"]
+    assert tabela[1][6] == "sim" and tabela[2][6] == ""
     texto = exportar_tabela(linhas, tmp_path / "c.txt").read_text(encoding="utf-8").splitlines()
-    assert texto[1].split("\t") == ["", "TV Cultura", "Abertos", "", "no ar", "sim", "", "https://a.org/1.m3u8"]
+    assert texto[1].split("\t") == ["", "TV Cultura", "Abertos", "", "", "no ar", "sim", "", "https://a.org/1.m3u8"]
     with pytest.raises(ValueError):
         exportar_tabela(linhas, tmp_path / "c.xls")
 

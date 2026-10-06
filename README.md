@@ -240,6 +240,20 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.8.0
+
+- **TV ao vivo: coluna "Programação"** (com filtro e na exportação). Mostra, canal por canal:
+  - **"✓ 48 programas · mi.tv"**: o guia do coletor já tem a grade desse canal;
+  - **"aguardando coleta · mi.tv"**: o canal está na lista do coletor, mas a grade ainda não chegou;
+  - **"sem programas · meuguia.tv"**: o guia chegou, mas o site não trouxe nada para esse canal;
+  - **"só categoria"**: nenhum site de guia tem esse canal, então ele fica com o guia de categorias.
+
+  A coluna se atualiza sozinha ao abrir a janela e depois de ligar o coletor.
+- **"Conferir programação"** (ao lado de "Programação dos canais..."): confere, em ordem, o que funciona e o que
+  falta. (1) O container `maestro-guia` está rodando no Docker? (2) O guia em `http://localhost:3000/guide.xml`
+  já responde, com quantos canais e programas? (3) Quantos dos seus canais têm grade? (4) O guia está no campo
+  e cadastrado no Jellyfin? Cada item que falta vem com o que fazer.
+
 ### Novidades da v2.7.0
 
 - **Modo híbrido: "Espelhar em vez de baixar"** (aba Vídeos, em Opções). Marcada, os botões viram **"Espelhar

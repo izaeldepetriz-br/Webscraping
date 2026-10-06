@@ -1856,14 +1856,14 @@ def test_tv_ao_vivo_exportar_o_que_esta_na_tabela(app, tmp_path, monkeypatch):
     app._mostrar_canais()
     assert janela.exportar(tmp_path / "todos.json") == 2
     dados = json.loads((tmp_path / "todos.json").read_text(encoding="utf-8"))
-    assert dados[0] == {"numero": "", "canal": "TV Cultura", "grupo": "Abertos", "idioma": "", "situacao": "", "no_ar": None,
-                        "historico": "", "link": "https://a.org/1.m3u8"}
+    assert dados[0] == {"numero": "", "canal": "TV Cultura", "grupo": "Abertos", "idioma": "", "programacao": "",
+                        "situacao": "", "no_ar": None, "historico": "", "link": "https://a.org/1.m3u8"}
     janela.aplicar_filtro("grupo", ["Rádios"])                          # com filtro: só os filtrados
     from videoscraper import gui_moderna
     monkeypatch.setattr(gui_moderna.filedialog, "asksaveasfilename", lambda **k: str(tmp_path / "filtrados.csv"))
     janela.bt_exportar.invoke()
     linhas = (tmp_path / "filtrados.csv").read_text(encoding="utf-8-sig").splitlines()
-    assert len(linhas) == 2 and linhas[1].startswith(";Rádio;Rádios;;fora do ar (HTTP 404);não;")
+    assert len(linhas) == 2 and linhas[1].startswith(";Rádio;Rádios;;;fora do ar (HTTP 404);não;")
     assert "1 canal(is) (só os do filtro)" in app.caixas[-1][2]
 
 
@@ -2071,6 +2071,47 @@ def test_tv_programacao_monta_o_channels_xml_e_liga_o_coletor(app, monkeypatch, 
     assert iniciados == [str(arquivo)]
     assert janela.var_guia.get() == "http://localhost:3000/guide.xml; https://outro.org/epg.xml"
     assert "coletor está rodando" in app.caixas[-1][2]
+
+
+def test_tv_conferir_programacao_preenche_a_coluna(app, monkeypatch, tmp_path):
+    from jellyfin_tools import epg_iptv
+    from jellyfin_tools.tv_ao_vivo import Canal
+    canais = [Canal("Agro Mais", "https://a.org/1", id_guia="AgroMais.br"),
+              Canal("Globo News", "https://a.org/2", idioma="Português"),
+              Canal("Sem Guia", "https://a.org/3", idioma="Português")]
+    janela = _abrir_tv(app, canais)
+    janela.var_pasta.set(str(tmp_path / "TV"))
+    janela.bt_conferir_programacao.invoke()                            # sem coletor montado: explica
+    assert "Programação dos canais..." in app.caixas[-1][2]
+    mapa = [{"channel": "AgroMais.br", "feed": None, "site": "mi.tv", "site_id": "1", "site_name": "AgroMais",
+             "lang": "pt"},
+            {"channel": "GloboNews.br", "feed": None, "site": "meuguia.tv", "site_id": "2", "site_name": "Globo News",
+             "lang": "pt"}]
+    epg_iptv.gravar_channels_xml(canais, tmp_path / "TV", mapa)
+    janela.var_guia.set(epg_iptv.URL_GUIA_LOCAL)
+    monkeypatch.setattr(epg_iptv, "estado_do_coletor", lambda: "rodando")
+    monkeypatch.setattr(epg_iptv, "programas_do_guia", lambda: None)  # 1ª coleta ainda não terminou
+    janela.bt_conferir_programacao.invoke()
+    esperar(app)
+    coluna = {janela.tabela.item(i, "text"): janela.tabela.set(i, "programacao") for i in janela.tabela.get_children()}
+    assert coluna == {"Agro Mais": "aguardando coleta · mi.tv", "Globo News": "aguardando coleta · meuguia.tv",
+                      "Sem Guia": "só categoria"}
+    assert "ainda não respondeu" in app.caixas[-1][2] and "rodando ✓" in app.caixas[-1][2]
+    monkeypatch.setattr(epg_iptv, "programas_do_guia", lambda: {"AgroMais.br": 48, "GloboNews.br": 0})
+    app.ao_conferir_programacao(avisar=False)                          # em segundo plano: só a coluna
+    for _ in range(40):
+        app.update()
+        if janela.tabela.set("0", "programacao").startswith("✓"):
+            break
+        time.sleep(0.05)
+    assert janela.tabela.set("0", "programacao") == "✓ 48 programas · mi.tv"
+    assert janela.tabela.set("1", "programacao") == "sem programas · meuguia.tv"
+    assert dict(janela.valores_da_coluna("programacao")) == {"com programação · mi.tv": 1,
+                                                             "sem programas · meuguia.tv": 1, "só categoria": 1}
+    destino = tmp_path / "canais.csv"
+    janela.exportar(destino)
+    assert "Programação" in destino.read_text(encoding="utf-8-sig") and "✓ 48 programas" in destino.read_text(
+        encoding="utf-8-sig")
 
 def test_tv_numerar_em_ordem(app):
     from jellyfin_tools.tv_ao_vivo import Canal

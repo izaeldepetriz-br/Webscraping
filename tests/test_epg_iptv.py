@@ -150,3 +150,50 @@ def test_iniciar_container_sem_docker(monkeypatch):
     monkeypatch.setattr(epg_iptv, "achar_docker", lambda: None)
     with pytest.raises(ErroEPG, match="Docker não foi encontrado"):
         iniciar_container("/tv/channels.xml", rodar=lambda *a, **k: None)
+
+
+def test_estado_do_coletor_no_docker():
+    def resposta(codigo, saida="", erro=""):
+        return lambda cmd, **_: subprocess.CompletedProcess(cmd, codigo, stdout=saida, stderr=erro)
+    assert epg_iptv.estado_do_coletor(resposta(0, "running\n"), docker="docker") == "rodando"
+    assert epg_iptv.estado_do_coletor(resposta(0, "exited\n"), docker="docker") == "parado (exited)"
+    assert epg_iptv.estado_do_coletor(resposta(1, erro="Error: No such object: maestro-guia"),
+                                      docker="docker") == "não criado"
+    assert epg_iptv.estado_do_coletor(resposta(1, erro="error during connect: is the docker daemon running?"),
+                                      docker="docker") == "Docker fechado"
+
+
+def test_programas_do_guia_conta_por_canal_e_aceita_gz(api_falsa):
+    import gzip
+    guia = ('<?xml version="1.0"?><tv><channel id="AgroMais.br"/><channel id="Vazio.br"/>'
+            '<programme channel="AgroMais.br" start="20261006000000 +0000"><title>A</title></programme>'
+            '<programme channel="AgroMais.br" start="20261006010000 +0000"><title>B</title></programme></tv>').encode()
+    api_falsa.rotas["/guide.xml"] = lambda q: (200, guia)
+    api_falsa.rotas["/guide.xml.gz"] = lambda q: (200, gzip.compress(guia))
+    esperado = {"AgroMais.br": 2, "Vazio.br": 0}
+    assert epg_iptv.programas_do_guia(api_falsa.base + "/guide.xml") == esperado
+    assert epg_iptv.programas_do_guia(api_falsa.base + "/guide.xml.gz") == esperado
+    api_falsa.rotas["/vazio.xml"] = lambda q: (200, b"<tv></tv>")
+    assert epg_iptv.programas_do_guia(api_falsa.base + "/vazio.xml") is None           # ainda não coletou
+    assert epg_iptv.programas_do_guia(api_falsa.base + "/nao-existe.xml") is None      # 404
+    assert epg_iptv.programas_do_guia("http://127.0.0.1:9/guide.xml", timeout=1) is None   # desligado
+
+
+def test_programacao_por_canal_e_resumo(tmp_path):
+    canais = [Canal("Agro Mais", "http://a", id_guia="AgroMais.br"), Canal("Globo News", "http://b", idioma="Português"),
+              Canal("Sem Guia", "http://x", idioma="Português")]
+    arquivo, _, _ = gravar_channels_xml(canais, tmp_path, MAPA)
+    entradas = epg_iptv.ler_channels_xml(arquivo)
+    assert entradas == [("Agro Mais", "AgroMais.br", "mi.tv"), ("Globo News", "GloboNews.br", "meuguia.tv")]
+    antes = epg_iptv.programacao_por_canal(canais, entradas, None)
+    assert antes == {"http://a": "aguardando coleta · mi.tv", "http://b": "aguardando coleta · meuguia.tv",
+                     "http://x": "só categoria"}
+    depois = epg_iptv.programacao_por_canal(canais, entradas, {"AgroMais.br": 40, "GloboNews.br": 0})
+    assert depois == {"http://a": "✓ 40 programas · mi.tv", "http://b": "sem programas · meuguia.tv",
+                      "http://x": "só categoria"}
+    texto = epg_iptv.resumo_do_coletor("rodando", {"AgroMais.br": 40, "GloboNews.br": 0}, depois, True, False)
+    assert "rodando ✓" in texto and "2 canal(is), 40 programa(s)" in texto
+    assert "1 com programação, 0 aguardando a coleta, 1 sem programas no site, 1 só com o guia" in texto
+    assert "Salvar e enviar ao Jellyfin" in texto
+    texto = epg_iptv.resumo_do_coletor("Docker fechado", None, antes, False, None)
+    assert "abra-o" in texto and "ainda não respondeu" in texto and "NÃO está no campo" in texto

@@ -695,6 +695,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._receber_conferencia_canais(dado)
         elif tipo == "tv_programacao":
             self._tv_programacao_pendente = dado            # pergunta depois do "fim"
+        elif tipo == "tv_epg_estado":
+            self._mostrar_estado_programacao(*dado)
         elif tipo == "tv_coletor_iniciado":
             self._tv_coletor_pendente = dado
         elif tipo == "tv_semanal":                     # conferência semanal dos canais (segundo plano)

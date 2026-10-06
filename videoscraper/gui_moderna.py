@@ -794,6 +794,7 @@ class LinhaCanal(NamedTuple):
     historico: str = ""        # "✓✓✕✓✕ (2 de 5 falharam)"
     morto: bool = False        # falhou em TODAS as últimas conferências (3 ou mais)
     idioma: str = ""           # "Português" (da lista ou deduzido pelo país/nome/link)
+    programacao: str = ""      # "✓ 57 programas · mi.tv", "aguardando coleta · mi.tv", "só categoria" ("" = não conferido)
 
 
 class DialogoCanal(ctk.CTkToplevel):
@@ -855,8 +856,9 @@ class JanelaCanais(ctk.CTkToplevel):
     acoes: {'adicionar', 'importar_arquivo', 'importar_endereco', 'remover', 'remover_todos', 'conferir',
             'publicar', 'editar' (iid), 'editar_selecionados', 'numerar', 'desfazer'}."""
 
-    COLUNAS = (("numero", "Nº", 44), ("grupo", "Grupo", 100), ("idioma", "Idioma", 90), ("situacao", "Situação", 170),
-               ("historico", "Últimas", 205), ("url", "Link", 240))
+    COLUNAS = (("numero", "Nº", 44), ("grupo", "Grupo", 100), ("idioma", "Idioma", 90),
+               ("programacao", "Programação", 170), ("situacao", "Situação", 150), ("historico", "Últimas", 185),
+               ("url", "Link", 220))
 
     def __init__(self, master, acoes: dict):
         super().__init__(master, fg_color=Tema.CARTAO)
@@ -937,12 +939,16 @@ class JanelaCanais(ctk.CTkToplevel):
         # a programação de verdade (o que passa ao longo do dia), pelo coletor iptv-org/epg no Docker
         self.bt_programacao = ctk.CTkButton(selecao, text="Programação dos canais...",
                                             command=acoes.get("programacao", lambda: None), **estilo)
+        # o coletor está funcionando? quais canais já têm a grade? (preenche a coluna Programação)
+        self.bt_conferir_programacao = ctk.CTkButton(selecao, text="Conferir programação",
+                                                     command=acoes.get("conferir_programacao", lambda: None), **estilo)
         for botao in (self.bt_selecionar_todos, self.bt_selecionar_fora, self.bt_selecionar_mortos,
                       self.bt_selecionar_duplicados):
             botao.pack(side="left")
         self.bt_tirar_filtros.pack(side="right")
         self.bt_diagnostico.pack(side="right", padx=(0, 8))
         self.bt_programacao.pack(side="right", padx=(0, 8))
+        self.bt_conferir_programacao.pack(side="right", padx=(0, 8))
 
         acoes_linha = ctk.CTkFrame(faixa, fg_color="transparent")
         acoes_linha.pack(fill="x", pady=(4, 0))
@@ -1024,8 +1030,8 @@ class JanelaCanais(ctk.CTkToplevel):
             parte.pack_configure(side="bottom", before=quadro)
         self.bind("<Escape>", lambda e: self.destroy())
 
-    TITULOS = {"#0": "Canal", "numero": "Nº", "grupo": "Grupo", "idioma": "Idioma", "situacao": "Situação",
-               "historico": "Últimas", "url": "Link"}
+    TITULOS = {"#0": "Canal", "numero": "Nº", "grupo": "Grupo", "idioma": "Idioma", "programacao": "Programação",
+               "situacao": "Situação", "historico": "Últimas", "url": "Link"}
 
     def preencher(self, linhas: list[LinhaCanal], manter_selecao: bool = False) -> None:
         """linhas: [LinhaCanal] (ok None = não conferido).
@@ -1050,6 +1056,10 @@ class JanelaCanais(ctk.CTkToplevel):
                 if linha.situacao and linha.situacao != "—" else "(não conferido)"
         if coluna == "historico":          # sem as marcas ✓✕: "2 de 5 falharam", "sempre no ar"
             return linha.historico.split("  ", 1)[-1] if linha.historico else "(nunca conferido)"
+        if coluna == "programacao":        # sem a contagem: "com programação · mi.tv" junta os canais do mesmo site
+            if not linha.programacao:
+                return "(não conferido)"
+            return re.sub(r"^✓ \d+ programas", "com programação", linha.programacao)
         return {"#0": linha.nome, "grupo": linha.grupo or "(sem grupo)", "idioma": linha.idioma or "(sem idioma)",
                 "numero": linha.numero or "(sem número)"}[coluna]
 
@@ -1062,8 +1072,8 @@ class JanelaCanais(ctk.CTkToplevel):
         for linha in visiveis:
             tags = () if linha.ok is None else ("ok" if linha.ok else "erro",)
             self.tabela.insert("", "end", iid=linha.iid, text=linha.nome, tags=tags,
-                               values=(linha.numero, linha.grupo, linha.idioma or "—", linha.situacao,
-                                       linha.historico, linha.link))
+                               values=(linha.numero, linha.grupo, linha.idioma or "—", linha.programacao or "—",
+                                       linha.situacao, linha.historico, linha.link))
         fora = sum(1 for linha in self._linhas if linha.ok is False)
         quantos = f"{len(visiveis)} de {len(self._linhas)}" if self._filtros else f"{len(self._linhas)}"
         self.lb_resumo.configure(text=f"{quantos} canal(is)" + (f" · {fora} fora do ar" if fora else "")
@@ -1113,6 +1123,7 @@ class JanelaCanais(ctk.CTkToplevel):
         from jellyfin_tools.tv_ao_vivo import exportar_tabela
         visiveis = set(self.tabela.get_children())
         linhas = [{"numero": linha.numero, "canal": linha.nome, "grupo": linha.grupo, "idioma": linha.idioma,
+                   "programacao": linha.programacao,
                    "situacao": linha.situacao if linha.situacao != "—" else "", "no_ar": linha.ok,
                    "historico": linha.historico, "link": linha.link}
                   for linha in self._linhas if linha.iid in visiveis]
