@@ -240,6 +240,25 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.4.0
+
+- **Busca de vídeos: opção "Ignorar o robots.txt"** (aba Vídeos, em Opções), para testar sites seus ou com
+  autorização do dono. Com ela marcada, cada busca ou download **pergunta antes de começar**, como na escolha
+  "domínio público ou todos":
+  - **"Ignorar nesta vez"**: só aquela busca/download; a próxima pergunta de novo;
+  - **"Ignorar sempre (até fechar o Maestro)"**: confirmação geral, em qualquer site, sem perguntar de novo até
+    fechar o programa ou desmarcar a opção;
+  - **"Respeitar o robots.txt"**: segue as regras do site; **Cancelar**: não faz nada.
+- **Sem a opção marcada**, se o robots.txt bloquear a página o Maestro pergunta no fim se o site é seu: com
+  **"Sim, o site é meu"**, busca de novo ignorando o robots.txt só daquele site (até fechar o programa).
+- Em todos os casos as pausas entre os pedidos continuam, e plataformas como YouTube, Instagram, TikTok,
+  Facebook, Netflix e Vimeo **nunca** têm o robots.txt ignorado (nem com `--ignorar-robots` na linha de comando).
+- **Pedidos mais espaçados e com pausas (mais estável e mais gentil com o site):** o campo vira **"Espera
+  média entre pedidos"** (padrão **5 s**) e cada espera é sorteada entre 60% e 140% dela (`random.uniform`:
+  com 5 s, de **3 a 7 s**). A cada **20 pedidos**, uma **pausa preventiva** maior, sorteada entre 6 e 12 vezes
+  a espera (com 5 s, de **30 a 60 s**). O "Parar" interrompe as pausas na hora. As novas tentativas continuam
+  como antes: em erro de rede, timeout ou HTTP 429/5xx, espera 2 s, depois 4 s... (dobrando) antes de desistir.
+
 ### Novidades da v2.3.2
 
 - **Corrigido: atualização pela metade.** Com outra janela do Maestro aberta (por exemplo, a da bandeja, do

@@ -92,6 +92,7 @@ class OpcoesInterface:
     limite: int
     espera: float
     pasta: str
+    ignorar_robots: bool = False      # só sites seus/autorizados; o programa confirma a cada busca
 
 
 @dataclass
@@ -1437,6 +1438,10 @@ class JanelaModerna(ctk.CTk):
                            ("Mostrar a janela do navegador", self.var_visivel),
                            ("Pausar para eu resolver verificações", self.var_pausar)):
             self._checkbox(lateral, texto, var, self._ajustar_checks)
+        # para testar sites seus (ou com autorização do dono): pergunta antes de cada busca/download
+        self.var_ignorar_robots = tk.BooleanVar(value=False)
+        self.check_ignorar_robots = self._checkbox(lateral, "Ignorar o robots.txt\n(pergunta a cada busca)",
+                                                   self.var_ignorar_robots)
 
         self._separador(lateral)
         self._rotulo(lateral, "Parâmetros", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
@@ -1450,7 +1455,7 @@ class JanelaModerna(ctk.CTk):
         self.campo_prof = self._numero(lateral, "Seguir links (níveis):", 0, 0, 5, 1)
         self.campo_maxp = self._numero(lateral, "Máx. de páginas:", 30, 1, MAXIMO_ITENS, 10)
         self.campo_limite = self._numero(lateral, "Máx. de vídeos (0 = todos):", 0, 0, MAXIMO_ITENS, 1)
-        self.campo_espera = self._numero(lateral, "Espera entre pedidos (s):", 1.5, 0.5, 10, 0.5, True)
+        self.campo_espera = self._numero(lateral, "Espera média entre pedidos (s):", 5.0, 0.5, 10, 0.5, True)
 
         self._separador(lateral)
         self._rotulo(lateral, "Salvar vídeos em:", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
@@ -2240,7 +2245,8 @@ class JanelaModerna(ctk.CTk):
             seletor=self.var_seletor.get().strip(), filtro_links=self.var_filtro.get().strip(),
             profundidade=int(self.campo_prof.get()),
             max_paginas=int(self.campo_maxp.get()), limite=int(self.campo_limite.get()),
-            espera=float(self.campo_espera.get()), pasta=self.var_pasta.get().strip() or self._pasta_padrao)
+            espera=float(self.campo_espera.get()), pasta=self.var_pasta.get().strip() or self._pasta_padrao,
+            ignorar_robots=self.var_ignorar_robots.get())
 
     def obter_opcoes_jellyfin(self) -> OpcoesJellyfin:
         self._destinos[self._modo_atual] = self.var_jf_destino.get()

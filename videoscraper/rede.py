@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import sys
 import time
 from urllib import robotparser
@@ -12,13 +13,40 @@ import requests
 USER_AGENT = "videoscraper/2.0 (projeto educacional)"
 TIMEOUT = 20
 
+# Plataformas grandes: os termos de uso proíbem baixar sem o botão oficial. O robots.txt delas NUNCA é ignorado,
+# nem com a pessoa dizendo que pode (para pesquisar no YouTube, o caminho é a API oficial).
+PLATAFORMAS_PROTEGIDAS = ("youtube.com", "youtu.be", "googlevideo.com", "instagram.com", "facebook.com", "fb.watch",
+                          "tiktok.com", "twitter.com", "x.com", "twitch.tv", "netflix.com", "primevideo.com",
+                          "disneyplus.com", "max.com", "globoplay.globo.com", "vimeo.com", "dailymotion.com",
+                          "kwai.com", "spotify.com")
+
+
+def site_de(url: str) -> str:
+    """'https://WWW.Meusite.com:8080/a' -> 'www.meusite.com:8080' (o site, como o robots.txt vale)."""
+    return urlparse(url).netloc.lower()
+
+
+def pode_ignorar_robots(site: str) -> bool:
+    """False para as plataformas grandes (e os subdomínios delas)."""
+    host = site.split(":")[0].lower().strip(".")
+    return bool(host) and not any(host == p or host.endswith("." + p) for p in PLATAFORMAS_PROTEGIDAS)
+
 
 class ClienteHTTP:
     def __init__(self, espera: float = 1.0, tentativas: int = 3, respeitar_robots: bool = True,
-                 timeout: float = TIMEOUT):
+                 timeout: float = TIMEOUT, sites_sem_robots=(), variacao: float = 0.0,
+                 pausa_longa_a_cada: int = 0):
+        """variacao: a espera entre pedidos vira um sorteio em [espera·(1-v), espera·(1+v)] (média = espera;
+        ex.: espera 5 e variacao 0.4 = de 3 a 7 s). pausa_longa_a_cada: depois de N pedidos, uma pausa
+        preventiva maior, sorteada entre 6 e 12 vezes a espera (espera 5 = de 30 a 60 s). 0 = sem pausa longa."""
         self.espera = espera
+        self.variacao = max(0.0, min(variacao, 1.0))
+        self.pausa_longa_a_cada = pausa_longa_a_cada
+        self.pedidos = 0                 # pedidos já feitos (conta para a pausa longa)
         self.tentativas = tentativas
         self.respeitar_robots = respeitar_robots
+        # sites que a pessoa disse serem dela (ou ter autorização): o robots.txt só deles é ignorado
+        self.sites_sem_robots = {s.lower() for s in sites_sem_robots if pode_ignorar_robots(s)}
         self.timeout = timeout
         self.sessao = requests.Session()
         self.sessao.headers.update({"User-Agent": USER_AGENT,
@@ -39,9 +67,10 @@ class ClienteHTTP:
     # --- regras do site -------------------------------------------------------
     def permitido(self, url: str) -> bool:
         """Consulta (e guarda em cache) o robots.txt do site. Sem robots.txt = liberado."""
-        if not self.respeitar_robots:
-            return True
         p = urlparse(url)
+        if p.netloc.lower() in self.sites_sem_robots or (not self.respeitar_robots
+                                                           and pode_ignorar_robots(p.netloc)):
+            return True
         raiz = f"{p.scheme}://{p.netloc}"
         if raiz not in self._robots:
             rp = robotparser.RobotFileParser()
@@ -57,12 +86,24 @@ class ClienteHTTP:
         rp = self._robots[raiz]
         return True if rp is None else rp.can_fetch(USER_AGENT, url)
 
+    def intervalo(self) -> float:
+        """A espera antes do próximo pedido: fixa, ou sorteada (random.uniform) em volta da média."""
+        if not self.variacao:
+            return self.espera
+        return random.uniform(self.espera * (1 - self.variacao), self.espera * (1 + self.variacao))
+
     def pausar(self) -> None:
-        """Garante pelo menos `espera` segundos entre um pedido e outro."""
-        sobra = self.espera - (time.monotonic() - self._ultimo)
+        """Espera o intervalo entre um pedido e outro; a cada `pausa_longa_a_cada` pedidos, uma pausa maior."""
+        if self.pausa_longa_a_cada and self.pedidos and self.pedidos % self.pausa_longa_a_cada == 0:
+            longa = random.uniform(self.espera * 6, self.espera * 12)
+            print(f"  ⏸ pausa preventiva de {longa:.0f} s ({self.pedidos} pedidos feitos)", file=sys.stderr)
+            if self._dormir(longa):
+                return                                 # "Parar" no meio da pausa
+        sobra = self.intervalo() - (time.monotonic() - self._ultimo)
         if sobra > 0:
             self._dormir(sobra)
         self._ultimo = time.monotonic()
+        self.pedidos += 1
 
     # --- pedidos ----------------------------------------------------------------
     def obter_html(self, url: str) -> tuple[bytes, str] | None:

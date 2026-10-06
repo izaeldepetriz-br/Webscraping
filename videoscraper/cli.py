@@ -25,7 +25,8 @@ def _opcoes_comuns() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(add_help=False)
     p.add_argument("url", help="endereço da página (http:// ou https://)")
     g = p.add_argument_group("acesso")
-    g.add_argument("-e", "--espera", type=float, default=1.5, help="segundos entre pedidos (padrão 1.5)")
+    g.add_argument("-e", "--espera", type=float, default=5.0,
+                   help="espera MÉDIA entre pedidos; sorteada entre 60%% e 140%% dela (padrão 5 = de 3 a 7 s)")
     g.add_argument("--ignorar-robots", action="store_true", help="não consultar robots.txt (só em sites seus)")
     n = p.add_argument_group("navegador (sites com JavaScript / login)")
     n.add_argument("-n", "--navegador", action="store_true", help="usar Chrome de verdade (Playwright)")

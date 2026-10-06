@@ -64,3 +64,36 @@ def test_busca_do_archive_org_para_ao_listar_as_paginas(api_falsa):
     cliente = ClienteHTTP(espera=0, respeitar_robots=False)
     links = archive_org.buscar(cliente, api_falsa.base + "/search?query=filmes", limite=1000, parar=lambda: True)
     assert links == [] and not any("advancedsearch" in p["caminho"] for p in api_falsa.pedidos)
+
+
+def test_robots_ignorado_so_nos_sites_confirmados_e_nunca_nas_plataformas(servidor):
+    from videoscraper.rede import pode_ignorar_robots, site_de
+    proibida = servidor.base + "/proibido/videos"
+    assert not ClienteHTTP(espera=0).permitido(proibida)
+    assert ClienteHTTP(espera=0, sites_sem_robots={site_de(servidor.base)}).permitido(proibida)
+    assert not ClienteHTTP(espera=0, sites_sem_robots={"outro.site"}).permitido(proibida)
+    assert site_de("https://WWW.MeuSite.com.br:8080/a") == "www.meusite.com.br:8080"
+    for plataforma in ("www.youtube.com", "m.youtube.com", "youtu.be", "www.instagram.com", "tiktok.com:443"):
+        assert not pode_ignorar_robots(plataforma)
+    assert pode_ignorar_robots("meusite.com.br") and pode_ignorar_robots("127.0.0.1:8000")
+    assert pode_ignorar_robots("notyoutube.com")                    # só a plataforma e os subdomínios dela
+    assert ClienteHTTP(sites_sem_robots={"www.youtube.com"}).sites_sem_robots == set()
+
+
+def test_espera_sorteada_em_volta_da_media_e_pausa_longa_a_cada_20(monkeypatch):
+    import random
+    cliente = ClienteHTTP(espera=5.0, variacao=0.4, pausa_longa_a_cada=20)
+    sorteios = [cliente.intervalo() for _ in range(2000)]
+    assert 3.0 <= min(sorteios) and max(sorteios) <= 7.0               # de 3 a 7 s...
+    assert abs(sum(sorteios) / len(sorteios) - 5.0) < 0.15             # ...com média 5 s
+    assert len({round(s, 3) for s in sorteios}) > 1000                  # e não é fixa
+    assert ClienteHTTP(espera=1.5).intervalo() == 1.5                   # sem variação: fixa como antes
+    esperas = []
+    monkeypatch.setattr(cliente, "_dormir", lambda s: esperas.append(s) or False)
+    random.seed(7)
+    for _ in range(41):
+        cliente._ultimo = 0.0                                           # (só a pausa longa, não o intervalo)
+        cliente.pausar()
+    longas = [s for s in esperas if s >= 30]
+    assert len(longas) == 2 and all(30 <= s <= 60 for s in longas)       # antes do 21º e do 41º pedido
+    assert cliente.pedidos == 41

@@ -62,6 +62,7 @@ from .gui_moderna import (DialogoCompletar, JanelaEspelhos, JanelaModerna, Janel
                           OpcoesInterface, Tema)
 from .tv_moderna import TVAoVivo
 from .navegador import PERFIL_PADRAO, PlaywrightAusente
+from .rede import pode_ignorar_robots, site_de
 from .servico import MENSAGEM_ROBOTS, Trabalho, fazer_login
 
 def pasta_padrao_videos() -> str:
@@ -161,6 +162,11 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._atualizacao_pendente = None       # .zip da versão nova baixado (pergunta no fim)
         self._tv_outros_pendente = None         # TV ao vivo: outros sintonizadores no Jellyfin (pergunta no fim)
         self._baixar_pendente = None            # vídeos achados pelo "Baixar" sem buscar antes (licença no fim)
+        # robots.txt: os sites que a pessoa disse serem dela (ignorados só enquanto o programa está aberto) e os
+        # que ela disse "não" (não pergunta de novo nesta sessão)
+        self.sites_sem_robots: set[str] = set()
+        self._robots_recusados: set[str] = set()
+        self._robots_pendente = None
         self._tmdb_opcoes_pendente = None       # "Escolher no TMDB": a lista abre depois do "fim"
         self._instalar_ao_sair = None           # (zip, reabrir): troca os arquivos quando o programa fechar
         self._versao_agendada = None
@@ -184,16 +190,19 @@ class AppModerna(TVAoVivo, JanelaModerna):
         url, opcoes = self._validar()
         if not url:
             return
+        ignorar = self._confirmar_ignorar_robots(opcoes, [url])
+        if ignorar is None:
+            return
         self._mostrar_links([])
 
         def tarefa():
-            with self._novo_trabalho(opcoes) as t:
+            with self._novo_trabalho(opcoes, ignorar) as t:
                 print(f"Acessando{' com navegador' if t.usa_navegador else ''}: {url}")
                 links = t.buscar(url, opcoes.profundidade, opcoes.max_paginas, True, opcoes.seletor,
                                  opcoes.filtro_links)
                 print(f"{len(links)} vídeo(s) encontrado(s).")
                 self.fila.put(("links", links))
-                self._explicar_resultado(t, links)
+                self._explicar_resultado(t, links, "buscar", perguntar=not opcoes.ignorar_robots)
 
         self._rodar("Buscando vídeos...", tarefa)
 
@@ -263,7 +272,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._abrir_no_sistema(pasta)
 
     # ================================================================== motor
-    def _baixar(self, escolhidos: list[LinkVideo]) -> None:
+    def _baixar(self, escolhidos: list[LinkVideo], ignorar: bool | None = None) -> None:
+        """ignorar: a resposta sobre o robots.txt já dada nesta mesma ação (None = perguntar, se marcado)."""
         url, opcoes = self._validar(exigir_url=not self.links)
         if not opcoes:
             return
@@ -276,9 +286,13 @@ class AppModerna(TVAoVivo, JanelaModerna):
             return
         if opcoes.limite:
             escolhidos = escolhidos[:opcoes.limite]
+        if ignorar is None:
+            ignorar = self._confirmar_ignorar_robots(opcoes, [lk.url for lk in escolhidos] or [url])
+            if ignorar is None:
+                return
 
         def tarefa():
-            with self._novo_trabalho(opcoes) as t:
+            with self._novo_trabalho(opcoes, ignorar) as t:
                 lista = escolhidos
                 if not lista:                         # ainda não buscou: busca primeiro
                     print(f"Acessando: {url}")
@@ -286,10 +300,11 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                      opcoes.filtro_links)
                     self.fila.put(("links", lista))
                     if not lista:
-                        self._explicar_resultado(t, lista)
+                        self._explicar_resultado(t, lista, "baixar", perguntar=not opcoes.ignorar_robots)
                         return
                     if self._sem_licenca_aberta(lista) or any(map(self.memoria_downloads.baixado, lista)):
                         # pergunta no fim (licença, já baixados) e baixa o que for escolhido
+                        self._ignorar_baixar_depois = ignorar        # não pergunta o robots.txt 2 vezes
                         self.fila.put(("baixar_depois", lista))
                         self.fila.put(("status_fim", f"{len(lista)} vídeo(s) encontrados: escolha a licença."))
                         return
@@ -449,10 +464,48 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
         threading.Thread(target=alvo, daemon=True).start()
 
-    def _novo_trabalho(self, o: OpcoesInterface) -> Trabalho:
+    OPCOES_ROBOTS = ("Ignorar nesta vez", "Ignorar sempre (até fechar o Maestro)", "Respeitar o robots.txt")
+
+    def _confirmar_ignorar_robots(self, opcoes: OpcoesInterface, urls: list[str]) -> bool | None:
+        """Com "Ignorar o robots.txt" marcado, confirma a CADA busca/download (como a escolha da licença), a não
+        ser que a pessoa tenha dado a confirmação geral ("Ignorar sempre"), que vale até fechar o programa ou
+        desmarcar a opção. True = ignorar; False = respeitar; None = Cancelar (não faz nada)."""
+        if not opcoes.ignorar_robots:
+            self._robots_sempre = False              # desmarcou: a confirmação geral acaba
+            return False
+        sites = sorted({site_de(u) for u in urls if site_de(u)})
+        nomes = ", ".join(sites[:5]) + (f" e mais {len(sites) - 5}" if len(sites) > 5 else "")
+        if getattr(self, "_robots_sempre", False):
+            self._log.warning("robots.txt IGNORADO (confirmação geral até fechar o Maestro): %s", nomes)
+            return True
+        protegidos = [s for s in sites if not pode_ignorar_robots(s)]
+        escolha = self.escolher(
+            "Ignorar o robots.txt?",
+            f"A opção \"Ignorar o robots.txt\" está marcada.\n\nSite: {nomes or '(nenhum)'}\n\n"
+            "O robots.txt é o aviso do DONO do site dizendo onde programas automáticos podem entrar. Ignore só "
+            "em sites seus ou com autorização do dono (testes pessoais).\n\n"
+            f"\"{self.OPCOES_ROBOTS[0]}\": só esta busca/download (pergunta de novo na próxima).\n"
+            f"\"{self.OPCOES_ROBOTS[1]}\": confirmação geral, em qualquer site, sem perguntar de novo até fechar "
+            "o Maestro ou desmarcar a opção.\n"
+            f"\"{self.OPCOES_ROBOTS[2]}\": segue as regras do site, como sempre.\n\n"
+            "Nos dois \"Ignorar\" as pausas entre os pedidos continuam."
+            + (f"\n\n{', '.join(protegidos)}: plataforma protegida, o robots.txt dela é respeitado de qualquer "
+               "jeito." if protegidos else ""),
+            self.OPCOES_ROBOTS)
+        if escolha is None:
+            return None
+        if escolha == self.OPCOES_ROBOTS[2]:
+            return False
+        self._robots_sempre = escolha == self.OPCOES_ROBOTS[1]
+        self._log.warning("robots.txt IGNORADO %s (confirmado pela pessoa): %s",
+                          "até fechar o Maestro" if self._robots_sempre else "nesta vez", nomes)
+        return True
+
+    def _novo_trabalho(self, o: OpcoesInterface, ignorar_robots: bool = False) -> Trabalho:
         return Trabalho(espera=o.espera, navegador=o.navegador, visivel=o.visivel, pausar=o.pausar,
+                        ignorar_robots=ignorar_robots,
                         perfil=PERFIL_PADRAO, aguardar_usuario=self._aguardar_usuario,
-                        parar=self.evento_parar.is_set)
+                        parar=self.evento_parar.is_set, sites_sem_robots=set(self.sites_sem_robots))
 
     def _aguardar_usuario(self, mensagem: str) -> None:
         """Chamado pela thread: pede à janela um aviso e espera o OK do usuário."""
@@ -460,7 +513,15 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self.fila.put(("aguardar", (mensagem, ok)))
         ok.wait()
 
-    def _explicar_resultado(self, t: Trabalho, links: list[LinkVideo]) -> None:
+    def _explicar_resultado(self, t: Trabalho, links: list[LinkVideo], acao: str = "buscar",
+                            perguntar: bool = True) -> None:
+        # robots.txt bloqueou páginas de um site comum: pergunta (no fim) se o site é da pessoa. Com a opção
+        # "Ignorar o robots.txt" marcada a pergunta já foi feita antes de começar.
+        sites = sorted({site_de(u) for u in t.bloqueadas if pode_ignorar_robots(site_de(u))}
+                       - self.sites_sem_robots - self._robots_recusados) if perguntar else []
+        if sites:
+            self.fila.put(("robots_perguntar", (sites, len(t.bloqueadas), bool(links), acao)))
+            return
         if links:
             return
         if t.bloqueadas:
@@ -473,6 +534,33 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.fila.put(("msg", ("Nenhum vídeo encontrado", "Nem com o navegador apareceu vídeo. Tente "
                                    "'Pausar para eu resolver verificações', 'Fazer login no site' ou um "
                                    "seletor CSS.", "info")))
+
+    OPCAO_IGNORAR_ROBOTS = "Sim, o site é meu: ignorar o robots.txt"
+
+    def _perguntar_robots(self, sites: list[str], quantas: int, achou: bool, acao: str) -> bool:
+        """O robots.txt de um site proibiu páginas: se o site é da pessoa (ou ela tem autorização do dono),
+        ignora o robots.txt SÓ desse site, enquanto o programa estiver aberto, e busca de novo. True = ignorou."""
+        nomes = ", ".join(sites)
+        texto = (f"O robots.txt de {nomes} não deixa robôs entrarem em {quantas} página(s)"
+                 + (" (os vídeos achados nas outras já estão na lista)" if achou else "") + ".\n\n"
+                 "O robots.txt é um aviso do DONO do site dizendo onde programas automáticos podem entrar. Ignore "
+                 "só se o site é SEU ou se o dono autorizou (ex.: testar o seu próprio site).\n\n"
+                 f"Ignorar vale só para {nomes} e só enquanto o Maestro estiver aberto. As pausas entre os pedidos "
+                 "continuam. Plataformas como YouTube, Instagram e TikTok nunca entram nesta opção.")
+        escolha = self.escolher("robots.txt do site", texto, (self.OPCAO_IGNORAR_ROBOTS,),
+                                cancelar="Não, respeitar")
+        if escolha != self.OPCAO_IGNORAR_ROBOTS:
+            self._robots_recusados.update(sites)
+            if not achou:
+                self.mostrar_mensagem("Acesso não permitido", MENSAGEM_ROBOTS, "aviso")
+            return False
+        self.sites_sem_robots.update(sites)
+        self._log.warning("robots.txt IGNORADO (a pessoa confirmou que o site é dela ou autorizado): %s", nomes)
+        if acao == "baixar":
+            self._baixar([])
+        else:
+            self.ao_buscar()
+        return True
 
     def _processar_fila(self) -> None:
         """Lê a fila e atualiza a tela. Um erro numa mensagem vai para o log e o ciclo CONTINUA
@@ -629,6 +717,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._tmdb_opcoes_pendente = dado              # a lista abre depois do "fim"
         elif tipo == "baixar_depois":
             self._baixar_pendente = dado                   # pergunta a licença depois do "fim"
+        elif tipo == "robots_perguntar":
+            self._robots_pendente = dado                   # pergunta depois do "fim" (a janela já está livre)
         elif tipo == "versao_nova":
             if self.trabalhando:                       # não interrompe uma tarefa: avisa no fim
                 self._versao_pendente = dado
@@ -691,7 +781,11 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 self.after(50, lambda: self._escolher_opcao_tmdb(*opcoes))
             if self._baixar_pendente:
                 lista, self._baixar_pendente = self._baixar_pendente, None
-                self.after(50, lambda: self._baixar(lista))
+                ignorar, self._ignorar_baixar_depois = getattr(self, "_ignorar_baixar_depois", None), None
+                self.after(50, lambda: self._baixar(lista) if ignorar is None else self._baixar(lista, ignorar))
+            if self._robots_pendente:
+                robots, self._robots_pendente = self._robots_pendente, None
+                self.after(50, lambda: self._perguntar_robots(*robots))
             if self._atualizacao_pendente:
                 baixada, self._atualizacao_pendente = self._atualizacao_pendente, None
                 self.after(50, lambda: self._atualizacao_baixada(*baixada))

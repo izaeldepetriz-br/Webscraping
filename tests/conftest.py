@@ -126,6 +126,8 @@ def servidor(tmp_path_factory):
                 r = (200, "text/html; charset=utf-8", BUSCA_SHADOW.encode())
             elif caminho == "/menu-e-resultados":
                 r = (200, "text/html", MENU_E_RESULTADOS.encode())
+            elif caminho == "/proibido/videos":                   # o robots.txt proíbe /proibido
+                r = (200, "text/html", b'<html><body><a href="/m/meu-video.mp4">Meu video</a></body></html>')
             elif caminho.startswith("/menu"):
                 r = (200, "text/html", b"<html><body>pagina de menu</body></html>")
             elif caminho.startswith("/item/"):

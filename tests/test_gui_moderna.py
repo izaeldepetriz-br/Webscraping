@@ -44,7 +44,7 @@ def test_view_sozinha_tem_placeholders_e_api():
         j.var_pausar.set(True)
         j._ajustar_checks()
         o = j.obter_opcoes()
-        assert o.navegador and o.visivel and o.pausar and o.espera == 1.5 and o.max_paginas == 30
+        assert o.navegador and o.visivel and o.pausar and o.espera == 5.0 and o.max_paginas == 30
     finally:
         j.destroy()
 
@@ -144,10 +144,72 @@ def test_baixar_todos_com_falha_e_robots(app, servidor):
 
     app.var_seletor.set("")
     app.definir_url(servidor.base + "/proibido/videos")
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append((t, m)), None)[1]   # "Não, respeitar"
     app.bt_buscar.invoke()
     esperar(app)
+    assert perguntas[0][0] == "robots.txt do site" and "127.0.0.1" in perguntas[0][1]
     assert ("aviso", "Acesso não permitido", MENSAGEM_ROBOTS) in app.caixas
+    app.bt_buscar.invoke()                               # disse "não": nesta sessão não pergunta de novo
+    esperar(app)
+    assert len(perguntas) == 1 and not app.links
 
+
+def test_robots_ignorado_so_no_site_que_a_pessoa_confirma(app, servidor):
+    from videoscraper.rede import site_de
+    app.definir_url(servidor.base + "/proibido/videos")
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append(t), opcoes[0])[1]   # "Sim, o site é meu"
+    app.bt_buscar.invoke()
+    esperar(app)
+    esperar(app)                                         # busca de novo sozinha, agora sem o robots.txt
+    assert perguntas == ["robots.txt do site"]
+    assert app.sites_sem_robots == {site_de(servidor.base)}
+    assert [lk.url for lk in app.links] == [servidor.base + "/m/meu-video.mp4"]
+    app.bt_buscar.invoke()                               # o site já foi liberado: não pergunta mais
+    esperar(app)
+    assert perguntas == ["robots.txt do site"] and len(app.links) == 1
+
+
+
+def test_opcao_geral_ignorar_robots_confirma_a_cada_vez(app, servidor):
+    app.definir_url(servidor.base + "/proibido/videos")
+    app.var_ignorar_robots.set(True)
+    perguntas, resposta = [], [None]
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append((t, m)), resposta[0](opcoes) if resposta[0] else None)[1]
+    app.bt_buscar.invoke()                                             # Cancelar: nem começa
+    assert [t for t, _ in perguntas] == ["Ignorar o robots.txt?"] and not app.trabalhando
+    assert "127.0.0.1" in perguntas[0][1]
+    resposta[0] = lambda opcoes: opcoes[2]                             # "Respeitar o robots.txt"
+    app.bt_buscar.invoke()
+    esperar(app)
+    assert len(perguntas) == 2 and not app.links                       # sem a 2ª pergunta (do fim)
+    assert ("aviso", "Acesso não permitido", MENSAGEM_ROBOTS) in app.caixas
+    resposta[0] = lambda opcoes: opcoes[0]                             # "Ignorar nesta vez"
+    app.bt_buscar.invoke()
+    esperar(app)
+    assert len(perguntas) == 3 and [lk.url for lk in app.links] == [servidor.base + "/m/meu-video.mp4"]
+    assert app.sites_sem_robots == set()                               # vale só para esta vez
+    app.bt_baixar_todos.invoke()                                       # o download pergunta de novo (1 vez)
+    esperar(app)
+    assert [t for t, _ in perguntas].count("Ignorar o robots.txt?") == 4
+    assert app.tabela.item("0", "values")[1].endswith("baixado")
+    resposta[0] = lambda opcoes: opcoes[1]                             # "Ignorar sempre (até fechar o Maestro)"
+    app.bt_buscar.invoke()
+    esperar(app)
+    assert [t for t, _ in perguntas].count("Ignorar o robots.txt?") == 5 and len(app.links) == 1
+    for _ in range(2):                                                 # confirmação geral: não pergunta mais
+        app.bt_buscar.invoke()
+        esperar(app)
+        assert [t for t, _ in perguntas].count("Ignorar o robots.txt?") == 5 and len(app.links) == 1
+    app.var_ignorar_robots.set(False)
+    app.bt_buscar.invoke()                                             # desmarcada: respeita e não pergunta antes
+    esperar(app)
+    assert [t for t, _ in perguntas].count("Ignorar o robots.txt?") == 5 and not app.links
+    app.var_ignorar_robots.set(True)                                   # marcou de novo: a geral acabou, pergunta
+    resposta[0] = None
+    app.bt_buscar.invoke()
+    assert [t for t, _ in perguntas].count("Ignorar o robots.txt?") == 6
 
 def test_sem_endereco_e_sem_selecao(app):
     app.bt_buscar.invoke()
