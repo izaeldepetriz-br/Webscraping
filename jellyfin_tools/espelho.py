@@ -86,10 +86,20 @@ class Verificacao:
     tempo: float | None = None       # segundos até o servidor responder
 
 
+AVISO_TEMPORARIO = "link temporário: para de tocar quando a assinatura expirar"
+
+
+def eh_link_temporario(url: str) -> bool:
+    """O link tem uma assinatura que expira (?expires=, ?token=, ?signature=...)?"""
+    return bool(_RE_TEMPORARIO.search(url))
+
+
 def verificar_link(url: str, sessao: requests.Session | None = None, timeout: float = 10,
-                   permitido=None) -> Verificacao:
-    """Pede só o 1º byte do arquivo (Range: bytes=0-0) e confere: é vídeo? é público? deixa avançar?"""
-    if _RE_TEMPORARIO.search(url):
+                   permitido=None, aceitar_temporario: bool = False) -> Verificacao:
+    """Pede só o 1º byte do arquivo (Range: bytes=0-0) e confere: é vídeo? é público? deixa avançar?
+    aceitar_temporario: a pessoa confirmou que quer o link temporário mesmo assim (confere o resto e avisa)."""
+    temporario = eh_link_temporario(url)
+    if temporario and not aceitar_temporario:
         return Verificacao(False, "link temporário (expira; o .strm pararia de funcionar)")
     if permitido is not None and not permitido(url):
         return Verificacao(False, "o robots.txt do site não permite")
@@ -112,7 +122,7 @@ def verificar_link(url: str, sessao: requests.Session | None = None, timeout: fl
     tipo = cabecalhos.get("Content-Type", "").lower()
     if tipo.startswith(("text/html", "application/xhtml")):
         return Verificacao(False, "é uma página, não o arquivo do vídeo", tempo=tempo)
-    avisos = []
+    avisos = [AVISO_TEMPORARIO] if temporario else []
     if status != 206 and "bytes" not in cabecalhos.get("Accept-Ranges", "").lower():
         avisos.append("o servidor não deixa avançar o vídeo")
     if tempo > LENTO_SEGUNDOS:
@@ -121,9 +131,10 @@ def verificar_link(url: str, sessao: requests.Session | None = None, timeout: fl
 
 
 def verificar_links(urls: list[str], trabalhadores: int = 8, ao_progresso=None,
-                    respeitar_robots: bool = True, parar=None) -> dict[str, Verificacao]:
+                    respeitar_robots: bool = True, parar=None,
+                    aceitar_temporarios: bool = False) -> dict[str, Verificacao]:
     """Confere vários links AO MESMO TEMPO (a espera é quase toda da rede). ao_progresso(feitos, total).
-    parar() verdadeiro: para na hora e devolve só os conferidos."""
+    parar() verdadeiro: para na hora e devolve só os conferidos. aceitar_temporarios: veja verificar_link."""
     unicos = list(dict.fromkeys(urls))
     if not unicos:
         return {}
@@ -141,7 +152,8 @@ def verificar_links(urls: list[str], trabalhadores: int = 8, ao_progresso=None,
     def um(url: str) -> Verificacao:
         if not hasattr(local, "sessao"):
             local.sessao = requests.Session()
-        return verificar_link(url, local.sessao, permitido=permitido if robots else None)
+        return verificar_link(url, local.sessao, permitido=permitido if robots else None,
+                              aceitar_temporario=aceitar_temporarios)
 
     feitos = em_paralelo(unicos, um, trabalhadores, ao_progresso, parar)
     return {unicos[i]: verificacao for i, verificacao in sorted(feitos.items())}
@@ -363,8 +375,10 @@ def conferir_espelhos(*pastas, ao_progresso=None, respeitar_robots: bool = True,
     """Confere o link de cada .strm: [(raiz, arquivo, url, Verificacao)]. Com parar(): só os conferidos."""
     espelhos = espelhos_da_biblioteca(*pastas)
     links = {a: ler_strm(a) for _, a in espelhos}
+    # aqui só importa se ainda TOCA: um link temporário que a pessoa aceitou não é quebrado por ser temporário;
+    # quando a assinatura expirar o site recusa, e aí sim ele aparece como quebrado
     verificacoes = verificar_links([u for u in links.values() if u], ao_progresso=ao_progresso,
-                                   respeitar_robots=respeitar_robots, parar=parar)
+                                   respeitar_robots=respeitar_robots, parar=parar, aceitar_temporarios=True)
     sem_link = Verificacao(False, "o .strm está vazio")
     return [(raiz, a, links[a], verificacoes.get(links[a], sem_link)) for raiz, a in espelhos
             if not links[a] or links[a] in verificacoes]

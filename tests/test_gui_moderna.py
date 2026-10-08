@@ -1111,6 +1111,46 @@ def test_modo_hibrido_espelha_em_vez_de_baixar_e_clicar_no_play(app, tmp_path, m
     app._novo_trabalho(app.obter_opcoes()).fechar()
     assert [k["ativar_midias"] for k in criados] == [True, False]
 
+
+def test_espelhar_links_temporarios_pergunta_e_lembra(app, tmp_path, monkeypatch):
+    from jellyfin_tools.espelho import AVISO_TEMPORARIO, Verificacao
+    from videoscraper.extracao import LinkVideo
+    aceitou = []
+
+    def verificar(urls, aceitar_temporarios=False, **k):
+        aceitou.append(aceitar_temporarios)
+        return {u: (Verificacao(True, aviso=AVISO_TEMPORARIO) if aceitar_temporarios or "token" not in u
+                    else Verificacao(False, "link temporário (expira; o .strm pararia de funcionar)")) for u in urls}
+    monkeypatch.setattr(app_moderna, "verificar_links", verificar)
+    base = "https://cdn.meusite.com.br/"
+    app._mostrar_links([LinkVideo(base + "nosferatu.mp4?token=abc&expires=9", "o", "meusite", "Nosferatu (1922)"),
+                        LinkVideo(base + "metropolis.mp4", "o", "meusite", "Metropolis (1927)")])
+    app._destinos.update({"Filmes": str(tmp_path / "Filmes"), "Séries": str(tmp_path / "Series")})
+    app.var_jf_destino.set(str(tmp_path / "Filmes"))
+    app.var_jf_legendas.set(False)
+    perguntas, respostas = [], {"Espelhar no Jellyfin": "Todos os identificados", "Links temporários": None}
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append((t, m, opcoes)), respostas.get(t))[1]
+
+    app.ao_espelhar_jellyfin()                                         # Cancelar: nada acontece
+    assert perguntas[-1][0] == "Links temporários" and "1 link(s) são temporários" in perguntas[-1][1]
+    assert not app.trabalhando and not list(tmp_path.rglob("*.strm"))
+    respostas["Links temporários"] = "Deixar de fora"                  # como antes: só o permanente
+    app.ao_espelhar_jellyfin()
+    esperar(app)
+    assert aceitou[-1] is False and [p.name for p in tmp_path.rglob("*.strm")] == ["Metropolis (1927).strm"]
+    respostas["Links temporários"] = "Sempre criar (até fechar o Maestro)"
+    app.ao_espelhar_jellyfin()
+    esperar(app)
+    assert aceitou[-1] is True
+    assert sorted(p.name for p in tmp_path.rglob("*.strm")) == ["Metropolis (1927).strm", "Nosferatu (1922).strm"]
+    assert next(tmp_path.rglob("Nosferatu*.strm")).read_text(encoding="utf-8").strip().endswith("token=abc&expires=9")
+    for arquivo in tmp_path.rglob("*.strm"):
+        arquivo.unlink()
+    antes = len([p for p in perguntas if p[0] == "Links temporários"])
+    app.ao_espelhar_jellyfin()                                         # confirmação geral: não pergunta de novo
+    esperar(app)
+    assert len([p for p in perguntas if p[0] == "Links temporários"]) == antes and aceitou[-1] is True
+
 def test_botao_testar_chaves_das_legendas(app, api_falsa, monkeypatch):
     from jellyfin_tools import ProvedorOpenSubtitles, ProvedorSubDL
     base = api_falsa.base

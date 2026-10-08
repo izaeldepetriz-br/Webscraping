@@ -240,6 +240,18 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.10.0
+
+- **Espelhar: links temporários com confirmação.** Links com assinatura que expira (`?expires=`, `?token=`,
+  `?signature=`...) antes ficavam sempre de fora ("Link que não serve para .strm"). Agora o Maestro mostra
+  quantos são, explica que o `.strm` toca só até a assinatura expirar, e pergunta, como na escolha da licença:
+  - **"Criar nesta vez"**: só neste espelhamento; pergunta de novo na próxima;
+  - **"Sempre criar (até fechar o Maestro)"**: confirmação geral;
+  - **"Deixar de fora"**: como antes.
+
+  Os aceitos ainda passam pela conferência normal (é vídeo? é público?) e saem com o aviso "link temporário".
+  No **Conferir espelhos**, um temporário só aparece como quebrado quando de fato parar de tocar.
+
 ### Novidades da v2.9.0
 
 - **Separação por tipo (Filmes, Séries, Esportes, Notícias, Infantil) mais certeira:**

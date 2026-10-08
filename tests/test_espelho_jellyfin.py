@@ -114,6 +114,12 @@ def test_verificar_links_de_outros_sites(api_falsa):
     assert r[b + "/ok.mp4"].tempo is not None
     pedido = next(p for p in api_falsa.pedidos if p["caminho"] == "/ok.mp4")
     assert pedido["headers"]["Range"] == "bytes=0-0"                     # pede só 1 byte, não o filme
+    # a pessoa confirmou que quer os temporários: confere o resto (toca?) e avisa que vai expirar
+    aceitos = verificar_links([b + "/ok.mp4?Expires=1700000000&Signature=abc", b + "/privado.mp4?token=x"],
+                              aceitar_temporarios=True)
+    assert [(v.ok, v.problema or v.aviso) for v in aceitos.values()] == [
+        (True, "link temporário: para de tocar quando a assinatura expirar"),
+        (False, "exige login ou permissão (o Jellyfin não tem o seu acesso)")]
 
 
 def test_verificar_links_em_paralelo(api_falsa):

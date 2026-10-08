@@ -37,9 +37,9 @@ from jellyfin_tools.metadados import ClienteTMDB
 from jellyfin_tools.notificacoes import Notificador
 from .memoria_downloads import MemoriaDownloads, texto_quando
 from jellyfin_tools.espelho import (aplicar_espelho, classificar, conferir_e_avisar, conferir_espelhos,
-                                    desfazer_ultima_remocao, intervalo_em_segundos, licenca_aberta,
-                                    lotes_de_espelhos, nome_do_link, planejar_espelho, remover_espelhos,
-                                    remover_espelhos_escolhidos, verificar_links)
+                                    desfazer_ultima_remocao, eh_link_temporario, intervalo_em_segundos,
+                                    licenca_aberta, lotes_de_espelhos, nome_do_link, planejar_espelho,
+                                    remover_espelhos, remover_espelhos_escolhidos, verificar_links)
 from jellyfin_tools.conflitos import aplicar as aplicar_conflitos, decidir as decidir_conflitos
 from jellyfin_tools.paralelo import prioridade_baixa
 from jellyfin_tools.lixeira import apagar_lotes, lotes_antigos, tamanho_legivel
@@ -997,6 +997,12 @@ class AppModerna(TVAoVivo, JanelaModerna):
         if escolha is None:
             return
         so_abertos = escolha == self.OPCOES_ESPELHO[0]
+        # links temporários (assinatura que expira): a pessoa decide se entram
+        temporarios = [l.url for l, t in zip(links, tipos) if (t != "outro" or pasta_comuns)
+                       and (not so_abertos or licenca_aberta(getattr(l, "licenca", ""))) and eh_link_temporario(l.url)]
+        aceitar_temporarios = self._confirmar_temporarios(temporarios) if temporarios else False
+        if aceitar_temporarios is None:
+            return
         self._salvar_config()
 
         def tarefa():
@@ -1005,6 +1011,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                           and (not so_abertos or licenca_aberta(getattr(l, "licenca", "")))]
             self._log.info("Conferindo %d link(s) (direto, permanente, público?)", len(candidatos))
             verificacoes = verificar_links(candidatos, parar=self.evento_parar.is_set,
+                                           aceitar_temporarios=aceitar_temporarios,
                                            ao_progresso=self._progresso_com_velocidade("Conferindo links"))
             if self.evento_parar.is_set():             # "Parar": não cria nenhum .strm pela metade
                 self.fila.put(("status_fim", f"Espelhar parado: {len(verificacoes)} de {len(candidatos)} links "
@@ -1071,6 +1078,33 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._rodar("Espelhando no Jellyfin...", tarefa)
 
     OPCOES_ESPELHO = ("Só domínio público / CC", "Todos os identificados")
+    OPCOES_TEMPORARIOS = ("Criar nesta vez", "Sempre criar (até fechar o Maestro)", "Deixar de fora")
+
+    def _confirmar_temporarios(self, urls: list[str]) -> bool | None:
+        """Links com assinatura que expira (?expires=, ?token=...): o .strm toca só até expirar. A pessoa decide,
+        como na licença: nesta vez, sempre (até fechar o programa) ou de fora. True = criar; False = de fora;
+        None = Cancelar (não espelha nada)."""
+        if getattr(self, "_temporarios_sempre", False):
+            self._log.info("Espelho: %d link(s) temporário(s) aceitos (confirmação geral)", len(urls))
+            return True
+        exemplo = urls[0] if len(urls[0]) <= 90 else urls[0][:87] + "..."
+        escolha = self.escolher(
+            "Links temporários",
+            f"{len(urls)} link(s) são temporários: têm uma assinatura que expira (ex.: {exemplo}).\n\n"
+            "O .strm com um link desses toca só até a assinatura expirar (em horas ou dias, depende do site). "
+            "Depois ele para de tocar, e o \"Conferir espelhos\" passa a marcá-lo como quebrado.\n\n"
+            f"\"{self.OPCOES_TEMPORARIOS[0]}\": cria os .strm só neste espelhamento (pergunta de novo na próxima).\n"
+            f"\"{self.OPCOES_TEMPORARIOS[1]}\": confirmação geral, sem perguntar de novo até fechar o Maestro.\n"
+            f"\"{self.OPCOES_TEMPORARIOS[2]}\": como antes, eles não entram.",
+            self.OPCOES_TEMPORARIOS)
+        if escolha is None:
+            return None
+        if escolha == self.OPCOES_TEMPORARIOS[2]:
+            return False
+        self._temporarios_sempre = escolha == self.OPCOES_TEMPORARIOS[1]
+        self._log.info("Espelho: %d link(s) temporário(s) aceitos (%s)", len(urls),
+                       "até fechar o Maestro" if self._temporarios_sempre else "nesta vez")
+        return True
 
     # ---- vídeos comuns (sem ano nem episódio): uma pasta própria, lembrada entre as vezes
     @property
