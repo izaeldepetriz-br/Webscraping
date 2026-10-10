@@ -2454,12 +2454,21 @@ class AppModerna(TVAoVivo, JanelaModerna):
             (f"Dublar os {len(itens)}",))
         if escolha is None:
             return
-        if automacao.usa_gemini(o) and o.voz_por_personagem:
-            self._ouvir_personagens(itens, o)
+        premium = {str(i.video) for i in itens}
+        if automacao.usa_gemini(o) and len(itens) > 1:      # mista por filme: os escolhidos com o Gemini
+            marcados = self.pedir_marcados(
+                "Voz premium (Gemini)", "Marque os filmes que vão com a voz premium do Gemini (pago por uso). Os "
+                "desmarcados vão com o Piper, grátis, no seu PC.",
+                [f"{i.video.stem} ({i.falas} falas)" for i in itens], set(range(len(itens))), "Dublar")
+            if marcados is None:
+                return
+            premium = {str(itens[k].video) for k in marcados}
+        if automacao.usa_gemini(o) and o.voz_por_personagem and premium:
+            self._ouvir_personagens(itens, o, premium)
         else:
-            self._dublar(itens, o)
+            self._dublar(itens, o, premium=premium)
 
-    def _ouvir_personagens(self, itens: list, o) -> None:
+    def _ouvir_personagens(self, itens: list, o, premium: set | None = None) -> None:
         """Voz por personagem, 1ª parte (numa tarefa): o Gemini ouve cada filme e diz quem fala cada fala. Depois,
         na janela, a tabela "Pessoa -> Voz" de cada filme (_escolher_vozes) e a dublagem."""
         def tarefa():
@@ -2468,8 +2477,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             except ErroDublagem as erro:
                 self.fila.put(("msg", ("Dublar filmes", f"Não deu para usar o Gemini: {erro}", "erro")))
                 return
-            achados = []
-            for k, item in enumerate(itens):
+            achados, ouvir = [], [i for i in itens if premium is None or str(i.video) in premium]
+            for k, item in enumerate(ouvir):
                 if self.evento_parar.is_set():
                     break
                 try:
@@ -2477,24 +2486,25 @@ class AppModerna(TVAoVivo, JanelaModerna):
                     lista = automacao.ouvir_personagens(
                         o, item.video, falas, cliente, parar=self.evento_parar.is_set,
                         ao_progresso=lambda f, k=k, item=item: self.fila.put(("jf_analise", (
-                            (k + f) / len(itens), f"Ouvindo quem fala em {item.video.stem} ({k + 1} de {len(itens)})"))))
+                            (k + f) / len(ouvir), f"Ouvindo quem fala em {item.video.stem} ({k + 1} de {len(ouvir)})"))))
                     self._log.info("%s: %d pessoa(s) falando", item.video.name, len(lista))
                     achados.append((item, falas, lista))
                 except (ErroDublagem, OSError, ErroLegenda) as erro:
                     self._log.warning("Voz por personagem em %s: %s (vai com uma voz só)", item.video.name, erro)
                     achados.append((item, [], []))
-            self.fila.put(("vozes_pendentes", (achados, o)))
+            outros = [i for i in itens if i not in ouvir]           # os que vão com o Piper: sem ouvir
+            self.fila.put(("vozes_pendentes", (achados, o, premium, outros)))
 
         self._rodar(f"Ouvindo quem fala em {len(itens)} filme(s)...", tarefa)
 
-    def _escolher_vozes(self, achados: list, o) -> None:
+    def _escolher_vozes(self, achados: list, o, premium: set | None = None, outros: list = ()) -> None:
         """Voz por personagem, 2ª parte (na janela): a tabela de cada filme; depois dubla os que não foram pulados."""
-        itens, vozes = [], {}
+        itens, vozes = list(outros), {}
         for item, falas, lista in achados:
             if not lista:                                      # não deu para ouvir: uma voz só
                 itens.append(item)
                 continue
-            sugestao = personagens.distribuir_vozes(lista, o.voz_gemini)
+            sugestao = personagens.distribuir_vozes(lista, o.voz_gemini, automacao.figurante(o))
             principais = [p for p in lista if len(p.falas) >= personagens.MINIMO_FALAS][:8]
             if not principais:
                 itens.append(item)
@@ -2510,19 +2520,25 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 vozes[str(item.video)] = personagens.vozes_por_fala(lista, mapa)
                 self._log.info("%s: %s", item.video.name, ", ".join(f"{r} -> {v}" for r, v in escolha.items()))
         if itens:
-            self._dublar(itens, o, vozes)
+            self._dublar(itens, o, vozes, premium)
 
-    def _dublar(self, itens: list, o, vozes: dict | None = None) -> None:
+    def _dublar(self, itens: list, o, vozes: dict | None = None, premium: set | None = None) -> None:
+        """premium: os filmes que vão com o motor da tela (Gemini); os outros, com o Piper (dublagem mista por filme).
+        None = todos com o motor da tela."""
         vozes = vozes or {}
+        premium = {str(i.video) for i in itens} if premium is None else premium
+        gemini = automacao.usa_gemini(o)
         def tarefa():
+            progresso = {"progresso_piper": lambda f: self.fila.put(
+                             ("jf_analise", (f * 0.5, f"Baixando o Piper: {int(f * 100)}%"))),
+                         "progresso_voz": lambda f: self.fila.put(
+                             ("jf_analise", (0.5 + f * 0.5, f"Baixando a voz \"{o.voz_dublagem}\": {int(f * 100)}%")))}
             try:
-                if not automacao.usa_gemini(o):
+                usa_piper = not gemini or any(str(i.video) not in premium for i in itens)
+                if usa_piper:
                     self.fila.put(("jf_analise", (0.0, "Preparando o Piper (só na 1ª vez baixa)...")))
-                motor = automacao.preparar_motor(
-                    o, progresso_piper=lambda f: self.fila.put(
-                        ("jf_analise", (f * 0.5, f"Baixando o Piper: {int(f * 100)}%"))),
-                    progresso_voz=lambda f: self.fila.put(
-                        ("jf_analise", (0.5 + f * 0.5, f"Baixando a voz \"{o.voz_dublagem}\": {int(f * 100)}%"))))
+                piper = automacao.motor_piper(o, **progresso) if usa_piper else None
+                motor = automacao.preparar_motor(o) if gemini and premium else piper
             except (ErroDublagem, automacao.FaltaConfiguracao) as erro:
                 self.fila.put(("msg", ("Dublar filmes", f"Não deu para preparar a voz: {erro}", "erro")))
                 return
@@ -2540,7 +2556,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 adaptar = automacao.adaptador(o, item.video.stem)
                 if adaptar is not None:
                     adaptadores.append(adaptar)
-                r = dublar_video(item.video, item.legenda, motor, parar=self.evento_parar.is_set,
+                deste = motor if str(item.video) in premium else piper
+                r = dublar_video(item.video, item.legenda, deste, parar=self.evento_parar.is_set,
                                  ao_progresso=andamento, adaptar=adaptar,
                                  avisar=lambda texto: self._log.warning("Dublagem: %s", texto),
                                  vozes=vozes.get(str(item.video)), pasta_cache=automacao.pasta_dublagem())

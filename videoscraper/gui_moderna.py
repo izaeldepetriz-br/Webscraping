@@ -151,6 +151,7 @@ class OpcoesJellyfin:
     chave_gemini: str = ""           # Google AI Studio > Get API key (vazio = variável GEMINI_API_KEY)
     encurtar_falas: bool = True      # dublagem: o Claude reescreve mais curtas as falas que não cabem no tempo
     voz_por_personagem: bool = False  # Gemini: ouve o filme, separa quem fala e dá uma voz para cada personagem
+    figurantes_piper: bool = False   # dublagem mista: quem fala pouco (figurante) fica com o Piper, grátis
     resumo_diario: bool = False      # mandar no Discord/Telegram, uma vez por dia, o que o Maestro fez
     hora_resumo: int = 21
 
@@ -905,6 +906,63 @@ class DialogoAgendar(ctk.CTkToplevel):
         self.destroy()
 
 
+def valor_da_voz(texto: str) -> str:
+    """Do menu para o valor: "Kore (feminina, firme)" -> "Kore"; "Piper faber (grátis, no PC)" -> "piper:faber"."""
+    partes = texto.split()
+    if not partes:
+        return ""
+    return f"piper:{partes[1]}" if partes[0] == "Piper" and len(partes) > 1 else partes[0]
+
+
+class DialogoMarcar(ctk.CTkToplevel):
+    """Lista com caixas de marcar (ex.: quais filmes vão com a voz premium). `resultado`: índices marcados ou None."""
+
+    def __init__(self, master, titulo: str, mensagem: str, itens: list[str], marcados: set[int], botao: str):
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.resultado = None
+        self.title(titulo)
+        self.resizable(False, False)
+        self.transient(master)
+        corpo = ctk.CTkFrame(self, fg_color="transparent")
+        corpo.pack(fill="both", expand=True, padx=26, pady=(20, 6))
+        ctk.CTkLabel(corpo, text=titulo, font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"), text_color=Tema.TEXTO,
+                     anchor="w").pack(fill="x")
+        ctk.CTkLabel(corpo, text=mensagem, font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w",
+                     justify="left", wraplength=560).pack(fill="x", pady=(2, 8))
+        atalhos = ctk.CTkFrame(corpo, fg_color="transparent")
+        atalhos.pack(fill="x", pady=(0, 4))
+        master._botao(atalhos, "Marcar todos", lambda: self._todos(True), "secundario").pack(side="left")
+        master._botao(atalhos, "Desmarcar todos", lambda: self._todos(False), "secundario").pack(side="left",
+                                                                                               padx=(8, 0))
+        lista = ctk.CTkScrollableFrame(corpo, fg_color="transparent", height=min(320, 34 * len(itens) + 10))
+        lista.pack(fill="x")
+        self.vars = [tk.BooleanVar(value=i in marcados) for i in range(len(itens))]
+        for texto, var in zip(itens, self.vars):
+            master._checkbox(lista, texto, var).pack_configure(padx=0)
+        botoes = ctk.CTkFrame(self, fg_color="transparent")
+        botoes.pack(fill="x", padx=26, pady=(10, 20))
+        master._botao(botoes, "Cancelar", self.destroy, "secundario").pack(side="left")
+        self.bt_ok = master._botao(botoes, botao, self._ok, "primario")
+        self.bt_ok.pack(side="right")
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_reqwidth()) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - self.winfo_reqheight()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+    def _todos(self, sim: bool) -> None:
+        for var in self.vars:
+            var.set(sim)
+
+    def _ok(self) -> None:
+        self.resultado = [i for i, var in enumerate(self.vars) if var.get()]
+        self.destroy()
+
+
 class DialogoVozes(ctk.CTkToplevel):
     """"Vozes dos personagens": quem o Gemini ouviu falar no filme e a voz sugerida para cada um, para trocar.
     `resultado`: {rótulo: voz} (dublar assim), {} (uma voz só para todos) ou None (pular este filme)."""
@@ -924,7 +982,7 @@ class DialogoVozes(ctk.CTkToplevel):
                      "principal.", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left",
                      wraplength=640).pack(fill="x", pady=(2, 10))
         self.vars: dict[str, tk.StringVar] = {}
-        por_nome = {v.split()[0]: v for v in vozes}
+        por_nome = {valor_da_voz(v): v for v in vozes}
         for rotulo, linha in zip(rotulos, linhas):
             fila = ctk.CTkFrame(corpo, fg_color="transparent")
             fila.pack(fill="x", pady=3)
@@ -954,7 +1012,7 @@ class DialogoVozes(ctk.CTkToplevel):
         self.destroy()
 
     def _ok(self) -> None:
-        self.resultado = {rotulo: var.get().split()[0] for rotulo, var in self.vars.items()}
+        self.resultado = {rotulo: valor_da_voz(var.get()) for rotulo, var in self.vars.items()}
         self.destroy()
 
 
@@ -2198,6 +2256,9 @@ class JanelaModerna(ctk.CTk):
         self.var_jf_voz_por_personagem = tk.BooleanVar(value=False)
         self._checkbox(lateral, "Uma voz para cada personagem (o Gemini\nouve o filme e separa quem fala)",
                        self.var_jf_voz_por_personagem)
+        self.var_jf_figurantes_piper = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Misto: figurantes (menos de 20 falas)\ncom o Piper, grátis (economiza pedidos)",
+                       self.var_jf_figurantes_piper)
         self._rotulo(lateral, "Chave do Google AI Studio (Gemini):").pack(anchor="w", pady=(6, 2), **p)
         self.var_jf_chave_gemini = tk.StringVar()
         self._entrada(lateral, self.var_jf_chave_gemini, "aistudio.google.com > Get API key", show="•").pack(
@@ -2648,7 +2709,8 @@ class JanelaModerna(ctk.CTk):
             voz_dublagem=self.var_jf_voz_dublagem.get(), motor_voz=self.var_jf_motor_voz.get(),
             voz_gemini=self.var_jf_voz_gemini.get().split()[0], chave_gemini=self.var_jf_chave_gemini.get().strip(),
             encurtar_falas=self.var_jf_encurtar_falas.get(),
-            voz_por_personagem=self.var_jf_voz_por_personagem.get(), resumo_diario=self.var_jf_resumo_diario.get(),
+            voz_por_personagem=self.var_jf_voz_por_personagem.get(),
+            figurantes_piper=self.var_jf_figurantes_piper.get(), resumo_diario=self.var_jf_resumo_diario.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
     def idiomas_jf(self) -> str:
@@ -2761,7 +2823,8 @@ class JanelaModerna(ctk.CTk):
                   "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar,
                   "whisper_gpu": self.var_jf_whisper_gpu, "resumo_diario": self.var_jf_resumo_diario,
                   "encurtar_falas": self.var_jf_encurtar_falas,
-                  "voz_por_personagem": self.var_jf_voz_por_personagem}
+                  "voz_por_personagem": self.var_jf_voz_por_personagem,
+                  "figurantes_piper": self.var_jf_figurantes_piper}
         for chave, var in textos.items():
             if dados.get(chave):
                 var.set(dados[chave])
@@ -3309,9 +3372,17 @@ class JanelaModerna(ctk.CTk):
         self.wait_window(dialogo)
         return dialogo.resposta
 
+    def pedir_marcados(self, titulo: str, mensagem: str, itens: list[str], marcados: set[int],
+                       botao: str = "Continuar") -> list[int] | None:
+        """Caixas de marcar (ver DialogoMarcar): os índices marcados, ou None (Cancelar)."""
+        dialogo = DialogoMarcar(self, titulo, mensagem, itens, marcados, botao)
+        self.wait_window(dialogo)
+        return dialogo.resultado
+
     def pedir_vozes(self, filme: str, linhas: list[str], rotulos: list[str], sugestao: dict) -> dict | None:
         """Janela "Vozes dos personagens" (ver DialogoVozes)."""
-        dialogo = DialogoVozes(self, filme, linhas, rotulos, sugestao, self.VOZES_GEMINI)
+        vozes = self.VOZES_GEMINI + tuple(f"Piper {v} (grátis, no PC)" for v in self.VOZES_DUBLAGEM)
+        dialogo = DialogoVozes(self, filme, linhas, rotulos, sugestao, vozes)
         self.wait_window(dialogo)
         return dialogo.resultado
 

@@ -24,4 +24,5 @@ Suas configurações ficam em `C:\Users\<você>\.videoscraper\` e continuam vale
 - **Mais:** sincronizar legendas, tradução econômica em lote (metade do preço), agendar várias tarefas de uma vez no Windows (caixas de marcar), resumo do dia no Discord/Telegram, exportar/importar configurações.
 - **Dublagem mais natural e voz premium:** falas longas reescritas mais curtas pelo Claude (fiéis ao sentido); voz premium do Gemini (Google AI Studio, vozes prontas, pago por uso) no lugar do Piper; botão "O que a vigia faria agora?" (simulação, sem mover nada).
 - **Gemini econômico e voz por personagem:** blocos de até 30 falas por pedido, progresso guardado por filme (continua de onde parou se o limite do dia acabar) e uma voz para cada personagem (o Gemini ouve o filme; você confere na tabela "Vozes dos personagens").
+- **Dublagem mista:** figurantes com o Piper (grátis) e os principais com o Gemini; ou escolha quais filmes vão com o Gemini e o resto com o Piper.
 - **Correções:** a pasta vigiada se organiza dentro dela mesma (opção marcada); "Conferir 1 selecionado" na TV não é mais seguido pela conferência automática de todos os canais.

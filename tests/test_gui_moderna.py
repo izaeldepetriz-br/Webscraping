@@ -3862,3 +3862,60 @@ def test_janela_vozes_dos_personagens(app):
     janela = DialogoVozes(app, "Filme", ["x"], ["Pessoa 1"], {}, app.VOZES_GEMINI)
     janela.bt_uma_voz.invoke()
     assert janela.resultado == {}                                       # uma voz só para todos
+
+
+def test_dublagem_mista_por_filme_e_figurantes(app, tmp_path, monkeypatch):
+    """Mista: só os filmes marcados vão com o Gemini (os outros com o Piper) e, na tabela de vozes, os figurantes
+    aparecem com a voz do Piper."""
+    from jellyfin_tools import dublagem, voz_gemini
+    from tests.test_dublagem import FFMPEG, SRT, VozFalsa, video_de_teste
+    from videoscraper import automacao
+    from videoscraper.gui_moderna import DialogoMarcar, valor_da_voz
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    assert valor_da_voz("Piper faber (grátis, no PC)") == "piper:faber" and valor_da_voz("Kore (feminina, firme)") == "Kore"
+    filmes = tmp_path / "Filmes"
+    for nome in ("Metropolis (1927)", "Nosferatu (1922)"):
+        (filmes / nome).mkdir(parents=True)
+        video_de_teste(filmes / nome / f"{nome}.mkv")
+        (filmes / nome / f"{nome}.pt-BR.srt").write_text(SRT, encoding="utf-8")
+    app.mostrar_aba("Jellyfin")
+    app._destinos.update({"Filmes": str(filmes), "Séries": ""})
+    app.var_jf_destino.set(str(filmes))
+    app.var_jf_motor_voz.set(app.MOTORES_VOZ[1])
+    app.var_jf_chave_gemini.set("AIza-teste")
+    app.var_jf_encurtar_falas.set(False)
+    monkeypatch.setattr(app_moderna, "videos_para_dublar",
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+    gemini, piper = VozFalsa(), VozFalsa()
+    monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, nome: gemini)
+    monkeypatch.setattr(automacao, "motor_piper", lambda o, voz="", **k: piper)
+    perguntas = []
+    app.pedir_marcados = lambda titulo, msg, itens, marcados, botao="": perguntas.append((itens, marcados)) or [1]
+    app.bt_dublar.invoke()
+    for _ in range(2):
+        esperar(app)
+    itens, marcados = perguntas[0]
+    assert itens[0].startswith("Metropolis (1927)") and marcados == {0, 1}      # todos marcados de início
+    assert gemini.textos and piper.textos and len(gemini.textos) == len(piper.textos)   # 1 filme em cada motor
+    assert all((filmes / n / f"{n} - Dublado IA.mkv").is_file() for n in ("Metropolis (1927)", "Nosferatu (1922)"))
+    # a janela de marcar, de verdade
+    janela = DialogoMarcar(app, "Voz premium", "msg", ["A", "B", "C"], {0, 1, 2}, "Dublar")
+    janela._todos(False)
+    janela.vars[2].set(True)
+    janela.bt_ok.invoke()
+    assert janela.resultado == [2]
+    # figurantes: a sugestão da tabela manda quem fala pouco para o Piper, e a tabela tem as vozes do Piper
+    from jellyfin_tools import personagens
+    app.var_jf_figurantes_piper.set(True)
+    o = app.obter_opcoes_jellyfin()
+    assert automacao.figurante(o) == "piper:faber"
+    sugestao = personagens.distribuir_vozes([personagens.Personagem("Conde", "m", falas=list(range(30))),
+                                             personagens.Personagem("Guarda", "m", falas=[30, 31, 32])],
+                                            o.voz_gemini, automacao.figurante(o))
+    from videoscraper.gui_moderna import DialogoVozes
+    vozes = app.VOZES_GEMINI + tuple(f"Piper {v} (grátis, no PC)" for v in app.VOZES_DUBLAGEM)
+    tabela = DialogoVozes(app, "Filme", ["Conde", "Guarda"], ["Conde", "Guarda"], sugestao, vozes)
+    assert tabela.vars["Guarda"].get() == "Piper faber (grátis, no PC)"
+    tabela.bt_dublar.invoke()
+    assert tabela.resultado == {"Conde": "Charon", "Guarda": "piper:faber"}

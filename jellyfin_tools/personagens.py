@@ -25,6 +25,7 @@ from .voz_gemini import (VOZ_PADRAO, VOZES, VOZES_FEMININAS, VOZES_MASCULINAS, l
 
 TRECHO = 15 * 60              # segundos de áudio por pedido (o Gemini separa bem quem fala em até ~30 min)
 MINIMO_FALAS = 3              # quem fala menos que isso fica com a voz principal
+FIGURANTE = 20                # dublagem mista: quem tem menos falas que isso é figurante (vai para o Piper)
 GENEROS = {"m": "homem", "f": "mulher", "?": "indefinido"}
 
 _PERGUNTA = """Você ouve um trecho do áudio de um filme ({inicio} a {fim} do filme). Abaixo estão as falas da \
@@ -142,13 +143,18 @@ def identificar(video: str | Path, falas: list, cliente, ffmpeg: str, arquivo: s
     return sorted(lista, key=lambda p: -len(p.falas))
 
 
-def distribuir_vozes(personagens: list[Personagem], voz_principal: str = VOZ_PADRAO) -> dict[str, str]:
+def distribuir_vozes(personagens: list[Personagem], voz_principal: str = VOZ_PADRAO,
+                     figurante: str | None = None, limite: int = FIGURANTE) -> dict[str, str]:
     """{rótulo: voz}. Quem mais fala fica com a voz principal (se o gênero combinar); os outros, vozes do mesmo
-    gênero ainda não usadas (repetem só quando acabam). Quem fala pouco fica com a voz principal."""
+    gênero ainda não usadas (repetem só quando acabam). Quem fala pouco fica com a voz principal.
+    figurante ("piper:faber"): dublagem MISTA, quem tem menos de `limite` falas vai para essa voz (Piper, grátis)."""
     principal = voz_principal if voz_principal in VOZES else VOZ_PADRAO
     usadas: Counter = Counter()
     mapa = {}
     for p in personagens:                              # já vêm de quem fala mais para quem fala menos
+        if figurante and len(p.falas) < limite:
+            mapa[p.rotulo] = figurante
+            continue
         if len(p.falas) < MINIMO_FALAS:
             mapa[p.rotulo] = principal
             continue

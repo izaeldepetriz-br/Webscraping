@@ -218,14 +218,64 @@ def duracao_wav(wav: Path) -> float:
         return w.getnframes() / w.getframerate()
 
 
-def montar_trilha(clipes: list[tuple[float, float, Path]], duracao: float, destino: Path, acelerar=None) -> dict:
+def reamostrar_com_ffmpeg(ffmpeg: str):
+    """Devolve a função que converte um .wav para outra taxa (mono, 16 bits): na dublagem mista, as falas do Piper
+    (22.050 ou 16.000 Hz) e as do Gemini (24.000 Hz) entram na mesma trilha."""
+    def reamostrar(wav: Path, taxa: int) -> Path:
+        saida = wav.with_name(f"{wav.stem}-{taxa}.wav")
+        if not saida.is_file():
+            subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(wav), "-ac", "1",
+                            "-ar", str(taxa), "-sample_fmt", "s16", str(saida)], capture_output=True, **SEM_JANELA)
+        return saida if saida.is_file() else wav
+    return reamostrar
+
+
+PREFIXO_PIPER = "piper:"      # voz de uma fala na dublagem mista: "piper:faber" = essa fala vai para o Piper
+
+
+class MotorMisto:
+    """Dublagem mista: as falas com voz "piper:..." (figurantes) vão para o Piper, grátis; as outras para o motor
+    premium (Gemini). piper(voz) devolve o MotorPiper daquela voz (preparado só quando aparece)."""
+
+    def __init__(self, premium, piper):
+        self.premium, self._fabrica, self._pipers = premium, piper, {}
+
+    @property
+    def pedidos(self) -> int:
+        return getattr(self.premium, "pedidos", 0)
+
+    def sintetizar(self, pedidos: list, parar=None, ao_progresso=None) -> None:
+        def voz(p):
+            return p[2] if len(p) > 2 and p[2] else ""
+        baratos: dict[str, list] = {}
+        for p in pedidos:
+            if voz(p).startswith(PREFIXO_PIPER):
+                baratos.setdefault(voz(p)[len(PREFIXO_PIPER):], []).append((p[0], p[1]))
+        for nome, lista in baratos.items():
+            if nome not in self._pipers:
+                self._pipers[nome] = self._fabrica(nome)
+            self._pipers[nome].sintetizar(lista, parar=parar)
+        caros = [p for p in pedidos if not voz(p).startswith(PREFIXO_PIPER)]
+        if caros:
+            self.premium.sintetizar(caros, parar=parar, ao_progresso=ao_progresso)
+        elif ao_progresso:
+            ao_progresso(1.0)
+
+
+def montar_trilha(clipes: list[tuple[float, float, Path]], duracao: float, destino: Path, acelerar=None,
+                  reamostrar=None) -> dict:
     """clipes: [(início, fim da fala na legenda, .wav)] em ordem. Grava 'destino' (mono, 16 bits) do tamanho do
-    vídeo, com cada fala no horário. Devolve {"aceleradas": n, "cortadas": n}."""
+    vídeo, com cada fala no horário. Devolve {"aceleradas": n, "cortadas": n}. reamostrar(wav, taxa): converte a
+    fala que vier noutra taxa (dublagem mista); sem ele, taxas diferentes são erro."""
     contas = {"aceleradas": 0, "cortadas": 0}
     if not clipes:
         raise ErroDublagem("nenhuma fala para montar a trilha")
     with wave.open(str(clipes[0][2]), "rb") as primeiro:
         taxa, largura = primeiro.getframerate(), primeiro.getsampwidth()
+    if reamostrar is not None:                               # mista: a trilha fica na MELHOR taxa entre as falas
+        for _, _, wav in clipes:
+            with wave.open(str(wav), "rb") as w:
+                taxa = max(taxa, w.getframerate())
     silencio_1s = b"\0" * taxa * largura
     with wave.open(str(destino), "wb") as saida:
         saida.setnchannels(1)
@@ -242,7 +292,11 @@ def montar_trilha(clipes: list[tuple[float, float, Path]], duracao: float, desti
         for k, ((inicio, fim, wav), vaga) in enumerate(zip(clipes, vagas(clipes, duracao))):
             proximo = clipes[k + 1][0] if k + 1 < len(clipes) else max(duracao, fim)
             with wave.open(str(wav), "rb") as w:
-                n = w.getnframes()
+                n, taxa_fala = w.getnframes(), w.getframerate()
+            if taxa_fala != taxa and reamostrar is not None:
+                wav = reamostrar(Path(wav), taxa)
+                with wave.open(str(wav), "rb") as w:
+                    n = w.getnframes()
             if n / taxa > vaga and acelerar is not None:
                 fator = min(n / taxa / vaga, ACELERAR_MAX)
                 if fator > 1.02:
@@ -465,7 +519,8 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
                 clipes, adaptadas = _adaptar(clipes, [t for _, t in falas], duracao, motor, adaptar, parar, avisar,
                                              vozes, pasta)
             andamento(0.6)
-            contas = montar_trilha(clipes, duracao, pasta / "trilha.wav", acelerar_com_ffmpeg(ffmpeg))
+            contas = montar_trilha(clipes, duracao, pasta / "trilha.wav", acelerar_com_ffmpeg(ffmpeg),
+                                   reamostrar_com_ffmpeg(ffmpeg))
             andamento(0.7)
             mixar(ffmpeg, video, pasta / "trilha.wav", destino, duracao, len(idiomas), parar,
                   lambda f: andamento(0.7 + 0.3 * f))

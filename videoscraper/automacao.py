@@ -57,8 +57,9 @@ from jellyfin_tools.traducao import Tradutor, estimar_custo, legendas_para_tradu
 from jellyfin_tools import traducao_lote
 from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sincronizar
 from jellyfin_tools.transcricao import Transcritor, legendar_pelo_audio, videos_sem_legenda
-from jellyfin_tools.dublagem import (ErroDublagem, MotorPiper, dublar_video, falas_da_legenda, localizar_ffmpeg,
-                                     pasta_do_filme, preparar_piper, preparar_voz, videos_para_dublar)
+from jellyfin_tools.dublagem import (PREFIXO_PIPER, ErroDublagem, MotorMisto, MotorPiper, dublar_video,
+                                     falas_da_legenda, localizar_ffmpeg, pasta_do_filme, preparar_piper, preparar_voz,
+                                     videos_para_dublar)
 from jellyfin_tools.legendas import ErroLegenda
 from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, ClienteTV, carregar_canais, carregar_historico,
                                        conferir_canais, mensagem_fora_do_ar, publicar, registrar_no_historico,
@@ -184,16 +185,28 @@ def chave_gemini(o: OpcoesJellyfin) -> str:
     return o.chave_gemini or os.environ.get("GEMINI_API_KEY", "")
 
 
+def motor_piper(o: OpcoesJellyfin, voz: str = "", progresso_piper=None, progresso_voz=None) -> MotorPiper:
+    """O Piper (grátis, no PC) com a voz dada (ou a da tela). Baixa o programa e a voz só na 1ª vez."""
+    pasta = config.ARQUIVO.parent
+    return MotorPiper(preparar_piper(pasta / "piper", ao_progresso=progresso_piper),
+                      preparar_voz(voz or o.voz_dublagem, pasta / "vozes", ao_progresso=progresso_voz))
+
+
+def figurante(o: OpcoesJellyfin) -> str | None:
+    """Dublagem mista: a voz dos figurantes ("piper:faber"), ou None (todos com o Gemini)."""
+    return f"{PREFIXO_PIPER}{o.voz_dublagem}" if usa_gemini(o) and o.figurantes_piper else None
+
+
 def preparar_motor(o: OpcoesJellyfin, progresso_piper=None, progresso_voz=None):
-    """A voz da dublagem: Gemini (premium, com a chave do AI Studio) ou Piper (grátis; baixa na 1ª vez)."""
+    """A voz da dublagem: Gemini (premium, com a chave do AI Studio) ou Piper (grátis; baixa na 1ª vez). Com os
+    figurantes no Piper (mista), um MotorMisto: cada fala vai para o motor da voz dela."""
     if usa_gemini(o):
         if not chave_gemini(o):
             raise FaltaConfiguracao("Para a voz premium do Gemini, crie a chave em aistudio.google.com (Get API key) "
                                     "e cole no campo \"Chave do Google AI Studio\" (ou use o Piper, grátis).")
-        return voz_gemini.MotorGemini(chave_gemini(o), o.voz_gemini)
-    pasta = config.ARQUIVO.parent
-    return MotorPiper(preparar_piper(pasta / "piper", ao_progresso=progresso_piper),
-                      preparar_voz(o.voz_dublagem, pasta / "vozes", ao_progresso=progresso_voz))
+        gemini = voz_gemini.MotorGemini(chave_gemini(o), o.voz_gemini)
+        return MotorMisto(gemini, lambda voz: motor_piper(o, voz)) if o.figurantes_piper else gemini
+    return motor_piper(o, progresso_piper=progresso_piper, progresso_voz=progresso_voz)
 
 
 def pasta_dublagem() -> Path:
@@ -544,7 +557,8 @@ def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
         if usa_gemini(o) and o.voz_por_personagem:
             try:
                 lista = ouvir_personagens(o, item.video, falas_da_legenda(item.legenda))
-                vozes = personagens.vozes_por_fala(lista, personagens.distribuir_vozes(lista, o.voz_gemini))
+                vozes = personagens.vozes_por_fala(lista, personagens.distribuir_vozes(lista, o.voz_gemini,
+                                                                                       figurante(o)))
             except (ErroDublagem, OSError, ErroLegenda) as erro:
                 log.warning("Voz por personagem em %s: %s (segue com uma voz só)", item.video.name, erro)
         r = dublar_video(item.video, item.legenda, motor, adaptar=adaptador(o, item.video.stem),

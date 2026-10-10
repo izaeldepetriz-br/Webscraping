@@ -282,6 +282,11 @@ primeira falha (antes esperava o tempo limite em cada filme).
   tabela **"Vozes dos personagens"** mostra cada pessoa, quantas falas e um exemplo, para trocar a voz, usar uma
   voz só ou pular o filme. Quem fala pouco usa a voz principal. Nos robôs (`--dublar`), as vozes são escolhidas
   sozinhas. Pode errar com falas sobrepostas, música alta ou muitas pessoas.
+- **Dublagem mista (Gemini + Piper)**, para economizar: (1) **por personagem** — com a opção "Misto: figurantes
+  com o Piper", quem tem menos de 20 falas fica com a voz do Piper (grátis) e os principais com o Gemini; a
+  tabela de vozes também oferece as vozes do Piper; (2) **por filme** — com o Gemini e vários filmes, uma lista
+  com caixas de marcar pergunta quais vão com a voz premium; os desmarcados vão com o Piper. A trilha junta falas
+  de taxas diferentes (o Piper grava a 22 kHz e o Gemini a 24 kHz). Um personagem nunca troca de voz no meio.
 - **Simular a vigia**: o botão **"O que a vigia faria agora?"** mostra na lista o que ela moveria (com as mesmas
   regras: só o que terminou de baixar, "dentro dela mesma", os desmarcados), **sem mover nada**.
 - **Pasta vigiada no lugar**: a opção **"Organizar cada pasta vigiada dentro dela mesma"** (já marcada) arruma

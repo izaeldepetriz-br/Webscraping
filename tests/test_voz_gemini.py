@@ -198,3 +198,51 @@ def test_falas_da_legenda_e_a_mesma_lista_da_dublagem(tmp_path):
     legenda.write_text("1\n00:00:01,000 --> 00:00:02,000\n♪ ♪\n\n2\n00:00:03,000 --> 00:00:04,000\n- Oi!\n",
                        encoding="utf-8")
     assert [t for _, t in falas_da_legenda(legenda)] == ["Oi!"]
+
+
+def test_motor_misto_manda_os_figurantes_para_o_piper(tmp_path):
+    from jellyfin_tools.dublagem import MotorMisto
+    feitos = {"gemini": [], "faber": []}
+
+    class Falso:
+        def __init__(self, nome):
+            self.nome, self.pedidos = nome, 0
+
+        def sintetizar(self, pedidos, parar=None, ao_progresso=None):
+            self.pedidos += 1
+            feitos[self.nome] += [p[0] for p in pedidos]
+            assert self.nome == "gemini" or all(len(p) == 2 for p in pedidos)   # o Piper recebe (texto, wav)
+    criados = []
+    motor = MotorMisto(Falso("gemini"), lambda voz: criados.append(voz) or Falso(voz))
+    motor.sintetizar([("A", tmp_path / "1.wav", "Charon"), ("B", tmp_path / "2.wav", "piper:faber"),
+                      ("C", tmp_path / "3.wav", ""), ("D", tmp_path / "4.wav", "piper:faber")])
+    assert feitos == {"gemini": ["A", "C"], "faber": ["B", "D"]} and criados == ["faber"]
+    motor.sintetizar([("E", tmp_path / "5.wav", "piper:faber")])        # o Piper da voz é preparado uma vez só
+    assert criados == ["faber"] and motor.pedidos == 1
+
+
+def test_figurantes_ficam_com_o_piper():
+    lista = [personagens.Personagem("Conde", "m", falas=list(range(50))),
+             personagens.Personagem("Ellen", "f", falas=list(range(50, 80))),
+             personagens.Personagem("Guarda", "m", falas=list(range(80, 85)))]
+    mapa = personagens.distribuir_vozes(lista, "Charon", figurante="piper:faber")
+    assert mapa["Conde"] == "Charon" and mapa["Ellen"] in voz_gemini.VOZES_FEMININAS
+    assert mapa["Guarda"] == "piper:faber"                               # 5 falas (< 20): figurante, grátis
+
+
+@pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
+def test_trilha_junta_falas_de_taxas_diferentes(tmp_path):
+    from jellyfin_tools.dublagem import montar_trilha, reamostrar_com_ffmpeg
+    piper, gemini = tmp_path / "piper.wav", tmp_path / "gemini.wav"
+    for wav, taxa in ((piper, 22050), (gemini, 24000)):
+        with wave.open(str(wav), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(taxa)
+            w.writeframes(b"\x10\x00" * taxa)                            # 1 s
+    destino = tmp_path / "trilha.wav"
+    montar_trilha([(0.0, 1.0, piper), (2.0, 3.0, gemini)], 4.0, destino, reamostrar=reamostrar_com_ffmpeg(FFMPEG))
+    with wave.open(str(destino), "rb") as w:
+        assert w.getframerate() == 24000 and abs(w.getnframes() / 24000 - 4.0) < 0.05   # a melhor das taxas
+    with pytest.raises(ErroDublagem, match="formatos diferentes"):        # sem reamostrar: erro, como antes
+        montar_trilha([(0.0, 1.0, piper), (2.0, 3.0, gemini)], 4.0, destino)
