@@ -2030,6 +2030,14 @@ class JanelaModerna(ctk.CTk):
         self._checkbox(lateral, "Lembrar as chaves neste computador", self.var_jf_lembrar)
         self._rotulo(lateral, "Sem marcar, chaves e tokens valem só até\nfechar o programa.",
                      fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(2, 0), **p)
+        # levar tudo para outro computador (ou guardar uma cópia): opções, regras, canais e memória de downloads
+        self.bt_exportar_config = self._botao(lateral, "Exportar configurações...", self.ao_exportar_config, "fantasma")
+        self.bt_exportar_config.pack(fill="x", pady=(8, 0), **p)
+        self.bt_importar_config = self._botao(lateral, "Importar configurações...", self.ao_importar_config, "fantasma")
+        self.bt_importar_config.pack(fill="x", pady=(4, 0), **p)
+        # as tarefas de robô (organizar, conferir canais, traduzir...) no Agendador de Tarefas do Windows
+        self.bt_agendar = self._botao(lateral, "Agendar tarefas...", self.ao_agendar, "fantasma")
+        self.bt_agendar.pack(fill="x", pady=(4, 0), **p)
         ctk.CTkFrame(lateral, height=12, fg_color="transparent").pack()
         self._mostrar_campos_jf()
 
@@ -3167,6 +3175,15 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_legendar_audio(self) -> None:
+        pass
+
+    def ao_exportar_config(self) -> None:
+        pass
+
+    def ao_agendar(self) -> None:
+        pass
+
+    def ao_importar_config(self) -> None:
         pass
 
     def ao_dublar(self) -> None:

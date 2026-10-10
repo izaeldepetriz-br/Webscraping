@@ -43,6 +43,7 @@ _PORTUGUES = {"pt", "pt-br", "pt-pt", "por", "pob", "pb", "ptbr"}
 _SISTEMA = """Você é um tradutor profissional de legendas de filmes e séries.
 Regras:
 - Traduza cada fala para {idioma}, com a linguagem natural de legenda (frases curtas, fáceis de ler rápido).
+- No máximo 42 letras por linha e 2 linhas por fala: se a tradução ficar longa, enxugue sem perder o sentido.
 - Devolva TODAS as falas recebidas, cada uma com o MESMO id. Não junte, não divida e não pule falas.
 - Mantenha as quebras de linha dentro de cada fala e as marcas de formatação como <i>, </i>, <b>, {{\\an8}}.
 - Nomes de pessoas, lugares e marcas não se traduzem.
@@ -95,6 +96,34 @@ def ler_srt(texto: str) -> list[Fala]:
 
 def gerar_srt(falas: list[Fala]) -> str:
     return "\n\n".join(f"{n}\n{f.tempo}\n{f.texto}" for n, f in enumerate(falas, 1)) + "\n"
+
+
+MAX_LINHA = 42                 # letras por linha de legenda (o padrão de legendagem)
+_RE_MARCA = re.compile(r"<[^>]+>|\{[^}]*\}")
+
+
+def quebrar_linhas(texto: str, max_linha: int = MAX_LINHA) -> str:
+    """Texto longo vira 2 linhas equilibradas, cortando num espaço perto do meio."""
+    texto = " ".join(texto.split())
+    if len(_RE_MARCA.sub("", texto)) <= max_linha:
+        return texto
+    meio = len(texto) // 2
+    espacos = [i for i, c in enumerate(texto) if c == " "]
+    if not espacos:
+        return texto
+    corte = min(espacos, key=lambda i: abs(i - meio))
+    return texto[:corte] + "\n" + texto[corte + 1:]
+
+
+def ajustar_linhas(texto: str, max_linha: int = MAX_LINHA) -> str:
+    """Revisão da legenda traduzida: linha com mais de 42 letras (sem contar <i> etc.) é redistribuída em 2 linhas
+    equilibradas. Fala de diálogo ('- Oi.\n- Olá.') e falas que já cabem ficam como estão."""
+    linhas = texto.split("\n")
+    if all(len(_RE_MARCA.sub("", l)) <= max_linha for l in linhas):
+        return texto
+    if len(linhas) > 1 and all(l.lstrip(" <i>").startswith("-") for l in linhas):
+        return texto                                   # diálogo: cada pessoa na sua linha
+    return quebrar_linhas(" ".join(linhas), max_linha)
 
 
 def parece_portugues(texto: str) -> bool:
@@ -291,6 +320,7 @@ def traduzir_arquivo(origem: str | Path, destino: str | Path, tradutor: Tradutor
         return ResultadoTraducao(origem, destino, "erro", "a legenda não tem nenhuma fala")
     try:
         textos = tradutor.traduzir_falas([f.texto for f in falas], titulo or origem.stem, parar, ao_progresso)
+        textos = [ajustar_linhas(t) for t in textos]                 # revisão: no máximo 42 letras por linha
     except ErroTraducao as erro:
         return ResultadoTraducao(origem, destino, "erro", str(erro), len(falas))
     parcial = destino.with_name(destino.name + ".part")

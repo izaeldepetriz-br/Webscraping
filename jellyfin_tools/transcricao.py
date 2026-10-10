@@ -23,11 +23,10 @@ from pathlib import Path
 
 from .legendas import nome_do_idioma
 from .nomes import eh_video_da_biblioteca
-from .traducao import _PORTUGUES, Fala, ErroTraducao, gerar_srt, traduzir_arquivo
+from .traducao import _PORTUGUES, MAX_LINHA, Fala, ErroTraducao, gerar_srt, quebrar_linhas, traduzir_arquivo
 
 MODELOS = ("tiny", "base", "small", "medium", "large-v3", "turbo")
 MODELO_PADRAO = "small"            # bom equilíbrio entre acerto e tempo no processador
-MAX_LINHA = 42                     # letras por linha de legenda
 MAX_CARACTERES = 2 * MAX_LINHA     # 2 linhas por fala
 MAX_DURACAO = 6.0                  # segundos que uma fala fica na tela, no máximo
 PAUSA = 0.8                        # silêncio entre palavras que vira um corte de fala
@@ -44,19 +43,6 @@ class ErroTranscricao(Exception):
 def tempo_srt(segundos: float) -> str:
     ms = max(0, int(round(segundos * 1000)))
     return f"{ms // 3_600_000:02d}:{ms // 60_000 % 60:02d}:{ms // 1000 % 60:02d},{ms % 1000:03d}"
-
-
-def quebrar_linhas(texto: str, max_linha: int = MAX_LINHA) -> str:
-    """Texto longo vira 2 linhas equilibradas, cortando num espaço perto do meio."""
-    texto = " ".join(texto.split())
-    if len(texto) <= max_linha:
-        return texto
-    meio = len(texto) // 2
-    espacos = [i for i, c in enumerate(texto) if c == " "]
-    if not espacos:
-        return texto
-    corte = min(espacos, key=lambda i: abs(i - meio))
-    return texto[:corte] + "\n" + texto[corte + 1:]
 
 
 def _fecha_frase(palavra: str) -> bool:

@@ -138,3 +138,22 @@ def test_estimativa_de_custo():
     assert estimar_custo(1000, 10, "modelo-que-nao-existe")[2] is None
     assert re.fullmatch(r"claude-[a-z0-9-]+", MODELO_PADRAO)
     assert Fala("t", "x") == Fala("t", "x")
+
+
+def test_revisao_das_linhas_traduzidas():
+    from jellyfin_tools.traducao import ajustar_linhas
+    longa = "Esta tradução ficou comprida demais para uma linha só de legenda"
+    assert ajustar_linhas(longa).count("\n") == 1 and all(len(l) <= 42 for l in ajustar_linhas(longa).split("\n"))
+    assert ajustar_linhas("Curta.\nOutra curta.") == "Curta.\nOutra curta."              # já cabe: não mexe
+    dialogo = "- Uma pessoa falando uma frase bem longa aqui.\n- E a outra responde."
+    assert ajustar_linhas(dialogo) == dialogo                                           # diálogo: uma por linha
+    assert ajustar_linhas("<i>Sem contar as marcas de itálico aqui</i>") == "<i>Sem contar as marcas de itálico aqui</i>"
+
+
+def test_mensagem_quando_o_ffmpeg_fecha_sozinho():
+    from videoscraper.download import explicar_falha_ffmpeg
+    assert explicar_falha_ffmpeg(1, "Invalid data found") == "Invalid data found"
+    linux = explicar_falha_ffmpeg(-11, "", "/x/imageio_ffmpeg/binaries/ffmpeg-linux")
+    assert "fechou sozinho" in linux and ("apt install ffmpeg" in linux or "ffmpeg.org" in linux)
+    assert "código 3221225477" in explicar_falha_ffmpeg(3221225477, "", "C:/ffmpeg.exe")
+    assert explicar_falha_ffmpeg(1, "") == "sem detalhes (código 1)"

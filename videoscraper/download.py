@@ -85,6 +85,18 @@ def baixar_arquivo(sessao: requests.Session, url: str, destino: str,
             os.remove(parcial)
 
 
+def explicar_falha_ffmpeg(codigo: int, saida: str, ffmpeg: str = "") -> str:
+    """Antes: "ffmpeg falhou: sem detalhes". Agora diz o que houve e o que fazer quando ele fecha sem explicar."""
+    if (saida or "").strip():
+        return saida.strip()[-400:]
+    if codigo < 0 or codigo >= 0xC0000000:            # Linux: morto por sinal; Windows: falha do programa
+        dica = ("o ffmpeg que vem no pacote imageio-ffmpeg não lê streaming pela rede no Linux: instale o do sistema "
+                "(sudo apt install ffmpeg) e tente de novo" if "imageio_ffmpeg" in ffmpeg and os.name != "nt" else
+                "tente de novo; se repetir, instale o ffmpeg do sistema (ffmpeg.org) e reabra o programa")
+        return f"o ffmpeg fechou sozinho, sem explicar (código {codigo}): {dica}"
+    return f"sem detalhes (código {codigo})"
+
+
 def baixar_streaming(sessao: requests.Session, url: str, destino: str,
                      referer: str | None = None) -> None:
     """HLS (.m3u8) / DASH (.mpd): o vídeo vem em pedaços; o ffmpeg junta tudo num .mp4.
@@ -110,7 +122,7 @@ def baixar_streaming(sessao: requests.Session, url: str, destino: str,
     try:
         resultado = subprocess.run(comando, capture_output=True, text=True, **SEM_JANELA)
         if resultado.returncode != 0:
-            raise RuntimeError("ffmpeg falhou: " + (resultado.stderr.strip()[-400:] or "sem detalhes"))
+            raise RuntimeError("ffmpeg falhou: " + explicar_falha_ffmpeg(resultado.returncode, resultado.stderr, ffmpeg))
         os.replace(parcial, destino)
     finally:
         if os.path.exists(parcial):

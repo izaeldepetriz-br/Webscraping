@@ -21,6 +21,7 @@ import threading
 import time
 import traceback
 import webbrowser
+import zipfile
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -61,7 +62,7 @@ from . import config
 from .cli import salvar
 from .extracao import LinkVideo
 from .gui import ORIGENS, _SaidaParaFila, _so_caracteres_basicos
-from . import atualizacao, automacao, instalacao, bandeja, inicializacao
+from . import agendador, atualizacao, automacao, instalacao, bandeja, inicializacao
 from .gui_moderna import (DialogoCompletar, JanelaEspelhos, JanelaModerna, JanelaNaoIdentificados,
                           OpcoesInterface, Tema)
 from .tv_moderna import TVAoVivo
@@ -2040,6 +2041,116 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.fila.put(("msg", ("Criar legenda pelo áudio", texto, "erro" if erros and not feitas else "sucesso")))
 
         self._rodar(f"Ouvindo {len(itens)} vídeo(s) com o Whisper...", tarefa)
+
+    # ================================================================== exportar / importar as configurações
+    def _pedir_arquivo_zip(self, salvar: bool) -> str:
+        tipos = [("Configurações do Maestro", "*.zip")]
+        if salvar:
+            return filedialog.asksaveasfilename(title="Exportar configurações", defaultextension=".zip", filetypes=tipos,
+                                                initialfile=f"maestro-configuracoes-{datetime.now():%Y-%m-%d}.zip")
+        return filedialog.askopenfilename(title="Importar configurações", filetypes=tipos)
+
+    def ao_exportar_config(self) -> None:
+        """Um .zip com as opções, as regras do "Corrigir nome", os canais e a memória de downloads."""
+        self._salvar_config()
+        escolha = self.escolher("Exportar configurações", "Levar as chaves de API (TMDB, Anthropic, Jellyfin, "
+                                "Discord...) junto?\n\nCom as chaves, guarde o arquivo em lugar seguro: quem tiver o "
+                                "arquivo usa as suas contas.", ("Sem as chaves", "Com as chaves"))
+        if escolha is None:
+            return
+        destino = self._pedir_arquivo_zip(salvar=True)
+        if not destino:
+            return
+        if escolha == "Com as chaves":                     # as da tela, mesmo sem "Lembrar as chaves"
+            tudo = config.carregar()
+            tudo["jellyfin"] = {**tudo.get("jellyfin", {}),
+                                **{k: v for k, v in asdict(self.obter_opcoes_jellyfin()).items() if k in SEGREDOS}}
+            config.salvar(tudo)
+        try:
+            nomes = config.exportar(destino, SEGREDOS, incluir_chaves=escolha == "Com as chaves")
+        except OSError as erro:
+            self.mostrar_mensagem("Exportar configurações", f"Não deu para gravar: {erro}", "erro")
+            return
+        finally:
+            if escolha == "Com as chaves":
+                self._salvar_config()                      # volta a respeitar o "Lembrar as chaves"
+        self._log.info("Configurações exportadas para %s (%s)", destino, ", ".join(nomes))
+        self.mostrar_mensagem("Exportar configurações", f"Pronto: {len(nomes)} arquivo(s) em\n{destino}\n\nNo outro "
+                              "computador: Maestro > aba Jellyfin > \"Importar configurações...\".", "sucesso")
+
+    def ao_importar_config(self) -> None:
+        origem = self._pedir_arquivo_zip(salvar=False)
+        if not origem:
+            return
+        if not self.perguntar("Importar configurações", "As configurações deste computador (opções, regras, canais e "
+                              "memória de downloads) serão TROCADAS pelas do arquivo.\n\nUma cópia das atuais fica em "
+                              "backups (dá para voltar importando ela). Continuar?"):
+            return
+        try:
+            nomes, copia = config.importar(origem)
+        except (OSError, ValueError, zipfile.BadZipFile) as erro:
+            self.mostrar_mensagem("Importar configurações", f"Não deu para importar: {erro}", "erro")
+            return
+        self._carregar_config()
+        self._canais, self._historico_canais = [], None
+        self._log.info("Configurações importadas de %s (%s); cópia das antigas: %s", origem, ", ".join(nomes), copia)
+        self.mostrar_mensagem("Importar configurações", f"Pronto: {len(nomes)} arquivo(s) importado(s).\n\nCópia das "
+                              f"configurações anteriores:\n{copia}", "sucesso")
+
+    # ================================================================== Agendar tarefas (Agendador do Windows)
+    def ao_agendar(self) -> None:
+        """Escolhe um comando de robô, a frequência e o horário; cria (ou tira) a tarefa no Agendador do Windows."""
+        try:
+            existentes = {c: (proxima, situacao) for c, proxima, situacao in agendador.listar()}
+        except agendador.ErroAgenda as erro:
+            self.mostrar_mensagem("Agendar tarefas", str(erro), "aviso")
+            return
+        comandos = list(agendador.COMANDOS)
+        itens = [f"{agendador.COMANDOS[c]}" + (f"   ·   agendada (próxima: {existentes[c][0]})" if c in existentes else "")
+                 for c in comandos]
+        n = self.escolher_da_lista(
+            "Agendar tarefas", "O que o Maestro deve fazer sozinho, sem abrir a janela? A tarefa vai para o Agendador "
+            "de Tarefas do Windows (pasta \"Maestro\") e roda com o computador ligado. O resultado fica no log.",
+            itens, "Escolher")
+        if n is None:
+            return
+        comando = comandos[n]
+        if comando in existentes:
+            acao = self.escolher("Agendar tarefas", f"\"{agendador.COMANDOS[comando]}\" já está agendada (próxima: "
+                                 f"{existentes[comando][0]}).", ("Mudar quando roda", "Tirar do agendamento"))
+            if acao is None:
+                return
+            if acao == "Tirar do agendamento":
+                try:
+                    agendador.remover(comando)
+                except agendador.ErroAgenda as erro:
+                    self.mostrar_mensagem("Agendar tarefas", f"Não deu para tirar: {erro}", "erro")
+                    return
+                self._log.info("Agendador: tarefa %s removida", agendador.nome_da_tarefa(comando))
+                self.mostrar_mensagem("Agendar tarefas", "Pronto: a tarefa saiu do agendamento.", "sucesso")
+                return
+        frequencia = self.escolher("Agendar tarefas", f"Com que frequência \"{agendador.COMANDOS[comando]}\"?",
+                                   agendador.FREQUENCIAS)
+        if frequencia is None:
+            return
+        hora = "00:00"
+        if frequencia != agendador.FREQUENCIAS[3]:
+            horas = [f"{h:02d}:00" for h in range(24)]
+            k = self.escolher_da_lista("Agendar tarefas", "A que horas (a 1ª vez, no caso de \"a cada 6 horas\")?",
+                                       horas, "Usar este horário", marcado=6)
+            if k is None:
+                return
+            hora = horas[k]
+        try:
+            nome = agendador.agendar(comando, frequencia, hora)
+        except agendador.ErroAgenda as erro:
+            self.mostrar_mensagem("Agendar tarefas", f"O Agendador recusou: {erro}", "erro")
+            return
+        self._log.info("Agendador: %s (%s, %s)", nome, frequencia, hora)
+        self.mostrar_mensagem("Agendar tarefas", f"Pronto: \"{agendador.COMANDOS[comando]}\" — {frequencia.lower()}"
+                              + (f", às {hora}" if frequencia != agendador.FREQUENCIAS[3] else "") + ".\n\nFica no "
+                              f"Agendador de Tarefas como {nome}. O resultado de cada vez fica no log (Abrir log).",
+                              "sucesso")
 
     # ================================================================== dublagem por IA (Piper)
     def ao_dublar(self) -> None:

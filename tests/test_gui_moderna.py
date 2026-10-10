@@ -3454,3 +3454,34 @@ def test_tv_coluna_idioma_com_filtro_e_numerar_por_idioma(app):
     janela.bt_numerar.invoke()
     assert [(c.nome, c.numero) for c in app._canais] == [("Globo Brasil", "1"), ("Record (Brazil)", "2"),
                                                          ("CNN", "101"), ("Canal Sur", "201")]
+
+
+def test_exportar_e_importar_configuracoes_pela_janela(app, tmp_path):
+    app.var_jf_origem.set(str(tmp_path / "Downloads"))
+    app.var_jf_chave_tmdb.set("chave-secreta")
+    destino = tmp_path / "exportado.zip"
+    app._pedir_arquivo_zip = lambda salvar: str(destino)
+    app.escolher = lambda t, m, opcoes, **k: opcoes[0]                  # "Sem as chaves"
+    app.bt_exportar_config.invoke()
+    assert app.caixas[-1][:2] == ("sucesso", "Exportar configurações") and destino.is_file()
+    import json
+    import zipfile
+    with zipfile.ZipFile(destino) as z:
+        dados = json.loads(z.read("config.json"))["jellyfin"]
+    assert dados["origem"] == str(tmp_path / "Downloads") and "chave_tmdb" not in dados
+    app.var_jf_origem.set("outra coisa")
+    app.bt_importar_config.invoke()                                     # perguntar() devolve True no teste
+    assert app.var_jf_origem.get() == str(tmp_path / "Downloads")      # voltou o da exportação
+    assert app.caixas[-1][:2] == ("sucesso", "Importar configurações") and "backups" in app.caixas[-1][2]
+
+
+def test_agendar_tarefa_pela_janela(app, monkeypatch):
+    from videoscraper import agendador
+    feitos = []
+    monkeypatch.setattr(agendador, "listar", lambda: [])
+    monkeypatch.setattr(agendador, "agendar", lambda c, f, h: feitos.append((c, f, h)) or agendador.nome_da_tarefa(c))
+    app.escolher_da_lista = lambda t, m, itens, botao="", **k: 2 if botao == "Escolher" else 22   # canais, 22:00
+    app.escolher = lambda t, m, opcoes, **k: opcoes[0]                                             # todo dia
+    app.bt_agendar.invoke()
+    assert feitos == [("--conferir-canais", "Todo dia", "22:00")]
+    assert app.caixas[-1][0] == "sucesso" and "Maestro\\conferir-canais" in app.caixas[-1][2]
