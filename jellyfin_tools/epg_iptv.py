@@ -24,6 +24,8 @@ import subprocess
 import sys
 import time
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from xml.sax.saxutils import escape, quoteattr
 
@@ -198,9 +200,35 @@ def estado_do_coletor(rodar=subprocess.run, docker: str | None = None) -> str:
     return "rodando" if situacao == "running" else f"parado ({situacao or '?'})"
 
 
-def programas_do_guia(endereco: str = URL_GUIA_LOCAL, sessao=None, timeout: float = 30) -> dict[str, int] | None:
-    """{id do canal: quantos programas} no guia que o coletor entrega. None = o guia ainda não está lá (o
-    coletor está desligado ou não terminou a 1ª coleta)."""
+@dataclass(frozen=True, order=True)
+class Programa:
+    inicio: datetime
+    fim: datetime | None
+    titulo: str
+
+
+_RE_HORA = re.compile(r"(\d{14})\s*([+-]\d{4})?")
+
+
+def _quando(texto: str | None) -> datetime | None:
+    """'20261006143000 -0300' -> datetime com fuso (sem fuso = UTC, como manda o XMLTV)."""
+    if not (m := _RE_HORA.match((texto or "").strip())):
+        return None
+    try:
+        hora = datetime.strptime(m.group(1), "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+    if m.group(2):
+        sinal = 1 if m.group(2)[0] == "+" else -1
+        fuso = timezone(sinal * timedelta(hours=int(m.group(2)[1:3]), minutes=int(m.group(2)[3:5])))
+    else:
+        fuso = timezone.utc
+    return hora.replace(tzinfo=fuso)
+
+
+def ler_guia(endereco: str = URL_GUIA_LOCAL, sessao=None, timeout: float = 30) -> dict[str, list[Programa]] | None:
+    """{id do canal: [programas]} do guia que o coletor entrega. None = o guia ainda não está lá (o coletor está
+    desligado ou não terminou a 1ª coleta)."""
     try:
         r = (sessao or requests).get(endereco, timeout=timeout)
     except requests.RequestException:
@@ -213,17 +241,50 @@ def programas_do_guia(endereco: str = URL_GUIA_LOCAL, sessao=None, timeout: floa
             dados = gzip.decompress(dados)
         except OSError:
             return None
-    contagem: dict[str, int] = {}
+    grade: dict[str, list[Programa]] = {}
     try:
         for _, el in ET.iterparse(io.BytesIO(dados), events=("end",)):
             if el.tag == "programme" and el.get("channel"):
-                contagem[el.get("channel")] = contagem.get(el.get("channel"), 0) + 1
+                inicio = _quando(el.get("start"))
+                if inicio is not None:
+                    titulo = (el.findtext("title") or "").strip() or "(sem título)"
+                    grade.setdefault(el.get("channel"), []).append(Programa(inicio, _quando(el.get("stop")), titulo))
+                el.clear()
             elif el.tag == "channel" and el.get("id"):
-                contagem.setdefault(el.get("id"), 0)
-            el.clear()
+                grade.setdefault(el.get("id"), [])
+                el.clear()
     except ET.ParseError:
         return None
-    return contagem or None                                         # guia vazio = ainda não coletou
+    return {canal: sorted(lista) for canal, lista in grade.items()} or None    # vazio = ainda não coletou
+
+
+def programas_do_guia(endereco: str = URL_GUIA_LOCAL, sessao=None, timeout: float = 30) -> dict[str, int] | None:
+    """{id do canal: quantos programas} no guia que o coletor entrega (None = o guia ainda não está lá)."""
+    grade = ler_guia(endereco, sessao, timeout)
+    return None if grade is None else {canal: len(lista) for canal, lista in grade.items()}
+
+
+def agora_por_canal(canais, entradas: list[tuple[str, str, str]], grade: dict[str, list[Programa]] | None,
+                    agora: datetime | None = None) -> dict[str, str]:
+    """{link do canal: "Jornal Hoje (até 14:00) → Sessão da Tarde"}: o que passa agora e o que vem depois, no
+    horário DESTE computador. Canais sem grade ficam de fora."""
+    if not grade:
+        return {}
+    agora = agora or datetime.now(timezone.utc)
+    por_nome: dict[str, str] = {}
+    for nome, xmltv_id, _ in entradas:
+        por_nome.setdefault(nome, xmltv_id)
+    resultado = {}
+    for c in canais:
+        lista = grade.get(por_nome.get(c.nome, ""), [])
+        atual = next((p for p in lista if p.inicio <= agora and (p.fim is None or agora < p.fim)), None)
+        proximo = next((p for p in lista if p.inicio > agora), None)
+        if atual:
+            ate = f" (até {atual.fim.astimezone():%H:%M})" if atual.fim else ""
+            resultado[c.url] = f"{atual.titulo}{ate}" + (f" → {proximo.titulo}" if proximo else "")
+        elif proximo:
+            resultado[c.url] = f"às {proximo.inicio.astimezone():%H:%M}: {proximo.titulo}"
+    return resultado
 
 
 def ler_channels_xml(arquivo: str | Path) -> list[tuple[str, str, str]]:

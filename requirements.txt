@@ -6,3 +6,4 @@ imageio-ffmpeg>=0.5
 customtkinter>=5.2
 pystray>=0.19       # ícone perto do relógio (iniciar com o Windows)
 pillow>=10
+anthropic>=1.0       # traduzir legendas com o Claude (API da Anthropic)

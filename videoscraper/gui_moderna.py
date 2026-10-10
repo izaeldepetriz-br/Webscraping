@@ -140,6 +140,8 @@ class OpcoesJellyfin:
     atualizar_sozinho: bool = False  # versão nova: baixa, instala e reinicia o programa sozinho (quando livre)
     versao_avisada: str = ""         # a última versão já avisada (não repete o aviso a cada abertura)
     fechar_na_bandeja: bool = False  # o X esconde a janela perto do relógio (a vigia continua)
+    chave_claude: str = ""           # API da Anthropic: traduzir legendas (vazio = variável ANTHROPIC_API_KEY)
+    modelo_traducao: str = "claude-sonnet-4-6"
 
 
 # Máximo dos campos "Máx. de páginas" e "Máx. de vídeos" (antes 2000 e 1000).
@@ -795,6 +797,7 @@ class LinhaCanal(NamedTuple):
     morto: bool = False        # falhou em TODAS as últimas conferências (3 ou mais)
     idioma: str = ""           # "Português" (da lista ou deduzido pelo país/nome/link)
     programacao: str = ""      # "✓ 57 programas · mi.tv", "aguardando coleta · mi.tv", "só categoria" ("" = não conferido)
+    agora: str = ""            # "Jornal Hoje (até 14:00) → Sessão da Tarde" (do guia do coletor)
 
 
 class DialogoCanal(ctk.CTkToplevel):
@@ -921,8 +924,8 @@ class JanelaCanais(ctk.CTkToplevel):
             'publicar', 'editar' (iid), 'editar_selecionados', 'numerar', 'desfazer'}."""
 
     COLUNAS = (("numero", "Nº", 44), ("grupo", "Grupo", 100), ("idioma", "Idioma", 90),
-               ("programacao", "Programação", 185), ("situacao", "Situação", 140), ("historico", "Últimas", 185),
-               ("url", "Link", 220))
+               ("programacao", "Programação", 175), ("agora", "Agora passando", 240), ("situacao", "Situação", 140),
+               ("historico", "Últimas", 175), ("url", "Link", 220))
 
     def __init__(self, master, acoes: dict):
         super().__init__(master, fg_color=Tema.CARTAO)
@@ -976,7 +979,11 @@ class JanelaCanais(ctk.CTkToplevel):
         self.tabela.grid(row=0, column=0, sticky="nsew")
         rolagem = ctk.CTkScrollbar(quadro, command=self.tabela.yview, button_color=Tema.CARTAO_BORDA)
         rolagem.grid(row=0, column=1, sticky="ns", padx=(4, 0))
-        self.tabela.configure(yscrollcommand=rolagem.set)
+        # muitas colunas: rola para o lado em vez de espremer (o Link sumia numa janela pequena)
+        rolagem_lado = ctk.CTkScrollbar(quadro, command=self.tabela.xview, orientation="horizontal",
+                                        button_color=Tema.CARTAO_BORDA, height=14)
+        rolagem_lado.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        self.tabela.configure(yscrollcommand=rolagem.set, xscrollcommand=rolagem_lado.set)
         self.tabela.bind("<Delete>", lambda e: acoes["remover"]())
 
         # Linha 1: o resumo e as formas de SELECIONAR. Linha 2: o que fazer com os selecionados.
@@ -1098,7 +1105,7 @@ class JanelaCanais(ctk.CTkToplevel):
         self.bind("<Escape>", lambda e: self.destroy())
 
     TITULOS = {"#0": "Canal", "numero": "Nº", "grupo": "Grupo", "idioma": "Idioma", "programacao": "Programação",
-               "situacao": "Situação", "historico": "Últimas", "url": "Link"}
+               "agora": "Agora passando", "situacao": "Situação", "historico": "Últimas", "url": "Link"}
 
     def preencher(self, linhas: list[LinhaCanal], manter_selecao: bool = False) -> None:
         """linhas: [LinhaCanal] (ok None = não conferido).
@@ -1123,6 +1130,8 @@ class JanelaCanais(ctk.CTkToplevel):
                 if linha.situacao and linha.situacao != "—" else "(não conferido)"
         if coluna == "historico":          # sem as marcas ✓✕: "2 de 5 falharam", "sempre no ar"
             return linha.historico.split("  ", 1)[-1] if linha.historico else "(nunca conferido)"
+        if coluna == "agora":              # o programa de agora (sem o horário e o próximo)
+            return linha.agora.split(" (até")[0].split(" → ")[0] if linha.agora else "(sem grade agora)"
         if coluna == "programacao":        # sem a contagem: "com programação · mi.tv" junta os canais do mesmo site
             if not linha.programacao:
                 return "(não conferido)"
@@ -1140,7 +1149,7 @@ class JanelaCanais(ctk.CTkToplevel):
             tags = () if linha.ok is None else ("ok" if linha.ok else "erro",)
             self.tabela.insert("", "end", iid=linha.iid, text=linha.nome, tags=tags,
                                values=(linha.numero, linha.grupo, linha.idioma or "—", linha.programacao or "—",
-                                       linha.situacao, linha.historico, linha.link))
+                                       linha.agora or "—", linha.situacao, linha.historico, linha.link))
         fora = sum(1 for linha in self._linhas if linha.ok is False)
         quantos = f"{len(visiveis)} de {len(self._linhas)}" if self._filtros else f"{len(self._linhas)}"
         self.lb_resumo.configure(text=f"{quantos} canal(is)" + (f" · {fora} fora do ar" if fora else "")
@@ -1945,6 +1954,17 @@ class JanelaModerna(ctk.CTk):
         self.var_jf_sobrescrever = tk.BooleanVar(value=False)
         self._checkbox(lateral, "Substituir o que já existe (legendas,\npôster, backdrop e .nfo)",
                        self.var_jf_sobrescrever)
+        # tradução com IA: a legenda que só existe em outro idioma vira 'Nome.pt-BR.srt' (mesmos horários)
+        self._rotulo(lateral, "Traduzir legendas com IA (Claude)", suave=False).pack(anchor="w", pady=(10, 2), **p)
+        self._rotulo(lateral, "Chave da API da Anthropic:").pack(anchor="w", pady=(2, 2), **p)
+        self.var_jf_chave_claude = tk.StringVar()
+        self._entrada(lateral, self.var_jf_chave_claude, "console.anthropic.com > API Keys", show="•").pack(
+            fill="x", **p)
+        self._rotulo(lateral, "Modelo:").pack(anchor="w", pady=(6, 2), **p)
+        self.var_jf_modelo_traducao = tk.StringVar(value="claude-sonnet-4-6")
+        self._entrada(lateral, self.var_jf_modelo_traducao, "claude-sonnet-4-6").pack(fill="x", **p)
+        self.bt_traduzir_legendas = self._botao(lateral, "Traduzir legendas com IA...", self.ao_traduzir_legendas)
+        self.bt_traduzir_legendas.pack(fill="x", pady=(8, 4), **p)
 
         self._separador(lateral)
         self._rotulo(lateral, "Servidor Jellyfin", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
@@ -2362,6 +2382,8 @@ class JanelaModerna(ctk.CTk):
             avisar_versao=self.var_jf_avisar_versao.get(), versao_avisada=self.var_jf_versao_avisada.get(),
             atualizar_sozinho=self.var_jf_atualizar_sozinho.get(),
             fechar_na_bandeja=self.var_jf_fechar_bandeja.get(),
+            chave_claude=self.var_jf_chave_claude.get().strip(),
+            modelo_traducao=self.var_jf_modelo_traducao.get().strip() or "claude-sonnet-4-6",
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
     def idiomas_jf(self) -> str:
@@ -2454,7 +2476,8 @@ class JanelaModerna(ctk.CTk):
         """Preenche a aba com valores salvos (chaves que não existirem ficam como estão)."""
         textos = {"origem": self.var_jf_origem, "chave_tmdb": self.var_jf_chave_tmdb,
                   "chave_opensubtitles": self.var_jf_chave_os, "url_site": self.var_jf_url_site,
-                  "chave_subdl": self.var_jf_chave_subdl,
+                  "chave_subdl": self.var_jf_chave_subdl, "chave_claude": self.var_jf_chave_claude,
+                  "modelo_traducao": self.var_jf_modelo_traducao,
                   "jellyfin_url": self.var_jf_url,
                   "jellyfin_api_key": self.var_jf_chave_jellyfin, "discord_webhook": self.var_jf_discord,
                   "telegram_token": self.var_jf_telegram_token, "telegram_chat_id": self.var_jf_telegram_chat}
@@ -2958,7 +2981,7 @@ class JanelaModerna(ctk.CTk):
         for b in (self.bt_buscar, self.bt_baixar_sel, self.bt_baixar_todos, self.bt_login,
                   self.bt_previa, self.bt_legendas, self.bt_desfazer, self.bt_testar_jellyfin,
                   self.bt_testar_avisos, self.bt_testar_tmdb, self.bt_espelhar, self.bt_testar_legendas,
-                  self.bt_conferir_espelhos, self.bt_relatorio, self.bt_gerenciar_espelhos):
+                  self.bt_conferir_espelhos, self.bt_relatorio, self.bt_gerenciar_espelhos, self.bt_traduzir_legendas):
             b.configure(state=estado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
         for parar in (self.bt_parar, self.bt_parar_jf):
@@ -3105,6 +3128,9 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_testar_legendas(self) -> None:
+        pass
+
+    def ao_traduzir_legendas(self) -> None:
         pass
 
     def ao_conferir_espelhos(self) -> None:

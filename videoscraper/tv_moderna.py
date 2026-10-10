@@ -40,6 +40,10 @@ class TVAoVivo:
         self._saude_tv = None                   # (tudo certo?, texto) da última consulta ao Jellyfin
         self._saude_tv_quando = 0.0             # time.monotonic() da última consulta (0 = consultar logo)
         self._saude_tv_rodando = False
+        self._saude_coletor = None              # (texto, ok) do coletor de programação no Docker
+        self._saude_coletor_quando = 0.0
+        self._saude_coletor_rodando = False
+        self._coletor_estava_ok = None          # para avisar (Discord/Telegram) só quando PARAR
         self._semanal_rodando = False           # conferência semanal dos canais em andamento
         self._semanal_visto = 0.0               # time.monotonic() da última vez que olhou se estava na hora
         self._semanal_resultado = None          # (conferidos, fora do ar, sempre falham) da última semanal
@@ -105,7 +109,7 @@ class TVAoVivo:
             linhas.append(LinhaCanal(str(i), c.nome, c.grupo, situacao.detalhe if situacao else "—", c.url,
                                      situacao.ok if situacao else None, c.numero, resumo_historico(ultimas),
                                      sempre_falha(ultimas), idioma_do_canal(c),
-                                     self._programacao_canais.get(c.url, "")))
+                                     self._programacao_canais.get(c.url, ""), self._agora_canais.get(c.url, "")))
         self.janela_canais.preencher(linhas, manter_selecao)
         self.janela_canais.bt_desfazer.configure(state="normal" if self._lixeira_canais() else "disabled")
 
@@ -560,6 +564,13 @@ class TVAoVivo:
             self._programacao_por_canal = {}
         return self._programacao_por_canal
 
+    @property
+    def _agora_canais(self) -> dict:
+        """{link: "o que passa agora → o que vem depois"} (coluna "Agora passando")."""
+        if not hasattr(self, "_agora_por_canal"):
+            self._agora_por_canal = {}
+        return self._agora_por_canal
+
     def ao_conferir_programacao(self, avisar: bool = True) -> None:
         """Botão "Conferir programação": confere o container, o guia que ele entrega e o Jellyfin, e preenche a
         coluna Programação. avisar=False: só a coluna, em segundo plano (ao abrir a janela)."""
@@ -583,8 +594,11 @@ class TVAoVivo:
         def tarefa():
             from jellyfin_tools import epg_iptv
             estado = epg_iptv.estado_do_coletor()
-            programas = epg_iptv.programas_do_guia()
-            por_canal = epg_iptv.programacao_por_canal(canais, epg_iptv.ler_channels_xml(arquivo), programas)
+            grade = epg_iptv.ler_guia()
+            programas = None if grade is None else {canal: len(lista) for canal, lista in grade.items()}
+            entradas = epg_iptv.ler_channels_xml(arquivo)
+            por_canal = epg_iptv.programacao_por_canal(canais, entradas, programas)
+            agora = epg_iptv.agora_por_canal(canais, entradas, grade)
             no_jellyfin = None
             if avisar and url and chave:
                 try:
@@ -594,17 +608,24 @@ class TVAoVivo:
                     self._log.warning("Conferir programação: não consultei o Jellyfin (%s)", erro)
             texto = epg_iptv.resumo_do_coletor(estado, programas, por_canal, guia_no_campo, no_jellyfin)
             self._log.info("Conferir programação:\n%s", texto)
-            self.fila.put(("tv_epg_estado", (por_canal, texto if avisar else None)))
+            self.fila.put(("tv_epg_estado", (por_canal, agora, texto if avisar else None)))
 
         if avisar:
             self._rodar("Conferindo o coletor de programação...", tarefa)
         else:
             threading.Thread(target=tarefa, daemon=True, name="conferir-programacao").start()
 
-    def _mostrar_estado_programacao(self, por_canal: dict, texto: str | None) -> None:
+    def _mostrar_estado_programacao(self, por_canal: dict, agora: dict, texto: str | None) -> None:
         self._programacao_canais.clear()
         self._programacao_canais.update(por_canal)
+        self._agora_canais.clear()
+        self._agora_canais.update(agora)
         self._mostrar_canais(manter_selecao=True)
+        janela = self.janela_canais
+        if janela is not None and janela.winfo_exists():   # "Agora passando" muda: refaz a cada 10 min
+            if getattr(self, "_agora_agendado", None):
+                self.after_cancel(self._agora_agendado)
+            self._agora_agendado = self.after(10 * 60 * 1000, lambda: self.ao_conferir_programacao(avisar=False))
         if texto:
             self.mostrar_mensagem("Conferir programação", texto, "info")
 
@@ -780,6 +801,58 @@ class TVAoVivo:
             if self._saude_tv[0] is False:
                 self._log.warning("TV ao vivo (painel de saúde): %s", self._saude_tv[1])
         threading.Thread(target=consultar, daemon=True, name="saude-tv").start()
+        return True
+
+    # ---- o coletor de programação (Docker) no painel de saúde
+    INTERVALO_SAUDE_COLETOR = 30 * 60
+
+    def item_saude_coletor(self):
+        """("Programação: coletor ok (98 canais)", True) para o painel; None se o coletor não está montado."""
+        return self._saude_coletor
+
+    def conferir_saude_coletor(self, agora: float | None = None) -> bool:
+        """A cada 30 min, em segundo plano: o container está rodando e o guia responde? Se ele PARAR (estava ok),
+        avisa no Discord/Telegram. True = disparou a consulta."""
+        import threading
+        import time
+        from jellyfin_tools.epg_iptv import ARQUIVO_CANAIS_EPG
+        agora = time.monotonic() if agora is None else agora
+        if self._saude_coletor_rodando or (self._saude_coletor_quando
+                                           and agora - self._saude_coletor_quando < self.INTERVALO_SAUDE_COLETOR):
+            return False
+        pasta = config.carregar().get("tv", {}).get("pasta") or str(config.ARQUIVO.parent / "tv")
+        if not (Path(pasta) / ARQUIVO_CANAIS_EPG).is_file():
+            self._saude_coletor = None                 # coletor nunca montado: nada a mostrar
+            return False
+        o = self.obter_opcoes_jellyfin()
+        notificador = Notificador(o.discord_webhook, o.telegram_token, o.telegram_chat_id)
+        self._saude_coletor_rodando, self._saude_coletor_quando = True, agora
+
+        def consultar():
+            from jellyfin_tools import epg_iptv
+            try:
+                estado = epg_iptv.estado_do_coletor()
+                programas = epg_iptv.programas_do_guia() if estado == "rodando" else None
+            except Exception as erro:                  # nunca derruba o painel
+                estado, programas = f"erro ({str(erro)[:40]})", None
+            if estado == "rodando" and programas is not None:
+                item = (f"Programação: coletor ok ({len(programas)} canais)", True)
+            elif estado == "rodando":
+                item = ("Programação: coletando (o guia ainda não respondeu)", None)
+            else:
+                dica = {"Docker fechado": "Docker fechado (abra o Docker Desktop)",
+                        "não criado": "coletor não existe (TV ao vivo > Programação dos canais...)",
+                        "sem Docker": "Docker não encontrado"}.get(estado, f"coletor {estado}")
+                item = (f"Programação: {dica}", False)
+            self._saude_coletor = item
+            if item[1] is False and self._coletor_estava_ok and notificador.ativo:
+                notificador.enviar(discord=f"\U0001F4FA **A programação dos canais parou:** {item[0][13:]}",
+                                   telegram=f"\U0001F4FA <b>A programação dos canais parou:</b> {item[0][13:]}")
+                self._log.warning("Coletor de programação parou: %s (aviso enviado)", item[0])
+            if item[1] is not None:
+                self._coletor_estava_ok = item[1]
+            self._saude_coletor_rodando = False
+        threading.Thread(target=consultar, daemon=True, name="saude-coletor").start()
         return True
 
     def _oferecer_tirar_sintonizadores(self, outros: list[dict], url: str, chave: str) -> None:

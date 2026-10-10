@@ -197,3 +197,27 @@ def test_programacao_por_canal_e_resumo(tmp_path):
     assert "Salvar e enviar ao Jellyfin" in texto
     texto = epg_iptv.resumo_do_coletor("Docker fechado", None, antes, False, None)
     assert "abra-o" in texto and "ainda não respondeu" in texto and "NÃO está no campo" in texto
+
+
+def test_horarios_do_guia_e_agora_passando(api_falsa):
+    from datetime import datetime, timezone
+    guia = ('<tv><channel id="A.br"/>'
+            '<programme channel="A.br" start="20261010120000 -0300" stop="20261010130000 -0300"><title>Jornal</title>'
+            '</programme><programme channel="A.br" start="20261010130000 -0300" stop="20261010150000 -0300">'
+            '<title>Filme da Tarde</title></programme>'
+            '<programme channel="B.br" start="20261010180000 +0000"><title>Esporte</title></programme></tv>').encode()
+    api_falsa.rotas["/guide.xml"] = lambda q: (200, guia)
+    grade = epg_iptv.ler_guia(api_falsa.base + "/guide.xml")
+    assert [p.titulo for p in grade["A.br"]] == ["Jornal", "Filme da Tarde"]
+    assert grade["A.br"][0].inicio == datetime(2026, 10, 10, 15, 0, tzinfo=timezone.utc)   # -0300 -> UTC
+    assert grade["B.br"][0].fim is None
+    assert epg_iptv.programas_do_guia(api_falsa.base + "/guide.xml") == {"A.br": 2, "B.br": 1}
+    canais = [Canal("Canal A", "http://a"), Canal("Canal B", "http://b"), Canal("Sem Guia", "http://x")]
+    entradas = [("Canal A", "A.br", "mi.tv"), ("Canal B", "B.br", "mi.tv")]
+    meio_dia_e_meia = datetime(2026, 10, 10, 15, 30, tzinfo=timezone.utc)                # 12:30 em Brasília
+    agora = epg_iptv.agora_por_canal(canais, entradas, grade, meio_dia_e_meia)
+    ate = datetime(2026, 10, 10, 16, 0, tzinfo=timezone.utc).astimezone().strftime("%H:%M")
+    proximo = datetime(2026, 10, 10, 18, 0, tzinfo=timezone.utc).astimezone().strftime("%H:%M")
+    assert agora == {"http://a": f"Jornal (até {ate}) → Filme da Tarde", "http://b": f"às {proximo}: Esporte"}
+    assert epg_iptv.agora_por_canal(canais, entradas, None) == {}
+    assert epg_iptv._quando("lixo") is None and epg_iptv._quando("20261010120000").tzinfo == timezone.utc

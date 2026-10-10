@@ -3,6 +3,8 @@
    Janela clássica (cinza):  python iniciar.py --classica
    Menu de texto antigo:     python iniciar.py --texto
    Autoteste do pacote:      python iniciar.py --verificar
+   Comandos para robôs (RPA, sem janela): --organizar, --conferir-espelhos, --conferir-canais,
+   --enviar-tv, --traduzir-legendas (veja videoscraper/automacao.py)
 """
 
 import sys
@@ -56,7 +58,7 @@ def _verificar() -> int:
     import os
     from jellyfin_tools import CatalogoLocal, organizar_pasta  # noqa: F401
     from jellyfin_tools.espelho import verificar_links  # noqa: F401
-    from videoscraper import app_moderna  # noqa: F401
+    from videoscraper import app_moderna, automacao  # noqa: F401
     from videoscraper.navegador import comando_instalar_chromium
     import customtkinter  # noqa: F401
     import imageio_ffmpeg
@@ -68,6 +70,8 @@ def _verificar() -> int:
     from videoscraper import bandeja
     from jellyfin_tools.conflitos import nota  # noqa: F401
     from jellyfin_tools.tv_ao_vivo import ler_m3u  # noqa: F401
+    import anthropic                                           # traduzir legendas: o SDK veio inteiro?
+    anthropic.Anthropic(api_key="autoteste")                  # (só monta o cliente; não chama a API)
     if sys.platform == "win32" and not bandeja.disponivel():
         faltando.append("pystray (ícone perto do relógio)")
     print(f"ok: versão {versao_atual()}, {len(catalogo.filmes)} títulos no catálogo, ffmpeg em {ffmpeg}, "
@@ -126,6 +130,12 @@ if __name__ == "__main__":
             relatorio.write_text(traceback.format_exc(), encoding="utf-8")
             raise SystemExit(1)
         raise SystemExit(0)
+    try:
+        from videoscraper import automacao
+    except ImportError:                             # sem o customtkinter: só a janela clássica abre
+        automacao = None
+    if automacao and automacao.foi_pedido(sys.argv[1:]):   # robô (UiPath, BotCity, Agendador): sem janela
+        raise SystemExit(automacao.main(sys.argv[1:]))
     if "--texto" in sys.argv:
         raise SystemExit(_menu_texto())
     try:

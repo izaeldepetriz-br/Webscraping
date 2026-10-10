@@ -1,0 +1,40 @@
+# Roda os testes automáticos a cada envio para a main e em cada pedido de mudança (pull request).
+# Passou: aparece um ✓ verde ao lado do commit. Falhou: um ✕ vermelho; clique nele (ou em Actions >
+# "Testes") para ver QUAL teste quebrou e por quê, antes de gerar o .exe e publicar uma versão.
+name: Testes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar as bibliotecas
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+      - name: Instalar a tela virtual (testes da janela) e o Chromium (testes do modo navegador)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          python -m playwright install --with-deps chromium
+      # As duas janelas (moderna e clássica) rodam em processos separados: o Tk não aceita as duas juntas.
+      - name: Testes sem janela (organizador, espelhos, TV, tradução, comandos de robô...)
+        run: python -m pytest tests -q --ignore=tests/test_gui_moderna.py --ignore=tests/test_gui.py
+      - name: Testes da janela moderna
+        run: xvfb-run -a python -m pytest tests/test_gui_moderna.py -q
+      - name: Testes da janela clássica
+        run: xvfb-run -a python -m pytest tests/test_gui.py -q

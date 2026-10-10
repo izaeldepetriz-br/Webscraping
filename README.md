@@ -240,6 +240,48 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.11.0
+
+- **Traduzir legendas com IA** (aba Jellyfin, seção Legendas, botão **"Traduzir legendas com IA..."**): acha nas
+  bibliotecas os vídeos que só têm legenda `.srt` em outro idioma (inglês tem preferência) e nenhuma em
+  português, mostra quantos são e o **custo estimado**, e, se você confirmar, cria `Nome.pt-BR.srt` com os
+  **mesmos horários**. Usa a API da Anthropic (Claude), com o modelo padrão **`claude-sonnet-4-6`** (dá para
+  trocar no campo "Modelo"). Crie a chave em console.anthropic.com > API Keys; o uso é pago por quantidade de
+  texto (um filme costuma custar centavos de dólar).
+  - A IA recebe **só o texto das falas**, numeradas; os horários nunca saem do seu computador. Cada fala volta
+    com o mesmo número, e o Maestro confere: fala esquecida é pedida de novo, resposta longa demais é dividida.
+  - A legenda original continua lá e **nada é sobrescrito**. No fim, o Jellyfin é avisado para atualizar.
+- **Coletor de programação no painel de saúde:** a linha "Programação" mostra se o coletor (iptv-org/epg no
+  Docker) está rodando e quantos programas tem no guia. Se ele **parar**, o Maestro avisa no Discord/Telegram
+  (uma vez, quando para; não fica repetindo).
+- **Coluna "Agora passando"** na TV ao vivo: o programa de agora, até que horas vai e o próximo
+  ("Jornal (até 20:30) → Novela"), lidos do guia do coletor. Atualiza sozinha a cada 10 minutos. A tabela
+  ganhou barra de rolagem para os lados.
+- **Comandos para robôs (RPA)**: UiPath, BotCity ou o Agendador de Tarefas do Windows podem rodar as tarefas do
+  Maestro **sem abrir a janela**:
+
+  | Comando | O que faz |
+  |---|---|
+  | `Maestro.exe --organizar` | organiza o que **terminou de baixar** (filmes → Filmes, episódios → Séries), com legendas, pôster, `.nfo` e scan do Jellyfin. `--simular` só mostra o que faria |
+  | `Maestro.exe --conferir-espelhos` | confere os links dos `.strm` e avisa no Discord/Telegram se algum quebrou |
+  | `Maestro.exe --conferir-canais` | confere os canais da TV ao vivo e avisa se algum saiu do ar |
+  | `Maestro.exe --enviar-tv` | envia a lista de canais ao Jellyfin (o mesmo "Salvar e enviar") |
+  | `Maestro.exe --traduzir-legendas` | traduz as legendas que faltam, até `--limite-dolares` (padrão 1.00; 0 = sem limite) |
+
+  Usam as **mesmas configurações da janela** e só as leem. Dá para juntar vários
+  (`Maestro.exe --organizar --traduzir-legendas`). O robô sabe o que aconteceu pelo **código de saída**:
+  **0** tudo certo · **1** terminou, mas achou problema (link quebrado, canal fora do ar, erro ao mover) ·
+  **2** falta configuração (pasta, chave, lista vazia): nada foi feito · **3** erro inesperado. O resumo fica em
+  `C:\Users\<você>\.videoscraper\rpa\ultimo.json` (ou onde você pedir com `--resultado arquivo.json`), e o
+  log completo em `.videoscraper\logs\` (o mesmo do botão "Abrir log"). Chaves não lembradas ("Lembrar as
+  chaves" desmarcado) vêm das variáveis de ambiente (`TMDB_API_KEY`, `ANTHROPIC_API_KEY`, `JELLYFIN_API_KEY`...).
+
+  No Prompt de Comando, use `start /wait Maestro.exe --conferir-canais` e depois `echo %ERRORLEVEL%`; no
+  PowerShell, `(Start-Process Maestro.exe --conferir-canais -Wait -PassThru).ExitCode`.
+- **Testes no GitHub:** a cada envio, os mais de 400 testes automáticos rodam sozinhos no GitHub (Actions >
+  "Testes"); um ✕ vermelho ao lado do commit mostra qual quebrou antes de virar versão. O `.exe` também
+  ganhou um autoteste dos comandos de robô.
+
 ### Novidades da v2.10.0
 
 - **Espelhar: links temporários com confirmação.** Links com assinatura que expira (`?expires=`, `?token=`,
@@ -806,6 +848,7 @@ videoscraper/
   app_moderna.py liga o motor à janela moderna (preenche os placeholders)
   gui.py        janela clássica (Tkinter cinza)
   cli.py        comandos links / baixar / login
+  automacao.py  comandos para robôs (Maestro.exe --organizar, --conferir-espelhos...), sem janela
   menu.py       menu de texto (python iniciar.py --texto)
 jellyfin_tools/
   nomes.py       lê nomes bagunçados e monta "Nome (Ano)"
@@ -816,6 +859,7 @@ jellyfin_tools/
   metadados.py   pôster/backdrop pt-BR e .nfo pela API do TMDB
   servidor_jellyfin.py  scan da biblioteca (POST /Library/Refresh)
   notificacoes.py       avisos no Discord/Telegram
+  traducao.py           traduz legendas .srt com a IA (Claude), mantendo os horários
   registro.py           log em arquivo (logging)
 organizar_jellyfin.py  script completo, com as configurações no topo
 exemplo_jellyfin.py  como integrar no seu arquivo principal
@@ -963,3 +1007,7 @@ pip install pytest && python -m pytest -q tests
 
 Os testes do modo navegador são pulados se o Chromium não estiver instalado, e os da janela
 se não houver tela (no Linux sem monitor: `xvfb-run python -m pytest -q tests`).
+
+No GitHub eles rodam sozinhos a cada envio (`.github/workflows/testes.yml`): as duas janelas em processos
+separados, porque o Tk não aceita as duas no mesmo processo. Nenhum teste usa a internet nem gasta crédito
+de API: servidores locais e um "cliente falso" fazem o papel do TMDB, do Jellyfin e do Claude.

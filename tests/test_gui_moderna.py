@@ -643,6 +643,7 @@ def tmdb_gui(app, api_falsa, monkeypatch):
             super().__init__(chave, base_url=base)
 
     monkeypatch.setattr(app_moderna, "CatalogoTMDB", TMDBFalso)
+    monkeypatch.setattr(app_moderna.automacao, "CatalogoTMDB", TMDBFalso)     # o catálogo da prévia
     api_falsa.rotas["/3/configuration"] = lambda q: (
         (200, {}) if q.get("api_key") == ["boa"] else (401, {"status_message": "Invalid API key"}))
     matrix = {"results": [{"id": 603, "title": "Matrix", "original_title": "The Matrix",
@@ -1150,6 +1151,45 @@ def test_espelhar_links_temporarios_pergunta_e_lembra(app, tmp_path, monkeypatch
     app.ao_espelhar_jellyfin()                                         # confirmação geral: não pergunta de novo
     esperar(app)
     assert len([p for p in perguntas if p[0] == "Links temporários"]) == antes and aceitou[-1] is True
+
+
+def test_traduzir_legendas_com_ia_pela_janela(app, tmp_path, monkeypatch):
+    from jellyfin_tools.traducao import Tradutor, ler_srt
+    from tests.test_traducao import SRT, ClienteFalso
+    filmes = tmp_path / "Filmes"
+    for nome in ("A (2001)", "B (2002)"):
+        (filmes / nome).mkdir(parents=True)
+        (filmes / nome / f"{nome}.mkv").write_bytes(b"\0" * 2_000_000)
+        (filmes / nome / f"{nome}.en.srt").write_text(SRT, encoding="utf-8")
+    (filmes / "B (2002)" / "B (2002).pt-BR.srt").write_text(SRT, encoding="utf-8")   # B já tem
+    app._destinos.update({"Filmes": str(filmes), "Séries": ""})
+    app.var_jf_destino.set(str(filmes))
+    assert app.obter_opcoes_jellyfin().modelo_traducao == "claude-sonnet-4-6"   # o padrão
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    app.ao_traduzir_legendas()                                         # sem chave: explica onde criar
+    assert "console.anthropic.com" in app.caixas[-1][2]
+    app.var_jf_chave_claude.set("sk-ant-teste")
+    criados = []
+
+    def tradutor_falso(**k):
+        criados.append(k)
+        return Tradutor(cliente=ClienteFalso(), **k)
+    monkeypatch.setattr(app_moderna, "Tradutor", tradutor_falso)
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append(m), opcoes[0])[1]
+    app.ao_traduzir_legendas()
+    esperar(app)
+    esperar(app)
+    assert "1 vídeo(s) têm legenda só em outro idioma" in perguntas[0] and "A (2001).en.srt" in perguntas[0]
+    assert "claude-sonnet-4-6" in perguntas[0] and "US$" in perguntas[0]
+    assert criados == [{"chave": "sk-ant-teste", "modelo": "claude-sonnet-4-6", "idioma": "pt-BR"}]
+    traduzida = filmes / "A (2001)" / "A (2001).pt-BR.srt"
+    assert ler_srt(traduzida.read_text(encoding="utf-8"))[0].texto == "PT: Hello, how are you?"
+    assert app.caixas[-1][1] == "Traduzir legendas" and "Traduzidas: 1 de 1" in app.caixas[-1][2]
+    app.ao_traduzir_legendas()                                         # de novo: nada mais a fazer
+    esperar(app)
+    esperar(app)
+    assert "Nada a traduzir" in app.caixas[-1][2]
 
 def test_botao_testar_chaves_das_legendas(app, api_falsa, monkeypatch):
     from jellyfin_tools import ProvedorOpenSubtitles, ProvedorSubDL
@@ -2130,14 +2170,21 @@ def test_tv_conferir_programacao_preenche_a_coluna(app, monkeypatch, tmp_path):
     epg_iptv.gravar_channels_xml(canais, tmp_path / "TV", mapa)
     janela.var_guia.set(epg_iptv.URL_GUIA_LOCAL)
     monkeypatch.setattr(epg_iptv, "estado_do_coletor", lambda: "rodando")
-    monkeypatch.setattr(epg_iptv, "programas_do_guia", lambda: None)  # 1ª coleta ainda não terminou
+    monkeypatch.setattr(epg_iptv, "ler_guia", lambda: None)           # 1ª coleta ainda não terminou
     janela.bt_conferir_programacao.invoke()
     esperar(app)
     coluna = {janela.tabela.item(i, "text"): janela.tabela.set(i, "programacao") for i in janela.tabela.get_children()}
     assert coluna == {"Agro Mais": "aguardando coleta · mi.tv", "Globo News": "aguardando coleta · meuguia.tv",
                       "Sem Guia": "só categoria"}
     assert "ainda não respondeu" in app.caixas[-1][2] and "rodando ✓" in app.caixas[-1][2]
-    monkeypatch.setattr(epg_iptv, "programas_do_guia", lambda: {"AgroMais.br": 48, "GloboNews.br": 0})
+    from datetime import datetime, timedelta, timezone
+    agora = datetime.now(timezone.utc)
+    grade = {"AgroMais.br": [epg_iptv.Programa(agora - timedelta(minutes=10), agora + timedelta(minutes=20),
+                                               "Campo e Lavoura"),
+                             epg_iptv.Programa(agora + timedelta(minutes=20), agora + timedelta(hours=1), "Rural News")]
+             + [epg_iptv.Programa(agora + timedelta(hours=n), None, f"P{n}") for n in range(2, 48)],
+             "GloboNews.br": []}
+    monkeypatch.setattr(epg_iptv, "ler_guia", lambda: grade)
     app.ao_conferir_programacao(avisar=False)                          # em segundo plano: só a coluna
     for _ in range(40):
         app.update()
@@ -2146,6 +2193,10 @@ def test_tv_conferir_programacao_preenche_a_coluna(app, monkeypatch, tmp_path):
         time.sleep(0.05)
     assert janela.tabela.set("0", "programacao") == "✓ 48 programas · mi.tv"
     assert janela.tabela.set("1", "programacao") == "sem programas · meuguia.tv"
+    ate = (agora + timedelta(minutes=20)).astimezone().strftime("%H:%M")
+    assert janela.tabela.set("0", "agora") == f"Campo e Lavoura (até {ate}) → Rural News"   # agora passando
+    assert janela.tabela.set("1", "agora") == "—"
+    assert dict(janela.valores_da_coluna("agora")) == {"Campo e Lavoura": 1, "(sem grade agora)": 2}
     assert dict(janela.valores_da_coluna("programacao")) == {"com programação · mi.tv": 1,
                                                              "sem programas · meuguia.tv": 1, "só categoria": 1}
     destino = tmp_path / "canais.csv"
@@ -2919,6 +2970,42 @@ def test_saude_da_tv_no_painel_e_diagnostico_sem_texto_generico(app, api_falsa):
     texto, opcoes = next((m, o) for m, o in mensagens if "Tudo certo" in m)
     assert "Se os canais não são da sua lista" not in texto and opcoes == ("Copiar o diagnóstico",)
 
+
+
+def test_coletor_de_programacao_no_painel_de_saude_e_aviso_quando_para(app, monkeypatch, tmp_path):
+    from jellyfin_tools import epg_iptv
+    from jellyfin_tools.notificacoes import Notificador
+    from videoscraper import config
+
+    def consultar(agora):
+        assert app.conferir_saude_coletor(agora=agora)
+        fim = time.time() + 10
+        while time.time() < fim and app._saude_coletor_rodando:
+            time.sleep(0.02)
+        return app.item_saude_coletor()
+    assert not app.conferir_saude_coletor(agora=1.0) and app.item_saude_coletor() is None   # sem coletor montado
+    pasta = tmp_path / "tv"
+    pasta.mkdir()
+    (pasta / "channels.xml").write_text("<channels/>", encoding="utf-8")
+    tudo = config.carregar()
+    tudo["tv"] = {"pasta": str(pasta)}
+    config.salvar(tudo)
+    app.var_jf_discord.set("https://discord.example/webhook")
+    avisos = []
+    monkeypatch.setattr(Notificador, "enviar", lambda self, discord, telegram: avisos.append(discord) or True)
+    estado, programas = ["rodando"], [None]
+    monkeypatch.setattr(epg_iptv, "estado_do_coletor", lambda: estado[0])
+    monkeypatch.setattr(epg_iptv, "programas_do_guia", lambda: programas[0])
+    assert consultar(1000.0) == ("Programação: coletando (o guia ainda não respondeu)", None)
+    assert not app.conferir_saude_coletor(agora=1000.0 + 60)            # 30 min entre consultas
+    programas[0] = {"A.br": 10, "B.br": 0}
+    assert consultar(1000.0 + 31 * 60) == ("Programação: coletor ok (2 canais)", True)
+    assert ("Programação: coletor ok (2 canais)", True) in app.itens_saude()
+    estado[0] = "Docker fechado"
+    assert consultar(1000.0 + 62 * 60) == ("Programação: Docker fechado (abra o Docker Desktop)", False)
+    assert len(avisos) == 1 and "parou" in avisos[0] and "Docker fechado" in avisos[0]   # avisa quando PARA
+    consultar(1000.0 + 93 * 60)
+    assert len(avisos) == 1                                             # continua parado: não repete
 
 def test_desmarcados_continuam_desmarcados_ao_previsualizar_de_novo(app, tmp_path):
     origem = tmp_path / "Baixados"

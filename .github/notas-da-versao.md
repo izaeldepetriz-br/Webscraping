@@ -17,3 +17,6 @@ Suas configurações ficam em `C:\Users\<você>\.videoscraper\` e continuam vale
 - **Pasta vigiada:** várias pastas do uTorrent/qBittorrent; filmes e séries separados sozinhos.
 - **Espelhos (.strm):** espelhar links no Jellyfin sem baixar; conferir os links (também automático, a cada minutos/horas/dias, com aviso no Discord/Telegram); remover qualquer espelhamento, não só o último.
 - **Relatório:** filmes sem legenda ou pôster e episódios faltando por temporada.
+- **Traduzir legendas com IA:** cria `Nome.pt-BR.srt` a partir de uma legenda em outro idioma, com os mesmos horários (API da Anthropic, modelo padrão `claude-sonnet-4-6`; mostra o custo estimado antes).
+- **TV ao vivo:** coluna "Agora passando" e o coletor de programação no painel de saúde (com aviso se ele parar).
+- **Comandos para robôs (RPA):** `Maestro.exe --organizar`, `--conferir-espelhos`, `--conferir-canais`, `--enviar-tv` e `--traduzir-legendas`, sem abrir a janela, com código de saída (0 certo, 1 problema, 2 falta configuração, 3 erro) e resumo em `.videoscraper\rpa\ultimo.json`.

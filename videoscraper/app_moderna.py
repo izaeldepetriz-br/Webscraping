@@ -29,8 +29,8 @@ from urllib.parse import unquote, urlparse
 import tkinter as tk
 from tkinter import filedialog
 
-from jellyfin_tools import (CatalogoEmCadeia, CatalogoLocal, CatalogoTMDB, ConfigSite, ErroCatalogo,
-                            ProvedorOpenSubtitles, ProvedorSiteHTML, ProvedorSubDL, desfazer, organizar_pasta)
+from jellyfin_tools import (CatalogoLocal, CatalogoTMDB, ErroCatalogo, ProvedorOpenSubtitles, ProvedorSubDL,
+                            desfazer, organizar_pasta)
 from jellyfin_tools.legendas import normalizar_idiomas
 from jellyfin_tools.nomes import extrair_episodio, extrair_titulo_e_ano, normalizar, serie_da_pasta
 from jellyfin_tools.metadados import ClienteTMDB
@@ -41,6 +41,7 @@ from jellyfin_tools.espelho import (aplicar_espelho, classificar, conferir_e_avi
                                     licenca_aberta, lotes_de_espelhos, nome_do_link, planejar_espelho,
                                     remover_espelhos, remover_espelhos_escolhidos, verificar_links)
 from jellyfin_tools.conflitos import aplicar as aplicar_conflitos, decidir as decidir_conflitos
+from jellyfin_tools.traducao import Tradutor, estimar_custo, legendas_para_traduzir, traduzir_arquivo
 from jellyfin_tools.paralelo import prioridade_baixa
 from jellyfin_tools.lixeira import apagar_lotes, lotes_antigos, tamanho_legivel
 from jellyfin_tools.tv_ao_vivo import carregar_canais, conferir_canais, mensagem_fora_do_ar
@@ -51,14 +52,13 @@ from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, ite
 from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao
 from jellyfin_tools.relatorio import gerar_relatorio, resumo, salvar_csv
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca, indice_da_biblioteca, testar_conexao
-from jellyfin_tools.site_demo import iniciar_site_demo
 from jellyfin_tools.vigia import filtro_prontos
 
 from . import config
 from .cli import salvar
 from .extracao import LinkVideo
 from .gui import ORIGENS, _SaidaParaFila, _so_caracteres_basicos
-from . import atualizacao, instalacao, bandeja, inicializacao
+from . import atualizacao, automacao, instalacao, bandeja, inicializacao
 from .gui_moderna import (DialogoCompletar, JanelaEspelhos, JanelaModerna, JanelaNaoIdentificados,
                           OpcoesInterface, Tema)
 from .tv_moderna import TVAoVivo
@@ -111,7 +111,7 @@ SITUACAO_ESPELHO = {"criado": ("espelhado", "ok"), "ja_existe": ("já espelhado"
 
 # Chaves e tokens: só vão para o config.json se o usuário marcar "Lembrar as chaves".
 SEGREDOS = ("chave_tmdb", "chave_opensubtitles", "chave_subdl", "jellyfin_api_key", "discord_webhook",
-            "telegram_token")
+            "telegram_token", "chave_claude")
 
 
 class _LogParaFila(logging.Handler):
@@ -728,6 +728,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._tmdb_opcoes_pendente = dado              # a lista abre depois do "fim"
         elif tipo == "baixar_depois":
             self._baixar_pendente = dado                   # pergunta a licença depois do "fim"
+        elif tipo == "traduzir_pendente":
+            self._traduzir_pendente = dado                 # pergunta (com o custo) depois do "fim"
         elif tipo == "robots_perguntar":
             self._robots_pendente = dado                   # pergunta depois do "fim" (a janela já está livre)
         elif tipo == "versao_nova":
@@ -794,6 +796,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 lista, self._baixar_pendente = self._baixar_pendente, None
                 ignorar, self._ignorar_baixar_depois = getattr(self, "_ignorar_baixar_depois", None), None
                 self.after(50, lambda: self._baixar(lista) if ignorar is None else self._baixar(lista, ignorar))
+            if getattr(self, "_traduzir_pendente", None):
+                traduzir, self._traduzir_pendente = self._traduzir_pendente, None
+                self.after(50, lambda: self._confirmar_traducao(*traduzir))
             if self._robots_pendente:
                 robots, self._robots_pendente = self._robots_pendente, None
                 self.after(50, lambda: self._perguntar_robots(*robots))
@@ -1804,6 +1809,95 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._log.info("TMDB identificou %d de %d", pelo_tmdb, len(analisados))
         return f" TMDB identificou {pelo_tmdb} de {len(analisados)}."
 
+    # ================================================================== traduzir legendas com IA (Claude)
+    def ao_traduzir_legendas(self) -> None:
+        """Botão "Traduzir legendas com IA...": acha nas bibliotecas os vídeos que só têm legenda em outro idioma,
+        mostra quantos e o custo estimado, e (se a pessoa confirmar) cria 'Nome.pt-BR.srt' com os mesmos horários."""
+        o = self.obter_opcoes_jellyfin()
+        pastas = list(self._bibliotecas())
+        if not pastas:
+            self.mostrar_mensagem("Traduzir legendas", "Escolha a biblioteca de Filmes e/ou de Séries.", "aviso")
+            return
+        if not (o.chave_claude or os.environ.get("ANTHROPIC_API_KEY")):
+            self.mostrar_mensagem("Traduzir legendas", "Preencha a chave da API da Anthropic (crie uma em "
+                                  "console.anthropic.com > API Keys; o uso é pago por quantidade de texto).", "aviso")
+            return
+        idioma = o.idioma.split(",")[0].strip() or "pt-BR"
+        self._salvar_config()
+
+        def tarefa():
+            pendentes = legendas_para_traduzir(*pastas, idioma=idioma)
+            self._log.info("Traduzir legendas: %d vídeo(s) com legenda só em outro idioma", len(pendentes))
+            self.fila.put(("traduzir_pendente", (pendentes, idioma, o)))
+
+        self._rodar("Procurando legendas para traduzir...", tarefa)
+
+    def _confirmar_traducao(self, pendentes: list, idioma: str, o) -> None:
+        if not pendentes:
+            self.mostrar_mensagem("Traduzir legendas", f"Nada a traduzir: os vídeos já têm legenda em {idioma} "
+                                  "(ou não têm legenda .srt em outro idioma).", "info")
+            return
+        entrada, saida, custo = estimar_custo(sum(p.caracteres for p in pendentes), sum(p.falas for p in pendentes),
+                                              o.modelo_traducao)
+        exemplos = "\n".join(f"• {p.origem.name}" for p in pendentes[:5]) + (
+            f"\n... e mais {len(pendentes) - 5}" if len(pendentes) > 5 else "")
+        valor = f"cerca de US$ {custo:.2f}" if custo is not None else "preço deste modelo desconhecido"
+        escolha = self.escolher(
+            "Traduzir legendas com IA",
+            f"{len(pendentes)} vídeo(s) têm legenda só em outro idioma e nenhuma em {idioma}:\n{exemplos}\n\n"
+            f"Modelo: {o.modelo_traducao}\nCusto estimado: {valor} (~{(entrada + saida) // 1000} mil tokens)\n\n"
+            f"Cada um vira 'Nome.{idioma}.srt' com os MESMOS horários (a IA recebe só o texto das falas). A legenda "
+            "original continua lá e nada é sobrescrito.",
+            (f"Traduzir os {len(pendentes)}",))
+        if escolha is None:
+            return
+        self._traduzir(pendentes, idioma, o)
+
+    def _traduzir(self, pendentes: list, idioma: str, o) -> None:
+        def tarefa():
+            try:
+                tradutor = Tradutor(chave=o.chave_claude, modelo=o.modelo_traducao, idioma=idioma)
+            except ImportError:
+                self.fila.put(("msg", ("Traduzir legendas", "Falta a biblioteca 'anthropic' (pip install anthropic).",
+                                       "erro")))
+                return
+            resultados, total = [], len(pendentes)
+            for k, p in enumerate(pendentes):
+                if self.evento_parar.is_set():
+                    break
+
+                def andamento(feitas, todas, k=k, p=p):
+                    fracao = (k + feitas / max(todas, 1)) / total
+                    self.fila.put(("jf_analise", (fracao, f"Traduzindo {k + 1} de {total}: {p.video.stem} "
+                                                          f"({feitas * 100 // max(todas, 1)}%)")))
+                andamento(0, 1)
+                r = traduzir_arquivo(p.origem, p.destino, tradutor, titulo=p.video.stem,
+                                     parar=self.evento_parar.is_set, ao_progresso=andamento)
+                resultados.append(r)
+                nivel = self._log.error if r.status == "erro" else self._log.info
+                nivel("[%s] %s -> %s%s", r.status, r.origem.name, r.destino.name, f" ({r.detalhe})" if r.detalhe else "")
+                if r.status == "erro" and r.detalhe.startswith(("a chave", "sem conexão", "limite", "modelo não")):
+                    break                                       # vale para todos: não insiste nos outros
+            traduzidas = [r for r in resultados if r.status == "traduzida"]
+            erros = [r for r in resultados if r.status == "erro"]
+            if traduzidas and o.atualizar_jellyfin and o.jellyfin_url and o.jellyfin_api_key:
+                try:
+                    atualizar_biblioteca(o.jellyfin_url, o.jellyfin_api_key)
+                except ErroJellyfin as erro:
+                    self._log.warning("Jellyfin: scan não pedido (%s)", erro)
+            custo = tradutor.custo
+            texto = (f"Traduzidas: {len(traduzidas)} de {total}\n"
+                     f"Já existiam: {sum(r.status == 'ja_existe' for r in resultados)}\n"
+                     f"Com erro: {len(erros)}" + (f" (ex.: {erros[0].origem.name}: {erros[0].detalhe})" if erros else "")
+                     + (f"\nNão feitas (parou antes): {total - len(resultados)}" if len(resultados) < total else "")
+                     + f"\n\nModelo: {tradutor.modelo} · {tradutor.pedidos} pedido(s) · "
+                     f"{tradutor.tokens_entrada + tradutor.tokens_saida} tokens"
+                     + (f" · custo real ~US$ {custo:.2f}" if custo is not None else ""))
+            self.fila.put(("status_fim", f"Legendas traduzidas: {len(traduzidas)} de {total}."))
+            self.fila.put(("msg", ("Traduzir legendas", texto, "erro" if erros and not traduzidas else "sucesso")))
+
+        self._rodar(f"Traduzindo {len(pendentes)} legenda(s) com IA...", tarefa)
+
     def ao_testar_legendas(self) -> None:
         """Testa a chave de cada fonte de legendas preenchida (OpenSubtitles e/ou SubDL)."""
         o = self.obter_opcoes_jellyfin()
@@ -2282,40 +2376,13 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 o.limpar_lixo, o.apagar_pasta_origem, o.nomes_episodios)
 
     def _problema_legendas(self, o) -> str | None:
-        fontes = self.FONTES_LEGENDA
-        if o.fonte_legenda == fontes[1] and not o.chave_opensubtitles:
-            return "Preencha a chave da API do OpenSubtitles (é gratuita em opensubtitles.com)."
-        if o.fonte_legenda == fontes[3] and not o.chave_subdl:
-            return "Preencha a chave da API do SubDL (é gratuita em subdl.com, no Painel > API)."
-        if o.fonte_legenda == fontes[2] and "{consulta}" not in o.url_site:
-            return "A URL de busca precisa ter {consulta} no lugar do termo pesquisado.\n" \
-                   "Ex.: https://site.com/busca?q={consulta}"
-        return None
+        return automacao.problema_legendas(o)
 
     def _catalogo(self, o):
-        """Com o TMDB marcado, ele vem PRIMEIRO (fonte oficial); o catálogo local fica de reserva."""
-        local = CatalogoLocal.padrao()
-        return CatalogoEmCadeia(CatalogoTMDB(o.chave_tmdb), local) if o.tmdb else local
+        return automacao.catalogo(o)
 
-    @contextlib.contextmanager
     def _provedores(self, o):
-        """Cria o provedor de legendas escolhido (e desliga o site de demonstração no fim)."""
-        fontes = self.FONTES_LEGENDA
-        servidor = None
-        try:
-            if o.fonte_legenda == fontes[0]:
-                servidor, base = iniciar_site_demo()
-                yield [ProvedorSiteHTML(ConfigSite(f"{base}/busca?q={{consulta}}", nome="site demo"))]
-            elif o.fonte_legenda == fontes[1]:             # OpenSubtitles; o SubDL é a reserva (se houver)
-                yield [ProvedorOpenSubtitles(o.chave_opensubtitles)] + (
-                    [ProvedorSubDL(o.chave_subdl)] if o.chave_subdl else [])
-            elif o.fonte_legenda == fontes[3]:
-                yield [ProvedorSubDL(o.chave_subdl)]
-            else:
-                yield [ProvedorSiteHTML(ConfigSite(o.url_site))]
-        finally:
-            if servidor:
-                servidor.shutdown()
+        return automacao.provedores(o)
 
     RE_PASTA_TEMPORADA = re.compile(r"^(season|temporada|s)\s*\d+$", re.IGNORECASE)
 
@@ -2532,6 +2599,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             itens.append(("Jellyfin" + (" (conectado)" if jellyfin == "ok" else ""), True))
         if item_tv := self.item_saude_tv():
             itens.append(item_tv)
+        if item_coletor := self.item_saude_coletor():
+            itens.append(item_coletor)
         itens.append(("● Vigia ligada" if self.var_jf_vigiar.get() else "○ Vigia desligada", None))
         if atualizacao.pode_instalar_sozinho():
             fixo = instalacao.esta_na_pasta_fixa(atualizacao.pasta_do_programa())
@@ -2549,6 +2618,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         except tk.TclError:
             return
         self.conferir_saude_tv()                      # a cada 30 min, em segundo plano
+        self.conferir_saude_coletor()                 # o coletor de programação (Docker), também a cada 30 min
         if not os.environ.get("VIDEOSCRAPER_SEM_ATUALIZACAO"):
             self.conferencia_semanal_tv()             # opção "Conferir sozinho toda semana" (TV ao vivo)
             if not getattr(self, "_guia_renovado", False):  # uma vez por abertura (e o arquivo vale 30 dias)

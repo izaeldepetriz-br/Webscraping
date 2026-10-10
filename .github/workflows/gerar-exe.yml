@@ -45,6 +45,14 @@ jobs:
           if ($p.ExitCode -ne 0) { Write-Error "autoteste falhou ($($p.ExitCode))"; exit 1 }
           $m = Start-Process -FilePath dist\videoscraper\Maestro.exe -ArgumentList "--verificar" -Wait -PassThru
           if ($m.ExitCode -ne 0) { Write-Error "o Maestro.exe não abriu ($($m.ExitCode))"; exit 1 }
+      - name: Autoteste dos comandos de robô (RPA) no .exe (sem janela, com código de saída)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\videoscraper\Maestro.exe -ArgumentList "--conferir-canais" -Wait -PassThru
+          $json = Join-Path $env:USERPROFILE '.videoscraper\rpa\ultimo.json'
+          Get-Content $json -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 2) { Write-Error "esperava o código 2 (lista de canais vazia); veio $($p.ExitCode)"; exit 1 }
+          if (-not (Test-Path $json)) { Write-Error "o resumo ultimo.json não foi gravado"; exit 1 }
       - name: Autoteste do navegador no .exe (baixa o Chromium e abre uma página)
         shell: pwsh
         run: |
