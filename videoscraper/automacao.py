@@ -62,6 +62,7 @@ from jellyfin_tools.dublagem import (ErroDublagem, MotorPiper, dublar_video, pre
 from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, ClienteTV, carregar_canais, carregar_historico,
                                        conferir_canais, mensagem_fora_do_ar, publicar, registrar_no_historico,
                                        salvar_historico)
+from jellyfin_tools import vigia
 from jellyfin_tools.vigia import filtro_prontos
 
 from . import config
@@ -173,23 +174,26 @@ def montar_config_pos(o: OpcoesJellyfin, provedores_legenda: list, notificar: bo
 
 # ============================================================================ os comandos
 def organizar(log: logging.Logger, simular: bool = False) -> Resultado:
-    """Como a pasta vigiada: só o que TERMINOU de baixar; filmes para Filmes e episódios para Séries."""
+    """Como a pasta vigiada: só o que TERMINOU de baixar; cada pasta vigiada dentro dela mesma (opção marcada)
+    ou filmes para Filmes e episódios para Séries."""
     o, pastas = opcoes_salvas()
-    vigiadas = [p for p in (o.pastas_vigiadas or (o.origem,)) if p and Path(p).is_dir() and not problema_no_caminho(p)]
-    filmes, series = pastas["Filmes"] or None, pastas["Séries"] or None
-    if not vigiadas:
+    alvos = vigia.alvos(o.pastas_vigiadas, o.origem, pastas["Filmes"], pastas["Séries"], o.vigia_no_lugar,
+                        valida=lambda p: not problema_no_caminho(p))
+    if not alvos:
         raise FaltaConfiguracao("Escolha a pasta de origem (ou as pastas vigiadas) na aba Jellyfin.")
-    if not (filmes or series):
+    alvos = [a for a in alvos if a[1] or a[2]]
+    if not alvos:
         raise FaltaConfiguracao("Escolha a biblioteca de Filmes e/ou de Séries na aba Jellyfin.")
     legendas = o.legendas
     if legendas and problema_legendas(o):
         legendas = False
         log.warning("Legendas desligadas nesta rodada: %s", problema_legendas(o))
-    log.info("Organizar%s: %s -> filmes: %s | séries: %s", " (SIMULAÇÃO)" if simular else "", ", ".join(vigiadas),
-             filmes or "—", series or "—")
+    for pasta, filmes, series in alvos:
+        log.info("Organizar%s: %s -> filmes: %s | séries: %s", " (SIMULAÇÃO)" if simular else "", pasta,
+                 filmes or "—", series or "—")
     regras = carregar_regras(config.ARQUIVO.parent / "regras_nomes.json")
     todos = []
-    for pasta in vigiadas:
+    for pasta, filmes, series in alvos:
         todos += organizar_misto(pasta, filmes, series, catalogo(o), filtro=filtro_prontos(), aplicar=not simular,
                                  incluir_tmdbid=o.incluir_tmdbid, exigir_catalogo=o.exigir_catalogo,
                                  limpar_lixo=o.limpar_lixo, apagar_pasta_origem=o.apagar_pasta_origem,

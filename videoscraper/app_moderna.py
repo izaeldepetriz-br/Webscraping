@@ -61,6 +61,7 @@ from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, inicia
 from jellyfin_tools.relatorio import gerar_relatorio, resumo, salvar_csv
 from jellyfin_tools.resumo_diario import ResumoDiario, mensagem as mensagem_resumo
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca, indice_da_biblioteca, testar_conexao
+from jellyfin_tools import vigia
 from jellyfin_tools.vigia import filtro_prontos
 
 from . import config
@@ -152,6 +153,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self.evento_parar = threading.Event()
         self.links: list[LinkVideo] = []
         self.trabalhando = False
+        self._fim_da_tarefa = 0.0               # time.monotonic() de quando a última tarefa acabou
         self._texto_fim: str | None = None      # texto do rodapé quando a tarefa acabar
         # Melhoria 4: log em arquivo (na pasta do usuário, junto das configurações) + console da janela
         self.arquivo_log = config.ARQUIVO.parent / "jellyfin_organizer.log"       # log geral (tudo)
@@ -795,6 +797,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                         nome, texto, categoria="organizado" if ok else "erro")
         elif tipo == "fim":
             self.trabalhando = False
+            self._fim_da_tarefa = time.monotonic()
             encerrar_log_da_acao(self._log_acao)       # o arquivo desta ação está completo
             self._log_acao = None
             self.definir_status(self._texto_fim or f"Pronto. {len(self.links)} vídeo(s) na lista.",
@@ -1215,16 +1218,18 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 f"• {p}" for p in problemas) + "\n\nAs que não existem são ignoradas.", "aviso")
         for aviso in self._bibliotecas_faltando():         # no log; na tela, o estado da vigia já diz
             self._log.warning("Vigia: %s", aviso)
-        self._log.info("Vigia ligada: conferindo %s a cada %s min", self.var_jf_origem.get(),
-                       int(self.campo_vigia_min.get()))
+        self._log.info("Vigia ligada: conferindo %s a cada %s min%s",
+                       ", ".join(self.pastas_vigiadas()) or self.var_jf_origem.get(), int(self.campo_vigia_min.get()),
+                       " (cada pasta organizada dentro dela mesma)" if self._vigia_no_lugar() else "")
         self._ciclo_vigia()
 
     def _agendar_vigia(self) -> None:
         minutos = self.campo_vigia_min.get()
         self._vigia_agendada = self.after(int(minutos * 60_000), self._ciclo_vigia)
         proxima = datetime.now() + timedelta(minutes=minutos)
-        faltando = [tipo for tipo in ("Filmes", "Séries") if not ({**self._destinos, self._modo_atual:
-                                                                    self.var_jf_destino.get()}).get(tipo)]
+        faltando = [] if self._vigia_no_lugar() else [
+            tipo for tipo in ("Filmes", "Séries") if not ({**self._destinos, self._modo_atual:
+                                                           self.var_jf_destino.get()}).get(tipo)]
         sem_scan = self.var_jf_atualizar.get() and not (self.var_jf_url.get().strip()
                                                         and self.var_jf_chave_jellyfin.get().strip())
         self.definir_estado_vigia(f"Ligada: próxima conferência às {proxima:%H:%M}."
@@ -1237,6 +1242,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
     def _bibliotecas_faltando(self) -> list[str]:
         """A vigia separa filmes e séries; sem uma das bibliotecas, aquele tipo fica parado (antes, sem aviso)."""
+        if self._vigia_no_lugar():
+            return []                                # cada pasta vigiada é a biblioteca dela mesma
         destinos = dict(self._destinos)
         destinos[self._modo_atual] = self.var_jf_destino.get()
         artigo = {"Filmes": "os filmes", "Séries": "as séries"}
@@ -1244,21 +1251,24 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 f"{tipo} (campo \"Biblioteca de {tipo} do Jellyfin\")." for tipo in ("Filmes", "Séries")
                 if not destinos.get(tipo)]
 
-    def _alvos_da_vigia(self, o):
-        """(pastas vigiadas, biblioteca de Filmes, biblioteca de Séries). Sem lista, vigia a pasta de origem."""
+    def _vigia_no_lugar(self) -> bool:
+        """Há pastas vigiadas e a opção "Organizar cada pasta vigiada dentro dela mesma" está marcada?"""
+        return bool(self.pastas_vigiadas()) and self.var_jf_vigia_no_lugar.get()
+
+    def _alvos_da_vigia(self, o) -> list[tuple]:
+        """[(pasta vigiada, biblioteca de Filmes, biblioteca de Séries)] (ver vigia.alvos)."""
         self._destinos[self._modo_atual] = self.var_jf_destino.get()
-        pastas = [p for p in (o.pastas_vigiadas or (o.origem,))
-                  if p and Path(p).is_dir() and not problema_no_caminho(p)]
         filmes, series = (self._destinos.get(t) or None for t in ("Filmes", "Séries"))
-        return pastas, filmes, series
+        return vigia.alvos(o.pastas_vigiadas, o.origem, filmes, series, o.vigia_no_lugar,
+                           valida=lambda p: not problema_no_caminho(p))
 
     def _ciclo_vigia(self) -> None:
         self._agendar_vigia()                        # a próxima já fica marcada, aconteça o que acontecer
         if self.trabalhando or self._vigia_conferindo:
             return                                   # outra tarefa rodando: confere na próxima
         o = self.obter_opcoes_jellyfin()
-        pastas, filmes, series = self._alvos_da_vigia(o)
-        if not pastas or not (filmes or series):
+        alvos = [a for a in self._alvos_da_vigia(o) if a[1] or a[2]]
+        if not alvos:
             self._log.warning("Vigia: escolha as pastas vigiadas (ou a de origem) e as bibliotecas de Filmes/Séries")
             return
         self._vigia_conferindo = True
@@ -1266,7 +1276,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
         def conferir():                              # na thread: a janela não trava
             novos = 0
-            for pasta in pastas:
+            for pasta, filmes, series in alvos:
                 try:
                     previa = organizar_misto(pasta, filmes, series, CatalogoLocal.padrao(), filtro=filtro_prontos(),
                                              protegidas=o.pastas_protegidas, regras=self.regras_de_nome(), fora=fora)
@@ -1284,9 +1294,15 @@ class AppModerna(TVAoVivo, JanelaModerna):
         if o.legendas and self._problema_legendas(o):
             o.legendas = False                       # sem caixa de mensagem: segue sem legendas
             self._log.warning("Vigia: legendas desligadas nesta rodada (%s)", self._problema_legendas(o))
-        pastas, filmes, series = self._alvos_da_vigia(o)
-        self._log.info("Vigia: %d arquivo(s) terminaram de baixar; organizando (filmes -> %s, séries -> %s)",
-                       novos, filmes or "—", series or "—")
+        alvos = [a for a in self._alvos_da_vigia(o) if a[1] or a[2]]
+        no_lugar = bool(o.pastas_vigiadas) and o.vigia_no_lugar
+        if no_lugar:
+            self._log.info("Vigia: %d arquivo(s) terminaram de baixar; organizando cada pasta dentro dela mesma "
+                           "(%s)", novos, ", ".join(a[0] for a in alvos))
+        else:
+            filmes, series = (alvos[0][1], alvos[0][2]) if alvos else (None, None)
+            self._log.info("Vigia: %d arquivo(s) terminaram de baixar; organizando (filmes -> %s, séries -> %s)",
+                           novos, filmes or "—", series or "—")
         self._tmdb_ativo = o.tmdb
         self._previa = None
         self.liberar_organizar(False)
@@ -1294,7 +1310,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
         def tarefa():
             todos = []
-            for pasta in pastas:
+            for pasta, filmes, series in alvos:
                 todos += organizar_misto(pasta, filmes, series, self._catalogo(o), filtro=filtro_prontos(),
                                          aplicar=True, incluir_tmdbid=o.incluir_tmdbid,
                                          exigir_catalogo=o.exigir_catalogo, limpar_lixo=o.limpar_lixo,
@@ -1310,8 +1326,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                     "Vigia", legendas=o.legendas, notificar=True)
             filmes_movidos = sum(1 for _, m in movidos if not m.episodio)
             self.resumo_diario.registrar("organizados", len(movidos))
-            parados = "".join(f" {tipo}: biblioteca não escolhida, ficaram onde estão." for tipo, pasta in
-                              (("Filmes", filmes), ("Séries", series)) if not pasta)
+            parados = "" if no_lugar or not alvos else "".join(
+                f" {tipo}: biblioteca não escolhida, ficaram onde estão." for tipo, pasta in
+                (("Filmes", alvos[0][1]), ("Séries", alvos[0][2])) if not pasta)
             scan = self._texto_do_scan(getattr(self, "_ultimo_scan", "")) if movidos else ""
             self.fila.put(("status_fim", f"Vigia: {filmes_movidos} filme(s) e {len(movidos) - filmes_movidos} "
                                          f"episódio(s) organizados.{parados}{scan}"))
@@ -1339,9 +1356,21 @@ class AppModerna(TVAoVivo, JanelaModerna):
         except ValueError:
             return "Última conferência: nunca."
 
+    PAUSA_APOS_TAREFA = 120                       # s: a automática espera a janela ficar quieta
+
     def _verificar_conferencia(self) -> None:
+        """A conferência automática (espelhos E todos os canais da TV). Não começa com a janela "TV ao vivo"
+        aberta nem logo depois de outra tarefa: antes, ela emendava num "Conferir 1 selecionado" e parecia que
+        o botão tinha conferido todos os canais."""
         if not self.var_jf_conferir_auto.get() or self.trabalhando:
             return
+        janela_tv = getattr(self, "janela_canais", None)
+        if janela_tv is not None and janela_tv.winfo_exists():
+            self.definir_estado_conferencia(f"{self._texto_ultima_conferencia()} A automática espera a janela "
+                                            "TV ao vivo fechar.")
+            return
+        if time.monotonic() - self._fim_da_tarefa < self.PAUSA_APOS_TAREFA:
+            return                                     # confere no próximo minuto, com a janela quieta
         o = self.obter_opcoes_jellyfin()
         intervalo = intervalo_em_segundos(o.conferir_a_cada, o.conferir_unidade)
         try:
@@ -1378,7 +1407,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             if canais:                                 # canais ao vivo: avisa se algum saiu do ar
                 with prioridade_baixa():
                     situacoes = conferir_canais(canais, trabalhadores, parar=self.evento_parar.is_set,
-                                                ao_progresso=self._progresso_com_velocidade("Conferindo canais ao vivo"))
+                                                ao_progresso=self._progresso_com_velocidade(
+                                                    "Conferência automática: todos os canais ao vivo"))
                 fora = [(c, s) for c, s in situacoes if not s.ok]
                 self._registrar_canais(situacoes)
                 self.fila.put(("canais_conferidos", situacoes))
@@ -1397,7 +1427,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                          + (f". Canais: {len(canais) - len(fora)} no ar, {len(fora)} fora." if canais
                                             else ".")))
 
-        self._rodar("Conferindo espelhos (automático)...", tarefa)
+        self._rodar("Conferência automática (espelhos" + (" e todos os canais" if canais else "") + ")...", tarefa)
 
     # ================================================================== relatório da biblioteca
     def ao_relatorio(self) -> None:
@@ -2196,58 +2226,60 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
     # ================================================================== Agendar tarefas (Agendador do Windows)
     def ao_agendar(self) -> None:
-        """Escolhe um comando de robô, a frequência e o horário; cria (ou tira) a tarefa no Agendador do Windows."""
+        """Janela "Agendar tarefas": marca um ou VÁRIOS comandos de robô (caixas de marcar e botões "Marcar todas"),
+        a frequência e o horário; cria (ou tira) as tarefas no Agendador do Windows. Várias de uma vez: a mesma
+        frequência, uma a cada 15 minutos (não rodam todas juntas)."""
         try:
-            existentes = {c: (proxima, situacao) for c, proxima, situacao in agendador.listar()}
+            existentes = {c: proxima for c, proxima, _situacao in agendador.listar()}
         except agendador.ErroAgenda as erro:
             self.mostrar_mensagem("Agendar tarefas", str(erro), "aviso")
             return
-        comandos = list(agendador.COMANDOS)
-        itens = [f"{agendador.COMANDOS[c]}" + (f"   ·   agendada (próxima: {existentes[c][0]})" if c in existentes else "")
-                 for c in comandos]
-        n = self.escolher_da_lista(
-            "Agendar tarefas", "O que o Maestro deve fazer sozinho, sem abrir a janela? A tarefa vai para o Agendador "
-            "de Tarefas do Windows (pasta \"Maestro\") e roda com o computador ligado. O resultado fica no log.",
-            itens, "Escolher")
-        if n is None:
+        escolha = self.pedir_agendamento(agendador.COMANDOS, existentes, agendador.FREQUENCIAS)
+        if not escolha:
             return
-        comando = comandos[n]
-        if comando in existentes:
-            acao = self.escolher("Agendar tarefas", f"\"{agendador.COMANDOS[comando]}\" já está agendada (próxima: "
-                                 f"{existentes[comando][0]}).", ("Mudar quando roda", "Tirar do agendamento"))
-            if acao is None:
-                return
-            if acao == "Tirar do agendamento":
-                try:
-                    agendador.remover(comando)
-                except agendador.ErroAgenda as erro:
-                    self.mostrar_mensagem("Agendar tarefas", f"Não deu para tirar: {erro}", "erro")
-                    return
-                self._log.info("Agendador: tarefa %s removida", agendador.nome_da_tarefa(comando))
-                self.mostrar_mensagem("Agendar tarefas", "Pronto: a tarefa saiu do agendamento.", "sucesso")
-                return
-        frequencia = self.escolher("Agendar tarefas", f"Com que frequência \"{agendador.COMANDOS[comando]}\"?",
-                                   agendador.FREQUENCIAS)
-        if frequencia is None:
-            return
-        hora = "00:00"
-        if frequencia != agendador.FREQUENCIAS[3]:
-            horas = [f"{h:02d}:00" for h in range(24)]
-            k = self.escolher_da_lista("Agendar tarefas", "A que horas (a 1ª vez, no caso de \"a cada 6 horas\")?",
-                                       horas, "Usar este horário", marcado=6)
-            if k is None:
-                return
-            hora = horas[k]
-        try:
-            nome = agendador.agendar(comando, frequencia, hora)
-        except agendador.ErroAgenda as erro:
-            self.mostrar_mensagem("Agendar tarefas", f"O Agendador recusou: {erro}", "erro")
-            return
-        self._log.info("Agendador: %s (%s, %s)", nome, frequencia, hora)
-        self.mostrar_mensagem("Agendar tarefas", f"Pronto: \"{agendador.COMANDOS[comando]}\" — {frequencia.lower()}"
-                              + (f", às {hora}" if frequencia != agendador.FREQUENCIAS[3] else "") + ".\n\nFica no "
-                              f"Agendador de Tarefas como {nome}. O resultado de cada vez fica no log (Abrir log).",
-                              "sucesso")
+        if escolha["acao"] == "tirar":
+            self._tirar_da_agenda(escolha["comandos"])
+        else:
+            self._agendar_varios(escolha["comandos"], escolha["frequencia"], escolha["hora"])
+
+    def _tirar_da_agenda(self, comandos: list[str]) -> None:
+        feitas, erros = [], []
+        for comando in comandos:
+            try:
+                agendador.remover(comando)
+            except agendador.ErroAgenda as erro:
+                erros.append(f"• {agendador.COMANDOS[comando]}: {erro}")
+                continue
+            self._log.info("Agendador: tarefa %s removida", agendador.nome_da_tarefa(comando))
+            feitas.append(f"• {agendador.COMANDOS[comando]}")
+        texto = ("Saíram do agendamento:\n" + "\n".join(feitas)) if feitas else "Nenhuma tarefa foi tirada."
+        if erros:
+            texto += "\n\nNão deu para tirar:\n" + "\n".join(erros)
+        self.mostrar_mensagem("Agendar tarefas", texto, "erro" if not feitas else "aviso" if erros else "sucesso")
+
+    def _agendar_varios(self, comandos: list[str], frequencia: str, hora: str) -> None:
+        """A mesma frequência para todas; a 1ª no horário escolhido e as outras de 15 em 15 min."""
+        cada_hora = frequencia == agendador.FREQUENCIAS[3]
+        feitas, erros, nomes = [], [], []
+        for comando, horario in zip(comandos, agendador.escalonar(hora, len(comandos))):
+            try:
+                nome = agendador.agendar(comando, frequencia, horario)
+            except agendador.ErroAgenda as erro:
+                erros.append(f"• {agendador.COMANDOS[comando]}: {erro}")
+                continue
+            self._log.info("Agendador: %s (%s, %s)", nome, frequencia, horario)
+            nomes.append(nome)
+            feitas.append(f"• {horario}  {agendador.COMANDOS[comando]}" if not cada_hora
+                          else f"• aos {horario[3:]} min de cada hora  {agendador.COMANDOS[comando]}")
+        texto = (f"Pronto — {frequencia.lower()}:\n" + "\n".join(feitas)) if feitas else "Nenhuma tarefa foi agendada."
+        if erros:
+            texto += "\n\nO Agendador recusou:\n" + "\n".join(erros)
+        if len(feitas) > 1:
+            texto += "\n\nUma a cada 15 minutos, para não rodarem todas juntas."
+        if feitas:
+            texto += (f"\n\nFicam no Agendador de Tarefas, pasta \"{agendador.PASTA}\" ({', '.join(nomes)}). "
+                      "O resultado de cada vez fica no log (Abrir log).")
+        self.mostrar_mensagem("Agendar tarefas", texto, "erro" if not feitas else "aviso" if erros else "sucesso")
 
     # ================================================================== sincronizar legendas (áudio x legenda)
     @property

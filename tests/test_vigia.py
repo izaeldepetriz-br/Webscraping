@@ -127,3 +127,18 @@ def test_script_confere_espelhos_junto_com_a_vigia(tmp_path, monkeypatch, api_fa
     assert (tmp_path / "log" / "ultima_conferencia_espelhos.txt").exists()
     assert script.main(["--conferir-espelhos"]) == 0                   # sob demanda: confere de novo
     assert len([p for p in api_falsa.pedidos if p["caminho"] == "/discord"]) == 2
+
+
+def test_alvos_cada_pasta_vigiada_dentro_dela_mesma(tmp_path):
+    from jellyfin_tools.vigia import alvos
+    filmes, novelas = tmp_path / "Filmes_Organizados", tmp_path / "Series" / "NOVELAS"
+    filmes.mkdir()
+    novelas.mkdir(parents=True)
+    vigiadas = (str(filmes), str(novelas), str(tmp_path / "nao_existe"))
+    assert alvos(vigiadas, str(filmes), "F:/Filmes", "F:/Series") == [(str(filmes), str(filmes), str(filmes)),
+                                                                      (str(novelas), str(novelas), str(novelas))]
+    assert alvos(vigiadas, "", "F:/Filmes", "", no_lugar=False) == [(str(filmes), "F:/Filmes", None),
+                                                                    (str(novelas), "F:/Filmes", None)]
+    # sem lista: a pasta de origem PARA as bibliotecas (como antes), mesmo com a opção marcada
+    assert alvos((), str(filmes), "F:/Filmes", "F:/Series") == [(str(filmes), "F:/Filmes", "F:/Series")]
+    assert alvos(vigiadas, "", None, None, valida=lambda p: "NOVELAS" not in p) == [(str(filmes),) * 3]

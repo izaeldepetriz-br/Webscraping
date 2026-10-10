@@ -130,6 +130,7 @@ class OpcoesJellyfin:
     vigiar: bool = False             # pasta vigiada ligada
     vigiar_min: float = 5            # de quanto em quanto tempo conferir
     pastas_vigiadas: tuple = ()      # pastas de download (ex.: as do uTorrent); vazio = a pasta de origem
+    vigia_no_lugar: bool = True      # cada pasta vigiada se organiza dentro dela mesma (não usa as bibliotecas)
     pastas_protegidas: tuple = ()    # pastas que o organizador nunca mexe (ex.: as do Sonarr/Radarr)
     conferir_auto: bool = False      # conferir os .strm sozinho
     conferir_a_cada: float = 7
@@ -786,6 +787,116 @@ class DialogoCompletar(ctk.CTkToplevel):
             self.master.mostrar_mensagem("Completar biblioteca", "Marque pelo menos uma coisa para completar.", "aviso")
             return
         self.resultado = {**escolha, "substituir": self.var_substituir.get() == "substituir"}
+        self.destroy()
+
+
+class DialogoAgendar(ctk.CTkToplevel):
+    """"Agendar tarefas": uma caixa de marcar por comando de robô, botões para marcar todas/nenhuma, a frequência e
+    o 1º horário na MESMA janela. `resultado`: {'acao': 'agendar'|'tirar', 'comandos': [...], 'frequencia', 'hora'}
+    ou None (Cancelar). Várias marcadas: uma a cada 15 min a partir do horário (não rodam todas juntas)."""
+
+    def __init__(self, master, comandos: dict, existentes: dict, frequencias: tuple, hora: str = "06:00"):
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.resultado = None
+        self._existentes = existentes
+        self.title("Agendar tarefas")
+        self.resizable(False, False)
+        self.transient(master)
+        corpo = ctk.CTkFrame(self, fg_color="transparent")
+        corpo.pack(fill="both", expand=True, padx=26, pady=(20, 6))
+        ctk.CTkLabel(corpo, text="Agendar tarefas", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
+                     text_color=Tema.TEXTO, anchor="w").pack(fill="x")
+        ctk.CTkLabel(corpo, text="Marque o que o Maestro deve fazer sozinho, sem abrir a janela. As tarefas vão para o "
+                     "Agendador de Tarefas do Windows (pasta \"Maestro\") e rodam com o computador ligado.",
+                     font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left",
+                     wraplength=520).pack(fill="x", pady=(2, 8))
+        atalhos = ctk.CTkFrame(corpo, fg_color="transparent")
+        atalhos.pack(fill="x", pady=(0, 4))
+        self.bt_marcar_todas = master._botao(atalhos, "Marcar todas", lambda: self.marcar(True), "secundario")
+        self.bt_marcar_todas.pack(side="left")
+        self.bt_desmarcar = master._botao(atalhos, "Desmarcar todas", lambda: self.marcar(False), "secundario")
+        self.bt_desmarcar.pack(side="left", padx=(8, 0))
+        self.bt_marcar_agendadas = master._botao(atalhos, "Marcar as já agendadas", self.marcar_agendadas, "fantasma")
+        self.bt_marcar_agendadas.pack(side="left", padx=(8, 0))
+        if not existentes:
+            self.bt_marcar_agendadas.configure(state="disabled")
+        self.vars: dict[str, tk.BooleanVar] = {}
+        for comando, texto in comandos.items():
+            self.vars[comando] = tk.BooleanVar(value=False)
+            extra = f"   ·   agendada (próxima: {existentes[comando]})" if comando in existentes else ""
+            master._checkbox(corpo, texto + extra, self.vars[comando], comando=self._atualizar).pack_configure(padx=0)
+        linha = ctk.CTkFrame(corpo, fg_color="transparent")
+        linha.pack(fill="x", pady=(10, 0))
+        ctk.CTkLabel(linha, text="Frequência:", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE).pack(side="left")
+        self.var_frequencia = tk.StringVar(value=frequencias[0])
+        self._frequencias = frequencias
+        master._menu_opcoes(linha, self.var_frequencia, frequencias).pack(side="left", padx=(8, 16))
+        ctk.CTkLabel(linha, text="1º horário:", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE).pack(side="left")
+        self.var_hora = tk.StringVar(value=hora)
+        self.menu_hora = master._menu_opcoes(linha, self.var_hora, [f"{h:02d}:{m:02d}" for h in range(24)
+                                                                     for m in (0, 30)])
+        self.menu_hora.pack(side="left", padx=(8, 0))
+        self.var_frequencia.trace_add("write", lambda *a: self._atualizar())
+        self.lb_resumo = ctk.CTkLabel(corpo, text="", font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_FRACO,
+                                      anchor="w", justify="left", wraplength=520)
+        self.lb_resumo.pack(fill="x", pady=(8, 0))
+        botoes = ctk.CTkFrame(self, fg_color="transparent")
+        botoes.pack(fill="x", padx=26, pady=(10, 20))
+        master._botao(botoes, "Cancelar", self.destroy, "secundario").pack(side="left")
+        self.bt_tirar = master._botao(botoes, "Tirar do agendamento", lambda: self._ok("tirar"), "perigo")
+        self.bt_tirar.pack(side="left", padx=(8, 0))
+        self.bt_agendar = master._botao(botoes, "Agendar", lambda: self._ok("agendar"), "primario")
+        self.bt_agendar.pack(side="right")
+        self.bind("<Escape>", lambda e: self.destroy())
+        self._atualizar()
+        self.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_reqwidth()) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - self.winfo_reqheight()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+    def marcados(self) -> list[str]:
+        return [c for c, var in self.vars.items() if var.get()]
+
+    def marcar(self, sim: bool) -> None:
+        for var in self.vars.values():
+            var.set(sim)
+        self._atualizar()
+
+    def marcar_agendadas(self) -> None:
+        for comando, var in self.vars.items():
+            var.set(comando in self._existentes)
+        self._atualizar()
+
+    def _atualizar(self) -> None:
+        """Botões com a contagem ("Agendar 3 marcadas") e o resumo dos horários."""
+        marcados = self.marcados()
+        n = len(marcados)
+        self.bt_agendar.configure(text=f"Agendar {n} marcada(s)" if n else "Agendar",
+                                  state="normal" if n else "disabled")
+        agendadas = [c for c in marcados if c in self._existentes]
+        self.bt_tirar.configure(text=f"Tirar {len(agendadas)} do agendamento" if agendadas else "Tirar do agendamento",
+                                state="normal" if agendadas else "disabled")
+        cada_hora = self.var_frequencia.get() == self._frequencias[-1]
+        self.menu_hora.configure(state="disabled" if cada_hora else "normal")
+        if n > 1:
+            self.lb_resumo.configure(text=f"{n} tarefas: uma a cada 15 minutos a partir do horário, para não "
+                                          "rodarem todas juntas.")
+        else:
+            self.lb_resumo.configure(text="Marque uma ou várias (as caixas ou os botões acima)." if not n else "")
+
+    def _ok(self, acao: str) -> None:
+        marcados = self.marcados()
+        if acao == "tirar":
+            marcados = [c for c in marcados if c in self._existentes]
+        if not marcados:
+            return
+        cada_hora = self.var_frequencia.get() == self._frequencias[-1]
+        self.resultado = {"acao": acao, "comandos": marcados, "frequencia": self.var_frequencia.get(),
+                          "hora": "00:00" if cada_hora else self.var_hora.get()}
         self.destroy()
 
 
@@ -1860,6 +1971,10 @@ class JanelaModerna(ctk.CTk):
         self.txt_pastas_vigiadas.bind("<FocusOut>", lambda e: self.atualizar_aviso_vigiadas(arrumar=True))
         self._botao(lateral, "Adicionar pasta...", self._adicionar_pasta_vigiada, "fantasma").pack(
             anchor="w", pady=(2, 4), **p)
+        # ligado: E:/Series/NOVELAS se arruma em E:/Series/NOVELAS (a origem e as bibliotecas acima não contam)
+        self.var_jf_vigia_no_lugar = tk.BooleanVar(value=True)
+        self._checkbox(lateral, "Organizar cada pasta vigiada dentro\ndela mesma (não leva para as bibliotecas)",
+                       self.var_jf_vigia_no_lugar)
         # pastas que o organizador nunca mexe (ex.: as que o Sonarr/Radarr cuidam)
         self._rotulo(lateral, "Pastas protegidas, uma por linha (ex.: as do\nSonarr/Radarr). O organizador nunca\n"
                               "mexe nelas, nem entra nelas.").pack(anchor="w", pady=(4, 2), **p)
@@ -2425,6 +2540,7 @@ class JanelaModerna(ctk.CTk):
             apagar_pasta_origem=self.var_jf_apagar_pasta.get(), nomes_episodios=self.var_jf_nomes_ep.get(),
             vigiar=self.var_jf_vigiar.get(), vigiar_min=self.campo_vigia_min.get(),
             pastas_vigiadas=tuple(self.pastas_vigiadas()), pastas_protegidas=tuple(self.pastas_protegidas()),
+            vigia_no_lugar=self.var_jf_vigia_no_lugar.get(),
             conferir_auto=self.var_jf_conferir_auto.get(), conferir_a_cada=self.campo_conferir_a_cada.get(),
             conferir_unidade=self.var_jf_conferir_unidade.get(), remover_quebrados=self.var_jf_remover_quebrados.get(),
             ultima_conferencia=self.var_jf_ultima_conferencia.get(),
@@ -2537,7 +2653,8 @@ class JanelaModerna(ctk.CTk):
                   "exigir_catalogo": self.var_jf_exigir, "legendas": self.var_jf_legendas,
                   "limpar_lixo": self.var_jf_lixo, "imagens_tmdb": self.var_jf_imagens,
                   "apagar_pasta_origem": self.var_jf_apagar_pasta, "nomes_episodios": self.var_jf_nomes_ep,
-                  "vigiar": self.var_jf_vigiar, "conferir_auto": self.var_jf_conferir_auto,
+                  "vigiar": self.var_jf_vigiar, "vigia_no_lugar": self.var_jf_vigia_no_lugar,
+                  "conferir_auto": self.var_jf_conferir_auto,
                   "remover_quebrados": self.var_jf_remover_quebrados, "avisar_versao": self.var_jf_avisar_versao,
                   "atualizar_sozinho": self.var_jf_atualizar_sozinho,
                   "fechar_na_bandeja": self.var_jf_fechar_bandeja,
@@ -3081,6 +3198,12 @@ class JanelaModerna(ctk.CTk):
         dialogo = DialogoLista(self, titulo, mensagem, itens, botao, marcado, procurar, termo)
         self.wait_window(dialogo)
         return dialogo.resposta
+
+    def pedir_agendamento(self, comandos: dict, existentes: dict, frequencias: tuple) -> dict | None:
+        """Janela "Agendar tarefas" (caixas de marcar + botões); ver DialogoAgendar."""
+        dialogo = DialogoAgendar(self, comandos, existentes, frequencias)
+        self.wait_window(dialogo)
+        return dialogo.resultado
 
     def escolher(self, titulo: str, mensagem: str, opcoes: tuple[str, ...], cancelar: str = "Cancelar") -> str | None:
         """Pergunta com vários botões; devolve o texto do escolhido (None = Cancelar)."""

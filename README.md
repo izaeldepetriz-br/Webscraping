@@ -259,8 +259,16 @@ primeira falha (antes esperava o tempo limite em cada filme).
   sozinho depois (o painel de saúde mostra "Tradução em lote: N aguardando").
 - **Revisão da legenda traduzida**: no máximo 42 letras por linha (o padrão de legendagem), em 2 linhas
   equilibradas; diálogos ("- Oi." / "- Olá.") ficam como estão.
-- **Agendar tarefas**: escolha na janela o que o Maestro faz sozinho (organizar, conferir canais, traduzir,
-  legendar, dublar, sincronizar...) e quando; vai para o **Agendador de Tarefas do Windows** (pasta "Maestro").
+- **Agendar tarefas**: uma janela com uma **caixa de marcar** por tarefa (organizar, conferir canais, traduzir,
+  legendar, dublar, sincronizar...), botões **"Marcar todas"**, **"Desmarcar todas"** e **"Marcar as já agendadas"**,
+  a frequência e o 1º horário. Marque **várias de uma vez**: elas rodam uma a cada 15 minutos (não todas juntas).
+  **"Tirar do agendamento"** remove as marcadas. Vai para o **Agendador de Tarefas do Windows** (pasta "Maestro").
+- **Pasta vigiada no lugar**: a opção **"Organizar cada pasta vigiada dentro dela mesma"** (já marcada) arruma
+  `E:\Series_Organizadas\NOVELAS` dentro de `E:\Series_Organizadas\NOVELAS`, sem levar nada para a pasta de
+  origem nem para as bibliotecas da tela. Desmarque para o jeito antigo (do uTorrent para as bibliotecas).
+- **TV ao vivo, "Conferir 1 selecionado"**: a conferência **automática** (espelhos + todos os canais) não começa
+  mais com a janela TV ao vivo aberta nem logo depois de outra tarefa, e o rodapé diz "Conferência automática".
+  Antes ela emendava no seu "Conferir 1 selecionado" e parecia que o botão tinha conferido todos.
 - **Resumo do dia** no Discord/Telegram, às 21h: o que foi baixado, organizado, traduzido, dublado, e o que
   quebrou. Dia parado não gera mensagem.
 - **Exportar/importar configurações** (.zip, com ou sem as chaves de API), para levar o Maestro para outro

@@ -71,6 +71,14 @@ def comando_criar(comando: str, frequencia: str, hora: str = "06:00", exe: str |
             *quando, "/F"]
 
 
+def escalonar(hora: str, quantas: int, intervalo: int = 15) -> list[str]:
+    """Vários comandos no mesmo horário: um a cada `intervalo` minutos ("06:00", "06:15", "06:30"...), para não
+    rodarem todos juntos disputando o disco, a internet e a CPU."""
+    h, m = (int(p) for p in hora.split(":"))
+    return [f"{(h * 60 + m + k * intervalo) // 60 % 24:02d}:{(h * 60 + m + k * intervalo) % 60:02d}"
+            for k in range(quantas)]
+
+
 def _rodar(comando: list[str], rodar=None) -> subprocess.CompletedProcess:
     if rodar is None:
         if sys.platform != "win32":

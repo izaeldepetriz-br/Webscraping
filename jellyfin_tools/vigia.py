@@ -37,6 +37,16 @@ def pronto(video: Path, espera: float = ESPERA_PADRAO, agora: float | None = Non
     return idade >= espera and not download_em_andamento(video.parent)
 
 
+def alvos(vigiadas, origem, filmes, series, no_lugar: bool = True, valida=None) -> list[tuple]:
+    """[(pasta vigiada, biblioteca de Filmes, biblioteca de Séries)]. Sem lista, vigia a pasta de origem.
+    no_lugar (com lista): cada pasta se organiza DENTRO dela mesma (E:/Series/NOVELAS -> E:/Series/NOVELAS/
+    Novela/Season 01/...); as bibliotecas escolhidas na tela não contam. valida(pasta): False = ignora a pasta."""
+    pastas = [p for p in (vigiadas or (origem,)) if p and Path(p).is_dir() and (valida is None or valida(p))]
+    if vigiadas and no_lugar:
+        return [(p, p, p) for p in pastas]
+    return [(p, filmes or None, series or None) for p in pastas]
+
+
 def filtro_prontos(espera: float = ESPERA_PADRAO):
     """Para organizar_pasta(filtro=...): só os vídeos que já terminaram de baixar."""
     pastas_ocupadas: dict[Path, bool] = {}

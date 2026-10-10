@@ -1389,6 +1389,7 @@ def test_vigia_com_pastas_do_utorrent_separa_filmes_e_series(app, tmp_path):
     app.var_jf_origem.set(str(tmp_path / "outra"))                       # sem uso: há pastas vigiadas
     app.definir_pastas_vigiadas([str(torrent / "Filmes"), str(torrent / "Series")])
     assert app.obter_opcoes_jellyfin().pastas_vigiadas == (str(torrent / "Filmes"), str(torrent / "Series"))
+    app.var_jf_vigia_no_lugar.set(False)                                  # do uTorrent PARA as bibliotecas
     app.var_jf_legendas.set(False)
     app.var_jf_vigiar.set(True)
     app.ao_alternar_vigia()
@@ -1458,6 +1459,7 @@ def test_conferencia_automatica_dos_espelhos(app, tmp_path, api_falsa, monkeypat
     api_falsa.rotas["/discord"] = lambda q: (204, b"")
     original = espelho.verificar_links
     monkeypatch.setattr(espelho, "verificar_links", lambda urls, **k: original(urls, **{**k, "respeitar_robots": False}))
+    monkeypatch.setattr(app, "PAUSA_APOS_TAREFA", 0)                     # sem esperar a janela ficar quieta
     filmes = tmp_path / "Filmes"
     (filmes / "Quebrado (2001)").mkdir(parents=True)
     (filmes / "Quebrado (2001)" / "Quebrado (2001).strm").write_text(api_falsa.base + "/sumiu.mp4\n", encoding="utf-8")
@@ -1491,6 +1493,25 @@ def test_conferencia_automatica_dos_espelhos(app, tmp_path, api_falsa, monkeypat
     esperar(app)
     assert len([p for p in api_falsa.pedidos if p["caminho"] == "/discord"]) == 2
     assert config.carregar()["jellyfin"]["conferir_unidade"] == "minutos"
+
+
+def test_conferencia_automatica_nao_emenda_no_conferir_selecionados(app, monkeypatch):
+    """"Só conferi 1, mas o sistema verificou todos os canais": era a conferência automática (espelhos + TODOS
+    os canais) começando logo depois. Agora ela espera a janela TV ao vivo fechar e a janela ficar quieta."""
+    import time as relogio
+    from types import SimpleNamespace
+    comecou = []
+    monkeypatch.setattr(app, "_rodar", lambda status, tarefa: comecou.append(status))
+    app.var_jf_conferir_auto.set(True)
+    app.var_jf_ultima_conferencia.set("")                               # nunca conferiu: estaria na hora
+    monkeypatch.setattr(app, "janela_canais", SimpleNamespace(winfo_exists=lambda: True))
+    app._verificar_conferencia()
+    assert not comecou and "espera a janela TV ao vivo fechar" in app.lb_estado_conferencia.cget("text")
+    monkeypatch.setattr(app, "janela_canais", None)
+    monkeypatch.setattr(app, "_fim_da_tarefa", relogio.monotonic())    # o "Conferir 1" acabou agora
+    app._verificar_conferencia()
+    assert not comecou
+    app.var_jf_conferir_auto.set(False)
 
 
 def test_espelhos_remover_qualquer_espelhamento_pela_janela(app, tmp_path, api_falsa):
@@ -2423,8 +2444,8 @@ def test_pastas_vigiadas_aceitam_virgula_e_avisam_o_que_esta_errado(app, tmp_pat
         [str(downloads), str(filmes), str(tmp_path / "nao_existe")]
     aviso = app.lb_aviso_vigiadas.cget("text")
     assert "Não existe" in aviso and "biblioteca" not in aviso and app.lb_aviso_vigiadas.winfo_manager()
-    pastas, _, _ = app._alvos_da_vigia(app.obter_opcoes_jellyfin())
-    assert pastas == [str(downloads), str(filmes)]                      # a biblioteca também pode ser vigiada
+    alvos = app._alvos_da_vigia(app.obter_opcoes_jellyfin())
+    assert [a[0] for a in alvos] == [str(downloads), str(filmes)]       # a biblioteca também pode ser vigiada
     app.definir_pastas_vigiadas([str(downloads)])
     assert app.lb_aviso_vigiadas.cget("text") == "" and not app.lb_aviso_vigiadas.winfo_manager()
 
@@ -2488,10 +2509,11 @@ def test_idiomas_das_legendas_quantos_quiser(app):
     assert "⚠" not in app.lb_idiomas_entendidos.cget("text")
 
 
-def _vigia_nas_bibliotecas(app, tmp_path, filmes_escolhida=True):
+def _vigia_nas_bibliotecas(app, tmp_path, filmes_escolhida=True, no_lugar=False):
     """O jeito do usuário: os arquivos caem DENTRO das bibliotecas e a vigia arruma no lugar."""
     import os
     series, filmes = tmp_path / "Series_Organizadas", tmp_path / "Filmes_Organizados"
+    app.var_jf_vigia_no_lugar.set(no_lugar)
     for p in (series / "Animes" / "Ashita no Joe 2 - 01 ~ 47" / "[Erai-raws] Ashita no Joe 2 - 14 [720p].mkv",
               filmes / "Matrix (1999)" / "Matrix (1999).mkv", filmes / "Interestelar.2014.1080p.BluRay.x264.mkv"):
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -2519,6 +2541,38 @@ def test_vigia_nas_proprias_bibliotecas_organiza_filmes_e_series(app, tmp_path):
     assert (filmes / "Interestelar (2014)" / "Interestelar (2014).mkv").is_file()       # o filme foi organizado
     assert (series / "Ashita no Joe 2" / "Season 01" / "Ashita no Joe 2 S01E14.mkv").is_file()
     assert (filmes / "Matrix (1999)" / "Matrix (1999).mkv").is_file()                 # já estava: fica
+    assert "1 filme(s) e 1 episódio(s)" in app.var_status.get()
+
+
+def test_vigia_organiza_cada_pasta_dentro_dela_mesma(app, tmp_path):
+    """Opção ligada: E:/Series_Organizadas/NOVELAS se arruma lá dentro, mesmo com a biblioteca de Séries da tela
+    apontando para outra pasta (o caso do usuário: Séries = E:/Filmes_Organizados)."""
+    import os
+    filmes, novelas = tmp_path / "Filmes_Organizados", tmp_path / "Series_Organizadas" / "NOVELAS"
+    for p in (filmes / "Interestelar.2014.1080p.BluRay.x264.mkv", novelas / "Pantanal" / "Pantanal.S01E03.mkv"):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"v" * 2048)
+        os.utime(p, (time.time() - 3600, time.time() - 3600))
+    app.mostrar_aba("Jellyfin")
+    app._destinos["Filmes"], app._destinos["Séries"] = str(filmes), str(filmes)        # a tela "errada"
+    app.var_jf_destino.set(app._destinos[app._modo_atual])
+    app.var_jf_origem.set(str(filmes))
+    app.var_jf_legendas.set(False)
+    app.definir_pastas_vigiadas([str(filmes), str(novelas)])
+    assert app.var_jf_vigia_no_lugar.get()                              # já vem marcada
+    assert app._bibliotecas_faltando() == []
+    app.var_jf_vigiar.set(True)
+    app.ao_alternar_vigia()
+    fim = time.time() + 60
+    while (app._vigia_conferindo or app.trabalhando) and time.time() < fim:
+        app.update()
+        time.sleep(0.05)
+    esperar(app)
+    app.var_jf_vigiar.set(False)
+    app.ao_alternar_vigia()
+    assert (filmes / "Interestelar (2014)" / "Interestelar (2014).mkv").is_file()
+    assert (novelas / "Pantanal" / "Season 01" / "Pantanal S01E03.mkv").is_file()   # ficou nas NOVELAS
+    assert not list(filmes.rglob("Pantanal*"))                          # nada foi para a pasta de origem
     assert "1 filme(s) e 1 episódio(s)" in app.var_status.get()
 
 
@@ -3480,11 +3534,55 @@ def test_agendar_tarefa_pela_janela(app, monkeypatch):
     feitos = []
     monkeypatch.setattr(agendador, "listar", lambda: [])
     monkeypatch.setattr(agendador, "agendar", lambda c, f, h: feitos.append((c, f, h)) or agendador.nome_da_tarefa(c))
-    app.escolher_da_lista = lambda t, m, itens, botao="", **k: 2 if botao == "Escolher" else 22   # canais, 22:00
-    app.escolher = lambda t, m, opcoes, **k: opcoes[0]                                             # todo dia
+    app.pedir_agendamento = lambda c, e, f: {"acao": "agendar", "comandos": ["--conferir-canais"],
+                                             "frequencia": "Todo dia", "hora": "22:00"}
     app.bt_agendar.invoke()
     assert feitos == [("--conferir-canais", "Todo dia", "22:00")]
     assert app.caixas[-1][0] == "sucesso" and "Maestro\\conferir-canais" in app.caixas[-1][2]
+    # VÁRIAS de uma vez: a mesma frequência, uma a cada 15 min (a das 23:45 passa da meia-noite)
+    feitos.clear()
+    app.pedir_agendamento = lambda c, e, f: {"acao": "agendar", "comandos": ["--organizar", "--conferir-canais",
+                                                                              "--traduzir-legendas"],
+                                             "frequencia": "Todo dia", "hora": "23:00"}
+    app.bt_agendar.invoke()
+    assert feitos == [("--organizar", "Todo dia", "23:00"), ("--conferir-canais", "Todo dia", "23:15"),
+                      ("--traduzir-legendas", "Todo dia", "23:30")]
+    assert app.caixas[-1][0] == "sucesso" and "23:15  Conferir os canais" in app.caixas[-1][2]
+    assert agendador.escalonar("23:45", 2) == ["23:45", "00:00"]
+    # tirar várias de uma vez
+    tirados = []
+    monkeypatch.setattr(agendador, "remover", lambda c: tirados.append(c))
+    app.pedir_agendamento = lambda c, e, f: {"acao": "tirar", "comandos": ["--organizar", "--dublar"],
+                                             "frequencia": "Todo dia", "hora": "06:00"}
+    app.bt_agendar.invoke()
+    assert tirados == ["--organizar", "--dublar"] and "Saíram do agendamento" in app.caixas[-1][2]
+
+
+def test_janela_agendar_caixas_e_botoes(app):
+    """A janela de verdade: caixas de marcar, "Marcar todas", "Marcar as já agendadas" e os botões com a contagem."""
+    from videoscraper import agendador
+    from videoscraper.gui_moderna import DialogoAgendar
+    janela = DialogoAgendar(app, agendador.COMANDOS, {"--dublar": "11/10/2026 06:00:00"}, agendador.FREQUENCIAS)
+    assert janela.bt_agendar.cget("state") == "disabled" and janela.bt_tirar.cget("state") == "disabled"
+    janela.bt_marcar_todas.invoke()
+    assert janela.marcados() == list(agendador.COMANDOS)
+    assert janela.bt_agendar.cget("text") == f"Agendar {len(agendador.COMANDOS)} marcada(s)"
+    assert janela.bt_tirar.cget("text") == "Tirar 1 do agendamento"
+    assert "uma a cada 15 minutos" in janela.lb_resumo.cget("text")
+    janela.bt_desmarcar.invoke()
+    assert janela.marcados() == []
+    janela.bt_marcar_agendadas.invoke()
+    assert janela.marcados() == ["--dublar"]
+    janela.vars["--organizar"].set(True)
+    janela.var_frequencia.set(agendador.FREQUENCIAS[1])
+    janela.var_hora.set("21:30")
+    janela.bt_agendar.invoke()
+    assert janela.resultado == {"acao": "agendar", "comandos": ["--organizar", "--dublar"],
+                                "frequencia": agendador.FREQUENCIAS[1], "hora": "21:30"}
+    janela = DialogoAgendar(app, agendador.COMANDOS, {"--dublar": "amanhã"}, agendador.FREQUENCIAS)
+    janela.bt_marcar_todas.invoke()
+    janela.bt_tirar.invoke()                                            # só as que estão agendadas saem
+    assert janela.resultado["acao"] == "tirar" and janela.resultado["comandos"] == ["--dublar"]
 
 
 def test_resumo_do_dia_pela_janela(app, api_falsa):
