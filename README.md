@@ -271,6 +271,17 @@ primeira falha (antes esperava o tempo limite em cada filme).
   mais natural, com entonação. Seis vozes prontas (masculinas e femininas); o Maestro nunca clona a voz de ninguém.
   Pago por uso: a confirmação mostra uma estimativa. Botões **"Criar a chave no AI Studio"** e **"Testar chave do
   Gemini"** (o teste não gera áudio). O painel de saúde mostra "Gemini (voz) ativa" quando ele está escolhido.
+- **Gemini mais econômico e sem perder trabalho**: as falas vão em **blocos de até 30 por pedido** (um filme de
+  ~1.200 falas faz ~40 pedidos, não 1.200), com uma pausa entre elas; o Maestro corta o áudio nas pausas e confere
+  cada pedaço (se não bater, refaz só aquele bloco fala por fala). O progresso fica **guardado por filme**
+  (`.videoscraper\dublagem`): se o limite do dia acabar, faltar internet ou você clicar em Parar, a próxima
+  dublagem **continua de onde parou**, sem pedir (nem pagar) de novo. Vale também para o Piper e para as falas
+  reescritas pelo Claude.
+- **Uma voz para cada personagem** (Gemini): marque a opção e o Gemini **ouve o filme** (em trechos de 15 min) e
+  diz quem fala cada fala, homem ou mulher. Cada pessoa ganha uma voz pronta do mesmo gênero; antes de dublar, a
+  tabela **"Vozes dos personagens"** mostra cada pessoa, quantas falas e um exemplo, para trocar a voz, usar uma
+  voz só ou pular o filme. Quem fala pouco usa a voz principal. Nos robôs (`--dublar`), as vozes são escolhidas
+  sozinhas. Pode errar com falas sobrepostas, música alta ou muitas pessoas.
 - **Simular a vigia**: o botão **"O que a vigia faria agora?"** mostra na lista o que ela moveria (com as mesmas
   regras: só o que terminou de baixar, "dentro dela mesma", os desmarcados), **sem mover nada**.
 - **Pasta vigiada no lugar**: a opção **"Organizar cada pasta vigiada dentro dela mesma"** (já marcada) arruma
@@ -916,7 +927,8 @@ jellyfin_tools/
   transcricao.py        cria a legenda ouvindo o áudio (Whisper, no PC)
   dublagem.py           lê a legenda com voz sintética (Piper) e junta ao vídeo (ffmpeg)
   adaptacao.py          reescreve (Claude) as falas da dublagem que não cabem no tempo da cena
-  voz_gemini.py         voz premium da dublagem: Gemini (Google AI Studio), só vozes prontas
+  voz_gemini.py         voz premium da dublagem: Gemini (Google AI Studio), só vozes prontas; blocos e cortes nas pausas
+  personagens.py        voz por personagem: o Gemini ouve o filme e diz quem fala cada fala
   sincronia.py          acerta legenda adiantada/atrasada comparando com a voz do áudio
   resumo_diario.py      o resumo do dia no Discord/Telegram
   registro.py           log em arquivo (logging)

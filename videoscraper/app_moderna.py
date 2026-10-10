@@ -32,7 +32,7 @@ from tkinter import filedialog
 
 from jellyfin_tools import (CatalogoLocal, CatalogoTMDB, ErroCatalogo, ProvedorOpenSubtitles, ProvedorSubDL,
                             desfazer, organizar_pasta)
-from jellyfin_tools.legendas import normalizar_idiomas
+from jellyfin_tools.legendas import ErroLegenda, normalizar_idiomas
 from jellyfin_tools.nomes import extrair_episodio, extrair_titulo_e_ano, normalizar, serie_da_pasta
 from jellyfin_tools.metadados import ClienteTMDB
 from jellyfin_tools.notificacoes import Notificador
@@ -48,7 +48,7 @@ from jellyfin_tools import traducao_lote
 from jellyfin_tools.transcricao import (Transcritor, estimar as estimar_audio, legendar_pelo_audio, modelo_baixado,
                                         videos_sem_legenda)
 from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sincronizar
-from jellyfin_tools.dublagem import ErroDublagem, dublar_video, videos_para_dublar, voz_pronta
+from jellyfin_tools.dublagem import ErroDublagem, dublar_video, falas_da_legenda, videos_para_dublar, voz_pronta
 from jellyfin_tools.paralelo import prioridade_baixa
 from jellyfin_tools.lixeira import apagar_lotes, lotes_antigos, tamanho_legivel
 from jellyfin_tools.tv_ao_vivo import carregar_canais, conferir_canais, mensagem_fora_do_ar
@@ -60,7 +60,7 @@ from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, inicia
 from jellyfin_tools.relatorio import gerar_relatorio, resumo, salvar_csv
 from jellyfin_tools.resumo_diario import ResumoDiario, mensagem as mensagem_resumo
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca, indice_da_biblioteca, testar_conexao
-from jellyfin_tools import vigia, voz_gemini
+from jellyfin_tools import personagens, vigia, voz_gemini
 from jellyfin_tools.vigia import filtro_prontos
 
 from . import config
@@ -769,6 +769,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._traduzir_pendente = dado                 # pergunta (com o custo) depois do "fim"
         elif tipo == "sincronizar_pendente":
             self._sincronizar_pendente = dado              # pergunta depois do "fim"
+        elif tipo == "vozes_pendentes":
+            self._vozes_pendente = dado                    # a tabela "Pessoa -> Voz" depois do "fim"
         elif tipo == "dublar_pendente":
             self._dublar_pendente = dado                   # pergunta (espaço em disco) depois do "fim"
         elif tipo == "legendar_audio_pendente":
@@ -846,6 +848,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
             if getattr(self, "_sincronizar_pendente", None):
                 pares, self._sincronizar_pendente = self._sincronizar_pendente, None
                 self.after(50, lambda: self._confirmar_sincronia(*pares))
+            if getattr(self, "_vozes_pendente", None):
+                vozes, self._vozes_pendente = self._vozes_pendente, None
+                self.after(50, lambda: self._escolher_vozes(*vozes))
             if getattr(self, "_dublar_pendente", None):
                 dublar, self._dublar_pendente = self._dublar_pendente, None
                 self.after(50, lambda: self._confirmar_dublagem(*dublar))
@@ -2419,9 +2424,14 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 return
             fala = sum(i.falas for i in itens) * 2.5               # ~2,5 s por fala, para a estimativa
             minimo, maximo = voz_gemini.estimar_custo(fala)
-            voz = (f"pela voz premium \"{o.voz_gemini}\" do Gemini (Google AI Studio, pago por uso: estimativa entre "
-                   f"US$ {minimo:.2f} e US$ {maximo:.2f} para ~{int(fala // 60)} min de fala; confira o preço atual no "
-                   "AI Studio)")
+            pedidos = sum(voz_gemini.pedidos_estimados(i.falas) for i in itens)
+            ouvir = sum(max(1, -(-int(i.duracao or i.falas * 4) // personagens.TRECHO)) for i in itens)
+            quem = (f"uma voz para cada personagem (o Gemini ouve o filme e separa quem fala: +{ouvir} pedido(s); "
+                    "depois você confere as vozes)" if o.voz_por_personagem else f"a voz premium \"{o.voz_gemini}\"")
+            voz = (f"com {quem} do Gemini (Google AI Studio, pago por uso: estimativa entre US$ {minimo:.2f} e US$ "
+                   f"{maximo:.2f} para ~{int(fala // 60)} min de fala; confira o preço atual no AI Studio). São "
+                   f"~{pedidos} pedido(s) de voz (até {voz_gemini.BLOCO} falas em cada): na camada GRÁTIS o limite por "
+                   "dia é baixo; se acabar, o que ficou pronto é guardado e a próxima dublagem continua de onde parou")
             download = ""
         else:
             voz = f"pela voz \"{o.voz_dublagem}\" (Piper, no seu PC, grátis)"
@@ -2444,9 +2454,66 @@ class AppModerna(TVAoVivo, JanelaModerna):
             (f"Dublar os {len(itens)}",))
         if escolha is None:
             return
-        self._dublar(itens, o)
+        if automacao.usa_gemini(o) and o.voz_por_personagem:
+            self._ouvir_personagens(itens, o)
+        else:
+            self._dublar(itens, o)
 
-    def _dublar(self, itens: list, o) -> None:
+    def _ouvir_personagens(self, itens: list, o) -> None:
+        """Voz por personagem, 1ª parte (numa tarefa): o Gemini ouve cada filme e diz quem fala cada fala. Depois,
+        na janela, a tabela "Pessoa -> Voz" de cada filme (_escolher_vozes) e a dublagem."""
+        def tarefa():
+            try:
+                cliente = voz_gemini._cliente(automacao.chave_gemini(o))
+            except ErroDublagem as erro:
+                self.fila.put(("msg", ("Dublar filmes", f"Não deu para usar o Gemini: {erro}", "erro")))
+                return
+            achados = []
+            for k, item in enumerate(itens):
+                if self.evento_parar.is_set():
+                    break
+                try:
+                    falas = falas_da_legenda(item.legenda)
+                    lista = automacao.ouvir_personagens(
+                        o, item.video, falas, cliente, parar=self.evento_parar.is_set,
+                        ao_progresso=lambda f, k=k, item=item: self.fila.put(("jf_analise", (
+                            (k + f) / len(itens), f"Ouvindo quem fala em {item.video.stem} ({k + 1} de {len(itens)})"))))
+                    self._log.info("%s: %d pessoa(s) falando", item.video.name, len(lista))
+                    achados.append((item, falas, lista))
+                except (ErroDublagem, OSError, ErroLegenda) as erro:
+                    self._log.warning("Voz por personagem em %s: %s (vai com uma voz só)", item.video.name, erro)
+                    achados.append((item, [], []))
+            self.fila.put(("vozes_pendentes", (achados, o)))
+
+        self._rodar(f"Ouvindo quem fala em {len(itens)} filme(s)...", tarefa)
+
+    def _escolher_vozes(self, achados: list, o) -> None:
+        """Voz por personagem, 2ª parte (na janela): a tabela de cada filme; depois dubla os que não foram pulados."""
+        itens, vozes = [], {}
+        for item, falas, lista in achados:
+            if not lista:                                      # não deu para ouvir: uma voz só
+                itens.append(item)
+                continue
+            sugestao = personagens.distribuir_vozes(lista, o.voz_gemini)
+            principais = [p for p in lista if len(p.falas) >= personagens.MINIMO_FALAS][:8]
+            if not principais:
+                itens.append(item)
+                continue
+            escolha = self.pedir_vozes(item.video.stem, personagens.resumo(principais, falas, len(principais)),
+                                       [p.rotulo for p in principais], sugestao)
+            if escolha is None:
+                self._log.info("Dublagem: %s pulado", item.video.name)
+                continue
+            itens.append(item)
+            if escolha:
+                mapa = {p.rotulo: escolha.get(p.rotulo, o.voz_gemini) for p in lista}
+                vozes[str(item.video)] = personagens.vozes_por_fala(lista, mapa)
+                self._log.info("%s: %s", item.video.name, ", ".join(f"{r} -> {v}" for r, v in escolha.items()))
+        if itens:
+            self._dublar(itens, o, vozes)
+
+    def _dublar(self, itens: list, o, vozes: dict | None = None) -> None:
+        vozes = vozes or {}
         def tarefa():
             try:
                 if not automacao.usa_gemini(o):
@@ -2475,11 +2542,13 @@ class AppModerna(TVAoVivo, JanelaModerna):
                     adaptadores.append(adaptar)
                 r = dublar_video(item.video, item.legenda, motor, parar=self.evento_parar.is_set,
                                  ao_progresso=andamento, adaptar=adaptar,
-                                 avisar=lambda texto: self._log.warning("Dublagem: %s", texto))
+                                 avisar=lambda texto: self._log.warning("Dublagem: %s", texto),
+                                 vozes=vozes.get(str(item.video)), pasta_cache=automacao.pasta_dublagem())
                 resultados.append(r)
                 (self._log.error if r.status == "erro" else self._log.info)(
-                    "[%s] %s%s (%d falas, %d adaptadas, %d aceleradas, %d cortadas)", r.status, r.video.name,
-                    f" ({r.detalhe})" if r.detalhe else "", r.falas, r.adaptadas, r.aceleradas, r.cortadas)
+                    "[%s] %s%s (%d falas, %d adaptadas, %d aceleradas, %d cortadas, %d já prontas de antes)",
+                    r.status, r.video.name, f" ({r.detalhe})" if r.detalhe else "", r.falas, r.adaptadas,
+                    r.aceleradas, r.cortadas, r.retomadas)
             feitos = [r for r in resultados if r.status == "dublado"]
             self.resumo_diario.registrar("dublados", len(feitos))
             erros = [r for r in resultados if r.status == "erro"]
@@ -2490,10 +2559,12 @@ class AppModerna(TVAoVivo, JanelaModerna):
                     self._log.warning("Jellyfin: scan não pedido (%s)", erro)
             adaptadas = sum(r.adaptadas for r in feitos)
             custos = [a.tradutor.custo for a in adaptadores if a.tradutor.pedidos and a.tradutor.custo is not None]
+            pedidos = getattr(motor, "pedidos", 0)
             texto = (f"Dublados: {len(feitos)} de {total}\nCom erro: {len(erros)}"
+                     + (f" (ex.: {erros[0].video.name}: {erros[0].detalhe})" if erros else "")
                      + (f"\nFalas longas reescritas pelo Claude: {adaptadas}"
                         + (f" (custo: US$ {sum(custos):.2f})" if custos else "") if adaptadas else "")
-                     + (f" (ex.: {erros[0].video.name}: {erros[0].detalhe})" if erros else "")
+                     + (f"\nPedidos de voz ao Gemini: {pedidos}" if pedidos else "")
                      + (f"\nNão feitos (parou antes): {total - len(resultados)}" if len(resultados) < total else "")
                      + f"\n\nTempo: {self._texto_duracao(time.monotonic() - inicio)}"
                      + ("\n\nNo Jellyfin, abra o filme e escolha a versão \"Dublado IA\"." if feitos else ""))

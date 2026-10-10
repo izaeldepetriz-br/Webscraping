@@ -267,3 +267,23 @@ def _cache_tmdb_limpo():
     CatalogoTMDB.limpar_cache()
     yield
     CatalogoTMDB.limpar_cache()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Diagnóstico: quando um teste FALHA, o relatório mostra o que as outras threads estavam fazendo naquela hora
+    (ex.: uma tarefa de um teste anterior ainda rodando e atrasando o servidor falso)."""
+    resultado = yield
+    relatorio = resultado.get_result()
+    if call.when != "call" or not relatorio.failed:
+        return
+    import traceback
+    linhas = []
+    nomes = {t.ident: t.name for t in threading.enumerate()}
+    for ident, quadro in sys._current_frames().items():
+        if ident == threading.get_ident():
+            continue
+        pilha = traceback.extract_stack(quadro)[-4:]
+        linhas.append(f"[{nomes.get(ident, ident)}] " + " <- ".join(
+            f"{Path(q.filename).name}:{q.lineno} {q.name}" for q in reversed(pilha)))
+    relatorio.sections.append(("Threads quando falhou", "\n".join(sorted(linhas)) or "(nenhuma)"))

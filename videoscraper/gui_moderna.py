@@ -150,6 +150,7 @@ class OpcoesJellyfin:
     voz_gemini: str = "Charon"       # voz pronta do Gemini (nunca clonagem de voz)
     chave_gemini: str = ""           # Google AI Studio > Get API key (vazio = variável GEMINI_API_KEY)
     encurtar_falas: bool = True      # dublagem: o Claude reescreve mais curtas as falas que não cabem no tempo
+    voz_por_personagem: bool = False  # Gemini: ouve o filme, separa quem fala e dá uma voz para cada personagem
     resumo_diario: bool = False      # mandar no Discord/Telegram, uma vez por dia, o que o Maestro fez
     hora_resumo: int = 21
 
@@ -901,6 +902,59 @@ class DialogoAgendar(ctk.CTkToplevel):
         cada_hora = self.var_frequencia.get() == self._frequencias[-1]
         self.resultado = {"acao": acao, "comandos": marcados, "frequencia": self.var_frequencia.get(),
                           "hora": "00:00" if cada_hora else self.var_hora.get()}
+        self.destroy()
+
+
+class DialogoVozes(ctk.CTkToplevel):
+    """"Vozes dos personagens": quem o Gemini ouviu falar no filme e a voz sugerida para cada um, para trocar.
+    `resultado`: {rótulo: voz} (dublar assim), {} (uma voz só para todos) ou None (pular este filme)."""
+
+    def __init__(self, master, filme: str, linhas: list[str], rotulos: list[str], sugestao: dict, vozes: tuple):
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.resultado = None
+        self.title("Vozes dos personagens")
+        self.resizable(False, False)
+        self.transient(master)
+        corpo = ctk.CTkFrame(self, fg_color="transparent")
+        corpo.pack(fill="both", expand=True, padx=26, pady=(20, 6))
+        ctk.CTkLabel(corpo, text="Vozes dos personagens", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
+                     text_color=Tema.TEXTO, anchor="w").pack(fill="x")
+        ctk.CTkLabel(corpo, text=f"{filme}: quem o Gemini ouviu falar e a voz de cada um. Troque o que quiser (ouça as "
+                     "vozes em aistudio.google.com/generate-speech). Quem fala pouco, ou fala sem dono, usa a voz "
+                     "principal.", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left",
+                     wraplength=640).pack(fill="x", pady=(2, 10))
+        self.vars: dict[str, tk.StringVar] = {}
+        por_nome = {v.split()[0]: v for v in vozes}
+        for rotulo, linha in zip(rotulos, linhas):
+            fila = ctk.CTkFrame(corpo, fg_color="transparent")
+            fila.pack(fill="x", pady=3)
+            ctk.CTkLabel(fila, text=linha, font=master.f_rotulo, text_color=Tema.TEXTO, anchor="w", justify="left",
+                         wraplength=400, width=400).pack(side="left")
+            self.vars[rotulo] = tk.StringVar(value=por_nome.get(sugestao.get(rotulo, ""), vozes[0]))
+            master._menu_opcoes(fila, self.vars[rotulo], vozes).pack(side="right")
+        botoes = ctk.CTkFrame(self, fg_color="transparent")
+        botoes.pack(fill="x", padx=26, pady=(10, 20))
+        master._botao(botoes, "Pular este filme", self.destroy, "secundario").pack(side="left")
+        self.bt_uma_voz = master._botao(botoes, "Uma voz só para todos", self._uma_voz, "fantasma")
+        self.bt_uma_voz.pack(side="left", padx=(8, 0))
+        self.bt_dublar = master._botao(botoes, "Dublar com estas vozes", self._ok, "primario")
+        self.bt_dublar.pack(side="right")
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_reqwidth()) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - self.winfo_reqheight()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+    def _uma_voz(self) -> None:
+        self.resultado = {}
+        self.destroy()
+
+    def _ok(self) -> None:
+        self.resultado = {rotulo: var.get().split()[0] for rotulo, var in self.vars.items()}
         self.destroy()
 
 
@@ -1868,8 +1922,12 @@ class JanelaModerna(ctk.CTk):
     MODELOS_WHISPER = ("tiny", "base", "small", "medium", "large-v3", "turbo")
     VOZES_DUBLAGEM = ("faber", "edresson")
     MOTORES_VOZ = ("Piper (grátis, no PC)", "Gemini (premium, Google AI Studio)")
+    # as mesmas de jellyfin_tools.voz_gemini.VOZES (um teste confere), com a descrição para o menu
     VOZES_GEMINI = ("Charon (masculina, informativa)", "Orus (masculina, firme)", "Puck (masculina, animada)",
-                    "Kore (feminina, firme)", "Aoede (feminina, leve)", "Leda (feminina, jovem)")
+                    "Fenrir (masculina, empolgada)", "Iapetus (masculina, clara)", "Algieba (masculina, suave)",
+                    "Enceladus (masculina, sussurrada)", "Kore (feminina, firme)", "Aoede (feminina, leve)",
+                    "Leda (feminina, jovem)", "Zephyr (feminina, brilhante)", "Despina (feminina, suave)",
+                    "Callirrhoe (feminina, tranquila)", "Autonoe (feminina, clara)")
     FONTES_LEGENDA = ("Site de demonstração", "OpenSubtitles (API)", "Site de busca (URL)", "SubDL (API)")
     IDIOMAS_JF = (("pt-BR", "Português"), ("en", "Inglês"), ("es", "Espanhol"))
     ROTULOS_DESTINO = {"Filmes": "Biblioteca de Filmes do Jellyfin:", "Séries": "Biblioteca de Séries do Jellyfin:"}
@@ -2137,6 +2195,9 @@ class JanelaModerna(ctk.CTk):
         self._rotulo(lateral, "Voz do Gemini (premium):").pack(anchor="w", pady=(6, 2), **p)
         self.var_jf_voz_gemini = tk.StringVar(value=self.VOZES_GEMINI[0])
         self._menu_opcoes(lateral, self.var_jf_voz_gemini, self.VOZES_GEMINI).pack(fill="x", **p)
+        self.var_jf_voz_por_personagem = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Uma voz para cada personagem (o Gemini\nouve o filme e separa quem fala)",
+                       self.var_jf_voz_por_personagem)
         self._rotulo(lateral, "Chave do Google AI Studio (Gemini):").pack(anchor="w", pady=(6, 2), **p)
         self.var_jf_chave_gemini = tk.StringVar()
         self._entrada(lateral, self.var_jf_chave_gemini, "aistudio.google.com > Get API key", show="•").pack(
@@ -2586,7 +2647,8 @@ class JanelaModerna(ctk.CTk):
             modelo_whisper=self.var_jf_modelo_whisper.get(), whisper_gpu=self.var_jf_whisper_gpu.get(),
             voz_dublagem=self.var_jf_voz_dublagem.get(), motor_voz=self.var_jf_motor_voz.get(),
             voz_gemini=self.var_jf_voz_gemini.get().split()[0], chave_gemini=self.var_jf_chave_gemini.get().strip(),
-            encurtar_falas=self.var_jf_encurtar_falas.get(), resumo_diario=self.var_jf_resumo_diario.get(),
+            encurtar_falas=self.var_jf_encurtar_falas.get(),
+            voz_por_personagem=self.var_jf_voz_por_personagem.get(), resumo_diario=self.var_jf_resumo_diario.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
     def idiomas_jf(self) -> str:
@@ -2698,7 +2760,8 @@ class JanelaModerna(ctk.CTk):
                   "gerar_nfo": self.var_jf_nfo, "atualizar_jellyfin": self.var_jf_atualizar,
                   "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar,
                   "whisper_gpu": self.var_jf_whisper_gpu, "resumo_diario": self.var_jf_resumo_diario,
-                  "encurtar_falas": self.var_jf_encurtar_falas}
+                  "encurtar_falas": self.var_jf_encurtar_falas,
+                  "voz_por_personagem": self.var_jf_voz_por_personagem}
         for chave, var in textos.items():
             if dados.get(chave):
                 var.set(dados[chave])
@@ -3245,6 +3308,12 @@ class JanelaModerna(ctk.CTk):
         dialogo = DialogoLista(self, titulo, mensagem, itens, botao, marcado, procurar, termo)
         self.wait_window(dialogo)
         return dialogo.resposta
+
+    def pedir_vozes(self, filme: str, linhas: list[str], rotulos: list[str], sugestao: dict) -> dict | None:
+        """Janela "Vozes dos personagens" (ver DialogoVozes)."""
+        dialogo = DialogoVozes(self, filme, linhas, rotulos, sugestao, self.VOZES_GEMINI)
+        self.wait_window(dialogo)
+        return dialogo.resultado
 
     def pedir_agendamento(self, comandos: dict, existentes: dict, frequencias: tuple) -> dict | None:
         """Janela "Agendar tarefas" (caixas de marcar + botões); ver DialogoAgendar."""

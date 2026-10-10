@@ -237,3 +237,34 @@ def test_traducao_economica_pelo_robo(casa, tmp_path, monkeypatch):
     assert automacao.main(["--traduzir-legendas", "--economico"]) == automacao.OK
     assert (filmes / "A (2001)" / "A (2001).pt-BR.srt").exists()
     assert "1 legenda(s) do lote gravada(s)" in resultado(tmp_path)["comandos"][0]["resumo"]
+
+
+def test_dublar_pelo_robo_com_voz_por_personagem(casa, tmp_path, monkeypatch):
+    """Sem janela: o robô ouve, distribui as vozes sozinho (sem a tabela) e guarda o progresso."""
+    from jellyfin_tools import dublagem, personagens, voz_gemini
+    from test_dublagem import FFMPEG, SRT_APERTADA, gravar_tom, video_de_teste
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    filmes = tmp_path / "Filmes"
+    (filmes / "A (2001)").mkdir(parents=True)
+    video_de_teste(filmes / "A (2001)" / "A (2001).mkv")
+    (filmes / "A (2001)" / "A (2001).pt-BR.srt").write_text(SRT_APERTADA, encoding="utf-8")
+    monkeypatch.setattr(automacao, "videos_para_dublar",
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+    monkeypatch.setattr(automacao, "ouvir_personagens", lambda o, video, falas, **k: [
+        personagens.Personagem("Pessoa 1", "m", falas=[0, 2]), personagens.Personagem("Ana", "f", falas=[1])])
+    vozes = {}
+
+    class Voz:
+        def sintetizar(self, pedidos, parar=None, ao_progresso=None):
+            for texto, wav, *voz in pedidos:
+                vozes[texto] = voz[0] if voz else None
+                gravar_tom(Path(wav), 0.05 * len(texto))
+    monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, voz: Voz())
+    casa(destino_filmes=str(filmes), motor_voz="Gemini (premium, Google AI Studio)", chave_gemini="AIza",
+         voz_gemini="Kore", voz_por_personagem=True, encurtar_falas=False)
+    assert automacao.main(["--dublar"]) == automacao.OK
+    # quem fala menos de 3 falas fica com a voz principal (Kore)
+    assert set(vozes.values()) == {"Kore"} and len(vozes) == 3
+    assert (filmes / "A (2001)" / "A (2001) - Dublado IA.mkv").is_file()
+    assert not any((tmp_path / "config" / "dublagem").iterdir())         # terminou: o progresso foi apagado

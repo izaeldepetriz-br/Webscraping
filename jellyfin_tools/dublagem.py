@@ -20,6 +20,8 @@ Por isso só FILMES por enquanto: em séries, a versão nova apareceria como um 
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import os
 import re
@@ -170,6 +172,7 @@ class MotorPiper:
             if parar and parar():
                 raise ErroDublagem("interrompido (botão Parar)")
             parte = pedidos[i:i + lote]
+            parte = [(p[0], p[1]) for p in parte]           # (texto, wav[, voz]): o Piper usa a voz do modelo dele
             linhas = "\n".join(json.dumps({"text": t, "output_file": str(w)}, ensure_ascii=False) for t, w in parte)
             r = self._rodar(["--json-input"], linhas + "\n", timeout=60 + 20 * len(parte))
             faltando = [(t, w) for t, w in parte if not Path(w).is_file()]
@@ -375,14 +378,54 @@ class ResultadoDublagem:
     aceleradas: int = 0
     cortadas: int = 0
     adaptadas: int = 0             # falas que a IA reescreveu mais curtas para caber no tempo
+    retomadas: int = 0             # falas que já estavam prontas de uma vez anterior (não pediu de novo)
+
+
+def falas_da_legenda(legenda: str | Path) -> list:
+    """[(Fala, texto para falar)] só das falas com texto: a MESMA lista (e numeração) na dublagem e na voz por
+    personagem."""
+    falas = [(f, texto_para_falar(f.texto)) for f in ler_srt(extrair_srt(Path(legenda).read_bytes()))]
+    return [(f, t) for f, t in falas if t]
+
+
+def pasta_do_filme(pasta_cache: str | Path, video: str | Path) -> Path:
+    """Onde fica o progresso guardado de um filme (as falas já geradas): some quando a dublagem termina."""
+    video = Path(video)
+    marca = hashlib.sha1(str(video.resolve()).encode("utf-8")).hexdigest()[:8]
+    nome = re.sub(r"[^\w() -]", "_", video.stem)[:60]
+    return Path(pasta_cache) / f"{nome}-{marca}"
+
+
+def _nome_wav(k: int, texto: str, voz: str, sufixo: str = "") -> str:
+    """O nome muda se o texto ou a voz mudarem: o que foi guardado só é reaproveitado se for o mesmo."""
+    return f"{k:05d}{sufixo}-{hashlib.sha1(f'{voz}|{texto}'.encode('utf-8')).hexdigest()[:10]}.wav"
+
+
+def _pronto(wav: Path) -> bool:
+    try:
+        with wave.open(str(wav), "rb") as w:
+            return w.getnframes() > 0
+    except (OSError, EOFError, wave.Error):
+        return False
+
+
+def _sintetizar(motor, pedidos, parar, ao_progresso=None) -> None:
+    """Só as falas que ainda não estão prontas; a voz vai junto só quando há uma por personagem."""
+    faltando = [(t, w, v) if v else (t, w) for t, w, v in pedidos if not _pronto(w)]
+    if faltando:
+        motor.sintetizar(faltando, parar=parar, ao_progresso=ao_progresso)
 
 
 def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | None = None,
                  pasta_trabalho: str | Path | None = None, parar=None, ao_progresso=None,
-                 sondar=faixas_de_audio, adaptar=None, avisar=None) -> ResultadoDublagem:
+                 sondar=faixas_de_audio, adaptar=None, avisar=None, vozes: dict | None = None,
+                 pasta_cache: str | Path | None = None) -> ResultadoDublagem:
     """Lê a legenda com a voz, monta a trilha e grava 'Nome - Dublado IA.mkv'. O original não é tocado.
     adaptar([(id, texto, máx. letras, fala anterior)]) -> {id: texto mais curto}: as falas que não cabem no tempo
-    são reescritas (ver adaptacao.py) e lidas de novo. Se falhar, segue sem adaptar. avisar(texto): para o log."""
+    são reescritas (ver adaptacao.py) e lidas de novo. Se falhar, segue sem adaptar. avisar(texto): para o log.
+    vozes: {número da fala: voz} (uma voz por personagem; ver personagens.py).
+    pasta_cache: guarda as falas já geradas (e as reescritas) por filme. Se parar no meio (limite do Gemini, sem
+    internet, botão Parar), a próxima vez continua de onde parou, sem pedir (nem pagar) de novo."""
     video, legenda = Path(video), Path(legenda)
     destino = caminho_dublado(video)
     if destino.exists():
@@ -395,62 +438,85 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
         if ao_progresso:
             ao_progresso(fracao)
     try:
-        falas = [(f, texto_para_falar(f.texto)) for f in ler_srt(extrair_srt(legenda.read_bytes()))]
+        falas = falas_da_legenda(legenda)
     except (OSError, ErroLegenda) as erro:
         return ResultadoDublagem(video, "erro", f"não deu para ler a legenda: {erro}")
-    falas = [(f, t) for f, t in falas if t]
     if not falas:
         return ResultadoDublagem(video, "erro", "a legenda não tem nenhuma fala")
     duracao, idiomas = sondar(video)
     if not idiomas:
         return ResultadoDublagem(video, "erro", "o vídeo não tem áudio")
     duracao = duracao or horarios(falas[-1][0].tempo)[1] + 2
-    with tempfile.TemporaryDirectory(prefix="maestro-dublagem-", dir=pasta_trabalho) as pasta:
+    vozes = vozes or {}
+    if pasta_cache:
+        lugar = contextlib.nullcontext(pasta_do_filme(pasta_cache, video))
+    else:
+        lugar = tempfile.TemporaryDirectory(prefix="maestro-dublagem-", dir=pasta_trabalho)
+    with lugar as pasta:
         pasta = Path(pasta)
-        pedidos = [(t, pasta / f"{k:05d}.wav") for k, (_, t) in enumerate(falas)]
+        pasta.mkdir(parents=True, exist_ok=True)
+        pedidos = [(t, pasta / _nome_wav(k, t, vozes.get(k, "")), vozes.get(k, "")) for k, (_, t) in enumerate(falas)]
+        retomadas = sum(1 for _, w, _ in pedidos if _pronto(w))
         try:
-            motor.sintetizar(pedidos, parar=parar, ao_progresso=lambda f: andamento(0.5 * f))
-            clipes = [(*horarios(f.tempo), w) for (f, _), (_, w) in zip(falas, pedidos)]
+            _sintetizar(motor, pedidos, parar, lambda f: andamento(0.5 * f))
+            clipes = [(*horarios(f.tempo), w) for (f, _), (_, w, _) in zip(falas, pedidos)]
             adaptadas = 0
             if adaptar is not None:
-                clipes, adaptadas = _adaptar(clipes, [t for _, t in falas], duracao, motor, adaptar, parar, avisar)
+                clipes, adaptadas = _adaptar(clipes, [t for _, t in falas], duracao, motor, adaptar, parar, avisar,
+                                             vozes, pasta)
             andamento(0.6)
             contas = montar_trilha(clipes, duracao, pasta / "trilha.wav", acelerar_com_ffmpeg(ffmpeg))
             andamento(0.7)
             mixar(ffmpeg, video, pasta / "trilha.wav", destino, duracao, len(idiomas), parar,
                   lambda f: andamento(0.7 + 0.3 * f))
-        except ErroDublagem as erro:
-            return ResultadoDublagem(video, "erro", str(erro), falas=len(falas))
-        except (OSError, wave.Error, subprocess.SubprocessError) as erro:
-            return ResultadoDublagem(video, "erro", f"{type(erro).__name__}: {erro}", falas=len(falas))
+        except (ErroDublagem, OSError, wave.Error, subprocess.SubprocessError) as erro:
+            detalhe = str(erro) if isinstance(erro, ErroDublagem) else f"{type(erro).__name__}: {erro}"
+            if pasta_cache:
+                prontas = sum(1 for _, w, _ in pedidos if _pronto(w))
+                detalhe += (f" — {prontas} de {len(pedidos)} falas já prontas e guardadas: dublar de novo continua "
+                            "de onde parou")
+            return ResultadoDublagem(video, "erro", detalhe, falas=len(falas), retomadas=retomadas)
+        if pasta_cache:
+            (pasta / "trilha.wav").unlink(missing_ok=True)
+    if pasta_cache:
+        shutil.rmtree(pasta_do_filme(pasta_cache, video), ignore_errors=True)      # pronto: o progresso não serve mais
     andamento(1.0)
     return ResultadoDublagem(video, "dublado", "", destino, len(falas), contas["aceleradas"], contas["cortadas"],
-                             adaptadas)
+                             adaptadas, retomadas)
 
 
-def _adaptar(clipes, textos, duracao, motor, adaptar, parar, avisar):
-    """Reescreve (IA) as falas que só caberiam muito aceleradas e as lê de novo. Fica a versão que soar MAIS CURTA."""
+def _adaptar(clipes, textos, duracao, motor, adaptar, parar, avisar, vozes, pasta):
+    """Reescreve (IA) as falas que só caberiam muito aceleradas e as lê de novo. Fica a versão que soar MAIS CURTA.
+    As reescritas ficam guardadas (adaptadas.json): ao continuar um filme, não se paga de novo por elas."""
     from .adaptacao import NATURAL, limite_de_letras
+    arquivo = Path(pasta) / "adaptadas.json"
+    try:
+        guardadas = {int(k): v for k, v in json.loads(arquivo.read_text(encoding="utf-8")).items()}
+    except (OSError, ValueError):
+        guardadas = {}
     longas = []
     for k, ((_, _, wav), vaga) in enumerate(zip(clipes, vagas(clipes, duracao))):
         dur = duracao_wav(wav)
-        if dur / vaga > NATURAL:
+        if dur / vaga > NATURAL and k not in guardadas:
             longas.append((k, textos[k], limite_de_letras(textos[k], dur, vaga), textos[k - 1] if k else ""))
-    if not longas:
+    if longas:
+        try:
+            guardadas.update(adaptar(longas))
+        except Exception as erro:                             # sem crédito, sem internet...: segue sem adaptar
+            if avisar:
+                avisar(f"falas longas não adaptadas ({str(erro)[:150]}): ficam aceleradas como antes")
+        try:
+            arquivo.write_text(json.dumps(guardadas, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+    if not guardadas:
         return clipes, 0
-    try:
-        novos = adaptar(longas)
-    except Exception as erro:                                 # sem crédito, sem internet...: segue sem adaptar
-        if avisar:
-            avisar(f"falas longas não adaptadas ({str(erro)[:150]}): ficam aceleradas como antes")
-        return clipes, 0
-    if not novos:
-        return clipes, 0
-    pedidos = [(texto, Path(clipes[k][2]).with_name(f"{k:05d}-curta.wav")) for k, texto in novos.items()]
-    motor.sintetizar(pedidos, parar=parar)
+    pedidos = [(texto, Path(pasta) / _nome_wav(k, texto, vozes.get(k, ""), "-curta"), vozes.get(k, ""))
+               for k, texto in guardadas.items() if k < len(clipes)]
+    _sintetizar(motor, pedidos, parar)
     clipes, adaptadas = list(clipes), 0
-    for (k, _), (_, wav) in zip(novos.items(), pedidos):
-        if wav.is_file() and duracao_wav(wav) < duracao_wav(clipes[k][2]):
+    for (k, _), (_, wav, _) in zip(((k, t) for k, t in guardadas.items() if k < len(clipes)), pedidos):
+        if _pronto(wav) and duracao_wav(wav) < duracao_wav(clipes[k][2]):
             clipes[k] = (clipes[k][0], clipes[k][1], wav)
             adaptadas += 1
     return clipes, adaptadas

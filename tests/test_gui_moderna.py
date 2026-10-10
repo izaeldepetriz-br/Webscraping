@@ -3786,3 +3786,79 @@ def test_voz_premium_do_gemini_pela_janela(app, tmp_path, monkeypatch):
     esperar(app)
     esperar(app)
     assert "precisa da chave do Google AI Studio" in app.caixas[-1][2] and not criados
+
+
+def test_voz_por_personagem_pela_janela(app, tmp_path, monkeypatch):
+    """Ouvir (Gemini) -> tabela "Pessoa -> Voz" -> dublar com uma voz por fala; o progresso fica guardado."""
+    from jellyfin_tools import dublagem, personagens, voz_gemini
+    from tests.test_dublagem import FFMPEG, SRT_APERTADA, gravar_tom, video_de_teste
+    from videoscraper import automacao
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    filmes = tmp_path / "Filmes"
+    (filmes / "Nosferatu (1922)").mkdir(parents=True)
+    video_de_teste(filmes / "Nosferatu (1922)" / "Nosferatu (1922).mkv")
+    (filmes / "Nosferatu (1922)" / "Nosferatu (1922).pt-BR.srt").write_text(SRT_APERTADA, encoding="utf-8")
+    app.mostrar_aba("Jellyfin")
+    app._destinos.update({"Filmes": str(filmes), "Séries": ""})
+    app.var_jf_destino.set(str(filmes))
+    app.var_jf_motor_voz.set(app.MOTORES_VOZ[1])
+    app.var_jf_chave_gemini.set("AIza-teste")
+    app.var_jf_voz_por_personagem.set(True)
+    app.var_jf_encurtar_falas.set(False)
+    monkeypatch.setattr(app_moderna, "videos_para_dublar",
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+    monkeypatch.setattr(voz_gemini, "_cliente", lambda chave: object())
+    ouvidos = []
+
+    def ouvir(o, video, falas, cliente=None, ao_progresso=None, parar=None):
+        ouvidos.append([t for _, t in falas])
+        return [personagens.Personagem("Conde", "m", "voz grave", falas=[0, 1, 2]),
+                personagens.Personagem("Ellen", "f", "", falas=[3, 4, 5])]
+    monkeypatch.setattr(automacao, "ouvir_personagens", ouvir)
+
+    class Voz:                                                       # o Gemini, de mentira: anota a voz de cada fala
+        pedidos = 1
+
+        def __init__(self):
+            self.vozes = {}
+
+        def sintetizar(self, pedidos, parar=None, ao_progresso=None):
+            for texto, wav, *voz in pedidos:
+                self.vozes[texto] = voz[0] if voz else "principal"
+                gravar_tom(Path(wav), 0.05 * len(texto))
+    voz = Voz()
+    monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, nome: voz)
+    tabelas, perguntas = [], []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append(m), opcoes[0])[1]
+    # a falas 0-2 são do Conde e 3-5 da Ellen, mas a legenda só tem 3 falas: a Ellen não chega a falar
+    app.pedir_vozes = lambda filme, linhas, rotulos, sugestao: tabelas.append((filme, linhas, rotulos, sugestao)) or \
+        {"Conde": "Orus", "Ellen": "Kore"}
+    app.bt_dublar.invoke()
+    for _ in range(3):
+        esperar(app)
+    assert "uma voz para cada personagem" in perguntas[0] and "pedido(s) de voz" in perguntas[0]
+    assert ouvidos == [["Olá!", "Uma fala comprida demais para caber nesse pedacinho de tempo.", "Tchau."]]
+    filme, linhas, rotulos, sugestao = tabelas[0]
+    assert filme == "Nosferatu (1922)" and rotulos == ["Conde", "Ellen"]
+    assert sugestao["Conde"] in voz_gemini.VOZES_MASCULINAS and sugestao["Ellen"] in voz_gemini.VOZES_FEMININAS
+    assert linhas[0].startswith('Conde (homem, voz grave) · 3 falas')
+    assert set(voz.vozes.values()) == {"Orus"}                          # as 3 falas são do Conde -> Orus
+    assert (filmes / "Nosferatu (1922)" / "Nosferatu (1922) - Dublado IA.mkv").is_file()
+    assert "Pedidos de voz ao Gemini" in app.caixas[-1][2]
+
+
+def test_janela_vozes_dos_personagens(app):
+    from jellyfin_tools import voz_gemini
+    from videoscraper.gui_moderna import DialogoVozes
+    assert [v.split()[0] for v in app.VOZES_GEMINI] == list(voz_gemini.VOZES)      # o menu e o motor batem
+    assert all(v == voz_gemini.texto_da_voz(v.split()[0]) for v in app.VOZES_GEMINI)
+    janela = DialogoVozes(app, "Filme", ["Pessoa 1 (homem) · 30 falas", "Ana (mulher) · 12 falas"],
+                          ["Pessoa 1", "Ana"], {"Pessoa 1": "Orus", "Ana": "Kore"}, app.VOZES_GEMINI)
+    assert janela.vars["Ana"].get() == "Kore (feminina, firme)"
+    janela.vars["Ana"].set("Leda (feminina, jovem)")
+    janela.bt_dublar.invoke()
+    assert janela.resultado == {"Pessoa 1": "Orus", "Ana": "Leda"}
+    janela = DialogoVozes(app, "Filme", ["x"], ["Pessoa 1"], {}, app.VOZES_GEMINI)
+    janela.bt_uma_voz.invoke()
+    assert janela.resultado == {}                                       # uma voz só para todos

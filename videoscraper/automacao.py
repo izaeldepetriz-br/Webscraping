@@ -57,12 +57,13 @@ from jellyfin_tools.traducao import Tradutor, estimar_custo, legendas_para_tradu
 from jellyfin_tools import traducao_lote
 from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sincronizar
 from jellyfin_tools.transcricao import Transcritor, legendar_pelo_audio, videos_sem_legenda
-from jellyfin_tools.dublagem import (ErroDublagem, MotorPiper, dublar_video, preparar_piper, preparar_voz,
-                                     videos_para_dublar)
+from jellyfin_tools.dublagem import (ErroDublagem, MotorPiper, dublar_video, falas_da_legenda, localizar_ffmpeg,
+                                     pasta_do_filme, preparar_piper, preparar_voz, videos_para_dublar)
+from jellyfin_tools.legendas import ErroLegenda
 from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, ClienteTV, carregar_canais, carregar_historico,
                                        conferir_canais, mensagem_fora_do_ar, publicar, registrar_no_historico,
                                        salvar_historico)
-from jellyfin_tools import vigia, voz_gemini
+from jellyfin_tools import personagens, vigia, voz_gemini
 from jellyfin_tools.adaptacao import Adaptador
 from jellyfin_tools.vigia import filtro_prontos
 
@@ -193,6 +194,21 @@ def preparar_motor(o: OpcoesJellyfin, progresso_piper=None, progresso_voz=None):
     pasta = config.ARQUIVO.parent
     return MotorPiper(preparar_piper(pasta / "piper", ao_progresso=progresso_piper),
                       preparar_voz(o.voz_dublagem, pasta / "vozes", ao_progresso=progresso_voz))
+
+
+def pasta_dublagem() -> Path:
+    """O progresso guardado das dublagens (as falas já geradas de cada filme), para continuar de onde parou."""
+    return config.ARQUIVO.parent / "dublagem"
+
+
+def ouvir_personagens(o: OpcoesJellyfin, video: Path, falas: list, cliente=None, ao_progresso=None, parar=None):
+    """O Gemini ouve o filme e diz quem fala cada fala (ver personagens.py). O que já ouviu fica guardado."""
+    ffmpeg = localizar_ffmpeg()
+    if not ffmpeg:
+        raise ErroDublagem("falta o ffmpeg (pip install imageio-ffmpeg)")
+    cliente = cliente or voz_gemini._cliente(chave_gemini(o))
+    arquivo = pasta_do_filme(pasta_dublagem(), video) / "personagens.json"
+    return personagens.identificar(video, falas, cliente, ffmpeg, arquivo, ao_progresso=ao_progresso, parar=parar)
 
 
 def adaptador(o: OpcoesJellyfin, titulo: str = ""):
@@ -524,8 +540,16 @@ def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
     log.info("Dublar: %d filme(s), %d nesta execução (voz %s)", len(itens), len(escolhidos), voz)
     resultados = []
     for item in escolhidos:
+        vozes = None
+        if usa_gemini(o) and o.voz_por_personagem:
+            try:
+                lista = ouvir_personagens(o, item.video, falas_da_legenda(item.legenda))
+                vozes = personagens.vozes_por_fala(lista, personagens.distribuir_vozes(lista, o.voz_gemini))
+            except (ErroDublagem, OSError, ErroLegenda) as erro:
+                log.warning("Voz por personagem em %s: %s (segue com uma voz só)", item.video.name, erro)
         r = dublar_video(item.video, item.legenda, motor, adaptar=adaptador(o, item.video.stem),
-                         avisar=lambda texto: log.warning("Dublagem: %s", texto))
+                         avisar=lambda texto: log.warning("Dublagem: %s", texto), vozes=vozes,
+                         pasta_cache=pasta_dublagem())
         resultados.append(r)
         (log.error if r.status == "erro" else log.info)("[%s] %s%s (%d falas, %d adaptadas, %d aceleradas)",
                                                          r.status, r.video.name,
