@@ -204,3 +204,31 @@ def test_dublar_pelo_robo(casa, tmp_path, monkeypatch):
     assert automacao.main(["--dublar"]) == automacao.OK
     assert resultado(tmp_path)["comandos"][0]["resumo"] == "1 de 1 filme(s) dublado(s), 0 erro(s)."
     assert (filmes / "A (2001)" / "A (2001) - Dublado IA.mkv").is_file()
+
+
+def test_robo_soma_no_resumo_do_dia(casa, tmp_path, api_falsa):
+    from jellyfin_tools.resumo_diario import ResumoDiario
+    api_falsa.rotas["/ok.m3u8"] = lambda q: (200, b"#EXTM3U\n", {"Content-Type": "application/x-mpegURL"})
+    casa()
+    salvar_canais(tmp_path / "config" / "canais.json", [Canal("Sumiu", api_falsa.base + "/sumiu.m3u8")])
+    automacao.main(["--conferir-canais"])
+    assert ResumoDiario(tmp_path / "config" / "resumo_do_dia.json").para_enviar(0) == {"canais_fora": 1}
+
+
+def test_traducao_economica_pelo_robo(casa, tmp_path, monkeypatch):
+    from test_traducao_lote import LoteFalso
+    filmes = tmp_path / "Filmes"
+    baixado(filmes / "A (2001)" / "A (2001).mkv")
+    (filmes / "A (2001)" / "A (2001).en.srt").write_text(SRT, encoding="utf-8")
+    cliente = ClienteFalso()
+    cliente.batches = LoteFalso(cliente)
+    monkeypatch.setattr(automacao, "Tradutor", lambda **k: Tradutor(cliente=cliente, **k))
+    casa(destino_filmes=str(filmes), chave_claude="chave")
+    assert automacao.main(["--traduzir-legendas", "--economico"]) == automacao.OK
+    assert resultado(tmp_path)["comandos"][0]["resumo"].startswith("Lote msgbatch_1 enviado: 1 legenda(s)")
+    assert automacao.main(["--traduzir-legendas", "--economico"]) == automacao.OK      # ainda processando
+    assert "ainda processando" in resultado(tmp_path)["comandos"][0]["resumo"]
+    cliente.batches.terminado = True
+    assert automacao.main(["--traduzir-legendas", "--economico"]) == automacao.OK
+    assert (filmes / "A (2001)" / "A (2001).pt-BR.srt").exists()
+    assert "1 legenda(s) do lote gravada(s)" in resultado(tmp_path)["comandos"][0]["resumo"]

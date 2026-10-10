@@ -240,6 +240,39 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.12.0
+
+- **Criar legenda pelo áudio** (aba Jellyfin > Legendas): para os vídeos **sem nenhuma legenda**, o
+  **Whisper** (código aberto, roda no seu PC, grátis) ouve o áudio e escreve as falas com os horários
+  (`Nome.en.srt`, no idioma do áudio); se o áudio não é português, o **Claude** traduz para `Nome.pt-BR.srt`.
+  Áudio já em português sai direto, sem gastar com a API. Escolha o modelo do Whisper (`tiny` ... `large-v3`,
+  padrão `small`) e, se tiver, a placa de vídeo NVIDIA (bem mais rápido). Na 1ª vez ele baixa o modelo.
+- **Dublar filmes (voz sintética)**: a legenda em português é lida por uma voz do **Piper** (roda no PC, grátis;
+  vozes genéricas, nunca a voz de atores) e o ffmpeg grava **`Nome - Dublado IA.mkv`**: o vídeo copiado sem perder
+  qualidade, a faixa dublada como a 1ª (padrão) e o áudio original preservado. Estilo narração de documentário:
+  a voz original fica mais baixa enquanto a dublada fala, e a boca dos atores não acompanha. O arquivo original
+  não é tocado; no Jellyfin aparecem as duas **versões** do filme. Só filmes, por enquanto.
+- **Sincronizar legendas**: compara onde há voz no áudio com onde há fala na legenda e corrige as adiantadas ou
+  atrasadas (a original fica como `Nome.srt.original`). Quando o encaixe não é claro, nada é mudado.
+- **Tradução econômica (em lote)**: no "Traduzir legendas com IA", a opção **"Econômico"** custa **metade** do
+  preço e fica pronta em até 24 h (quase sempre menos de 1 h). Pode fechar o Maestro: ele busca o resultado
+  sozinho depois (o painel de saúde mostra "Tradução em lote: N aguardando").
+- **Revisão da legenda traduzida**: no máximo 42 letras por linha (o padrão de legendagem), em 2 linhas
+  equilibradas; diálogos ("- Oi." / "- Olá.") ficam como estão.
+- **Agendar tarefas**: escolha na janela o que o Maestro faz sozinho (organizar, conferir canais, traduzir,
+  legendar, dublar, sincronizar...) e quando; vai para o **Agendador de Tarefas do Windows** (pasta "Maestro").
+- **Resumo do dia** no Discord/Telegram, às 21h: o que foi baixado, organizado, traduzido, dublado, e o que
+  quebrou. Dia parado não gera mensagem.
+- **Exportar/importar configurações** (.zip, com ou sem as chaves de API), para levar o Maestro para outro
+  computador; antes de importar, as atuais ficam guardadas em `backups`.
+- **Baixar todos com vídeos selecionados** agora pergunta: só os selecionados ou todos? A situação "baixado"
+  marca só a linha do vídeo baixado, e o log mostra quais foram escolhidos.
+- **Download por streaming**: em vez de "ffmpeg falhou: sem detalhes", explica o que houve e o que fazer.
+- Comandos de robô novos: `--legendar-audio`, `--dublar`, `--sincronizar-legendas` (com `--limite-videos`,
+  padrão 5 por execução) e `--traduzir-legendas --economico`.
+- O `.exe` testa no GitHub, a cada versão, a ida e volta do áudio: o Piper **fala** uma frase em português e o
+  Whisper **ouve** e confere.
+
 ### Novidades da v2.11.0
 
 - **Traduzir legendas com IA** (aba Jellyfin, seção Legendas, botão **"Traduzir legendas com IA..."**): acha nas
@@ -849,6 +882,7 @@ videoscraper/
   gui.py        janela clássica (Tkinter cinza)
   cli.py        comandos links / baixar / login
   automacao.py  comandos para robôs (Maestro.exe --organizar, --conferir-espelhos...), sem janela
+  agendador.py  põe os comandos de robô no Agendador de Tarefas do Windows
   menu.py       menu de texto (python iniciar.py --texto)
 jellyfin_tools/
   nomes.py       lê nomes bagunçados e monta "Nome (Ano)"
@@ -860,6 +894,11 @@ jellyfin_tools/
   servidor_jellyfin.py  scan da biblioteca (POST /Library/Refresh)
   notificacoes.py       avisos no Discord/Telegram
   traducao.py           traduz legendas .srt com a IA (Claude), mantendo os horários
+  traducao_lote.py      a mesma tradução em lote (metade do preço, pronta em até 24 h)
+  transcricao.py        cria a legenda ouvindo o áudio (Whisper, no PC)
+  dublagem.py           lê a legenda com voz sintética (Piper) e junta ao vídeo (ffmpeg)
+  sincronia.py          acerta legenda adiantada/atrasada comparando com a voz do áudio
+  resumo_diario.py      o resumo do dia no Discord/Telegram
   registro.py           log em arquivo (logging)
 organizar_jellyfin.py  script completo, com as configurações no topo
 exemplo_jellyfin.py  como integrar no seu arquivo principal

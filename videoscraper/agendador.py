@@ -23,6 +23,7 @@ COMANDOS = {"--organizar": "Organizar o que terminou de baixar",
             "--enviar-tv": "Enviar a lista de canais ao Jellyfin",
             "--traduzir-legendas": "Traduzir as legendas que faltam (Claude)",
             "--legendar-audio": "Criar legenda pelo áudio (Whisper)",
+            "--sincronizar-legendas": "Sincronizar legendas adiantadas/atrasadas",
             "--dublar": "Dublar filmes (voz sintética)"}
 FREQUENCIAS = ("Todo dia", "Toda semana (segunda)", "A cada 6 horas", "A cada hora")
 SEM_JANELA = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}

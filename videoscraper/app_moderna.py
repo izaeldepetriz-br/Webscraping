@@ -42,8 +42,10 @@ from jellyfin_tools.espelho import (aplicar_espelho, classificar, conferir_e_avi
                                     licenca_aberta, lotes_de_espelhos, nome_do_link, planejar_espelho,
                                     remover_espelhos, remover_espelhos_escolhidos, verificar_links)
 from jellyfin_tools.conflitos import aplicar as aplicar_conflitos, decidir as decidir_conflitos
-from jellyfin_tools.traducao import Tradutor, estimar_custo, legendas_para_traduzir, traduzir_arquivo
+from jellyfin_tools.traducao import ErroTraducao, Tradutor, estimar_custo, legendas_para_traduzir, traduzir_arquivo
+from jellyfin_tools import traducao_lote
 from jellyfin_tools.transcricao import Transcritor, estimar as estimar_audio, legendar_pelo_audio, videos_sem_legenda
+from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sincronizar
 from jellyfin_tools.dublagem import (ErroDublagem, MotorPiper, dublar_video, preparar_piper, preparar_voz,
                                      videos_para_dublar)
 from jellyfin_tools.paralelo import prioridade_baixa
@@ -55,6 +57,7 @@ from jellyfin_tools.organizador import (DETALHE_EPISODIO, agrupar_nao_identifica
 from jellyfin_tools.pos_processamento import ConfigPos, itens_da_biblioteca, itens_de_series, pos_processar
 from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao
 from jellyfin_tools.relatorio import gerar_relatorio, resumo, salvar_csv
+from jellyfin_tools.resumo_diario import ResumoDiario, mensagem as mensagem_resumo
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca, indice_da_biblioteca, testar_conexao
 from jellyfin_tools.vigia import filtro_prontos
 
@@ -344,6 +347,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                         self.memoria_downloads.registrar(link, detalhe)
                     self.fila.put(("item", (link, status)))
                 resumo = t.baixar(lista, opcoes.pasta, ao_terminar_item=terminou)
+                self.resumo_diario.registrar("baixados", resumo.ok)
+                self.resumo_diario.registrar("erros", resumo.falhas)
                 self.fila.put(("msg", ("Downloads concluídos",
                                        f"Baixados: {resumo.ok}\nPulados: {resumo.pulados}\n"
                                        f"Com erro: {resumo.falhas}\n\nPasta: {opcoes.pasta}",
@@ -751,6 +756,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._baixar_pendente = dado                   # pergunta a licença depois do "fim"
         elif tipo == "traduzir_pendente":
             self._traduzir_pendente = dado                 # pergunta (com o custo) depois do "fim"
+        elif tipo == "sincronizar_pendente":
+            self._sincronizar_pendente = dado              # pergunta depois do "fim"
         elif tipo == "dublar_pendente":
             self._dublar_pendente = dado                   # pergunta (espaço em disco) depois do "fim"
         elif tipo == "legendar_audio_pendente":
@@ -824,6 +831,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
             if getattr(self, "_traduzir_pendente", None):
                 traduzir, self._traduzir_pendente = self._traduzir_pendente, None
                 self.after(50, lambda: self._confirmar_traducao(*traduzir))
+            if getattr(self, "_sincronizar_pendente", None):
+                pares, self._sincronizar_pendente = self._sincronizar_pendente, None
+                self.after(50, lambda: self._confirmar_sincronia(*pares))
             if getattr(self, "_dublar_pendente", None):
                 dublar, self._dublar_pendente = self._dublar_pendente, None
                 self.after(50, lambda: self._confirmar_dublagem(*dublar))
@@ -1293,6 +1303,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 self._pos_processar(o, [(m, m.destino.stem) for _, m in movidos], [i for i, _ in movidos],
                                     "Vigia", legendas=o.legendas, notificar=True)
             filmes_movidos = sum(1 for _, m in movidos if not m.episodio)
+            self.resumo_diario.registrar("organizados", len(movidos))
             parados = "".join(f" {tipo}: biblioteca não escolhida, ficaram onde estão." for tipo, pasta in
                               (("Filmes", filmes), ("Séries", series)) if not pasta)
             scan = self._texto_do_scan(getattr(self, "_ultimo_scan", "")) if movidos else ""
@@ -1441,6 +1452,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 linhas.append(("/".join(arquivo.relative_to(raiz).parts), v.ok, texto))
             self.fila.put(("jf_espelhos", linhas))
             quebrados = [r for r in resultado if not r[3].ok]
+            self.resumo_diario.registrar("espelhos_quebrados", len(quebrados))
             self.fila.put(("status_fim", f"Espelhos: {len(resultado) - len(quebrados)} funcionando, "
                                          f"{len(quebrados)} quebrado(s)."))
             if quebrados:
@@ -1683,6 +1695,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                                  [i for i, _ in movidos], f"Etapa 2/{etapas}",
                                                  legendas=o.legendas, notificar=True)
             legendas = sum(1 for r in resultados if r.legenda and r.legenda.status == "baixada")
+            self.resumo_diario.registrar("organizados", len(movidos))
+            self.resumo_diario.registrar("erros", sum(m.status == "erro" for m in movimentos))
             metadados = sum(1 for r in resultados if r.metadados and r.metadados.criados)
             for i, m in enumerate(movimentos):                 # sobras de antes: "pasta apagada" ou erro
                 if m.pasta_apagar and m.status in ("pasta_apagada", "erro") and not m.destino:
@@ -1880,11 +1894,86 @@ class AppModerna(TVAoVivo, JanelaModerna):
             f"{len(pendentes)} vídeo(s) têm legenda só em outro idioma e nenhuma em {idioma}:\n{exemplos}\n\n"
             f"Modelo: {o.modelo_traducao}\nCusto estimado: {valor} (~{(entrada + saida) // 1000} mil tokens)\n\n"
             f"Cada um vira 'Nome.{idioma}.srt' com os MESMOS horários (a IA recebe só o texto das falas). A legenda "
-            "original continua lá e nada é sobrescrito.",
-            (f"Traduzir os {len(pendentes)}",))
+            "original continua lá e nada é sobrescrito.\n\n"
+            "\"Econômico\": metade do preço"
+            + (f" (~US$ {custo / 2:.2f})" if custo is not None else "") + ", mas as legendas ficam prontas em até 24 h "
+            "(quase sempre menos de 1 h). Pode fechar o Maestro: ao abrir de novo ele busca o resultado.",
+            (f"Traduzir os {len(pendentes)} agora", "Econômico (metade do preço)"))
         if escolha is None:
             return
-        self._traduzir(pendentes, idioma, o)
+        if escolha.startswith("Econômico"):
+            self._enviar_lote(pendentes, idioma, o)
+        else:
+            self._traduzir(pendentes, idioma, o)
+
+    # ---- modo econômico (API de lotes: metade do preço, resultado em até 24 h)
+    @property
+    def pasta_lotes(self) -> Path:
+        return config.ARQUIVO.parent / "lotes"
+
+    def _enviar_lote(self, pendentes: list, idioma: str, o) -> None:
+        def tarefa():
+            try:
+                tradutor = Tradutor(chave=o.chave_claude, modelo=o.modelo_traducao, idioma=idioma)
+                codigo, pedidos = traducao_lote.enviar(pendentes, tradutor, self.pasta_lotes)
+            except (ErroTraducao, ImportError) as erro:
+                self.fila.put(("msg", ("Traduzir legendas", f"Não deu para enviar o lote: {erro}", "erro")))
+                return
+            self._log.info("Tradução em lote enviada: %s (%d pedido(s), %d legenda(s))", codigo, pedidos,
+                           len(pendentes))
+            self._lotes_quando = 0.0
+            self.fila.put(("status_fim", f"Tradução em lote enviada ({len(pendentes)} legenda(s))."))
+            self.fila.put(("msg", ("Traduzir legendas", f"Enviado: {len(pendentes)} legenda(s) no modo econômico.\n\n"
+                                   "O Maestro confere sozinho a cada 10 minutos e grava as legendas quando ficarem "
+                                   "prontas (o painel de saúde mostra \"Tradução em lote\"). Pode fechar o programa: "
+                                   "ao abrir de novo ele continua.", "sucesso")))
+
+        self._rodar("Enviando a tradução em lote...", tarefa)
+
+    INTERVALO_LOTES = 10 * 60
+
+    def conferir_lotes(self, agora: float | None = None) -> bool:
+        """A cada 10 min, em segundo plano: algum lote de tradução terminou? Grava as legendas e avisa."""
+        agora = time.monotonic() if agora is None else agora
+        if getattr(self, "_lotes_rodando", False) or agora - getattr(self, "_lotes_quando", -1e9) < self.INTERVALO_LOTES:
+            return False
+        arquivos = traducao_lote.pendentes_no_disco(self.pasta_lotes)
+        if not arquivos:
+            return False
+        o = self.obter_opcoes_jellyfin()
+        self._lotes_rodando, self._lotes_quando = True, agora
+
+        def conferir():
+            try:
+                for arquivo in arquivos:
+                    try:
+                        dados = json.loads(arquivo.read_text(encoding="utf-8"))
+                        tradutor = Tradutor(chave=o.chave_claude, modelo=dados.get("modelo") or o.modelo_traducao,
+                                            idioma=dados.get("idioma") or "pt-BR")
+                        resultados = traducao_lote.coletar(arquivo, tradutor)
+                    except (ErroTraducao, ImportError, OSError, ValueError) as erro:
+                        self._log.warning("Tradução em lote %s: %s", arquivo.stem, erro)
+                        continue
+                    if resultados is None:
+                        continue                                  # ainda processando
+                    feitas = [r for r in resultados if r.status == "traduzida"]
+                    for r in resultados:
+                        (self._log.error if r.status == "erro" else self._log.info)(
+                            "[lote %s] %s -> %s%s", r.status, r.origem.name, r.destino.name,
+                            f" ({r.detalhe})" if r.detalhe else "")
+                    self.resumo_diario.registrar("traduzidas", len(feitas))
+                    custo = f", ~US$ {tradutor.custo:.2f}" if tradutor.custo is not None else ""
+                    self._log.info("Tradução em lote pronta: %d legenda(s)%s", len(feitas), custo)
+                    if feitas and o.atualizar_jellyfin and o.jellyfin_url and o.jellyfin_api_key:
+                        try:
+                            atualizar_biblioteca(o.jellyfin_url, o.jellyfin_api_key)
+                        except ErroJellyfin as erro:
+                            self._log.warning("Jellyfin: scan não pedido (%s)", erro)
+            finally:
+                self._lotes_rodando = False
+
+        threading.Thread(target=conferir, daemon=True, name="lotes-traducao").start()
+        return True
 
     def _traduzir(self, pendentes: list, idioma: str, o) -> None:
         def tarefa():
@@ -1912,6 +2001,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 if r.status == "erro" and r.detalhe.startswith(("a chave", "sem conexão", "limite", "modelo não")):
                     break                                       # vale para todos: não insiste nos outros
             traduzidas = [r for r in resultados if r.status == "traduzida"]
+            self.resumo_diario.registrar("traduzidas", len(traduzidas))
             erros = [r for r in resultados if r.status == "erro"]
             if traduzidas and o.atualizar_jellyfin and o.jellyfin_url and o.jellyfin_api_key:
                 try:
@@ -2019,6 +2109,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                                                 "a chave", "sem conexão", "limite", "modelo não")):
                     break                                       # vale para todos: não insiste nos outros
             feitas = [r for r in resultados if r.status in ("criada", "traduzida")]
+            self.resumo_diario.registrar("pelo_audio", len(feitas))
             if feitas and o.atualizar_jellyfin and o.jellyfin_url and o.jellyfin_api_key:
                 try:
                     atualizar_biblioteca(o.jellyfin_url, o.jellyfin_api_key)
@@ -2152,6 +2243,64 @@ class AppModerna(TVAoVivo, JanelaModerna):
                               f"Agendador de Tarefas como {nome}. O resultado de cada vez fica no log (Abrir log).",
                               "sucesso")
 
+    # ================================================================== sincronizar legendas (áudio x legenda)
+    @property
+    def conferidas_sincronia(self) -> Conferidas:
+        return Conferidas(config.ARQUIVO.parent / "sincronia.json")
+
+    def ao_sincronizar_legendas(self) -> None:
+        """Botão "Sincronizar legendas...": compara onde há voz no áudio com onde há fala na legenda e corrige as
+        adiantadas/atrasadas (a original fica como '.srt.original'). Só ouve as legendas novas ou mudadas."""
+        pastas = list(self._bibliotecas())
+        if not pastas:
+            self.mostrar_mensagem("Sincronizar legendas", "Escolha a biblioteca de Filmes e/ou de Séries.", "aviso")
+            return
+        conferidas = self.conferidas_sincronia.dados
+
+        def tarefa():
+            pares = legendas_para_sincronizar(*pastas, conferidas=conferidas)
+            self._log.info("Sincronizar: %d legenda(s) para conferir", len(pares))
+            self.fila.put(("sincronizar_pendente", (pares,)))   # tupla: lista vazia também avisa
+
+        self._rodar("Procurando legendas...", tarefa)
+
+    def _confirmar_sincronia(self, pares: list) -> None:
+        if not pares:
+            self.mostrar_mensagem("Sincronizar legendas", "Nenhuma legenda nova para conferir: as outras já foram "
+                                  "conferidas e não mudaram.", "info")
+            return
+        escolha = self.escolher(
+            "Sincronizar legendas", f"{len(pares)} legenda(s) .srt para conferir contra o áudio.\n\nO programa ouve "
+            "onde há voz em cada vídeo (no PC, cerca de 1 minuto por filme) e, se a legenda estiver adiantada ou "
+            "atrasada, move todas as falas (a original fica como 'Nome.srt.original'). Quando o encaixe não é claro "
+            "(legenda de outra versão do vídeo), nada é mudado.", (f"Conferir as {len(pares)}",))
+        if escolha is not None:
+            self._sincronizar(pares)
+
+    def _sincronizar(self, pares: list) -> None:
+        def tarefa():
+            registro, resultados = self.conferidas_sincronia, []
+            for k, (legenda, video) in enumerate(pares):
+                if self.evento_parar.is_set():
+                    break
+                self.fila.put(("jf_analise", (k / len(pares), f"Ouvindo {k + 1} de {len(pares)}: {video.stem}")))
+                r = sincronizar(legenda, video)
+                resultados.append(r)
+                if r.status != "erro":
+                    registro.marcar(legenda)
+                texto = {"ajustada": f"movida {r.atraso:+.2f} s", "ja_certa": "já estava certa"}.get(r.status, r.detalhe)
+                (self._log.error if r.status == "erro" else self._log.info)("[%s] %s: %s", r.status, legenda.name, texto)
+            conta = {s: sum(r.status == s for r in resultados) for s in ("ajustada", "ja_certa", "incerta", "erro")}
+            self.fila.put(("status_fim", f"Legendas: {conta['ajustada']} sincronizada(s)."))
+            self.fila.put(("msg", ("Sincronizar legendas",
+                                   f"Corrigidas: {conta['ajustada']}\nJá estavam certas: {conta['ja_certa']}\n"
+                                   f"Sem encaixe claro (não mexidas): {conta['incerta']}\nCom erro: {conta['erro']}"
+                                   + "".join(f"\n• {r.legenda.name}: {r.atraso:+.2f} s" for r in resultados
+                                             if r.status == "ajustada")[:1500],
+                                   "erro" if conta["erro"] and not conta["ajustada"] else "sucesso")))
+
+        self._rodar(f"Conferindo {len(pares)} legenda(s) contra o áudio...", tarefa)
+
     # ================================================================== dublagem por IA (Piper)
     def ao_dublar(self) -> None:
         """Botão "Dublar filmes...": os filmes com legenda em português e sem áudio em português ganham uma versão
@@ -2223,6 +2372,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                     "[%s] %s%s (%d falas, %d aceleradas, %d cortadas)", r.status, r.video.name,
                     f" ({r.detalhe})" if r.detalhe else "", r.falas, r.aceleradas, r.cortadas)
             feitos = [r for r in resultados if r.status == "dublado"]
+            self.resumo_diario.registrar("dublados", len(feitos))
             erros = [r for r in resultados if r.status == "erro"]
             if feitos and o.atualizar_jellyfin and o.jellyfin_url and o.jellyfin_api_key:
                 try:
@@ -2951,13 +3101,36 @@ class AppModerna(TVAoVivo, JanelaModerna):
             itens.append((f"Versão {atual}: a {publicada} já saiu", False))
         else:
             itens.append((f"Versão {atual}" + (" (a mais nova)" if publicada else ""), True))
+        lotes = len(traducao_lote.pendentes_no_disco(self.pasta_lotes))
+        if lotes:
+            itens.append((f"Tradução em lote: {lotes} aguardando", None))
         return itens
+
+    @property
+    def resumo_diario(self) -> ResumoDiario:
+        return ResumoDiario(config.ARQUIVO.parent / "resumo_do_dia.json")
+
+    def enviar_resumo_diario(self, agora: datetime | None = None) -> bool:
+        """Opção "Resumo do dia": na hora escolhida, manda o que aconteceu hoje (uma vez por dia). True = mandou."""
+        o = self.obter_opcoes_jellyfin()
+        avisos = Notificador(o.discord_webhook, o.telegram_token, o.telegram_chat_id)
+        if not o.resumo_diario or not avisos.ativo:
+            return False
+        contagens = self.resumo_diario.para_enviar(o.hora_resumo, agora)
+        if not contagens:
+            return False
+        threading.Thread(target=lambda: avisos.enviar(*mensagem_resumo(contagens, agora)), daemon=True,
+                         name="resumo-diario").start()
+        self._log.info("Resumo do dia enviado: %s", contagens)
+        return True
 
     def _ciclo_saude(self) -> None:
         try:
             self.definir_saude(self.itens_saude())
         except tk.TclError:
             return
+        self.enviar_resumo_diario()
+        self.conferir_lotes()                         # tradução em lote (modo econômico) que ficou pronta
         self.conferir_saude_tv()                      # a cada 30 min, em segundo plano
         self.conferir_saude_coletor()                 # o coletor de programação (Docker), também a cada 30 min
         if not os.environ.get("VIDEOSCRAPER_SEM_ATUALIZACAO"):

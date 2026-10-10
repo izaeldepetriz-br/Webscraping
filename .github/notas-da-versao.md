@@ -20,3 +20,5 @@ Suas configurações ficam em `C:\Users\<você>\.videoscraper\` e continuam vale
 - **Traduzir legendas com IA:** cria `Nome.pt-BR.srt` a partir de uma legenda em outro idioma, com os mesmos horários (API da Anthropic, modelo padrão `claude-sonnet-4-6`; mostra o custo estimado antes).
 - **TV ao vivo:** coluna "Agora passando" e o coletor de programação no painel de saúde (com aviso se ele parar).
 - **Comandos para robôs (RPA):** `Maestro.exe --organizar`, `--conferir-espelhos`, `--conferir-canais`, `--enviar-tv` e `--traduzir-legendas`, sem abrir a janela, com código de saída (0 certo, 1 problema, 2 falta configuração, 3 erro) e resumo em `.videoscraper\rpa\ultimo.json`.
+- **Legenda pelo áudio e dublagem por IA:** o Whisper (no PC) cria a legenda dos vídeos sem nenhuma; o Claude traduz; o Piper lê a legenda em português e gera "Nome - Dublado IA.mkv" (o original fica intacto).
+- **Mais:** sincronizar legendas, tradução econômica em lote (metade do preço), agendar tarefas no Windows, resumo do dia no Discord/Telegram, exportar/importar configurações.

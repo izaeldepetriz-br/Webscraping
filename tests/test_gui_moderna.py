@@ -3485,3 +3485,85 @@ def test_agendar_tarefa_pela_janela(app, monkeypatch):
     app.bt_agendar.invoke()
     assert feitos == [("--conferir-canais", "Todo dia", "22:00")]
     assert app.caixas[-1][0] == "sucesso" and "Maestro\\conferir-canais" in app.caixas[-1][2]
+
+
+def test_resumo_do_dia_pela_janela(app, api_falsa):
+    import json as _json
+    from datetime import datetime as _dt
+    api_falsa.rotas["/discord"] = lambda q: (204, b"")
+    app.var_jf_discord.set(api_falsa.base + "/discord")
+    app.resumo_diario.registrar("organizados", 2, _dt(2026, 10, 10, 10))
+    assert not app.enviar_resumo_diario(_dt(2026, 10, 10, 22))           # opção desligada: não manda
+    app.var_jf_resumo_diario.set(True)
+    assert not app.enviar_resumo_diario(_dt(2026, 10, 10, 20))           # antes das 21h
+    assert app.enviar_resumo_diario(_dt(2026, 10, 10, 22))
+    fim = time.time() + 5
+    while not [p for p in api_falsa.pedidos if p["caminho"] == "/discord"] and time.time() < fim:
+        time.sleep(0.05)
+    [pedido] = [p for p in api_falsa.pedidos if p["caminho"] == "/discord"]
+    assert "2 filme(s)/episódio(s) organizado(s)" in _json.loads(pedido["corpo"])["content"]
+    assert not app.enviar_resumo_diario(_dt(2026, 10, 10, 23))           # uma vez por dia
+
+
+def test_sincronizar_legendas_pela_janela(app, tmp_path, monkeypatch):
+    np = pytest.importorskip("numpy")  # noqa: F841
+    from jellyfin_tools.sincronia import deslocar, regua_da_legenda
+    from jellyfin_tools.traducao import gerar_srt
+    from tests.test_sincronia import falas_aleatorias
+    falas, total = falas_aleatorias()
+    filmes = tmp_path / "Filmes" / "A (2001)"
+    filmes.mkdir(parents=True)
+    (filmes / "A (2001).mkv").write_bytes(b"\0" * 2_000_000)
+    (filmes / "A (2001).pt-BR.srt").write_text(gerar_srt(deslocar(falas, 1.5)), encoding="utf-8")
+    app._destinos.update({"Filmes": str(tmp_path / "Filmes"), "Séries": ""})
+    app.var_jf_destino.set(str(tmp_path / "Filmes"))
+    audio = regua_da_legenda(falas, int(total / 0.01))
+    monkeypatch.setattr(app_moderna, "sincronizar",
+                        lambda leg, vid: __import__("jellyfin_tools.sincronia", fromlist=["x"]).sincronizar(
+                            leg, vid, ouvir=lambda v: audio))
+    app.escolher = lambda t, m, opcoes, **k: opcoes[0]
+    app.bt_sincronizar.invoke()
+    esperar(app)
+    esperar(app)
+    assert app.caixas[-1][1] == "Sincronizar legendas" and "Corrigidas: 1" in app.caixas[-1][2]
+    assert "-1.50 s" in app.caixas[-1][2] and (filmes / "A (2001).pt-BR.srt.original").exists()
+    app.bt_sincronizar.invoke()                                        # de novo: já conferida
+    esperar(app)
+    esperar(app)
+    assert "Nenhuma legenda nova" in app.caixas[-1][2]
+
+
+def test_traducao_economica_em_lote_pela_janela(app, tmp_path, monkeypatch):
+    from jellyfin_tools.traducao import Tradutor, ler_srt
+    from tests.test_traducao import SRT, ClienteFalso
+    from tests.test_traducao_lote import LoteFalso
+    filmes = tmp_path / "Filmes" / "A (2001)"
+    filmes.mkdir(parents=True)
+    (filmes / "A (2001).mkv").write_bytes(b"\0" * 2_000_000)
+    (filmes / "A (2001).en.srt").write_text(SRT, encoding="utf-8")
+    app._destinos.update({"Filmes": str(tmp_path / "Filmes"), "Séries": ""})
+    app.var_jf_destino.set(str(tmp_path / "Filmes"))
+    app.var_jf_chave_claude.set("sk-ant-teste")
+    cliente = ClienteFalso()
+    cliente.batches = LoteFalso(cliente)
+    monkeypatch.setattr(app_moderna, "Tradutor", lambda **k: Tradutor(cliente=cliente, **k))
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append((m, opcoes)), opcoes[1])[1]   # "Econômico"
+    app.bt_traduzir_legendas.invoke()
+    esperar(app)
+    esperar(app)
+    assert perguntas[0][1][1] == "Econômico (metade do preço)" and "metade do preço (~US$" in perguntas[0][0]
+    assert "modo econômico" in app.caixas[-1][2] and not cliente.pedidos
+    assert any("Tradução em lote: 1 aguardando" in texto for texto, _ in app.itens_saude())
+    assert app.conferir_lotes(agora=1e9)                                   # ainda processando
+    fim = time.time() + 5
+    while app._lotes_rodando and time.time() < fim:
+        time.sleep(0.05)
+    assert not (filmes / "A (2001).pt-BR.srt").exists()
+    cliente.batches.terminado = True
+    assert not app.conferir_lotes(agora=1e9 + 60)                          # espera 10 min entre conferências
+    assert app.conferir_lotes(agora=1e9 + 700)
+    while app._lotes_rodando and time.time() < fim + 5:
+        time.sleep(0.05)
+    assert ler_srt((filmes / "A (2001).pt-BR.srt").read_text(encoding="utf-8"))[0].texto == "PT: Hello, how are you?"
+    assert not any("Tradução em lote" in texto for texto, _ in app.itens_saude())

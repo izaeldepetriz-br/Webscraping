@@ -383,6 +383,7 @@ class TVAoVivo:
                                             ao_progresso=self._progresso_com_velocidade(rotulo))
             self._registrar_canais(situacoes)
             fora = sum(1 for _, sit in situacoes if not sit.ok)
+            self.resumo_diario.registrar("canais_fora", fora)
             self.fila.put(("canais_conferidos", situacoes))
             parado = f" Parado: {len(situacoes)} de {len(canais)} conferidos." if len(situacoes) < len(canais) else ""
             self.fila.put(("status_fim", f"Canais: {len(situacoes) - fora} no ar, {fora} fora do ar.{parado}"))

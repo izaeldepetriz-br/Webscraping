@@ -7,9 +7,11 @@
     Maestro.exe --traduzir-legendas    traduz com a IA (Claude) as legendas que faltam
     Maestro.exe --legendar-audio       cria a legenda ouvindo o áudio (Whisper no PC + Claude) dos vídeos sem nenhuma
     Maestro.exe --dublar               dubla com voz sintética (Piper) os filmes com legenda em português
+    Maestro.exe --sincronizar-legendas corrige legendas adiantadas/atrasadas (compara com a voz do áudio)
 
 Dá para juntar vários (rodam nessa ordem): Maestro.exe --organizar --traduzir-legendas
 Opções:  --simular (organizar: só mostra o que faria)   --limite-dolares 1.00 (traduzir: 0 = sem limite)
+         --economico (traduzir: em lote, metade do preço; fica pronto em até 24 h e a próxima execução grava)
          --limite-videos 5 (legendar-audio e dublar: quantos vídeos por execução; demora)
          --resultado C:\\pasta\\resultado.json (onde gravar o resumo; padrão: ~/.videoscraper/rpa/ultimo.json)
 
@@ -48,9 +50,12 @@ from jellyfin_tools.paralelo import prioridade_baixa
 from jellyfin_tools.pos_processamento import ConfigPos, pos_processar
 from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao
 from jellyfin_tools.regras import carregar_regras
+from jellyfin_tools.resumo_diario import ResumoDiario
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca
 from jellyfin_tools.site_demo import iniciar_site_demo
 from jellyfin_tools.traducao import Tradutor, estimar_custo, legendas_para_traduzir, traduzir_arquivo
+from jellyfin_tools import traducao_lote
+from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sincronizar
 from jellyfin_tools.transcricao import Transcritor, legendar_pelo_audio, videos_sem_legenda
 from jellyfin_tools.dublagem import (ErroDublagem, MotorPiper, dublar_video, preparar_piper, preparar_voz,
                                      videos_para_dublar)
@@ -64,7 +69,7 @@ from .gui_moderna import JanelaModerna, OpcoesJellyfin
 
 # Ordem em que rodam quando vêm juntos (organizar primeiro: as legendas novas já entram na tradução)
 COMANDOS = ("--organizar", "--conferir-espelhos", "--conferir-canais", "--enviar-tv", "--traduzir-legendas",
-            "--legendar-audio", "--dublar")
+            "--legendar-audio", "--sincronizar-legendas", "--dublar")
 OK, PROBLEMA, FALTA_CONFIGURACAO, ERRO_INESPERADO = 0, 1, 2, 3
 
 # Chave não lembrada no config.json? Vem destas variáveis de ambiente (as mesmas que a janela usa).
@@ -89,6 +94,7 @@ class Resultado:
     codigo: int
     resumo: str
     detalhes: list[str] = field(default_factory=list)
+    contagens: dict = field(default_factory=dict)      # para o resumo do dia (Discord/Telegram)
 
 
 # ============================================================================ as configurações da janela
@@ -209,7 +215,8 @@ def organizar(log: logging.Logger, simular: bool = False) -> Resultado:
     resumo = (f"{len(movidos)} movido(s), {legendas_baixadas} legenda(s), {contagem['erro']} erro(s), "
               f"{contagem['conflito']} conflito(s), {contagem['nao_identificado']} não identificado(s).{scan}")
     return Resultado("--organizar", PROBLEMA if contagem["erro"] else OK, resumo,
-                     [str(m) for m in todos if m.status == "erro"])
+                     [str(m) for m in todos if m.status == "erro"],
+                     {"organizados": len(movidos), "erros": contagem["erro"]})
 
 
 def conferir_os_espelhos(log: logging.Logger) -> Resultado:
@@ -226,7 +233,8 @@ def conferir_os_espelhos(log: logging.Logger) -> Resultado:
         detalhes.append(texto)
     resumo = (f"{len(todos)} espelho(s) conferido(s): {len(todos) - len(quebrados)} funcionando, "
               f"{len(quebrados)} quebrado(s)" + (f", {removidos} removido(s)" if removidos else "") + ".")
-    return Resultado("--conferir-espelhos", PROBLEMA if quebrados else OK, resumo, detalhes)
+    return Resultado("--conferir-espelhos", PROBLEMA if quebrados else OK, resumo, detalhes,
+                     {"espelhos_quebrados": len(quebrados)})
 
 
 def conferir_os_canais(log: logging.Logger) -> Resultado:
@@ -253,7 +261,7 @@ def conferir_os_canais(log: logging.Logger) -> Resultado:
         avisos.enviar(*mensagem_fora_do_ar(fora))
     return Resultado("--conferir-canais", PROBLEMA if fora else OK,
                      f"{len(situacoes)} canal(is) conferido(s): {len(situacoes) - len(fora)} no ar, "
-                     f"{len(fora)} fora do ar.", [f"{c.nome}: {s.detalhe}" for c, s in fora])
+                     f"{len(fora)} fora do ar.", [f"{c.nome}: {s.detalhe}" for c, s in fora], {"canais_fora": len(fora)})
 
 
 def enviar_tv(log: logging.Logger) -> Resultado:
@@ -315,7 +323,24 @@ def escolher_dentro_do_limite(pendentes: list, modelo: str, limite: float) -> tu
     return escolhidos, total
 
 
-def traduzir_legendas(log: logging.Logger, limite: float = 1.0) -> Resultado:
+def coletar_lotes(log: logging.Logger, o) -> int:
+    """Grava as traduções em lote (modo econômico) que já ficaram prontas. Devolve quantas legendas."""
+    feitas = 0
+    for arquivo in traducao_lote.pendentes_no_disco(config.ARQUIVO.parent / "lotes"):
+        dados = json.loads(arquivo.read_text(encoding="utf-8"))
+        tradutor = Tradutor(chave=o.chave_claude, modelo=dados.get("modelo") or o.modelo_traducao,
+                            idioma=dados.get("idioma") or "pt-BR")
+        resultados = traducao_lote.coletar(arquivo, tradutor)
+        if resultados is None:
+            log.info("Tradução em lote %s: ainda processando", arquivo.stem)
+            continue
+        for r in resultados:
+            (log.error if r.status == "erro" else log.info)("[lote %s] %s", r.status, r.destino.name)
+        feitas += sum(r.status == "traduzida" for r in resultados)
+    return feitas
+
+
+def traduzir_legendas(log: logging.Logger, limite: float = 1.0, economico: bool = False) -> Resultado:
     o, pastas = opcoes_salvas()
     onde = bibliotecas(pastas)
     if not onde:
@@ -324,10 +349,17 @@ def traduzir_legendas(log: logging.Logger, limite: float = 1.0) -> Resultado:
         raise FaltaConfiguracao("Falta a chave da API da Anthropic (aba Jellyfin > Legendas, com \"Lembrar as "
                                 "chaves\" marcado, ou a variável de ambiente ANTHROPIC_API_KEY).")
     idioma = o.idioma.split(",")[0].strip() or "pt-BR"
+    do_lote = coletar_lotes(log, o)
+    aguardando = len(traducao_lote.pendentes_no_disco(config.ARQUIVO.parent / "lotes"))
     pendentes = legendas_para_traduzir(*onde, idioma=idioma)
+    if economico and aguardando:
+        return Resultado("--traduzir-legendas", OK, f"{do_lote} legenda(s) do lote gravada(s); {aguardando} lote(s) "
+                         "ainda processando (um de cada vez).", contagens={"traduzidas": do_lote})
     if not pendentes:
-        return Resultado("--traduzir-legendas", OK, f"Nada a traduzir: os vídeos já têm legenda em {idioma}.")
-    escolhidos, estimado = escolher_dentro_do_limite(pendentes, o.modelo_traducao, limite)
+        return Resultado("--traduzir-legendas", OK, f"Nada a traduzir: os vídeos já têm legenda em {idioma}."
+                         + (f" {do_lote} legenda(s) do lote gravada(s)." if do_lote else ""),
+                         contagens={"traduzidas": do_lote})
+    escolhidos, estimado = escolher_dentro_do_limite(pendentes, o.modelo_traducao, limite * (2 if economico else 1))
     if estimado is None and not escolhidos:
         raise FaltaConfiguracao(f"O preço do modelo {o.modelo_traducao} é desconhecido: não dá para respeitar o "
                                 "limite. Use --limite-dolares 0 (sem limite) ou o modelo padrão.")
@@ -338,6 +370,12 @@ def traduzir_legendas(log: logging.Logger, limite: float = 1.0) -> Resultado:
              len(escolhidos), f"US$ {limite:.2f}" if limite > 0 else "sem limite",
              f"US$ {estimado:.2f}" if estimado is not None else "desconhecido")
     tradutor = Tradutor(chave=o.chave_claude, modelo=o.modelo_traducao, idioma=idioma)
+    if economico:
+        codigo, pedidos = traducao_lote.enviar(escolhidos, tradutor, config.ARQUIVO.parent / "lotes")
+        return Resultado("--traduzir-legendas", OK, f"Lote {codigo} enviado: {len(escolhidos)} legenda(s), "
+                         f"{pedidos} pedido(s), metade do preço. A próxima execução grava o que ficar pronto."
+                         + (f" {do_lote} legenda(s) de um lote anterior gravada(s)." if do_lote else ""),
+                         contagens={"traduzidas": do_lote})
     resultados = []
     for p in escolhidos:
         r = traduzir_arquivo(p.origem, p.destino, tradutor, titulo=p.video.stem)
@@ -360,7 +398,7 @@ def traduzir_legendas(log: logging.Logger, limite: float = 1.0) -> Resultado:
               + f". Modelo {tradutor.modelo}, {tradutor.tokens_entrada + tradutor.tokens_saida} tokens"
               + (f", custo ~US$ {custo:.2f}." if custo is not None else "."))
     return Resultado("--traduzir-legendas", PROBLEMA if erros else OK, resumo,
-                     [f"{r.origem.name}: {r.detalhe}" for r in erros])
+                     [f"{r.origem.name}: {r.detalhe}" for r in erros], {"traduzidas": len(traduzidas) + do_lote})
 
 
 def legendar_audio(log: logging.Logger, limite_videos: int = 5, limite: float = 1.0) -> Resultado:
@@ -407,7 +445,31 @@ def legendar_audio(log: logging.Logger, limite_videos: int = 5, limite: float = 
               + (f", {len(itens) - len(resultados)} vídeo(s) para a próxima vez" if len(resultados) < len(itens) else "")
               + (f". Claude ~US$ {tradutor.custo:.2f}." if tradutor is not None and tradutor.custo else "."))
     return Resultado("--legendar-audio", PROBLEMA if erros else OK, resumo,
-                     [f"{r.video.name}: {r.detalhe}" for r in erros])
+                     [f"{r.video.name}: {r.detalhe}" for r in erros], {"pelo_audio": len(feitas)})
+
+
+def sincronizar_legendas(log: logging.Logger, limite_videos: int = 5) -> Resultado:
+    _, pastas = opcoes_salvas()
+    onde = bibliotecas(pastas)
+    if not onde:
+        raise FaltaConfiguracao("Escolha a biblioteca de Filmes e/ou de Séries na aba Jellyfin.")
+    registro = Conferidas(config.ARQUIVO.parent / "sincronia.json")
+    pares = legendas_para_sincronizar(*onde, conferidas=registro.dados)
+    escolhidos = pares[:limite_videos] if limite_videos > 0 else pares
+    resultados = []
+    for legenda, video in escolhidos:
+        r = sincronizar(legenda, video)
+        resultados.append(r)
+        if r.status != "erro":
+            registro.marcar(legenda)
+        (log.error if r.status == "erro" else log.info)("[%s] %s %s", r.status, legenda.name,
+                                                         f"{r.atraso:+.2f} s" if r.status == "ajustada" else r.detalhe)
+    ajustadas = [r for r in resultados if r.status == "ajustada"]
+    erros = [r for r in resultados if r.status == "erro"]
+    resumo = (f"{len(resultados)} legenda(s) conferida(s): {len(ajustadas)} corrigida(s), {len(erros)} erro(s)"
+              + (f", {len(pares) - len(resultados)} para a próxima vez." if len(resultados) < len(pares) else "."))
+    return Resultado("--sincronizar-legendas", PROBLEMA if erros else OK, resumo,
+                     [f"{r.legenda.name}: {r.detalhe}" for r in erros])
 
 
 def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
@@ -441,7 +503,8 @@ def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
             log.warning("Jellyfin: scan não pedido (%s)", erro)
     resumo = (f"{len(feitos)} de {len(resultados)} filme(s) dublado(s), {len(erros)} erro(s)"
               + (f", {len(itens) - len(resultados)} para a próxima vez." if len(resultados) < len(itens) else "."))
-    return Resultado("--dublar", PROBLEMA if erros else OK, resumo, [f"{r.video.name}: {r.detalhe}" for r in erros])
+    return Resultado("--dublar", PROBLEMA if erros else OK, resumo, [f"{r.video.name}: {r.detalhe}" for r in erros],
+                     {"dublados": len(feitos)})
 
 
 # ============================================================================ entrada
@@ -459,6 +522,8 @@ def _argumentos() -> argparse.ArgumentParser:
     p.add_argument("--simular", action="store_true", help="organizar: só mostra o que faria")
     p.add_argument("--limite-dolares", type=float, default=1.0,
                    help="traduzir: no máximo este custo estimado por execução (0 = sem limite)")
+    p.add_argument("--economico", action="store_true",
+                   help="traduzir: em lote, metade do preço (pronto em até 24 h; a próxima execução grava)")
     p.add_argument("--limite-videos", type=int, default=5,
                    help="legendar-audio: quantos vídeos por execução (0 = todos)")
     p.add_argument("--resultado", help="onde gravar o resumo em JSON (padrão ~/.videoscraper/rpa/ultimo.json)")
@@ -470,8 +535,9 @@ def _rodar(comando: str, args, log: logging.Logger) -> Resultado:
              "--conferir-espelhos": lambda: conferir_os_espelhos(log),
              "--conferir-canais": lambda: conferir_os_canais(log),
              "--enviar-tv": lambda: enviar_tv(log),
-             "--traduzir-legendas": lambda: traduzir_legendas(log, args.limite_dolares),
+             "--traduzir-legendas": lambda: traduzir_legendas(log, args.limite_dolares, args.economico),
              "--legendar-audio": lambda: legendar_audio(log, args.limite_videos, args.limite_dolares),
+             "--sincronizar-legendas": lambda: sincronizar_legendas(log, args.limite_videos),
              "--dublar": lambda: dublar(log, args.limite_videos)}
     try:
         return acoes[comando]()
@@ -504,6 +570,8 @@ def main(argv: list[str] | None = None) -> int:
             log.info("=== %s ===", comando)
             r = _rodar(comando, args, log)
             log.info("=== %s: código %d. %s ===", comando, r.codigo, r.resumo)
+            for item, quantidade in r.contagens.items():
+                ResumoDiario(pasta / "resumo_do_dia.json").registrar(item, quantidade)
             resultados.append(r)
     finally:
         encerrar_log_da_acao(handler)

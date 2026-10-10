@@ -224,6 +224,7 @@ class Tradutor:
     tokens_entrada: int = 0
     tokens_saida: int = 0
     pedidos: int = 0
+    fator_preco: float = 1.0   # 0,5 no modo econômico (lote: metade do preço)
     _sistema: str = field(default="", repr=False)
 
     def __post_init__(self):
@@ -237,7 +238,26 @@ class Tradutor:
     @property
     def custo(self) -> float | None:
         preco = PRECOS.get(self.modelo)
-        return (self.tokens_entrada * preco[0] + self.tokens_saida * preco[1]) / 1_000_000 if preco else None
+        return ((self.tokens_entrada * preco[0] + self.tokens_saida * preco[1]) / 1_000_000 * self.fator_preco
+                if preco else None)
+
+    def parametros(self, lote: dict[int, str], titulo: str, anteriores: list[str], rotulo_contexto: str = "") -> dict:
+        """O pedido de um lote de falas (o mesmo no modo normal e no econômico, em lote)."""
+        falas = [{"id": i, "texto": t} for i, t in lote.items()]
+        rotulo = rotulo_contexto or "Falas anteriores, já traduzidas (só contexto, não devolva):"
+        contexto = f"{rotulo}\n" + "\n".join(anteriores) + "\n\n" if anteriores else ""
+        pedido = (f"Título: {titulo or '(desconhecido)'}\n\n{contexto}"
+                  f"Traduza para {nome_do_idioma(self.idioma)} e devolva cada fala com o mesmo id.\n"
+                  f"Falas:\n{json.dumps(falas, ensure_ascii=False)}")
+        return {"model": self.modelo, "max_tokens": MAX_TOKENS, "system": self._sistema,
+                "messages": [{"role": "user", "content": pedido}],
+                "output_config": {"format": {"type": "json_schema", "schema": _ESQUEMA}}}
+
+    def contar(self, resposta) -> None:
+        self.pedidos += 1
+        uso = getattr(resposta, "usage", None)
+        self.tokens_entrada += getattr(uso, "input_tokens", 0) or 0
+        self.tokens_saida += getattr(uso, "output_tokens", 0) or 0
 
     def traduzir_falas(self, textos: list[str], titulo: str = "", parar=None, ao_progresso=None) -> list[str]:
         """Os textos traduzidos, na mesma ordem. Falas vazias continuam vazias (não vão para a API)."""
@@ -258,23 +278,11 @@ class Tradutor:
 
     def _traduzir_lote(self, lote: dict[int, str], titulo: str, anteriores: list[str],
                        tentativa: int = 1) -> dict[int, str]:
-        falas = [{"id": i, "texto": t} for i, t in lote.items()]
-        contexto = ("Falas anteriores, já traduzidas (só contexto, não devolva):\n" + "\n".join(anteriores) + "\n\n"
-                    if anteriores else "")
-        pedido = (f"Título: {titulo or '(desconhecido)'}\n\n{contexto}"
-                  f"Traduza para {nome_do_idioma(self.idioma)} e devolva cada fala com o mesmo id.\n"
-                  f"Falas:\n{json.dumps(falas, ensure_ascii=False)}")
         try:
-            resposta = self.cliente.messages.create(
-                model=self.modelo, max_tokens=MAX_TOKENS, system=self._sistema,
-                messages=[{"role": "user", "content": pedido}],
-                output_config={"format": {"type": "json_schema", "schema": _ESQUEMA}})
+            resposta = self.cliente.messages.create(**self.parametros(lote, titulo, anteriores))
         except Exception as erro:                    # erros do SDK (chave, conexão, limite...) em português
             raise ErroTraducao(_explicar(erro)) from erro
-        self.pedidos += 1
-        uso = getattr(resposta, "usage", None)
-        self.tokens_entrada += getattr(uso, "input_tokens", 0) or 0
-        self.tokens_saida += getattr(uso, "output_tokens", 0) or 0
+        self.contar(resposta)
         if resposta.stop_reason == "refusal":
             raise ErroTraducao("o modelo recusou traduzir um trecho desta legenda")
         if resposta.stop_reason == "max_tokens":                     # não coube: divide o lote ao meio
@@ -284,17 +292,22 @@ class Tradutor:
             metade = len(itens) // 2
             return {**self._traduzir_lote(dict(itens[:metade]), titulo, anteriores),
                     **self._traduzir_lote(dict(itens[metade:]), titulo, anteriores)}
-        try:
-            texto = next(b.text for b in resposta.content if getattr(b, "type", "") == "text")
-            traduzidas = {int(f["id"]): str(f["texto"]) for f in json.loads(texto)["falas"]}
-        except (StopIteration, ValueError, KeyError, TypeError) as erro:
-            raise ErroTraducao("a resposta da IA veio num formato inesperado") from erro
+        traduzidas = ler_resposta(resposta)
         faltando = {i: t for i, t in lote.items() if i not in traduzidas}
         if faltando:                                                 # alguma fala não voltou: pede de novo só ela
             if tentativa >= 2:
                 raise ErroTraducao(f"{len(faltando)} fala(s) não voltaram traduzidas")
             traduzidas.update(self._traduzir_lote(faltando, titulo, anteriores, tentativa + 1))
         return {i: traduzidas[i] for i in lote}
+
+
+def ler_resposta(resposta) -> dict[int, str]:
+    """{id: texto traduzido} da resposta (saída estruturada em JSON)."""
+    try:
+        texto = next(b.text for b in resposta.content if getattr(b, "type", "") == "text")
+        return {int(f["id"]): str(f["texto"]) for f in json.loads(texto)["falas"]}
+    except (StopIteration, ValueError, KeyError, TypeError) as erro:
+        raise ErroTraducao("a resposta da IA veio num formato inesperado") from erro
 
 
 @dataclass

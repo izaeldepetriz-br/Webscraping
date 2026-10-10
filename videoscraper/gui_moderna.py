@@ -145,6 +145,8 @@ class OpcoesJellyfin:
     modelo_whisper: str = "small"    # legenda pelo áudio: tamanho do modelo do Whisper (maior = acerta mais, demora mais)
     whisper_gpu: bool = False        # usar a placa de vídeo NVIDIA na transcrição
     voz_dublagem: str = "faber"      # dublagem por IA: a voz sintética do Piper
+    resumo_diario: bool = False      # mandar no Discord/Telegram, uma vez por dia, o que o Maestro fez
+    hora_resumo: int = 21
 
 
 # Máximo dos campos "Máx. de páginas" e "Máx. de vídeos" (antes 2000 e 1000).
@@ -1986,6 +1988,8 @@ class JanelaModerna(ctk.CTk):
         self._checkbox(lateral, "Usar a placa de vídeo NVIDIA", self.var_jf_whisper_gpu)
         self.bt_legendar_audio = self._botao(lateral, "Criar legenda pelo áudio...", self.ao_legendar_audio)
         self.bt_legendar_audio.pack(fill="x", pady=(4, 4), **p)
+        self.bt_sincronizar = self._botao(lateral, "Sincronizar legendas...", self.ao_sincronizar_legendas, "fantasma")
+        self.bt_sincronizar.pack(fill="x", pady=(0, 4), **p)
         # dublagem: a legenda pt-BR é lida por uma voz sintética (Piper) e vira uma faixa de áudio nova
         self._rotulo(lateral, "Dublagem por IA (voz sintética)", suave=False).pack(anchor="w", pady=(10, 2), **p)
         self._rotulo(lateral, "Voz (Piper, português):").pack(anchor="w", pady=(2, 2), **p)
@@ -2024,6 +2028,9 @@ class JanelaModerna(ctk.CTk):
             self._entrada(lateral, var, dica, **({"show": "•"} if secreto else {})).pack(fill="x", pady=(2, 6), **p)
         self.bt_testar_avisos = self._botao(lateral, "Enviar aviso de teste", self.ao_testar_avisos)
         self.bt_testar_avisos.pack(fill="x", pady=(0, 0), **p)
+        self.var_jf_resumo_diario = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Resumo do dia às 21h (o que foi\nbaixado, organizado, traduzido...)",
+                       self.var_jf_resumo_diario)
 
         self._separador(lateral)
         self.var_jf_lembrar = tk.BooleanVar(value=False)
@@ -2421,7 +2428,7 @@ class JanelaModerna(ctk.CTk):
             chave_claude=self.var_jf_chave_claude.get().strip(),
             modelo_traducao=self.var_jf_modelo_traducao.get().strip() or "claude-sonnet-4-6",
             modelo_whisper=self.var_jf_modelo_whisper.get(), whisper_gpu=self.var_jf_whisper_gpu.get(),
-            voz_dublagem=self.var_jf_voz_dublagem.get(),
+            voz_dublagem=self.var_jf_voz_dublagem.get(), resumo_diario=self.var_jf_resumo_diario.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
     def idiomas_jf(self) -> str:
@@ -2530,7 +2537,7 @@ class JanelaModerna(ctk.CTk):
                   "fechar_na_bandeja": self.var_jf_fechar_bandeja,
                   "gerar_nfo": self.var_jf_nfo, "atualizar_jellyfin": self.var_jf_atualizar,
                   "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar,
-                  "whisper_gpu": self.var_jf_whisper_gpu}
+                  "whisper_gpu": self.var_jf_whisper_gpu, "resumo_diario": self.var_jf_resumo_diario}
         for chave, var in textos.items():
             if dados.get(chave):
                 var.set(dados[chave])
@@ -3022,7 +3029,7 @@ class JanelaModerna(ctk.CTk):
                   self.bt_previa, self.bt_legendas, self.bt_desfazer, self.bt_testar_jellyfin,
                   self.bt_testar_avisos, self.bt_testar_tmdb, self.bt_espelhar, self.bt_testar_legendas,
                   self.bt_conferir_espelhos, self.bt_relatorio, self.bt_gerenciar_espelhos, self.bt_traduzir_legendas,
-                  self.bt_legendar_audio, self.bt_dublar):
+                  self.bt_legendar_audio, self.bt_dublar, self.bt_sincronizar):
             b.configure(state=estado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
         for parar in (self.bt_parar, self.bt_parar_jf):
@@ -3187,6 +3194,9 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_dublar(self) -> None:
+        pass
+
+    def ao_sincronizar_legendas(self) -> None:
         pass
 
     def ao_conferir_espelhos(self) -> None:
