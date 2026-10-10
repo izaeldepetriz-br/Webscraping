@@ -91,14 +91,20 @@ def app(monkeypatch, tmp_path):
 
 
 def esperar(app, limite=90):
+    """Espera a tarefa acabar. Se outra começar logo em seguida (ex.: "procurar filmes" -> confirmar -> "dublar"),
+    espera essa também: antes, ela começava durante as últimas atualizações da tela e o teste acusava
+    "não terminou a tempo" sem ter esperado nada (falhava só às vezes, conforme a velocidade da máquina)."""
     fim = time.time() + limite
-    app.update()
-    while app.trabalhando and time.time() < fim:
+    while True:
         app.update()
-        time.sleep(0.05)
-    for _ in range(5):
-        app.update()
-        time.sleep(0.12)
+        while app.trabalhando and time.time() < fim:
+            app.update()
+            time.sleep(0.05)
+        for _ in range(5):
+            app.update()
+            time.sleep(0.12)
+        if not app.trabalhando or time.time() >= fim:
+            break
     assert not app.trabalhando, "a tarefa não terminou a tempo"
 
 
