@@ -7,3 +7,4 @@ customtkinter>=5.2
 pystray>=0.19       # ícone perto do relógio (iniciar com o Windows)
 pillow>=10
 anthropic>=1.0       # traduzir legendas com o Claude (API da Anthropic)
+faster-whisper>=1.1  # criar a legenda ouvindo o áudio (Whisper, roda no PC)

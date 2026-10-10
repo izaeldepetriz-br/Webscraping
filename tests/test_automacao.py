@@ -160,3 +160,47 @@ def test_pelo_iniciar_py_sem_abrir_a_janela(tmp_path):
     assert feito.returncode == automacao.FALTA_CONFIGURACAO, feito.stderr
     assert "--conferir-canais: código 2" in feito.stdout
     assert json.loads((tmp_path / ".videoscraper" / "rpa" / "ultimo.json").read_text(encoding="utf-8"))["codigo"] == 2
+
+
+def test_legendar_audio_no_maximo_n_videos_por_vez(casa, tmp_path, monkeypatch):
+    from jellyfin_tools import transcricao
+    from test_transcricao import WhisperFalso
+    filmes = tmp_path / "Filmes"
+    for nome in ("A (2001)", "B (2002)", "C (2003)"):
+        baixado(filmes / nome / f"{nome}.mkv")
+    monkeypatch.setattr(automacao, "videos_sem_legenda",
+                        lambda *p, **k: transcricao.videos_sem_legenda(*p, sondar_arquivo=lambda v: (600.0, set()), **k))
+    monkeypatch.setattr(automacao, "Transcritor", lambda **k: transcricao.Transcritor(motor=WhisperFalso(), **k))
+    monkeypatch.setattr(automacao, "Tradutor", lambda **k: Tradutor(cliente=ClienteFalso(), **k))
+    casa(destino_filmes=str(filmes), chave_claude="chave-do-teste")
+    assert automacao.main(["--legendar-audio", "--limite-videos", "2"]) == automacao.OK
+    resumo = resultado(tmp_path)["comandos"][0]["resumo"]
+    assert resumo.startswith("2 de 2 legenda(s) em pt-BR criada(s), 0 erro(s), 1 vídeo(s) para a próxima vez")
+    assert (filmes / "A (2001)" / "A (2001).pt-BR.srt").exists() and (filmes / "B (2002)" / "B (2002).en.srt").exists()
+    assert not (filmes / "C (2003)" / "C (2003).pt-BR.srt").exists()
+    assert automacao.main(["--legendar-audio"]) == automacao.OK                  # a próxima execução pega o C
+    assert (filmes / "C (2003)" / "C (2003).pt-BR.srt").exists()
+    assert automacao.main(["--legendar-audio"]) == automacao.OK
+    assert resultado(tmp_path)["comandos"][0]["resumo"] == "Nenhum vídeo sem legenda."
+
+
+def test_dublar_pelo_robo(casa, tmp_path, monkeypatch):
+    from jellyfin_tools import dublagem
+    from test_dublagem import FFMPEG, SRT, VozFalsa, video_de_teste
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    filmes = tmp_path / "Filmes"
+    (filmes / "A (2001)").mkdir(parents=True)
+    video_de_teste(filmes / "A (2001)" / "A (2001).mkv")
+    (filmes / "A (2001)" / "A (2001).pt-BR.srt").write_text(SRT, encoding="utf-8")
+    monkeypatch.setattr(automacao, "preparar_piper", lambda pasta: Path("piper"))
+    monkeypatch.setattr(automacao, "preparar_voz", lambda voz, pasta: Path("v.onnx"))
+    monkeypatch.setattr(automacao, "MotorPiper", lambda exe, modelo: VozFalsa())
+    monkeypatch.setattr(automacao, "videos_para_dublar",
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+    casa()
+    assert automacao.main(["--dublar"]) == automacao.FALTA_CONFIGURACAO
+    casa(destino_filmes=str(filmes))
+    assert automacao.main(["--dublar"]) == automacao.OK
+    assert resultado(tmp_path)["comandos"][0]["resumo"] == "1 de 1 filme(s) dublado(s), 0 erro(s)."
+    assert (filmes / "A (2001)" / "A (2001) - Dublado IA.mkv").is_file()

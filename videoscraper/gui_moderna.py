@@ -142,6 +142,9 @@ class OpcoesJellyfin:
     fechar_na_bandeja: bool = False  # o X esconde a janela perto do relógio (a vigia continua)
     chave_claude: str = ""           # API da Anthropic: traduzir legendas (vazio = variável ANTHROPIC_API_KEY)
     modelo_traducao: str = "claude-sonnet-4-6"
+    modelo_whisper: str = "small"    # legenda pelo áudio: tamanho do modelo do Whisper (maior = acerta mais, demora mais)
+    whisper_gpu: bool = False        # usar a placa de vídeo NVIDIA na transcrição
+    voz_dublagem: str = "faber"      # dublagem por IA: a voz sintética do Piper
 
 
 # Máximo dos campos "Máx. de páginas" e "Máx. de vídeos" (antes 2000 e 1000).
@@ -1506,6 +1509,13 @@ class JanelaModerna(ctk.CTk):
         lateral.grid(row=0, column=0, rowspan=linhas, sticky="nsw", padx=(0, 14))
         return lateral
 
+    def _menu_opcoes(self, master, var, valores) -> ctk.CTkOptionMenu:
+        return ctk.CTkOptionMenu(master, variable=var, values=list(valores), height=36,
+                                 corner_radius=Tema.RAIO_CONTROLE, font=self.f_normal, fg_color=Tema.CAMPO,
+                                 button_color=Tema.SECUNDARIA, button_hover_color=Tema.SECUNDARIA_HOVER,
+                                 dropdown_fg_color=Tema.CARTAO, dropdown_hover_color=Tema.SECUNDARIA_HOVER,
+                                 dropdown_font=self.f_normal, text_color=Tema.TEXTO)
+
     def _checkbox(self, master, texto, var, comando=None) -> ctk.CTkCheckBox:
         caixa = ctk.CTkCheckBox(master, text=texto, variable=var, command=comando,
                                 font=self.f_normal, text_color=Tema.TEXTO, fg_color=Tema.PRIMARIA,
@@ -1738,6 +1748,8 @@ class JanelaModerna(ctk.CTk):
                   ("fonte", "Nome via", 150, False))
     # Ordem na TELA: "Nome via" logo depois do novo nome (os valores continuam na ordem acima)
     ORDEM_TELA_JF = ("n", "status", "atual", "novo", "fonte", "legenda", "progresso")
+    MODELOS_WHISPER = ("tiny", "base", "small", "medium", "large-v3", "turbo")
+    VOZES_DUBLAGEM = ("faber", "edresson")
     FONTES_LEGENDA = ("Site de demonstração", "OpenSubtitles (API)", "Site de busca (URL)", "SubDL (API)")
     IDIOMAS_JF = (("pt-BR", "Português"), ("en", "Inglês"), ("es", "Espanhol"))
     ROTULOS_DESTINO = {"Filmes": "Biblioteca de Filmes do Jellyfin:", "Séries": "Biblioteca de Séries do Jellyfin:"}
@@ -1965,6 +1977,22 @@ class JanelaModerna(ctk.CTk):
         self._entrada(lateral, self.var_jf_modelo_traducao, "claude-sonnet-4-6").pack(fill="x", **p)
         self.bt_traduzir_legendas = self._botao(lateral, "Traduzir legendas com IA...", self.ao_traduzir_legendas)
         self.bt_traduzir_legendas.pack(fill="x", pady=(8, 4), **p)
+        # sem NENHUMA legenda: o Whisper ouve o áudio no PC e o Claude traduz (se o áudio não for português)
+        self._rotulo(lateral, "Criar legenda pelo áudio (Whisper, no PC)", suave=False).pack(anchor="w", pady=(10, 2), **p)
+        self._rotulo(lateral, "Modelo do Whisper (maior = acerta mais,\nmas demora mais):").pack(anchor="w", pady=(2, 2), **p)
+        self.var_jf_modelo_whisper = tk.StringVar(value="small")
+        self._menu_opcoes(lateral, self.var_jf_modelo_whisper, self.MODELOS_WHISPER).pack(fill="x", **p)
+        self.var_jf_whisper_gpu = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Usar a placa de vídeo NVIDIA", self.var_jf_whisper_gpu)
+        self.bt_legendar_audio = self._botao(lateral, "Criar legenda pelo áudio...", self.ao_legendar_audio)
+        self.bt_legendar_audio.pack(fill="x", pady=(4, 4), **p)
+        # dublagem: a legenda pt-BR é lida por uma voz sintética (Piper) e vira uma faixa de áudio nova
+        self._rotulo(lateral, "Dublagem por IA (voz sintética)", suave=False).pack(anchor="w", pady=(10, 2), **p)
+        self._rotulo(lateral, "Voz (Piper, português):").pack(anchor="w", pady=(2, 2), **p)
+        self.var_jf_voz_dublagem = tk.StringVar(value="faber")
+        self._menu_opcoes(lateral, self.var_jf_voz_dublagem, self.VOZES_DUBLAGEM).pack(fill="x", **p)
+        self.bt_dublar = self._botao(lateral, "Dublar filmes...", self.ao_dublar)
+        self.bt_dublar.pack(fill="x", pady=(8, 4), **p)
 
         self._separador(lateral)
         self._rotulo(lateral, "Servidor Jellyfin", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
@@ -2384,6 +2412,8 @@ class JanelaModerna(ctk.CTk):
             fechar_na_bandeja=self.var_jf_fechar_bandeja.get(),
             chave_claude=self.var_jf_chave_claude.get().strip(),
             modelo_traducao=self.var_jf_modelo_traducao.get().strip() or "claude-sonnet-4-6",
+            modelo_whisper=self.var_jf_modelo_whisper.get(), whisper_gpu=self.var_jf_whisper_gpu.get(),
+            voz_dublagem=self.var_jf_voz_dublagem.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
     def idiomas_jf(self) -> str:
@@ -2477,7 +2507,8 @@ class JanelaModerna(ctk.CTk):
         textos = {"origem": self.var_jf_origem, "chave_tmdb": self.var_jf_chave_tmdb,
                   "chave_opensubtitles": self.var_jf_chave_os, "url_site": self.var_jf_url_site,
                   "chave_subdl": self.var_jf_chave_subdl, "chave_claude": self.var_jf_chave_claude,
-                  "modelo_traducao": self.var_jf_modelo_traducao,
+                  "modelo_traducao": self.var_jf_modelo_traducao, "modelo_whisper": self.var_jf_modelo_whisper,
+                  "voz_dublagem": self.var_jf_voz_dublagem,
                   "jellyfin_url": self.var_jf_url,
                   "jellyfin_api_key": self.var_jf_chave_jellyfin, "discord_webhook": self.var_jf_discord,
                   "telegram_token": self.var_jf_telegram_token, "telegram_chat_id": self.var_jf_telegram_chat}
@@ -2490,7 +2521,8 @@ class JanelaModerna(ctk.CTk):
                   "atualizar_sozinho": self.var_jf_atualizar_sozinho,
                   "fechar_na_bandeja": self.var_jf_fechar_bandeja,
                   "gerar_nfo": self.var_jf_nfo, "atualizar_jellyfin": self.var_jf_atualizar,
-                  "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar}
+                  "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar,
+                  "whisper_gpu": self.var_jf_whisper_gpu}
         for chave, var in textos.items():
             if dados.get(chave):
                 var.set(dados[chave])
@@ -2981,7 +3013,8 @@ class JanelaModerna(ctk.CTk):
         for b in (self.bt_buscar, self.bt_baixar_sel, self.bt_baixar_todos, self.bt_login,
                   self.bt_previa, self.bt_legendas, self.bt_desfazer, self.bt_testar_jellyfin,
                   self.bt_testar_avisos, self.bt_testar_tmdb, self.bt_espelhar, self.bt_testar_legendas,
-                  self.bt_conferir_espelhos, self.bt_relatorio, self.bt_gerenciar_espelhos, self.bt_traduzir_legendas):
+                  self.bt_conferir_espelhos, self.bt_relatorio, self.bt_gerenciar_espelhos, self.bt_traduzir_legendas,
+                  self.bt_legendar_audio, self.bt_dublar):
             b.configure(state=estado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
         for parar in (self.bt_parar, self.bt_parar_jf):
@@ -3131,6 +3164,12 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_traduzir_legendas(self) -> None:
+        pass
+
+    def ao_legendar_audio(self) -> None:
+        pass
+
+    def ao_dublar(self) -> None:
         pass
 
     def ao_conferir_espelhos(self) -> None:

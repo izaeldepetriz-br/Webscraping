@@ -42,6 +42,9 @@ from jellyfin_tools.espelho import (aplicar_espelho, classificar, conferir_e_avi
                                     remover_espelhos, remover_espelhos_escolhidos, verificar_links)
 from jellyfin_tools.conflitos import aplicar as aplicar_conflitos, decidir as decidir_conflitos
 from jellyfin_tools.traducao import Tradutor, estimar_custo, legendas_para_traduzir, traduzir_arquivo
+from jellyfin_tools.transcricao import Transcritor, estimar as estimar_audio, legendar_pelo_audio, videos_sem_legenda
+from jellyfin_tools.dublagem import (ErroDublagem, MotorPiper, dublar_video, preparar_piper, preparar_voz,
+                                     videos_para_dublar)
 from jellyfin_tools.paralelo import prioridade_baixa
 from jellyfin_tools.lixeira import apagar_lotes, lotes_antigos, tamanho_legivel
 from jellyfin_tools.tv_ao_vivo import carregar_canais, conferir_canais, mensagem_fora_do_ar
@@ -216,10 +219,27 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.mostrar_mensagem("Nada selecionado", "Clique nos vídeos da lista (Ctrl+clique para vários) "
                                   "e tente de novo, ou use 'Baixar todos'.", "aviso")
             return
+        ids = [i for i in ids if i.isdigit() and int(i) < len(self.links)]
+        self._log.info("Baixar selecionados: %d de %d (#%s)", len(ids), len(self.links),
+                       ", #".join(str(int(i) + 1) for i in ids[:20]) + (" ..." if len(ids) > 20 else ""))
         self._baixar([self.links[int(i)] for i in ids])
 
     def ao_baixar_todos(self) -> None:
-        """Com filtro nas colunas, "todos" = os que estão À VISTA (o escondido pelo filtro não é baixado)."""
+        """Com filtro nas colunas, "todos" = os que estão À VISTA (o escondido pelo filtro não é baixado).
+        Com alguns selecionados (☑), pergunta antes: só eles ou todos? (antes baixava todos sem avisar)"""
+        selecionados = [i for i in self.tabela.selection() if i.isdigit() and int(i) < len(self.links)]
+        visiveis = self.visiveis_videos() if self._filtros_videos else [str(i) for i in range(len(self.links))]
+        if selecionados and len(selecionados) < len(visiveis):
+            acao = "Espelhar" if self.var_espelhar.get() else "Baixar"
+            escolha = self.escolher(
+                f"{acao} todos?", f"Há {len(selecionados)} vídeo(s) selecionado(s) (☑) na lista, mas o botão é "
+                f"\"{acao} todos\": {len(visiveis)} vídeo(s).", (f"Só os {len(selecionados)} selecionados",
+                                                                  f"Todos os {len(visiveis)}"))
+            if escolha is None:
+                return
+            if escolha.startswith("Só"):
+                self.ao_baixar_selecionados()
+                return
         if self.var_espelhar.get():                   # modo híbrido: .strm no Jellyfin em vez de baixar
             visiveis = self.visiveis_videos() if self._filtros_videos else range(len(self.links))
             self.ao_espelhar_jellyfin([int(i) for i in visiveis if int(i) < len(self.links)])
@@ -321,7 +341,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 def terminou(link, status, detalhe):
                     if status == "ok":                    # memória: numa busca futura aparece "já baixado"
                         self.memoria_downloads.registrar(link, detalhe)
-                    self.fila.put(("item", (link.url, status)))
+                    self.fila.put(("item", (link, status)))
                 resumo = t.baixar(lista, opcoes.pasta, ao_terminar_item=terminou)
                 self.fila.put(("msg", ("Downloads concluídos",
                                        f"Baixados: {resumo.ok}\nPulados: {resumo.pulados}\n"
@@ -730,6 +750,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._baixar_pendente = dado                   # pergunta a licença depois do "fim"
         elif tipo == "traduzir_pendente":
             self._traduzir_pendente = dado                 # pergunta (com o custo) depois do "fim"
+        elif tipo == "dublar_pendente":
+            self._dublar_pendente = dado                   # pergunta (espaço em disco) depois do "fim"
+        elif tipo == "legendar_audio_pendente":
+            self._legendar_audio_pendente = dado           # pergunta (tempo e custo) depois do "fim"
         elif tipo == "robots_perguntar":
             self._robots_pendente = dado                   # pergunta depois do "fim" (a janela já está livre)
         elif tipo == "versao_nova":
@@ -799,6 +823,12 @@ class AppModerna(TVAoVivo, JanelaModerna):
             if getattr(self, "_traduzir_pendente", None):
                 traduzir, self._traduzir_pendente = self._traduzir_pendente, None
                 self.after(50, lambda: self._confirmar_traducao(*traduzir))
+            if getattr(self, "_dublar_pendente", None):
+                dublar, self._dublar_pendente = self._dublar_pendente, None
+                self.after(50, lambda: self._confirmar_dublagem(*dublar))
+            if getattr(self, "_legendar_audio_pendente", None):
+                audio, self._legendar_audio_pendente = self._legendar_audio_pendente, None
+                self.after(50, lambda: self._confirmar_legendar_audio(*audio))
             if self._robots_pendente:
                 robots, self._robots_pendente = self._robots_pendente, None
                 self.after(50, lambda: self._perguntar_robots(*robots))
@@ -849,10 +879,12 @@ class AppModerna(TVAoVivo, JanelaModerna):
             if registro := self.memoria_downloads.baixado(l):        # baixado numa busca anterior
                 self.atualizar_situacao(str(i), f"já baixado ({texto_quando(registro)})", "ok", rolar=False)
 
-    def _marcar_item(self, url: str, status: str) -> None:
-        for i, l in enumerate(self.links):
-            if l.url == url:
-                self.atualizar_situacao(str(i), TEXTOS_SITUACAO.get(status, status), status)
+    def _marcar_item(self, link, status: str) -> None:
+        """Marca a situação SÓ da linha desse vídeo (antes marcava todas as linhas com o mesmo endereço)."""
+        indices = [i for i, l in enumerate(self.links) if l is link] or \
+                  [i for i, l in enumerate(self.links) if l.url == getattr(link, "url", link)][:1]
+        for i in indices:
+            self.atualizar_situacao(str(i), TEXTOS_SITUACAO.get(status, status), status)
 
     def _link_selecionado(self) -> LinkVideo | None:
         ids = self.selecionados()
@@ -1897,6 +1929,204 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.fila.put(("msg", ("Traduzir legendas", texto, "erro" if erros and not traduzidas else "sucesso")))
 
         self._rodar(f"Traduzindo {len(pendentes)} legenda(s) com IA...", tarefa)
+
+    # ================================================================== legenda a partir do áudio (Whisper)
+    @property
+    def pasta_modelos_whisper(self) -> str:
+        return str(config.ARQUIVO.parent / "modelos_whisper")
+
+    def ao_legendar_audio(self) -> None:
+        """Botão "Criar legenda pelo áudio...": acha os vídeos sem NENHUMA legenda, mostra o tempo de áudio e o custo
+        da tradução e, confirmado, o Whisper ouve cada um no PC e o Claude traduz o que não for português."""
+        o = self.obter_opcoes_jellyfin()
+        pastas = list(self._bibliotecas())
+        if not pastas:
+            self.mostrar_mensagem("Criar legenda pelo áudio", "Escolha a biblioteca de Filmes e/ou de Séries.", "aviso")
+            return
+        idioma = o.idioma.split(",")[0].strip() or "pt-BR"
+        self._salvar_config()
+
+        def tarefa():
+            itens = videos_sem_legenda(*pastas, idioma=idioma)
+            self._log.info("Criar legenda pelo áudio: %d vídeo(s) sem nenhuma legenda", len(itens))
+            self.fila.put(("legendar_audio_pendente", (itens, idioma, o)))
+
+        self._rodar("Procurando vídeos sem legenda...", tarefa)
+
+    def _confirmar_legendar_audio(self, itens: list, idioma: str, o) -> None:
+        if not itens:
+            self.mostrar_mensagem("Criar legenda pelo áudio", "Nenhum vídeo sem legenda: todos têm alguma legenda ao "
+                                  "lado (as de outro idioma: use \"Traduzir legendas com IA\").", "info")
+            return
+        horas, letras, falas = estimar_audio(itens)
+        traduzir = bool(o.chave_claude or os.environ.get("ANTHROPIC_API_KEY"))
+        custo = estimar_custo(letras, falas, o.modelo_traducao)[2] if traduzir else None
+        exemplos = "\n".join(f"• {i.video.name}" for i in itens[:5]) + (
+            f"\n... e mais {len(itens) - 5}" if len(itens) > 5 else "")
+        traducao = (f"Tradução com o Claude ({o.modelo_traducao}), só do que não for {idioma}: no máximo cerca de "
+                    f"US$ {custo:.2f}." if custo is not None else
+                    f"Tradução com o Claude ({o.modelo_traducao}): preço deste modelo desconhecido." if traduzir else
+                    "Sem a chave da Anthropic: fica só a legenda no idioma do áudio (sem tradução).")
+        escolha = self.escolher(
+            "Criar legenda pelo áudio",
+            f"{len(itens)} vídeo(s) sem nenhuma legenda (cerca de {horas:.1f} h de áudio):\n{exemplos}\n\n"
+            f"O Whisper (modelo \"{o.modelo_whisper}\") ouve o áudio NO SEU PC: é grátis, mas demora (no processador, "
+            "pode levar mais que a duração do vídeo; com a placa de vídeo, bem menos). Na 1ª vez ele baixa o modelo "
+            f"(de dezenas de MB a mais de 1 GB).\n\n{traducao}\n\nCada vídeo ganha 'Nome.{idioma}.srt' (e a legenda no "
+            "idioma do áudio, ex.: 'Nome.en.srt'). Nada é sobrescrito. O \"Parar\" interrompe entre um trecho e outro.",
+            (f"Criar para os {len(itens)}",))
+        if escolha is None:
+            return
+        self._legendar_audio(itens, idioma, o, traduzir)
+
+    @staticmethod
+    def _texto_duracao(segundos: float) -> str:
+        minutos = max(1, int(round(segundos / 60)))
+        return f"{minutos} min" if minutos < 60 else f"{minutos // 60} h {minutos % 60:02d} min"
+
+    def _legendar_audio(self, itens: list, idioma: str, o, traduzir: bool) -> None:
+        def tarefa():
+            transcritor = Transcritor(modelo=o.modelo_whisper, usar_gpu=o.whisper_gpu,
+                                      pasta_modelos=self.pasta_modelos_whisper)
+            tradutor = None
+            if traduzir:
+                try:
+                    tradutor = Tradutor(chave=o.chave_claude, modelo=o.modelo_traducao, idioma=idioma)
+                except ImportError:
+                    self._log.warning("Falta a biblioteca 'anthropic': as legendas ficam sem tradução")
+            resultados, total, inicio, avisados = [], len(itens), time.monotonic(), set()
+            for k, item in enumerate(itens):
+                if self.evento_parar.is_set():
+                    break
+
+                def andamento(fracao, k=k, item=item):
+                    geral, gasto = (k + fracao) / total, time.monotonic() - inicio
+                    resta = f" · faltam ~{self._texto_duracao(gasto / geral - gasto)}" if geral > 0.02 else ""
+                    self.fila.put(("jf_analise", (geral, f"Ouvindo {k + 1} de {total}: {item.video.stem} "
+                                                         f"({int(fracao * 100)}%){resta}")))
+                andamento(0.0)
+                r = legendar_pelo_audio(item.video, transcritor, tradutor, idioma, parar=self.evento_parar.is_set,
+                                        ao_progresso=andamento)
+                resultados.append(r)
+                for aviso in set(r.avisos) - avisados:
+                    self._log.warning("Whisper: %s", aviso)
+                    avisados.add(aviso)
+                nivel = self._log.error if r.status == "erro" else self._log.info
+                nivel("[%s] %s%s (áudio: %s, %s)", r.status, r.video.name, f" ({r.detalhe})" if r.detalhe else "",
+                      r.idioma_audio or "?", self._texto_duracao(r.segundos))
+                if r.status == "erro" and r.detalhe.startswith(("não deu para carregar o modelo", "falta a biblioteca",
+                                                                "a chave", "sem conexão", "limite", "modelo não")):
+                    break                                       # vale para todos: não insiste nos outros
+            feitas = [r for r in resultados if r.status in ("criada", "traduzida")]
+            if feitas and o.atualizar_jellyfin and o.jellyfin_url and o.jellyfin_api_key:
+                try:
+                    atualizar_biblioteca(o.jellyfin_url, o.jellyfin_api_key)
+                except ErroJellyfin as erro:
+                    self._log.warning("Jellyfin: scan não pedido (%s)", erro)
+            conta = {s: sum(r.status == s for r in resultados) for s in
+                     ("criada", "traduzida", "so_original", "sem_fala", "erro", "ja_existe")}
+            erros = [r for r in resultados if r.status == "erro"]
+            texto = (f"Legendas em {idioma}: {len(feitas)} de {total}\n"
+                     f"   • do áudio já em {idioma}: {conta['criada']}\n   • traduzidas pelo Claude: {conta['traduzida']}\n"
+                     + (f"Só no idioma do áudio (sem tradução): {conta['so_original']}\n" if conta["so_original"] else "")
+                     + (f"Sem fala reconhecida: {conta['sem_fala']}\n" if conta["sem_fala"] else "")
+                     + f"Com erro: {len(erros)}" + (f" (ex.: {erros[0].video.name}: {erros[0].detalhe})" if erros else "")
+                     + (f"\nNão feitos (parou antes): {total - len(resultados)}" if len(resultados) < total else "")
+                     + f"\n\nTempo: {self._texto_duracao(time.monotonic() - inicio)}"
+                     + (f" · Claude: {tradutor.pedidos} pedido(s), custo ~US$ {tradutor.custo:.2f}"
+                        if tradutor is not None and tradutor.pedidos and tradutor.custo is not None else "")
+                     + "".join(f"\n⚠ {a}" for a in avisados))
+            self.fila.put(("status_fim", f"Legendas pelo áudio: {len(feitas)} de {total}."))
+            self.fila.put(("msg", ("Criar legenda pelo áudio", texto, "erro" if erros and not feitas else "sucesso")))
+
+        self._rodar(f"Ouvindo {len(itens)} vídeo(s) com o Whisper...", tarefa)
+
+    # ================================================================== dublagem por IA (Piper)
+    def ao_dublar(self) -> None:
+        """Botão "Dublar filmes...": os filmes com legenda em português e sem áudio em português ganham uma versão
+        'Nome - Dublado IA.mkv' com a legenda lida por uma voz sintética (o original não é tocado)."""
+        o = self.obter_opcoes_jellyfin()
+        filmes = self.destinos_jellyfin()["Filmes"]
+        if not filmes or not Path(filmes).is_dir():
+            self.mostrar_mensagem("Dublar filmes", "Escolha a biblioteca de Filmes (a dublagem é só para filmes, por "
+                                  "enquanto: em séries a versão dublada apareceria como episódio repetido).", "aviso")
+            return
+        idioma = o.idioma.split(",")[0].strip() or "pt-BR"
+        self._salvar_config()
+
+        def tarefa():
+            itens = videos_para_dublar(filmes, idioma=idioma)
+            self._log.info("Dublar: %d filme(s) com legenda em %s e sem áudio em português", len(itens), idioma)
+            self.fila.put(("dublar_pendente", (itens, o)))
+
+        self._rodar("Procurando filmes para dublar...", tarefa)
+
+    def _confirmar_dublagem(self, itens: list, o) -> None:
+        if not itens:
+            self.mostrar_mensagem("Dublar filmes", "Nenhum filme para dublar: é preciso ter a legenda em português "
+                                  "(\"Criar legenda pelo áudio\" ou \"Traduzir legendas\" fazem uma) e não ter "
+                                  "áudio em português nem versão dublada.", "info")
+            return
+        espaco = sum(i.tamanho for i in itens)
+        exemplos = "\n".join(f"• {i.video.name} ({i.falas} falas)" for i in itens[:5]) + (
+            f"\n... e mais {len(itens) - 5}" if len(itens) > 5 else "")
+        escolha = self.escolher(
+            "Dublar filmes (voz sintética)",
+            f"{len(itens)} filme(s) com legenda em português e sem áudio em português:\n{exemplos}\n\n"
+            f"Cada um ganha 'Nome - Dublado IA.mkv': a legenda é lida pela voz \"{o.voz_dublagem}\" (Piper, no seu PC, "
+            "grátis) e a voz original fica mais baixa por baixo, no estilo narração de documentário. A boca dos atores "
+            "não acompanha. O Jellyfin mostra as duas versões do filme.\n\n"
+            f"Espaço em disco: cerca de {tamanho_legivel(espaco)} (o vídeo é copiado, sem perder qualidade). "
+            "Na 1ª vez baixa o Piper (~25 MB) e a voz (~60 MB). O arquivo original não é tocado.",
+            (f"Dublar os {len(itens)}",))
+        if escolha is None:
+            return
+        self._dublar(itens, o)
+
+    def _dublar(self, itens: list, o) -> None:
+        def tarefa():
+            pasta = config.ARQUIVO.parent
+            try:
+                self.fila.put(("jf_analise", (0.0, "Preparando o Piper (só na 1ª vez baixa)...")))
+                exe = preparar_piper(pasta / "piper", ao_progresso=lambda f: self.fila.put(
+                    ("jf_analise", (f * 0.5, f"Baixando o Piper: {int(f * 100)}%"))))
+                modelo = preparar_voz(o.voz_dublagem, pasta / "vozes", ao_progresso=lambda f: self.fila.put(
+                    ("jf_analise", (0.5 + f * 0.5, f"Baixando a voz \"{o.voz_dublagem}\": {int(f * 100)}%"))))
+            except ErroDublagem as erro:
+                self.fila.put(("msg", ("Dublar filmes", f"Não deu para preparar a voz: {erro}", "erro")))
+                return
+            motor, resultados, total, inicio = MotorPiper(exe, modelo), [], len(itens), time.monotonic()
+            for k, item in enumerate(itens):
+                if self.evento_parar.is_set():
+                    break
+
+                def andamento(fracao, k=k, item=item):
+                    geral = (k + fracao) / total
+                    etapa = "lendo as falas" if fracao < 0.6 else "juntando ao vídeo"
+                    self.fila.put(("jf_analise", (geral, f"Dublando {k + 1} de {total}: {item.video.stem} – {etapa} "
+                                                         f"({int(fracao * 100)}%)")))
+                r = dublar_video(item.video, item.legenda, motor, parar=self.evento_parar.is_set,
+                                 ao_progresso=andamento)
+                resultados.append(r)
+                (self._log.error if r.status == "erro" else self._log.info)(
+                    "[%s] %s%s (%d falas, %d aceleradas, %d cortadas)", r.status, r.video.name,
+                    f" ({r.detalhe})" if r.detalhe else "", r.falas, r.aceleradas, r.cortadas)
+            feitos = [r for r in resultados if r.status == "dublado"]
+            erros = [r for r in resultados if r.status == "erro"]
+            if feitos and o.atualizar_jellyfin and o.jellyfin_url and o.jellyfin_api_key:
+                try:
+                    atualizar_biblioteca(o.jellyfin_url, o.jellyfin_api_key)
+                except ErroJellyfin as erro:
+                    self._log.warning("Jellyfin: scan não pedido (%s)", erro)
+            texto = (f"Dublados: {len(feitos)} de {total}\nCom erro: {len(erros)}"
+                     + (f" (ex.: {erros[0].video.name}: {erros[0].detalhe})" if erros else "")
+                     + (f"\nNão feitos (parou antes): {total - len(resultados)}" if len(resultados) < total else "")
+                     + f"\n\nTempo: {self._texto_duracao(time.monotonic() - inicio)}"
+                     + ("\n\nNo Jellyfin, abra o filme e escolha a versão \"Dublado IA\"." if feitos else ""))
+            self.fila.put(("status_fim", f"Dublagem: {len(feitos)} de {total} filme(s)."))
+            self.fila.put(("msg", ("Dublar filmes", texto, "erro" if erros and not feitos else "sucesso")))
+
+        self._rodar(f"Dublando {len(itens)} filme(s) com voz sintética...", tarefa)
 
     def ao_testar_legendas(self) -> None:
         """Testa a chave de cada fonte de legendas preenchida (OpenSubtitles e/ou SubDL)."""

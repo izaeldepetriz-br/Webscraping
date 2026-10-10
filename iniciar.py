@@ -72,11 +72,42 @@ def _verificar() -> int:
     from jellyfin_tools.tv_ao_vivo import ler_m3u  # noqa: F401
     import anthropic                                           # traduzir legendas: o SDK veio inteiro?
     anthropic.Anthropic(api_key="autoteste")                  # (só monta o cliente; não chama a API)
+    import av  # noqa: F401                                   # legenda pelo áudio: Whisper, PyAV e o detector de voz
+    import ctranslate2  # noqa: F401
+    import faster_whisper
+    vad = os.path.join(os.path.dirname(faster_whisper.__file__), "assets", "silero_vad_v6.onnx")
+    if not os.path.exists(vad):
+        faltando.append("detector de voz do Whisper (silero_vad_v6.onnx)")
     if sys.platform == "win32" and not bandeja.disponivel():
         faltando.append("pystray (ícone perto do relógio)")
     print(f"ok: versão {versao_atual()}, {len(catalogo.filmes)} títulos no catálogo, ffmpeg em {ffmpeg}, "
           f"instalador do navegador {'OK' if not faltando else 'FALTANDO: ' + str(faltando)}")
     return 1 if faltando else 0
+
+
+def _verificar_audio() -> int:
+    """Autoteste de ida e volta (usado ao gerar o .exe, com internet): o Piper FALA uma frase em português, o
+    Whisper (modelo tiny) OUVE e o teste confere se entendeu. Prova a dublagem (fase 2) e a legenda (fase 1)."""
+    import tempfile
+    import traceback
+    from pathlib import Path
+    relatorio = Path(tempfile.gettempdir()) / "maestro-teste-audio.txt"
+    try:
+        from jellyfin_tools.dublagem import MotorPiper, preparar_piper, preparar_voz
+        from jellyfin_tools.transcricao import Transcritor
+        with tempfile.TemporaryDirectory() as pasta:
+            pasta = Path(pasta)
+            motor = MotorPiper(preparar_piper(pasta / "piper"), preparar_voz("faber", pasta / "vozes"))
+            wav = pasta / "frase.wav"
+            motor.sintetizar([("Olá! Este é um teste de legenda e dublagem do Maestro.", wav)])
+            lingua, duracao, falas = Transcritor(modelo="tiny", pasta_modelos=str(pasta / "modelos")).transcrever(wav)
+        texto = " ".join(f.texto.replace("\n", " ") for f in falas)
+        ok = any(p in texto.lower() for p in ("teste", "legenda", "dublagem", "maestro"))
+        relatorio.write_text(f"idioma: {lingua} | duração: {duracao:.1f} s | ouviu: {texto}", encoding="utf-8")
+    except Exception:
+        relatorio.write_text(traceback.format_exc()[-1500:], encoding="utf-8")
+        return 1
+    return 0 if ok else 1
 
 
 def _verificar_navegador() -> int:
@@ -94,6 +125,8 @@ def _verificar_navegador() -> int:
 if __name__ == "__main__":
     if "--verificar" in sys.argv:
         raise SystemExit(_verificar())
+    if "--verificar-audio" in sys.argv:
+        raise SystemExit(_verificar_audio())
     if "--verificar-navegador" in sys.argv:
         raise SystemExit(_verificar_navegador())
     if "--testar-atualizacao" in sys.argv:          # GitHub: a troca dos arquivos funciona no Windows de verdade?

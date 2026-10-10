@@ -5,9 +5,12 @@
     Maestro.exe --conferir-canais      confere os canais da TV ao vivo (e avisa se algum saiu do ar)
     Maestro.exe --enviar-tv            envia a lista de canais ao Jellyfin (o mesmo "Salvar e enviar")
     Maestro.exe --traduzir-legendas    traduz com a IA (Claude) as legendas que faltam
+    Maestro.exe --legendar-audio       cria a legenda ouvindo o áudio (Whisper no PC + Claude) dos vídeos sem nenhuma
+    Maestro.exe --dublar               dubla com voz sintética (Piper) os filmes com legenda em português
 
 Dá para juntar vários (rodam nessa ordem): Maestro.exe --organizar --traduzir-legendas
 Opções:  --simular (organizar: só mostra o que faria)   --limite-dolares 1.00 (traduzir: 0 = sem limite)
+         --limite-videos 5 (legendar-audio e dublar: quantos vídeos por execução; demora)
          --resultado C:\\pasta\\resultado.json (onde gravar o resumo; padrão: ~/.videoscraper/rpa/ultimo.json)
 
 Usam as MESMAS configurações da janela (pastas, chaves, opções da aba Jellyfin e da TV ao vivo) e só as
@@ -48,6 +51,9 @@ from jellyfin_tools.regras import carregar_regras
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca
 from jellyfin_tools.site_demo import iniciar_site_demo
 from jellyfin_tools.traducao import Tradutor, estimar_custo, legendas_para_traduzir, traduzir_arquivo
+from jellyfin_tools.transcricao import Transcritor, legendar_pelo_audio, videos_sem_legenda
+from jellyfin_tools.dublagem import (ErroDublagem, MotorPiper, dublar_video, preparar_piper, preparar_voz,
+                                     videos_para_dublar)
 from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, ClienteTV, carregar_canais, carregar_historico,
                                        conferir_canais, mensagem_fora_do_ar, publicar, registrar_no_historico,
                                        salvar_historico)
@@ -57,7 +63,8 @@ from . import config
 from .gui_moderna import JanelaModerna, OpcoesJellyfin
 
 # Ordem em que rodam quando vêm juntos (organizar primeiro: as legendas novas já entram na tradução)
-COMANDOS = ("--organizar", "--conferir-espelhos", "--conferir-canais", "--enviar-tv", "--traduzir-legendas")
+COMANDOS = ("--organizar", "--conferir-espelhos", "--conferir-canais", "--enviar-tv", "--traduzir-legendas",
+            "--legendar-audio", "--dublar")
 OK, PROBLEMA, FALTA_CONFIGURACAO, ERRO_INESPERADO = 0, 1, 2, 3
 
 # Chave não lembrada no config.json? Vem destas variáveis de ambiente (as mesmas que a janela usa).
@@ -356,6 +363,87 @@ def traduzir_legendas(log: logging.Logger, limite: float = 1.0) -> Resultado:
                      [f"{r.origem.name}: {r.detalhe}" for r in erros])
 
 
+def legendar_audio(log: logging.Logger, limite_videos: int = 5, limite: float = 1.0) -> Resultado:
+    """Os vídeos sem NENHUMA legenda: o Whisper ouve no PC e o Claude traduz (se houver chave e o áudio não for
+    português). No máximo `limite_videos` por execução (0 = todos); o resto fica para a próxima."""
+    o, pastas = opcoes_salvas()
+    onde = bibliotecas(pastas)
+    if not onde:
+        raise FaltaConfiguracao("Escolha a biblioteca de Filmes e/ou de Séries na aba Jellyfin.")
+    idioma = o.idioma.split(",")[0].strip() or "pt-BR"
+    itens = videos_sem_legenda(*onde, idioma=idioma)
+    if not itens:
+        return Resultado("--legendar-audio", OK, "Nenhum vídeo sem legenda.")
+    escolhidos = itens[:limite_videos] if limite_videos > 0 else itens
+    tradutor = None
+    if o.chave_claude or os.environ.get("ANTHROPIC_API_KEY"):
+        tradutor = Tradutor(chave=o.chave_claude, modelo=o.modelo_traducao, idioma=idioma)
+    log.info("Legendar pelo áudio: %d sem legenda, %d nesta execução (Whisper %s, %s)", len(itens), len(escolhidos),
+             o.modelo_whisper, "com tradução" if tradutor else "sem tradução: falta a chave da Anthropic")
+    transcritor = Transcritor(modelo=o.modelo_whisper, usar_gpu=o.whisper_gpu,
+                              pasta_modelos=str(config.ARQUIVO.parent / "modelos_whisper"))
+    resultados = []
+    for item in escolhidos:
+        if tradutor is not None and limite > 0 and tradutor.custo is not None and tradutor.custo >= limite:
+            log.warning("Limite de US$ %.2f atingido: o resto fica para a próxima", limite)
+            break
+        r = legendar_pelo_audio(item.video, transcritor, tradutor, idioma)
+        resultados.append(r)
+        (log.error if r.status == "erro" else log.info)("[%s] %s%s (áudio: %s)", r.status, r.video.name,
+                                                         f" ({r.detalhe})" if r.detalhe else "", r.idioma_audio or "?")
+        if r.status == "erro" and r.detalhe.startswith(("não deu para carregar o modelo", "falta a biblioteca",
+                                                        "a chave", "sem conexão", "limite", "modelo não")):
+            break
+    for aviso in dict.fromkeys(a for r in resultados for a in r.avisos):
+        log.warning("Whisper: %s", aviso)
+    feitas = [r for r in resultados if r.status in ("criada", "traduzida")]
+    erros = [r for r in resultados if r.status == "erro"]
+    if feitas and o.atualizar_jellyfin and o.jellyfin_url and o.jellyfin_api_key:
+        try:
+            atualizar_biblioteca(o.jellyfin_url, o.jellyfin_api_key)
+        except ErroJellyfin as erro:
+            log.warning("Jellyfin: scan não pedido (%s)", erro)
+    resumo = (f"{len(feitas)} de {len(resultados)} legenda(s) em {idioma} criada(s), {len(erros)} erro(s)"
+              + (f", {len(itens) - len(resultados)} vídeo(s) para a próxima vez" if len(resultados) < len(itens) else "")
+              + (f". Claude ~US$ {tradutor.custo:.2f}." if tradutor is not None and tradutor.custo else "."))
+    return Resultado("--legendar-audio", PROBLEMA if erros else OK, resumo,
+                     [f"{r.video.name}: {r.detalhe}" for r in erros])
+
+
+def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
+    """Os filmes com legenda em português e sem áudio em português ganham 'Nome - Dublado IA.mkv'."""
+    o, pastas = opcoes_salvas()
+    filmes = pastas["Filmes"]
+    if not filmes or not Path(filmes).is_dir():
+        raise FaltaConfiguracao("Escolha a biblioteca de Filmes na aba Jellyfin (a dublagem é só para filmes).")
+    itens = videos_para_dublar(filmes, idioma=o.idioma.split(",")[0].strip() or "pt-BR")
+    if not itens:
+        return Resultado("--dublar", OK, "Nenhum filme para dublar.")
+    escolhidos = itens[:limite_videos] if limite_videos > 0 else itens
+    pasta = config.ARQUIVO.parent
+    try:
+        motor = MotorPiper(preparar_piper(pasta / "piper"), preparar_voz(o.voz_dublagem, pasta / "vozes"))
+    except ErroDublagem as erro:
+        return Resultado("--dublar", PROBLEMA, f"Não deu para preparar a voz: {erro}")
+    log.info("Dublar: %d filme(s), %d nesta execução (voz %s)", len(itens), len(escolhidos), o.voz_dublagem)
+    resultados = []
+    for item in escolhidos:
+        r = dublar_video(item.video, item.legenda, motor)
+        resultados.append(r)
+        (log.error if r.status == "erro" else log.info)("[%s] %s%s", r.status, r.video.name,
+                                                         f" ({r.detalhe})" if r.detalhe else "")
+    feitos = [r for r in resultados if r.status == "dublado"]
+    erros = [r for r in resultados if r.status == "erro"]
+    if feitos and o.atualizar_jellyfin and o.jellyfin_url and o.jellyfin_api_key:
+        try:
+            atualizar_biblioteca(o.jellyfin_url, o.jellyfin_api_key)
+        except ErroJellyfin as erro:
+            log.warning("Jellyfin: scan não pedido (%s)", erro)
+    resumo = (f"{len(feitos)} de {len(resultados)} filme(s) dublado(s), {len(erros)} erro(s)"
+              + (f", {len(itens) - len(resultados)} para a próxima vez." if len(resultados) < len(itens) else "."))
+    return Resultado("--dublar", PROBLEMA if erros else OK, resumo, [f"{r.video.name}: {r.detalhe}" for r in erros])
+
+
 # ============================================================================ entrada
 def foi_pedido(argv: list[str]) -> bool:
     """Algum comando de robô na linha? (senão, o programa abre a janela normalmente)"""
@@ -371,6 +459,8 @@ def _argumentos() -> argparse.ArgumentParser:
     p.add_argument("--simular", action="store_true", help="organizar: só mostra o que faria")
     p.add_argument("--limite-dolares", type=float, default=1.0,
                    help="traduzir: no máximo este custo estimado por execução (0 = sem limite)")
+    p.add_argument("--limite-videos", type=int, default=5,
+                   help="legendar-audio: quantos vídeos por execução (0 = todos)")
     p.add_argument("--resultado", help="onde gravar o resumo em JSON (padrão ~/.videoscraper/rpa/ultimo.json)")
     return p
 
@@ -380,7 +470,9 @@ def _rodar(comando: str, args, log: logging.Logger) -> Resultado:
              "--conferir-espelhos": lambda: conferir_os_espelhos(log),
              "--conferir-canais": lambda: conferir_os_canais(log),
              "--enviar-tv": lambda: enviar_tv(log),
-             "--traduzir-legendas": lambda: traduzir_legendas(log, args.limite_dolares)}
+             "--traduzir-legendas": lambda: traduzir_legendas(log, args.limite_dolares),
+             "--legendar-audio": lambda: legendar_audio(log, args.limite_videos, args.limite_dolares),
+             "--dublar": lambda: dublar(log, args.limite_videos)}
     try:
         return acoes[comando]()
     except FaltaConfiguracao as falta:

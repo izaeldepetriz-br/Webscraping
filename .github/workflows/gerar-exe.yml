@@ -53,6 +53,15 @@ jobs:
           Get-Content $json -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 2) { Write-Error "esperava o código 2 (lista de canais vazia); veio $($p.ExitCode)"; exit 1 }
           if (-not (Test-Path $json)) { Write-Error "o resumo ultimo.json não foi gravado"; exit 1 }
+      - name: Autoteste do áudio no .exe (o Piper fala uma frase e o Whisper ouve)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\videoscraper\Maestro.exe -ArgumentList "--verificar-audio" -Wait -PassThru
+          $r = Get-Content (Join-Path $env:TEMP 'maestro-teste-audio.txt') -Raw -ErrorAction SilentlyContinue
+          $r
+          $linha = ("$r" -replace "`r", "" -replace "`n", "%0A")
+          if ($p.ExitCode -ne 0) { Write-Output "::error title=Autoteste do áudio::$linha"; exit 1 }
+          Write-Output "::notice title=Autoteste do áudio::$linha"
       - name: Autoteste do navegador no .exe (baixa o Chromium e abre uma página)
         shell: pwsh
         run: |

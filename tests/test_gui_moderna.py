@@ -135,6 +135,30 @@ def test_buscar_selecionar_e_baixar(app, servidor):
     assert perguntas == ["Já baixados"] and not app.trabalhando
 
 
+
+def test_baixar_so_os_selecionados_e_baixar_todos_com_selecao_pergunta(app, servidor):
+    """Pedido: "mesmo selecionando, está baixando todos". Selecionados com clique de verdade: só eles são
+    baixados; e o "Baixar todos" com alguns selecionados pergunta antes (só eles ou todos)."""
+    app.redirecionar_saida()
+    app.definir_url(servidor.base + "/")
+    app.bt_buscar.invoke()
+    esperar(app)
+    for iid in ("0", "4"):                                             # clique, como a pessoa faz
+        x, y, _, _ = app.tabela.bbox(iid, "titulo")
+        app.tabela.event_generate("<Button-1>", x=x + 5, y=y + 5)
+        app.update()
+    assert app.tabela.selection() == ("0", "4")
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append((t, m, opcoes)), opcoes[0])[1]
+    app.bt_baixar_todos.invoke()
+    esperar(app)
+    assert perguntas[0][0] == "Baixar todos?" and perguntas[0][2] == ("Só os 2 selecionados", "Todos os 7")
+    assert sorted(os.listdir(app.var_pasta.get())) == ["a.mp4", "og.mp4"]
+    situacoes = [app.tabela.item(i, "values")[1] for i in app.tabela.get_children()]
+    assert [n for n, s in enumerate(situacoes) if s] == [0, 4]                  # só as 2 linhas mudaram
+    assert "Baixar selecionados: 2 de 7 (#1, #5)" in app.log.get("1.0", "end")
+
+
 def test_baixar_todos_com_falha_e_robots(app, servidor):
     app.definir_url(servidor.base + "/lista")
     app.var_seletor.set("a.video-link")
@@ -1190,6 +1214,86 @@ def test_traduzir_legendas_com_ia_pela_janela(app, tmp_path, monkeypatch):
     esperar(app)
     esperar(app)
     assert "Nada a traduzir" in app.caixas[-1][2]
+
+
+def test_criar_legenda_pelo_audio_pela_janela(app, tmp_path, monkeypatch):
+    from jellyfin_tools import transcricao
+    from jellyfin_tools.traducao import Tradutor, ler_srt
+    from tests.test_traducao import ClienteFalso
+    from tests.test_transcricao import WhisperFalso
+    filmes = tmp_path / "Filmes"
+    for nome in ("Sem Legenda (2001)", "Com Legenda (2002)"):
+        (filmes / nome).mkdir(parents=True)
+        (filmes / nome / f"{nome}.mkv").write_bytes(b"\0" * 2_000_000)
+    (filmes / "Com Legenda (2002)" / "Com Legenda (2002).en.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nx\n")
+    app._destinos.update({"Filmes": str(filmes), "Séries": ""})
+    app.var_jf_destino.set(str(filmes))
+    assert app.MODELOS_WHISPER == transcricao.MODELOS                  # a janela e o motor com a mesma lista
+    o = app.obter_opcoes_jellyfin()
+    assert (o.modelo_whisper, o.whisper_gpu) == ("small", False)
+    monkeypatch.setattr(app_moderna, "videos_sem_legenda",
+                        lambda *p, **k: transcricao.videos_sem_legenda(*p, sondar_arquivo=lambda v: (3600.0, set()), **k))
+    abertos = []
+    monkeypatch.setattr(app_moderna, "Transcritor",
+                        lambda **k: (abertos.append(k), transcricao.Transcritor(motor=WhisperFalso(), **k))[1])
+    monkeypatch.setattr(app_moderna, "Tradutor", lambda **k: Tradutor(cliente=ClienteFalso(), **k))
+    app.var_jf_chave_claude.set("sk-ant-teste")
+    app.var_jf_modelo_whisper.set("medium")
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append(m), opcoes[0])[1]
+    app.bt_legendar_audio.invoke()
+    esperar(app)
+    esperar(app)
+    assert "1 vídeo(s) sem nenhuma legenda (cerca de 1.0 h de áudio)" in perguntas[0]
+    assert "Sem Legenda (2001).mkv" in perguntas[0] and "Com Legenda" not in perguntas[0]
+    assert 'modelo "medium"' in perguntas[0] and "US$" in perguntas[0]
+    assert abertos[0]["modelo"] == "medium" and abertos[0]["pasta_modelos"].endswith("modelos_whisper")
+    pasta = filmes / "Sem Legenda (2001)"
+    assert ler_srt((pasta / "Sem Legenda (2001).en.srt").read_text(encoding="utf-8"))[0].texto == "Hello, how are you?"
+    assert ler_srt((pasta / "Sem Legenda (2001).pt-BR.srt").read_text(encoding="utf-8"))[0].texto.startswith("PT: ")
+    assert app.caixas[-1][1] == "Criar legenda pelo áudio" and "traduzidas pelo Claude: 1" in app.caixas[-1][2]
+    app.bt_legendar_audio.invoke()                                     # de novo: o vídeo já tem legenda
+    esperar(app)
+    esperar(app)
+    assert "Nenhum vídeo sem legenda" in app.caixas[-1][2]
+
+
+
+def test_dublar_filmes_pela_janela(app, tmp_path, monkeypatch):
+    from jellyfin_tools import dublagem
+    from tests.test_dublagem import FFMPEG, SRT, VozFalsa, faixas, video_de_teste
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    filmes = tmp_path / "Filmes"
+    (filmes / "Nosferatu (1922)").mkdir(parents=True)
+    video = video_de_teste(filmes / "Nosferatu (1922)" / "Nosferatu (1922).mkv")
+    (filmes / "Nosferatu (1922)" / "Nosferatu (1922).pt-BR.srt").write_text(SRT, encoding="utf-8")
+    app._destinos.update({"Filmes": str(filmes), "Séries": ""})
+    app.var_jf_destino.set(str(filmes))
+    assert app.obter_opcoes_jellyfin().voz_dublagem == "faber" and app.VOZES_DUBLAGEM == tuple(dublagem.VOZES)
+    preparados = []
+    monkeypatch.setattr(app_moderna, "preparar_piper", lambda pasta, **k: preparados.append(pasta) or Path("piper"))
+    monkeypatch.setattr(app_moderna, "preparar_voz", lambda voz, pasta, **k: preparados.append(voz) or Path("v.onnx"))
+    voz = VozFalsa()
+    monkeypatch.setattr(app_moderna, "MotorPiper", lambda exe, modelo: voz)
+    monkeypatch.setattr(app_moderna, "videos_para_dublar",
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append(m), opcoes[0])[1]
+    app.bt_dublar.invoke()
+    esperar(app)
+    esperar(app)
+    assert "1 filme(s) com legenda em português" in perguntas[0] and "Nosferatu (1922).mkv (2 falas)" in perguntas[0]
+    assert "faber" in perguntas[0] and "O arquivo original não é tocado" in perguntas[0]
+    assert preparados[1] == "faber" and str(preparados[0]).endswith("piper")
+    dublado = filmes / "Nosferatu (1922)" / "Nosferatu (1922) - Dublado IA.mkv"
+    assert dublado.is_file() and "(por)" in [l for l in faixas(dublado) if "Audio" in l][0]
+    assert app.caixas[-1][1] == "Dublar filmes" and "Dublados: 1 de 1" in app.caixas[-1][2]
+    app.bt_dublar.invoke()                                             # de novo: já tem a versão dublada
+    esperar(app)
+    esperar(app)
+    assert "Nenhum filme para dublar" in app.caixas[-1][2]
+
 
 def test_botao_testar_chaves_das_legendas(app, api_falsa, monkeypatch):
     from jellyfin_tools import ProvedorOpenSubtitles, ProvedorSubDL
