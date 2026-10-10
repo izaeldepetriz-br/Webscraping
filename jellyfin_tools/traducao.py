@@ -215,6 +215,21 @@ def _explicar(erro: Exception) -> str:
             "OverloadedError": "a API está sobrecarregada; tente mais tarde"}.get(nome, f"{nome}: {erro}")[:300]
 
 
+def testar_chave(chave: str = "", modelo: str = MODELO_PADRAO, cliente=None) -> str:
+    """Confere se a chave da Anthropic funciona e o modelo existe, SEM gastar crédito (só consulta o modelo).
+    Devolve o nome do modelo ('Claude Sonnet 4.6'); erro vira ErroTraducao em português."""
+    try:
+        if cliente is None:
+            import anthropic
+            cliente = anthropic.Anthropic(api_key=chave or None, max_retries=1)
+        info = cliente.models.retrieve(modelo or MODELO_PADRAO)
+    except ImportError as erro:
+        raise ErroTraducao("falta a biblioteca 'anthropic' (pip install anthropic)") from erro
+    except Exception as erro:
+        raise ErroTraducao(_explicar(erro)) from erro
+    return getattr(info, "display_name", "") or modelo
+
+
 @dataclass
 class Tradutor:
     chave: str = ""

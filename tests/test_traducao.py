@@ -157,3 +157,31 @@ def test_mensagem_quando_o_ffmpeg_fecha_sozinho():
     assert "fechou sozinho" in linux and ("apt install ffmpeg" in linux or "ffmpeg.org" in linux)
     assert "código 3221225477" in explicar_falha_ffmpeg(3221225477, "", "C:/ffmpeg.exe")
     assert explicar_falha_ffmpeg(1, "") == "sem detalhes (código 1)"
+
+
+def test_testar_chave_sem_gastar_credito(tmp_path):
+    from jellyfin_tools.dublagem import voz_pronta
+    from jellyfin_tools.traducao import testar_chave
+    from jellyfin_tools.transcricao import modelo_baixado
+
+    class Modelos:
+        def __init__(self, erro=None):
+            self.erro, self.models, self.pedidos = erro, self, []
+
+        def retrieve(self, modelo):
+            self.pedidos.append(modelo)
+            if self.erro:
+                raise self.erro
+            return SimpleNamespace(id=modelo, display_name="Claude Sonnet 4.6")
+    cliente = Modelos()
+    assert testar_chave(modelo="claude-sonnet-4-6", cliente=cliente) == "Claude Sonnet 4.6"
+    assert cliente.pedidos == ["claude-sonnet-4-6"]                  # só consulta o modelo: nenhum texto enviado
+
+    class AuthenticationError(Exception):
+        pass
+    with pytest.raises(ErroTraducao, match="chave de API foi recusada"):
+        testar_chave(cliente=Modelos(AuthenticationError("401")))
+    assert not modelo_baixado("small", tmp_path)
+    (tmp_path / "models--Systran--faster-whisper-small").mkdir()
+    assert modelo_baixado("small", tmp_path) and not modelo_baixado("large-v3", tmp_path)
+    assert not voz_pronta("faber", tmp_path / "piper", tmp_path / "vozes")

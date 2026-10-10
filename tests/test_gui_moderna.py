@@ -3567,3 +3567,28 @@ def test_traducao_economica_em_lote_pela_janela(app, tmp_path, monkeypatch):
         time.sleep(0.05)
     assert ler_srt((filmes / "A (2001).pt-BR.srt").read_text(encoding="utf-8"))[0].texto == "PT: Hello, how are you?"
     assert not any("Tradução em lote" in texto for texto, _ in app.itens_saude())
+
+
+def test_testar_chave_da_anthropic_e_painel_de_saude(app, monkeypatch):
+    from jellyfin_tools.traducao import ErroTraducao
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    app.var_jf_chave_claude.set("")
+    assert ("Claude (API): sem chave", None) in app.itens_saude()
+    app.bt_testar_claude.invoke()
+    assert app.caixas[-1][0] == "aviso" and "console.anthropic.com" in app.caixas[-1][2]
+    app.var_jf_chave_claude.set("sk-ant-teste")
+    assert ("Claude (API): chave não testada", None) in app.itens_saude()
+    monkeypatch.setattr(app_moderna, "testar_chave", lambda chave, modelo: "Claude Sonnet 4.6")
+    app.bt_testar_claude.invoke()
+    esperar(app)
+    assert ("Claude (API) ativa", True) in app.itens_saude()
+    assert "API ativa · Claude Sonnet 4.6" in app.lb_estado_claude.cget("text")
+    assert "Claude (API) ativa" in app.lb_saude.cget("text")
+
+    def recusada(chave, modelo):
+        raise ErroTraducao("a chave de API foi recusada (confira em console.anthropic.com)")
+    monkeypatch.setattr(app_moderna, "testar_chave", recusada)
+    app.bt_testar_claude.invoke()
+    esperar(app)
+    assert ("Claude (API): chave recusada", False) in app.itens_saude() and app.caixas[-1][0] == "erro"
+    assert any(t.startswith("Whisper (baixa na 1ª vez) · Piper (baixa na 1ª vez)") for t, _ in app.itens_saude())

@@ -38,6 +38,13 @@ jobs:
       - name: Testes sem janela (organizador, espelhos, TV, tradução, comandos de robô...)
         run: python -m pytest tests -q --ignore=tests/test_gui_moderna.py --ignore=tests/test_gui.py
       - name: Testes da janela moderna
-        run: xvfb-run -a python -m pytest tests/test_gui_moderna.py -q
+        run: |
+          set -o pipefail
+          xvfb-run -a python -m pytest tests/test_gui_moderna.py -q -rfE 2>&1 | tee saida-janela.txt
+      # Se o pytest fechar sem anotar o teste (ex.: o Tk caiu), o fim da saída vira um aviso no resumo da execução.
+      - name: Mostrar o fim da saída da janela (só quando falha)
+        if: failure()
+        run: |
+          echo "::error title=Fim da saída dos testes da janela::$(tail -n 40 saida-janela.txt | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
       - name: Testes da janela clássica
         run: xvfb-run -a python -m pytest tests/test_gui.py -q

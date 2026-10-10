@@ -1420,7 +1420,7 @@ class JanelaModerna(ctk.CTk):
         self.lb_subtitulo.pack(anchor="w", pady=(2, 0))
         # "painel de saúde" (aba Jellyfin): bibliotecas, Jellyfin, vigia, lugar fixo e versão numa linha só
         self.lb_saude = ctk.CTkLabel(textos, text="", font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO_SUAVE,
-                                     anchor="w", justify="left")
+                                     anchor="w", justify="left", wraplength=1000)   # muita coisa: quebra a linha
         self.seletor_aba = ctk.CTkSegmentedButton(
             topo, values=["Vídeos", "Jellyfin"], command=self.mostrar_aba, height=38,
             corner_radius=Tema.RAIO_CONTROLE, font=self.f_botao, fg_color=Tema.CARTAO,
@@ -1977,6 +1977,12 @@ class JanelaModerna(ctk.CTk):
         self._rotulo(lateral, "Modelo:").pack(anchor="w", pady=(6, 2), **p)
         self.var_jf_modelo_traducao = tk.StringVar(value="claude-sonnet-4-6")
         self._entrada(lateral, self.var_jf_modelo_traducao, "claude-sonnet-4-6").pack(fill="x", **p)
+        # "API ativa?": consulta o modelo com a chave (não gasta crédito) e mostra o resultado aqui e no painel
+        self.bt_testar_claude = self._botao(lateral, "Testar chave da Anthropic", self.ao_testar_claude, "fantasma")
+        self.bt_testar_claude.pack(fill="x", pady=(6, 0), **p)
+        self.lb_estado_claude = ctk.CTkLabel(lateral, text="", font=self.f_rotulo, text_color=Tema.TEXTO_FRACO,
+                                             anchor="w", justify="left", wraplength=250)
+        self.lb_estado_claude.pack(fill="x", **p)
         self.bt_traduzir_legendas = self._botao(lateral, "Traduzir legendas com IA...", self.ao_traduzir_legendas)
         self.bt_traduzir_legendas.pack(fill="x", pady=(8, 4), **p)
         # sem NENHUMA legenda: o Whisper ouve o áudio no PC e o Claude traduz (se o áudio não for português)
@@ -2706,6 +2712,12 @@ class JanelaModerna(ctk.CTk):
         cor = {True: Tema.SUCESSO, False: Tema.PERIGO}.get(ok, Tema.TEXTO_FRACO)
         self.lb_estado_legendas.configure(text=texto, text_color=cor)
 
+    def definir_estado_claude(self, ok: bool | None, texto: str) -> None:
+        """Linha abaixo de 'Testar chave da Anthropic': verde (ativa), vermelha (recusada) ou neutra."""
+        cor = {True: Tema.SUCESSO, False: Tema.PERIGO}.get(ok, Tema.TEXTO_FRACO)
+        simbolo = {True: self.SIMBOLO_SITUACAO["ok"] + "  ", False: self.SIMBOLO_SITUACAO["erro"] + "  "}.get(ok, "")
+        self.lb_estado_claude.configure(text=simbolo + texto if texto else "", text_color=cor)
+
     def definir_estado_tmdb(self, ok: bool | None, texto: str) -> None:
         """Linha abaixo do botão 'Testar conexão com o TMDB': verde (ok), vermelha (erro) ou neutra."""
         cor = {True: Tema.SUCESSO, False: Tema.PERIGO}.get(ok, Tema.TEXTO_FRACO)
@@ -3029,7 +3041,7 @@ class JanelaModerna(ctk.CTk):
                   self.bt_previa, self.bt_legendas, self.bt_desfazer, self.bt_testar_jellyfin,
                   self.bt_testar_avisos, self.bt_testar_tmdb, self.bt_espelhar, self.bt_testar_legendas,
                   self.bt_conferir_espelhos, self.bt_relatorio, self.bt_gerenciar_espelhos, self.bt_traduzir_legendas,
-                  self.bt_legendar_audio, self.bt_dublar, self.bt_sincronizar):
+                  self.bt_legendar_audio, self.bt_dublar, self.bt_sincronizar, self.bt_testar_claude):
             b.configure(state=estado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
         for parar in (self.bt_parar, self.bt_parar_jf):
@@ -3182,6 +3194,9 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_legendar_audio(self) -> None:
+        pass
+
+    def ao_testar_claude(self) -> None:
         pass
 
     def ao_exportar_config(self) -> None:

@@ -136,6 +136,14 @@ def preparar_voz(nome: str, pasta: str | Path, baixar=_baixar, ao_progresso=None
     return modelo
 
 
+def voz_pronta(nome: str, pasta_piper: str | Path, pasta_vozes: str | Path) -> bool:
+    """O Piper e a voz já estão no PC? (senão, são baixados na 1ª dublagem)"""
+    if nome not in VOZES or not executavel_piper(pasta_piper).is_file():
+        return False
+    modelo = Path(pasta_vozes) / (VOZES[nome].rsplit("/", 1)[-1] + ".onnx")
+    return modelo.is_file() and modelo.with_name(modelo.name + ".json").is_file()
+
+
 # ----------------------------------------------------------------- falar (texto -> .wav)
 def texto_para_falar(texto: str) -> str:
     """Tira o que é só de legenda: <i>, {\\an8}, ♪, travessão de diálogo, [risos], quebras de linha."""

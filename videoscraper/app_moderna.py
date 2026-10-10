@@ -42,12 +42,14 @@ from jellyfin_tools.espelho import (aplicar_espelho, classificar, conferir_e_avi
                                     licenca_aberta, lotes_de_espelhos, nome_do_link, planejar_espelho,
                                     remover_espelhos, remover_espelhos_escolhidos, verificar_links)
 from jellyfin_tools.conflitos import aplicar as aplicar_conflitos, decidir as decidir_conflitos
-from jellyfin_tools.traducao import ErroTraducao, Tradutor, estimar_custo, legendas_para_traduzir, traduzir_arquivo
+from jellyfin_tools.traducao import (ErroTraducao, Tradutor, estimar_custo, legendas_para_traduzir, testar_chave,
+                                     traduzir_arquivo)
 from jellyfin_tools import traducao_lote
-from jellyfin_tools.transcricao import Transcritor, estimar as estimar_audio, legendar_pelo_audio, videos_sem_legenda
+from jellyfin_tools.transcricao import (Transcritor, estimar as estimar_audio, legendar_pelo_audio, modelo_baixado,
+                                        videos_sem_legenda)
 from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sincronizar
 from jellyfin_tools.dublagem import (ErroDublagem, MotorPiper, dublar_video, preparar_piper, preparar_voz,
-                                     videos_para_dublar)
+                                     videos_para_dublar, voz_pronta)
 from jellyfin_tools.paralelo import prioridade_baixa
 from jellyfin_tools.lixeira import apagar_lotes, lotes_antigos, tamanho_legivel
 from jellyfin_tools.tv_ao_vivo import carregar_canais, conferir_canais, mensagem_fora_do_ar
@@ -693,6 +695,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
             fracao, texto = dado
             self.definir_progresso_total(fracao, texto)
             self.definir_progresso_rodape(fracao, texto)
+        elif tipo == "claude_estado":
+            self._saude_claude = dado
+            self.definir_estado_claude(*dado)
+            self.definir_saude(self.itens_saude())
         elif tipo == "jf_tmdb_estado":
             self.definir_estado_tmdb(*dado)
         elif tipo == "legendas_estado":
@@ -2422,6 +2428,32 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
         self._rodar("Testando as chaves das legendas...", tarefa)
 
+    def ao_testar_claude(self) -> None:
+        """Botão "Testar chave da Anthropic": a chave funciona e o modelo existe? Não gasta crédito."""
+        o = self.obter_opcoes_jellyfin()
+        if not (o.chave_claude or os.environ.get("ANTHROPIC_API_KEY")):
+            self.mostrar_mensagem("Anthropic (Claude)", "Cole a chave da API no campo acima (crie uma em "
+                                  "console.anthropic.com > API Keys). O uso é pago por quantidade de texto, com "
+                                  "créditos comprados no próprio Console.", "aviso")
+            return
+
+        def tarefa():
+            try:
+                nome = testar_chave(o.chave_claude, o.modelo_traducao)
+            except ErroTraducao as erro:
+                self._log.warning("Anthropic: %s", erro)
+                self.fila.put(("claude_estado", (False, f"Não funcionou: {erro}")))
+                self.fila.put(("msg", ("Anthropic (Claude)", f"A chave não funcionou: {erro}.", "erro")))
+                return
+            self._log.info("Anthropic: chave ativa, modelo %s (%s)", o.modelo_traducao, nome)
+            self.fila.put(("claude_estado", (True, f"API ativa · {nome}")))
+            self.fila.put(("msg", ("Anthropic (Claude)", f"Tudo certo: a chave funciona e o modelo \"{nome}\" "
+                                   f"({o.modelo_traducao}) está disponível.\n\nEste teste não gasta crédito. O "
+                                   "painel de saúde (no topo da aba) passa a mostrar \"Claude (API) ativa\".",
+                                   "sucesso")))
+
+        self._rodar("Testando a chave da Anthropic...", tarefa)
+
     def ao_testar_tmdb(self) -> None:
         o = self.obter_opcoes_jellyfin()
         if not o.chave_tmdb:
@@ -3101,6 +3133,20 @@ class AppModerna(TVAoVivo, JanelaModerna):
             itens.append((f"Versão {atual}: a {publicada} já saiu", False))
         else:
             itens.append((f"Versão {atual}" + (" (a mais nova)" if publicada else ""), True))
+        claude = getattr(self, "_saude_claude", None)        # (ok, texto) do último "Testar chave da Anthropic"
+        if not (self.var_jf_chave_claude.get().strip() or os.environ.get("ANTHROPIC_API_KEY")):
+            itens.append(("Claude (API): sem chave", None))
+        elif claude and claude[0]:
+            itens.append(("Claude (API) ativa", True))
+        elif claude:
+            itens.append(("Claude (API): chave recusada", False))
+        else:
+            itens.append(("Claude (API): chave não testada", None))
+        pasta = config.ARQUIVO.parent
+        whisper = modelo_baixado(self.var_jf_modelo_whisper.get(), self.pasta_modelos_whisper)
+        piper = voz_pronta(self.var_jf_voz_dublagem.get(), pasta / "piper", pasta / "vozes")
+        itens.append((f"Whisper {'pronto' if whisper else '(baixa na 1ª vez)'} · "
+                      f"Piper {'pronto' if piper else '(baixa na 1ª vez)'}", True if whisper and piper else None))
         lotes = len(traducao_lote.pendentes_no_disco(self.pasta_lotes))
         if lotes:
             itens.append((f"Tradução em lote: {lotes} aguardando", None))

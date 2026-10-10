@@ -146,6 +146,12 @@ class Transcritor:
         return (info.language or "").lower(), float(info.duration or 0), falas_dos_segmentos(ouvidos)
 
 
+def modelo_baixado(modelo: str, pasta_modelos: str | Path | None) -> bool:
+    """O modelo do Whisper já está no PC? (senão, ele é baixado na 1ª vez que for usado)"""
+    nome = {"turbo": "large-v3-turbo"}.get(modelo, modelo)
+    return bool(pasta_modelos) and any(Path(pasta_modelos).glob(f"models--*--faster-whisper-{nome}"))
+
+
 # ----------------------------------------------------------------- o que legendar na biblioteca
 @dataclass
 class SemLegenda:
