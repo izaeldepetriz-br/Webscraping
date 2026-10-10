@@ -2455,7 +2455,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         if escolha is None:
             return
         premium = {str(i.video) for i in itens}
-        if automacao.usa_gemini(o) and len(itens) > 1:      # mista por filme: os escolhidos com o Gemini
+        if automacao.usa_gemini(o) and o.perguntar_filmes and len(itens) > 1:   # mista por filme: quais com o Gemini
             marcados = self.pedir_marcados(
                 "Voz premium (Gemini)", "Marque os filmes que vão com a voz premium do Gemini (pago por uso). Os "
                 "desmarcados vão com o Piper, grátis, no seu PC.",
@@ -2504,7 +2504,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
             if not lista:                                      # não deu para ouvir: uma voz só
                 itens.append(item)
                 continue
-            sugestao = personagens.distribuir_vozes(lista, o.voz_gemini, automacao.figurante(o))
+            sugestao = personagens.distribuir_vozes(lista, o.voz_gemini, automacao.figurante(o), o.limite_figurante)
             principais = [p for p in lista if len(p.falas) >= personagens.MINIMO_FALAS][:8]
             if not principais:
                 itens.append(item)

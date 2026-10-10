@@ -152,6 +152,9 @@ class OpcoesJellyfin:
     encurtar_falas: bool = True      # dublagem: o Claude reescreve mais curtas as falas que não cabem no tempo
     voz_por_personagem: bool = False  # Gemini: ouve o filme, separa quem fala e dá uma voz para cada personagem
     figurantes_piper: bool = False   # dublagem mista: quem fala pouco (figurante) fica com o Piper, grátis
+    limite_figurante: int = 20       # dublagem mista: figurante = quem tem menos falas que isso
+    perguntar_filmes: bool = True    # Gemini com vários filmes: perguntar quais vão com o Gemini (o resto, Piper)
+    robo_so_piper: bool = False      # robôs agendados (--dublar): só o Piper, sem custo
     resumo_diario: bool = False      # mandar no Discord/Telegram, uma vez por dia, o que o Maestro fez
     hora_resumo: int = 21
 
@@ -1572,11 +1575,14 @@ class JanelaModerna(ctk.CTk):
         # Cada aba é um quadro na MESMA célula da grade; trocar de aba = mostrar um e esconder o outro.
         self.aba_videos = ctk.CTkFrame(self, fg_color="transparent")
         self.aba_jellyfin = ctk.CTkFrame(self, fg_color="transparent")
-        for aba in (self.aba_videos, self.aba_jellyfin):
+        self.aba_config = ctk.CTkFrame(self, fg_color="transparent")
+        for aba in (self.aba_videos, self.aba_jellyfin, self.aba_config):
             aba.grid(row=1, column=0, sticky="nsew")
             aba.grid_columnconfigure(0, weight=1)
         self.aba_videos.grid_rowconfigure(2, weight=1)
-        self.aba_jellyfin.grid_rowconfigure(1, weight=1)
+        self.aba_jellyfin.grid_rowconfigure(3, weight=1)
+        # ⚙ Configurações primeiro: as outras abas põem as opções delas nas categorias de lá
+        self._montar_aba_config(self.aba_config)
         self._montar_endereco(self.aba_videos)
         self._montar_acoes(self.aba_videos)
         self._montar_corpo(self.aba_videos)
@@ -1584,6 +1590,8 @@ class JanelaModerna(ctk.CTk):
         self._montar_rodape()
         self._organizar_liberado = False
         self.definir_ocupado(False)
+        self._quebrar_textos_config()
+        self.mostrar_config("Nomes e TMDB")
         self.mostrar_aba("Vídeos")
         self.campo_url.focus_set()
 
@@ -1624,9 +1632,11 @@ class JanelaModerna(ctk.CTk):
     SUBTITULOS = {
         "Vídeos": "1) Cole o endereço da página    2) Clique em Buscar vídeos    3) Selecione e clique em Baixar",
         "Jellyfin": "1) Escolha as pastas    2) Clique em Pré-visualizar    3) Confira e clique em Organizar",
+        "⚙ Configurações": "Tudo o que muda o jeito do programa trabalhar fica aqui. Vale na hora e fica salvo.",
     }
     TITULOS = {"Vídeos": "Extrair e baixar vídeos públicos",
-               "Jellyfin": "Organizar a biblioteca do Jellyfin"}
+               "Jellyfin": "Organizar a biblioteca do Jellyfin",
+               "⚙ Configurações": "Configurações"}
 
     def _montar_cabecalho(self) -> None:
         topo = ctk.CTkFrame(self, fg_color="transparent")
@@ -1647,9 +1657,9 @@ class JanelaModerna(ctk.CTk):
         self.lb_subtitulo.pack(anchor="w", pady=(2, 0))
         # "painel de saúde" (aba Jellyfin): bibliotecas, Jellyfin, vigia, lugar fixo e versão numa linha só
         self.lb_saude = ctk.CTkLabel(textos, text="", font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO_SUAVE,
-                                     anchor="w", justify="left", wraplength=1000)   # muita coisa: quebra a linha
+                                     anchor="w", justify="left", wraplength=860)    # muita coisa: quebra a linha
         self.seletor_aba = ctk.CTkSegmentedButton(
-            topo, values=["Vídeos", "Jellyfin"], command=self.mostrar_aba, height=38,
+            topo, values=["Vídeos", "Jellyfin", "⚙ Configurações"], command=self.mostrar_aba, height=38,
             corner_radius=Tema.RAIO_CONTROLE, font=self.f_botao, fg_color=Tema.CARTAO,
             selected_color=Tema.PRIMARIA, selected_hover_color=Tema.PRIMARIA_HOVER,
             unselected_color=Tema.CARTAO, unselected_hover_color=Tema.SECUNDARIA_HOVER, text_color=Tema.TEXTO)
@@ -1663,15 +1673,21 @@ class JanelaModerna(ctk.CTk):
         self.bt_atualizacoes.pack(side="right", padx=(0, 12), pady=(4, 0))
 
     def mostrar_aba(self, nome: str) -> None:
-        """'Vídeos' ou 'Jellyfin'."""
-        mostrar, esconder = ((self.aba_videos, self.aba_jellyfin) if nome == "Vídeos"
-                             else (self.aba_jellyfin, self.aba_videos))
-        esconder.grid_remove()
-        mostrar.grid()
+        """'Vídeos', 'Jellyfin' ou '⚙ Configurações'."""
+        abas = {"Vídeos": self.aba_videos, "Jellyfin": self.aba_jellyfin, self.ABA_CONFIG: self.aba_config}
+        saindo_da_config = self.seletor_aba.get() == self.ABA_CONFIG and nome != self.ABA_CONFIG
+        for outro, aba in abas.items():
+            if outro != nome:
+                aba.grid_remove()
+        abas[nome].grid()
         self.seletor_aba.set(nome)
         self.lb_titulo.configure(text=self.TITULOS[nome])
         self.lb_subtitulo.configure(text=self.SUBTITULOS[nome])
-        if nome == "Jellyfin" and self.lb_saude.cget("text"):
+        if saindo_da_config and hasattr(self, "_salvar_config"):
+            self._salvar_config()                       # o que mudou nas configurações já fica guardado
+        if nome == "Jellyfin":
+            self.atualizar_resumo_config()
+        if nome in ("Jellyfin", self.ABA_CONFIG) and self.lb_saude.cget("text"):
             self.lb_saude.pack(anchor="w", pady=(2, 0))
         else:
             self.lb_saude.pack_forget()
@@ -1682,7 +1698,7 @@ class JanelaModerna(ctk.CTk):
                                for rotulo, ok in itens)
         self.lb_saude.configure(text=texto, text_color=Tema.AVISO if any(ok is False for _, ok in itens)
                                 else Tema.TEXTO_SUAVE)
-        if self.aba_atual() == "Jellyfin":
+        if self.aba_atual() in ("Jellyfin", self.ABA_CONFIG):
             self.lb_saude.pack(anchor="w", pady=(2, 0))
 
     def aba_atual(self) -> str:
@@ -1722,21 +1738,13 @@ class JanelaModerna(ctk.CTk):
         self._criar_console(corpo)
 
     def _corpo(self, aba, linha: int) -> ctk.CTkFrame:
-        """Área de baixo de uma aba: painel lateral (coluna 0) + tabela e console (coluna 1)."""
+        """Área de baixo de uma aba: a tabela e o console (as opções ficam em ⚙ Configurações)."""
         corpo = ctk.CTkFrame(aba, fg_color="transparent")
         corpo.grid(row=linha, column=0, sticky="nsew", padx=28)
         corpo.grid_columnconfigure(1, weight=1)
         corpo.grid_rowconfigure(0, weight=3)
         corpo.grid_rowconfigure(1, weight=2)
         return corpo
-
-    def _lateral(self, corpo, linhas: int = 2) -> ctk.CTkScrollableFrame:
-        lateral = ctk.CTkScrollableFrame(corpo, width=320, fg_color=Tema.CARTAO, corner_radius=Tema.RAIO,
-                                         border_width=1, border_color=Tema.CARTAO_BORDA,
-                                         scrollbar_button_color=Tema.CARTAO_BORDA,
-                                         scrollbar_button_hover_color=Tema.CAMPO_BORDA)
-        lateral.grid(row=0, column=0, rowspan=linhas, sticky="nsw", padx=(0, 14))
-        return lateral
 
     def _menu_opcoes(self, master, var, valores) -> ctk.CTkOptionMenu:
         return ctk.CTkOptionMenu(master, variable=var, values=list(valores), height=36,
@@ -1755,7 +1763,8 @@ class JanelaModerna(ctk.CTk):
 
     # 2. painel de opções (cartão lateral; rola se a tela for baixa)
     def _montar_opcoes(self, corpo) -> None:
-        lateral = self._lateral(corpo)
+        """As opções da busca de vídeos ficam em ⚙ Configurações > Vídeos (busca)."""
+        lateral = self._secao_config("Vídeos (busca)")
         p = dict(padx=18)
 
         self._rotulo(lateral, "Opções", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(12, 4), **p)
@@ -2007,83 +2016,108 @@ class JanelaModerna(ctk.CTk):
             b.pack(side="left", padx=(0, 10))
         self.bt_parar_jf.pack(side="right")
 
-        corpo = self._corpo(aba, linha=1)
-        corpo.grid_rowconfigure(1, weight=0)          # painel Antes -> Depois: altura fixa
-        lateral = self._lateral(corpo, linhas=3)
-        self.lateral_jf = lateral
-        p = dict(padx=18)
-
-        self._rotulo(lateral, "Tipo de conteúdo", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(12, 6), **p)
+        # --- o contexto do trabalho: Filmes/Séries e as duas pastas (o resto fica em ⚙ Configurações)
+        contexto = self._cartao(aba)
+        contexto.grid(row=1, column=0, sticky="ew", padx=28, pady=(0, 10))
         self._destinos = {"Filmes": "", "Séries": ""}
         self._modo_atual = "Filmes"
         self.seletor_modo = ctk.CTkSegmentedButton(
-            lateral, values=["Filmes", "Séries"], command=self._ao_trocar_modo, height=34,
+            contexto, values=["Filmes", "Séries"], command=self._ao_trocar_modo, height=34, width=170,
             corner_radius=Tema.RAIO_CONTROLE, font=self.f_normal, fg_color=Tema.CAMPO,
             selected_color=Tema.PRIMARIA, selected_hover_color=Tema.PRIMARIA_HOVER,
             unselected_color=Tema.CAMPO, unselected_hover_color=Tema.SECUNDARIA_HOVER, text_color=Tema.TEXTO)
-        self.seletor_modo.pack(fill="x", **p)
+        self.seletor_modo.grid(row=0, column=0, padx=(16, 14), pady=12)
         self.seletor_modo.set("Filmes")
-
-        self._separador(lateral)
-        self._rotulo(lateral, "Pastas", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
         self.var_jf_origem = tk.StringVar()
         self.var_jf_destino = tk.StringVar()
-        self._campo_pasta(lateral, "Arquivos para organizar:", self.var_jf_origem, "ex.: C:/Users/Voce/Downloads")
-        self.lb_destino = self._campo_pasta(lateral, self.ROTULOS_DESTINO["Filmes"], self.var_jf_destino,
-                                            "ex.: D:/Jellyfin/Filmes")
+        contexto.grid_columnconfigure((2, 5), weight=1)
+        self._rotulo(contexto, "Arquivos para organizar:").grid(row=0, column=1, padx=(0, 6))
+        self._entrada(contexto, self.var_jf_origem, "ex.: C:/Users/Voce/Downloads").grid(row=0, column=2, sticky="ew")
+        self._botao(contexto, "Escolher...", lambda: self._escolher_pasta_em(self.var_jf_origem), largura=90).grid(
+            row=0, column=3, padx=(6, 14))
+        self.lb_destino = self._rotulo(contexto, self.ROTULOS_DESTINO["Filmes"])
+        self.lb_destino.grid(row=0, column=4, padx=(0, 6))
+        self._entrada(contexto, self.var_jf_destino, "ex.: D:/Jellyfin/Filmes").grid(row=0, column=5, sticky="ew")
+        self._botao(contexto, "Escolher...", lambda: self._escolher_pasta_em(self.var_jf_destino), largura=90).grid(
+            row=0, column=6, padx=(6, 16))
+        # o que está ligado (resumo) e o atalho para mudar
+        self.lb_resumo_config = ctk.CTkLabel(contexto, text="", font=ctk.CTkFont(Tema.FAMILIA, 11),
+                                             text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left")
+        self.lb_resumo_config.grid(row=1, column=0, columnspan=6, sticky="w", padx=16, pady=(0, 10))
+        self._botao(contexto, "⚙ Configurações", lambda: self.mostrar_aba(self.ABA_CONFIG), "fantasma",
+                    largura=130).grid(row=1, column=6, padx=(6, 16), pady=(0, 8))
 
-        self._separador(lateral)
-        self._rotulo(lateral, "Nomes e metadados (TMDB)", suave=False, fonte=self.f_secao).pack(
-            anchor="w", pady=(0, 6), **p)
+        # --- ações de legendas e voz (o "como" de cada uma fica em ⚙ Configurações)
+        voz = ctk.CTkFrame(aba, fg_color="transparent")
+        voz.grid(row=2, column=0, sticky="ew", padx=28, pady=(0, 10))
+        self._rotulo(voz, "Legendas e voz:").pack(side="left", padx=(2, 10))
+        self.bt_traduzir_legendas = self._botao(voz, "Traduzir legendas com IA...", self.ao_traduzir_legendas)
+        self.bt_legendar_audio = self._botao(voz, "Criar legenda pelo áudio...", self.ao_legendar_audio)
+        self.bt_sincronizar = self._botao(voz, "Sincronizar legendas...", self.ao_sincronizar_legendas)
+        self.bt_dublar = self._botao(voz, "Dublar filmes...", self.ao_dublar)
+        for b in (self.bt_traduzir_legendas, self.bt_legendar_audio, self.bt_sincronizar, self.bt_dublar):
+            b.configure(height=34)
+            b.pack(side="left", padx=(0, 8))
+
+        corpo = self._corpo(aba, linha=3)
+        corpo.grid_rowconfigure(1, weight=0)          # painel Antes -> Depois: altura fixa
+        p = dict(padx=18)
+
+        # ===================================================== ⚙ Configurações > Nomes e TMDB
+        lateral = self._secao_config("Nomes e TMDB")
         self.var_jf_tmdb = tk.BooleanVar(value=False)
         self.var_jf_chave_tmdb = tk.StringVar()
         self.var_jf_imagens = tk.BooleanVar(value=True)
         self.var_jf_nfo = tk.BooleanVar(value=True)
-        self._rotulo(lateral, "Chave da API do TMDB:").pack(anchor="w", **p)
-        self.campo_chave_tmdb = self._entrada(lateral, self.var_jf_chave_tmdb, "themoviedb.org > Configurações > API",
-                                              show="•")
-        self.campo_chave_tmdb.pack(fill="x", pady=(2, 6), **p)
-        self.bt_testar_tmdb = self._botao(lateral, "Testar conexão com o TMDB", self.ao_testar_tmdb)
-        self.bt_testar_tmdb.pack(fill="x", pady=(0, 4), **p)
-        self.lb_estado_tmdb = ctk.CTkLabel(lateral, text="", font=self.f_rotulo, text_color=Tema.TEXTO_FRACO,
-                                           anchor="w", justify="left", wraplength=250)
-        self.lb_estado_tmdb.pack(fill="x", pady=(0, 6), **p)
-        self.cb_tmdb = self._checkbox(lateral, "Consultar o TMDB para confirmar nomes", self.var_jf_tmdb)
+        self.cb_tmdb = self._checkbox(lateral, "Consultar o TMDB para confirmar nomes (a chave fica em Chaves de API)",
+                                      self.var_jf_tmdb)
         self._checkbox(lateral, "Baixar pôster e backdrop (se faltarem)", self.var_jf_imagens)
         self._checkbox(lateral, "Criar arquivo .nfo (sinopse, duração...)", self.var_jf_nfo)
         self.var_jf_tmdbid = tk.BooleanVar(value=False)
         self.var_jf_exigir = tk.BooleanVar(value=False)
         self.cb_tmdbid = self._checkbox(lateral, "Incluir [tmdbid] no nome da pasta", self.var_jf_tmdbid)
         self.var_jf_nomes_ep = tk.BooleanVar(value=True)
-        self._checkbox(lateral, "Séries: nome do episódio depois do\nnúmero (S01E07 - Nome)", self.var_jf_nomes_ep)
+        self._checkbox(lateral, "Séries: nome do episódio depois do número (S01E07 - Nome)", self.var_jf_nomes_ep)
         self._checkbox(lateral, "Só mover o que estiver no catálogo", self.var_jf_exigir)
 
-        self._separador(lateral)
-        self._rotulo(lateral, "Limpeza", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
+        # ===================================================== Organização e limpeza
+        lateral = self._secao_config("Organização e limpeza")
         self.var_jf_lixo = tk.BooleanVar(value=True)
-        self._checkbox(lateral, "Apagar lixo do torrent (.url, .txt\nde propaganda, trailers < 100 MB)",
+        self._checkbox(lateral, "Apagar lixo do torrent (.url, .txt de propaganda, trailers < 100 MB)",
                        self.var_jf_lixo)
         self.var_jf_apagar_pasta = tk.BooleanVar(value=False)
-        self._checkbox(lateral, "Apagar a pasta do torrent depois de\ntransferir (com o que sobrar nela)",
+        self._checkbox(lateral, "Apagar a pasta do torrent depois de transferir (com o que sobrar nela)",
                        self.var_jf_apagar_pasta)
-        self._rotulo(lateral, "Imagens (poster, backdrop...) e legendas\nlocais vão junto com o filme.",
+        self._rotulo(lateral, "Imagens (poster, backdrop...) e legendas locais vão junto com o filme.",
                      fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(2, 0), **p)
-
         self._separador(lateral)
-        self._rotulo(lateral, "Automático", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
+        # pastas que o organizador nunca mexe (ex.: as que o Sonarr/Radarr cuidam)
+        self._rotulo(lateral, "Pastas protegidas, uma por linha (ex.: as do Sonarr/Radarr). O organizador nunca "
+                              "mexe nelas, nem entra nelas.").pack(anchor="w", pady=(4, 2), **p)
+        self.txt_pastas_protegidas = ctk.CTkTextbox(lateral, height=70, font=self.f_rotulo, fg_color=Tema.CAMPO,
+                                                    border_width=1, border_color=Tema.CAMPO_BORDA,
+                                                    text_color=Tema.TEXTO, corner_radius=Tema.RAIO_CONTROLE,
+                                                    wrap="none")
+        self.txt_pastas_protegidas.pack(fill="x", **p)
+        self._botao(lateral, "Proteger pasta...", self._adicionar_pasta_protegida, "fantasma").pack(
+            anchor="w", pady=(2, 4), **p)
+
+        # ===================================================== Vigia (automático)
+        lateral = self._secao_config("Vigia (automático)")
         self.var_jf_vigiar = tk.BooleanVar(value=False)
-        self._checkbox(lateral, "Vigiar a pasta de origem e organizar\nsozinho o que terminar de baixar",
+        self._checkbox(lateral, "Vigiar as pastas e organizar sozinho o que terminar de baixar",
                        self.var_jf_vigiar, comando=self.ao_alternar_vigia)
         self.campo_vigia_min = self._numero(lateral, "Conferir a cada (min):", 5, 1, 240, 1)
-        self._rotulo(lateral, "Pastas vigiadas, uma por linha (ex.: as do\nuTorrent, ou a própria biblioteca). Filmes e\n"
-                              "séries são separados sozinhos. Vazio = a\npasta de origem acima.").pack(anchor="w", pady=(4, 2), **p)
-        self.txt_pastas_vigiadas = ctk.CTkTextbox(lateral, height=64, font=self.f_rotulo, fg_color=Tema.CAMPO,
+        self._rotulo(lateral, "Pastas vigiadas, uma por linha (ex.: as do uTorrent, ou a própria biblioteca). Filmes "
+                              "e séries são separados sozinhos. Vazio = a pasta de origem da aba Jellyfin.").pack(
+            anchor="w", pady=(4, 2), **p)
+        self.txt_pastas_vigiadas = ctk.CTkTextbox(lateral, height=80, font=self.f_rotulo, fg_color=Tema.CAMPO,
                                                   border_width=1, border_color=Tema.CAMPO_BORDA, text_color=Tema.TEXTO,
                                                   corner_radius=Tema.RAIO_CONTROLE, wrap="none")
         self.txt_pastas_vigiadas.pack(fill="x", **p)
         # aviso embaixo do campo: pasta que não existe, ou que é a própria biblioteca (some quando está tudo certo)
         self.lb_aviso_vigiadas = ctk.CTkLabel(lateral, text="", font=ctk.CTkFont(Tema.FAMILIA, 11),
-                                              text_color=Tema.AVISO, anchor="w", justify="left", wraplength=300)
+                                              text_color=Tema.AVISO, anchor="w", justify="left", wraplength=600)
         self._espera_vigiadas = None
 
         def ao_digitar_vigiadas(_=None):
@@ -2094,206 +2128,122 @@ class JanelaModerna(ctk.CTk):
         self.txt_pastas_vigiadas.bind("<FocusOut>", lambda e: self.atualizar_aviso_vigiadas(arrumar=True))
         self._botao(lateral, "Adicionar pasta...", self._adicionar_pasta_vigiada, "fantasma").pack(
             anchor="w", pady=(2, 4), **p)
-        # ligado: E:/Series/NOVELAS se arruma em E:/Series/NOVELAS (a origem e as bibliotecas acima não contam)
+        # ligado: E:/Series/NOVELAS se arruma em E:/Series/NOVELAS (a origem e as bibliotecas não contam)
         self.var_jf_vigia_no_lugar = tk.BooleanVar(value=True)
-        self._checkbox(lateral, "Organizar cada pasta vigiada dentro\ndela mesma (não leva para as bibliotecas)",
+        self._checkbox(lateral, "Organizar cada pasta vigiada dentro dela mesma (não leva para as bibliotecas)",
                        self.var_jf_vigia_no_lugar)
         # simulação: mostra na lista o que a vigia moveria AGORA, sem mexer em nada
         self.bt_simular_vigia = self._botao(lateral, "O que a vigia faria agora? (simular)", self.ao_simular_vigia,
                                             "secundario")
-        self.bt_simular_vigia.pack(fill="x", pady=(2, 6), **p)
-        # pastas que o organizador nunca mexe (ex.: as que o Sonarr/Radarr cuidam)
-        self._rotulo(lateral, "Pastas protegidas, uma por linha (ex.: as do\nSonarr/Radarr). O organizador nunca\n"
-                              "mexe nelas, nem entra nelas.").pack(anchor="w", pady=(4, 2), **p)
-        self.txt_pastas_protegidas = ctk.CTkTextbox(lateral, height=52, font=self.f_rotulo, fg_color=Tema.CAMPO,
-                                                    border_width=1, border_color=Tema.CAMPO_BORDA,
-                                                    text_color=Tema.TEXTO, corner_radius=Tema.RAIO_CONTROLE,
-                                                    wrap="none")
-        self.txt_pastas_protegidas.pack(fill="x", **p)
-        self._botao(lateral, "Proteger pasta...", self._adicionar_pasta_protegida, "fantasma").pack(
-            anchor="w", pady=(2, 4), **p)
-        # conferência automática dos espelhos (.strm), em horas ou dias
+        self.bt_simular_vigia.pack(anchor="w", pady=(2, 6), **p)
+        self.lb_estado_vigia = ctk.CTkLabel(lateral, text="Desligada. Usa as pastas e opções desta aba; o que ainda "
+                                            "está baixando (.part, .!qB) fica para a próxima.",
+                                            font=self.f_rotulo, text_color=Tema.TEXTO_FRACO, anchor="w",
+                                            justify="left", wraplength=600)
+        self.lb_estado_vigia.pack(fill="x", padx=18, pady=(0, 4))
+
+        # ===================================================== Espelhos (.strm)
+        lateral = self._secao_config("Espelhos (.strm)")
         self.var_jf_conferir_auto = tk.BooleanVar(value=False)
-        self._checkbox(lateral, "Conferir os espelhos (.strm) sozinho e\navisar no Discord/Telegram se quebrar",
-                       self.var_jf_conferir_auto, comando=self.ao_alternar_conferencia)
+        self._checkbox(lateral, "Conferir os espelhos (.strm) e os canais sozinho e avisar no Discord/Telegram se "
+                                "quebrar", self.var_jf_conferir_auto, comando=self.ao_alternar_conferencia)
         linha = ctk.CTkFrame(lateral, fg_color="transparent")
-        linha.pack(fill="x", padx=18, pady=(0, 6))
-        self._rotulo(linha, "A cada:").pack(side="left")
+        linha.pack(anchor="w", padx=18, pady=(0, 6))
+        self._rotulo(linha, "A cada:").pack(side="left", padx=(0, 8))
+        self.campo_conferir_a_cada = CampoNumerico(linha, 7, 1, 999, 1, largura=102)
+        self.campo_conferir_a_cada.pack(side="left", padx=(0, 6))
         self.var_jf_conferir_unidade = tk.StringVar(value="dias")
         ctk.CTkOptionMenu(linha, variable=self.var_jf_conferir_unidade, values=["minutos", "horas", "dias"], width=96,
                           height=32, corner_radius=Tema.RAIO_CONTROLE, font=self.f_normal, fg_color=Tema.CAMPO,
                           button_color=Tema.SECUNDARIA, button_hover_color=Tema.SECUNDARIA_HOVER,
-                          dropdown_fg_color=Tema.CARTAO, text_color=Tema.TEXTO).pack(side="right")
-        self.campo_conferir_a_cada = CampoNumerico(linha, 7, 1, 999, 1, largura=102)
-        self.campo_conferir_a_cada.pack(side="right", padx=(0, 6))
+                          dropdown_fg_color=Tema.CARTAO, text_color=Tema.TEXTO).pack(side="left")
         self.var_jf_remover_quebrados = tk.BooleanVar(value=False)
         self._checkbox(lateral, "Remover os quebrados (dá para desfazer)", self.var_jf_remover_quebrados)
         self.var_jf_ultima_conferencia = tk.StringVar(value="")
         self.lb_estado_conferencia = ctk.CTkLabel(lateral, text="Última conferência: nunca.", font=self.f_rotulo,
                                                   text_color=Tema.TEXTO_FRACO, anchor="w", justify="left",
-                                                  wraplength=250)
+                                                  wraplength=600)
         self.lb_estado_conferencia.pack(fill="x", padx=18, pady=(0, 4))
-        self.var_jf_iniciar_windows = tk.BooleanVar(value=False)
-        self._checkbox(lateral, "Iniciar junto com o Windows,\nminimizado perto do relógio", self.var_jf_iniciar_windows,
-                       comando=self.ao_alternar_inicializacao)
-        self.var_jf_fechar_bandeja = tk.BooleanVar(value=False)
-        self._checkbox(lateral, "Ao fechar (X), continuar rodando\nperto do relógio (a vigia segue)",
-                       self.var_jf_fechar_bandeja)
-        self.var_jf_avisar_versao = tk.BooleanVar(value=True)
-        self._checkbox(lateral, "Avisar quando sair versão nova\ndo programa (ao abrir)", self.var_jf_avisar_versao)
-        self.var_jf_atualizar_sozinho = tk.BooleanVar(value=False)
-        self._checkbox(lateral, "Atualizar sozinho: baixar, instalar e\nreiniciar o programa (quando estiver livre)",
-                       self.var_jf_atualizar_sozinho)
-        # onde o programa está no computador (e, no Windows, o lugar fixo com atalhos)
-        self.lb_pasta_programa = ctk.CTkLabel(lateral, text="", font=ctk.CTkFont(Tema.FAMILIA, 11),
-                                              text_color=Tema.TEXTO_FRACO, anchor="w", justify="left", wraplength=290)
-        self.lb_pasta_programa.pack(anchor="w", **p)
-        self.bt_abrir_pasta_programa = self._botao(lateral, "Abrir a pasta do programa", self.ao_abrir_pasta_programa,
-                                                   "fantasma")
-        self.bt_abrir_pasta_programa.pack(anchor="w", **p)
-        self.bt_instalar_fixo = self._botao(lateral, "Instalar no lugar fixo (com atalhos)...", self.ao_instalar_fixo,
-                                            "secundario")
-        self.var_jf_versao_avisada = tk.StringVar(value="")
-        self.lb_estado_vigia = ctk.CTkLabel(lateral, text="Desligada. Usa as pastas e opções desta aba; o que ainda "
-                                            "está baixando (.part, .!qB) fica para a próxima.",
-                                            font=self.f_rotulo, text_color=Tema.TEXTO_FRACO, anchor="w",
-                                            justify="left", wraplength=250)
-        self.lb_estado_vigia.pack(fill="x", padx=18, pady=(0, 4))
 
-        self._separador(lateral)
-        self._rotulo(lateral, "Legendas", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
+        # ===================================================== Legendas
+        lateral = self._secao_config("Legendas")
         self.var_jf_legendas = tk.BooleanVar(value=True)
         self._checkbox(lateral, "Baixar legendas ao organizar", self.var_jf_legendas)
-        self._rotulo(lateral, "Fonte das legendas:").pack(anchor="w", pady=(6, 4), **p)
+        self._rotulo(lateral, "Fonte das legendas (as chaves ficam em Chaves de API):").pack(anchor="w",
+                                                                                            pady=(6, 4), **p)
         self.var_jf_fonte = tk.StringVar(value=self.FONTES_LEGENDA[0])
         ctk.CTkOptionMenu(lateral, variable=self.var_jf_fonte, values=list(self.FONTES_LEGENDA),
-                          command=lambda v: self._mostrar_campos_jf(), height=36,
+                          command=lambda v: self._mostrar_campos_jf(), height=36, width=320,
                           corner_radius=Tema.RAIO_CONTROLE, font=self.f_normal, fg_color=Tema.CAMPO,
                           button_color=Tema.SECUNDARIA, button_hover_color=Tema.SECUNDARIA_HOVER,
                           dropdown_fg_color=Tema.CARTAO, dropdown_hover_color=Tema.SECUNDARIA_HOVER,
-                          dropdown_font=self.f_normal, text_color=Tema.TEXTO).pack(fill="x", **p)
-        # height=1: vazio, um CTkFrame ocuparia 200 px (o padrão); assim só cresce com um campo dentro
-        self.quadro_fonte = ctk.CTkFrame(lateral, fg_color="transparent", height=1)
-        self.quadro_fonte.pack(fill="x")
+                          dropdown_font=self.f_normal, text_color=Tema.TEXTO).pack(anchor="w", **p)
         self.var_jf_chave_os = tk.StringVar()
         self.var_jf_url_site = tk.StringVar()
         self.var_jf_chave_subdl = tk.StringVar()
-        self.rot_chave_os = self._rotulo(self.quadro_fonte, "Chave da API do OpenSubtitles:")
-        self.campo_chave_os = self._entrada(self.quadro_fonte, self.var_jf_chave_os,
-                                            "opensubtitles.com > API consumers", show="•")
-        self.rot_chave_subdl = self._rotulo(self.quadro_fonte, "")
-        self.campo_chave_subdl = self._entrada(self.quadro_fonte, self.var_jf_chave_subdl,
-                                               "subdl.com > Painel > API", show="•")
-        self.bt_testar_legendas = self._botao(self.quadro_fonte, "Testar chaves das legendas",
-                                              self.ao_testar_legendas)
-        self.lb_estado_legendas = ctk.CTkLabel(self.quadro_fonte, text="", font=self.f_rotulo,
-                                               text_color=Tema.TEXTO_FRACO, anchor="w", justify="left",
-                                               wraplength=250)
+        # height=1: vazio, um CTkFrame ocuparia 200 px (o padrão); assim só cresce com um campo dentro
+        self.quadro_fonte = ctk.CTkFrame(lateral, fg_color="transparent", height=1)
+        self.quadro_fonte.pack(fill="x")
         self.campo_url_site = self._entrada(self.quadro_fonte, self.var_jf_url_site,
                                             "https://site/busca?q={consulta}")
         self._rotulo(lateral, "Idiomas das legendas (um arquivo cada):").pack(anchor="w", pady=(10, 2), **p)
         self.vars_idioma_jf = {codigo: tk.BooleanVar(value=(codigo == "pt-BR")) for codigo, _ in self.IDIOMAS_JF}
         for codigo, nome in self.IDIOMAS_JF:
             self._checkbox(lateral, f"{nome} ({codigo})", self.vars_idioma_jf[codigo])
-        self._rotulo(lateral, "Outros idiomas (quantos quiser, separados\npor vírgula, ponto e vírgula ou espaço):").pack(
+        self._rotulo(lateral, "Outros idiomas (quantos quiser, separados por vírgula, ponto e vírgula ou espaço):").pack(
             anchor="w", pady=(4, 0), **p)
         self.var_jf_outros_idiomas = tk.StringVar()
         self._entrada(lateral, self.var_jf_outros_idiomas, "ex.: fr, italiano; coreano").pack(fill="x", pady=(2, 2), **p)
         # o que o programa entendeu do que foi digitado (e o que não entendeu)
         self.lb_idiomas_entendidos = ctk.CTkLabel(lateral, text="", font=ctk.CTkFont(Tema.FAMILIA, 11),
                                                   text_color=Tema.TEXTO_FRACO, anchor="w", justify="left",
-                                                  wraplength=300)
+                                                  wraplength=600)
         self.lb_idiomas_entendidos.pack(anchor="w", **p)
         self.var_jf_outros_idiomas.trace_add("write", lambda *_: self.atualizar_idiomas_entendidos())
         self.bt_mais_idiomas = self._botao(lateral, "Mais idiomas...", self.abrir_mais_idiomas, "fantasma")
         self.bt_mais_idiomas.pack(anchor="w", pady=(0, 4), **p)
         self.var_jf_sobrescrever = tk.BooleanVar(value=False)
-        self._checkbox(lateral, "Substituir o que já existe (legendas,\npôster, backdrop e .nfo)",
+        self._checkbox(lateral, "Substituir o que já existe (legendas, pôster, backdrop e .nfo)",
                        self.var_jf_sobrescrever)
-        # tradução com IA: a legenda que só existe em outro idioma vira 'Nome.pt-BR.srt' (mesmos horários)
-        self._rotulo(lateral, "Traduzir legendas com IA (Claude)", suave=False).pack(anchor="w", pady=(10, 2), **p)
-        self._rotulo(lateral, "Chave da API da Anthropic:").pack(anchor="w", pady=(2, 2), **p)
-        self.var_jf_chave_claude = tk.StringVar()
-        self._entrada(lateral, self.var_jf_chave_claude, "console.anthropic.com > API Keys", show="•").pack(
-            fill="x", **p)
+
+        # ===================================================== Tradução (Claude)
+        lateral = self._secao_config("Tradução (Claude)")
+        self._rotulo(lateral, "A legenda que só existe em outro idioma vira 'Nome.pt-BR.srt', com os mesmos horários. "
+                              "A chave da Anthropic fica em Chaves de API.").pack(anchor="w", pady=(0, 4), **p)
         self._rotulo(lateral, "Modelo:").pack(anchor="w", pady=(6, 2), **p)
         self.var_jf_modelo_traducao = tk.StringVar(value="claude-sonnet-4-6")
-        self._entrada(lateral, self.var_jf_modelo_traducao, "claude-sonnet-4-6").pack(fill="x", **p)
-        # "API ativa?": consulta o modelo com a chave (não gasta crédito) e mostra o resultado aqui e no painel
-        self.bt_testar_claude = self._botao(lateral, "Testar chave da Anthropic", self.ao_testar_claude, "fantasma")
-        self.bt_testar_claude.pack(fill="x", pady=(6, 0), **p)
-        self.lb_estado_claude = ctk.CTkLabel(lateral, text="", font=self.f_rotulo, text_color=Tema.TEXTO_FRACO,
-                                             anchor="w", justify="left", wraplength=250)
-        self.lb_estado_claude.pack(fill="x", **p)
-        self.bt_traduzir_legendas = self._botao(lateral, "Traduzir legendas com IA...", self.ao_traduzir_legendas)
-        self.bt_traduzir_legendas.pack(fill="x", pady=(8, 4), **p)
-        # sem NENHUMA legenda: o Whisper ouve o áudio no PC e o Claude traduz (se o áudio não for português)
-        self._rotulo(lateral, "Criar legenda pelo áudio (Whisper, no PC)", suave=False).pack(anchor="w", pady=(10, 2), **p)
-        self._rotulo(lateral, "Modelo do Whisper (maior = acerta mais,\nmas demora mais):").pack(anchor="w", pady=(2, 2), **p)
+        self._entrada(lateral, self.var_jf_modelo_traducao, "claude-sonnet-4-6", width=320).pack(anchor="w", **p)
+
+        # ===================================================== Legenda pelo áudio (Whisper)
+        lateral = self._secao_config("Legenda pelo áudio")
+        self._rotulo(lateral, "Para vídeos SEM nenhuma legenda: o Whisper ouve o áudio no seu PC (grátis) e, se o "
+                              "áudio não for português, o Claude traduz.").pack(anchor="w", pady=(0, 4), **p)
+        self._rotulo(lateral, "Modelo do Whisper (maior = acerta mais, mas demora mais):").pack(anchor="w",
+                                                                                              pady=(2, 2), **p)
         self.var_jf_modelo_whisper = tk.StringVar(value="small")
-        self._menu_opcoes(lateral, self.var_jf_modelo_whisper, self.MODELOS_WHISPER).pack(fill="x", **p)
+        menu = self._menu_opcoes(lateral, self.var_jf_modelo_whisper, self.MODELOS_WHISPER)
+        menu.configure(width=320)
+        menu.pack(anchor="w", **p)
         self.var_jf_whisper_gpu = tk.BooleanVar(value=False)
         self._checkbox(lateral, "Usar a placa de vídeo NVIDIA", self.var_jf_whisper_gpu)
-        self.bt_legendar_audio = self._botao(lateral, "Criar legenda pelo áudio...", self.ao_legendar_audio)
-        self.bt_legendar_audio.pack(fill="x", pady=(4, 4), **p)
-        self.bt_sincronizar = self._botao(lateral, "Sincronizar legendas...", self.ao_sincronizar_legendas, "fantasma")
-        self.bt_sincronizar.pack(fill="x", pady=(0, 4), **p)
-        # dublagem: a legenda pt-BR é lida por uma voz sintética (Piper) e vira uma faixa de áudio nova
-        self._rotulo(lateral, "Dublagem por IA (voz sintética)", suave=False).pack(anchor="w", pady=(10, 2), **p)
-        self._rotulo(lateral, "Voz (Piper, português):").pack(anchor="w", pady=(2, 2), **p)
-        self.var_jf_voz_dublagem = tk.StringVar(value="faber")
-        self._menu_opcoes(lateral, self.var_jf_voz_dublagem, self.VOZES_DUBLAGEM).pack(fill="x", **p)
-        self.var_jf_encurtar_falas = tk.BooleanVar(value=True)
-        self._checkbox(lateral, "Falas longas: o Claude reescreve mais\ncurtas e naturais (em vez de acelerar)",
-                       self.var_jf_encurtar_falas)
-        # voz premium: o Gemini (Google AI Studio) lê as falas no lugar do Piper (só vozes prontas, nada de clonar)
-        self._rotulo(lateral, "Motor da voz:").pack(anchor="w", pady=(6, 2), **p)
-        self.var_jf_motor_voz = tk.StringVar(value=self.MOTORES_VOZ[0])
-        self._menu_opcoes(lateral, self.var_jf_motor_voz, self.MOTORES_VOZ).pack(fill="x", **p)
-        self._rotulo(lateral, "Voz do Gemini (premium):").pack(anchor="w", pady=(6, 2), **p)
-        self.var_jf_voz_gemini = tk.StringVar(value=self.VOZES_GEMINI[0])
-        self._menu_opcoes(lateral, self.var_jf_voz_gemini, self.VOZES_GEMINI).pack(fill="x", **p)
-        self.var_jf_voz_por_personagem = tk.BooleanVar(value=False)
-        self._checkbox(lateral, "Uma voz para cada personagem (o Gemini\nouve o filme e separa quem fala)",
-                       self.var_jf_voz_por_personagem)
-        self.var_jf_figurantes_piper = tk.BooleanVar(value=False)
-        self._checkbox(lateral, "Misto: figurantes (menos de 20 falas)\ncom o Piper, grátis (economiza pedidos)",
-                       self.var_jf_figurantes_piper)
-        self._rotulo(lateral, "Chave do Google AI Studio (Gemini):").pack(anchor="w", pady=(6, 2), **p)
-        self.var_jf_chave_gemini = tk.StringVar()
-        self._entrada(lateral, self.var_jf_chave_gemini, "aistudio.google.com > Get API key", show="•").pack(
-            fill="x", **p)
-        self.bt_criar_chave_gemini = self._botao(lateral, "Criar a chave no AI Studio (abre o site)",
-                                                 self.ao_criar_chave_gemini, "fantasma")
-        self.bt_criar_chave_gemini.pack(fill="x", pady=(4, 0), **p)
-        # "Validar chave": consulta o modelo de voz com a chave (não gera áudio, não gasta) e mostra aqui e no painel
-        self.bt_testar_gemini = self._botao(lateral, "Validar chave do Gemini", self.ao_testar_gemini, "secundario")
-        self.bt_testar_gemini.pack(fill="x", pady=(4, 0), **p)
-        self.lb_estado_gemini = ctk.CTkLabel(lateral, text="", font=self.f_rotulo, text_color=Tema.TEXTO_FRACO,
-                                             anchor="w", justify="left", wraplength=250)
-        self.lb_estado_gemini.pack(fill="x", **p)
-        self.bt_dublar = self._botao(lateral, "Dublar filmes...", self.ao_dublar)
-        self.bt_dublar.pack(fill="x", pady=(8, 4), **p)
 
-        self._separador(lateral)
-        self._rotulo(lateral, "Servidor Jellyfin", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
+        # ===================================================== Dublagem
+        self._montar_config_dublagem(self._secao_config("Dublagem"))
+
+        # ===================================================== Jellyfin (servidor)
+        lateral = self._secao_config("Jellyfin")
         self.var_jf_url = tk.StringVar(value="http://localhost:8096")
         self.var_jf_chave_jellyfin = tk.StringVar()
         self.var_jf_atualizar = tk.BooleanVar(value=True)
-        self._rotulo(lateral, "Endereço do servidor:").pack(anchor="w", **p)
-        self._entrada(lateral, self.var_jf_url, "http://localhost:8096").pack(fill="x", pady=(2, 6), **p)
-        self._rotulo(lateral, "Chave de API do Jellyfin:").pack(anchor="w", **p)
-        self._entrada(lateral, self.var_jf_chave_jellyfin, "Painel > Avançado > Chaves de API",
-                      show="•").pack(fill="x", pady=(2, 6), **p)
+        self._rotulo(lateral, "Endereço do servidor (a chave fica em Chaves de API):").pack(anchor="w", **p)
+        self._entrada(lateral, self.var_jf_url, "http://localhost:8096", width=320).pack(anchor="w", pady=(2, 6), **p)
         self._checkbox(lateral, "Atualizar a biblioteca no fim (scan)", self.var_jf_atualizar)
-        self.bt_testar_jellyfin = self._botao(lateral, "Testar conexão", self.ao_testar_jellyfin)
-        self.bt_testar_jellyfin.pack(fill="x", pady=(6, 0), **p)
         # o mesmo scan do fim do Organizar/vigia, na hora (ex.: séries que não apareceram no Jellyfin)
         self.bt_scan_jellyfin = self._botao(lateral, "Atualizar a biblioteca agora", self.ao_atualizar_jellyfin_agora)
-        self.bt_scan_jellyfin.pack(fill="x", pady=(6, 0), **p)
+        self.bt_scan_jellyfin.pack(anchor="w", pady=(6, 0), **p)
 
-        self._separador(lateral)
-        self._rotulo(lateral, "Avisos (opcional)", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(0, 6), **p)
+        # ===================================================== Avisos e resumo do dia
+        lateral = self._secao_config("Avisos e resumo do dia")
         self.var_jf_discord = tk.StringVar()
         self.var_jf_telegram_token = tk.StringVar()
         self.var_jf_telegram_chat = tk.StringVar()
@@ -2304,25 +2254,52 @@ class JanelaModerna(ctk.CTk):
             self._rotulo(lateral, rotulo).pack(anchor="w", **p)
             self._entrada(lateral, var, dica, **({"show": "•"} if secreto else {})).pack(fill="x", pady=(2, 6), **p)
         self.bt_testar_avisos = self._botao(lateral, "Enviar aviso de teste", self.ao_testar_avisos)
-        self.bt_testar_avisos.pack(fill="x", pady=(0, 0), **p)
+        self.bt_testar_avisos.pack(anchor="w", pady=(0, 0), **p)
         self.var_jf_resumo_diario = tk.BooleanVar(value=False)
-        self._checkbox(lateral, "Resumo do dia às 21h (o que foi\nbaixado, organizado, traduzido...)",
+        self._checkbox(lateral, "Resumo do dia às 21h (o que foi baixado, organizado, traduzido...)",
                        self.var_jf_resumo_diario)
 
-        self._separador(lateral)
-        self.var_jf_lembrar = tk.BooleanVar(value=False)
-        self._checkbox(lateral, "Lembrar as chaves neste computador", self.var_jf_lembrar)
-        self._rotulo(lateral, "Sem marcar, chaves e tokens valem só até\nfechar o programa.",
-                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(2, 0), **p)
-        # levar tudo para outro computador (ou guardar uma cópia): opções, regras, canais e memória de downloads
-        self.bt_exportar_config = self._botao(lateral, "Exportar configurações...", self.ao_exportar_config, "fantasma")
-        self.bt_exportar_config.pack(fill="x", pady=(8, 0), **p)
-        self.bt_importar_config = self._botao(lateral, "Importar configurações...", self.ao_importar_config, "fantasma")
-        self.bt_importar_config.pack(fill="x", pady=(4, 0), **p)
+        # ===================================================== Chaves de API (todas num lugar, cada uma com Validar)
+        self._montar_config_chaves(self._secao_config("Chaves de API"))
+
+        # ===================================================== Agendamentos
+        lateral = self._secao_config("Agendamentos")
+        self._rotulo(lateral, "As tarefas de robô (organizar, conferir canais, traduzir, dublar...) no Agendador de "
+                              "Tarefas do Windows: rodam sozinhas, sem abrir a janela.").pack(anchor="w", pady=(0, 6), **p)
         # as tarefas de robô (organizar, conferir canais, traduzir...) no Agendador de Tarefas do Windows
-        self.bt_agendar = self._botao(lateral, "Agendar tarefas...", self.ao_agendar, "fantasma")
-        self.bt_agendar.pack(fill="x", pady=(4, 0), **p)
-        ctk.CTkFrame(lateral, height=12, fg_color="transparent").pack()
+        self.bt_agendar = self._botao(lateral, "Agendar tarefas...", self.ao_agendar)
+        self.bt_agendar.pack(anchor="w", pady=(4, 0), **p)
+
+        # ===================================================== Geral, backup e versão
+        lateral = self._secao_config("Geral, backup e versão")
+        self.var_jf_iniciar_windows = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Iniciar junto com o Windows, minimizado perto do relógio", self.var_jf_iniciar_windows,
+                       comando=self.ao_alternar_inicializacao)
+        self.var_jf_fechar_bandeja = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Ao fechar (X), continuar rodando perto do relógio (a vigia segue)",
+                       self.var_jf_fechar_bandeja)
+        self.var_jf_avisar_versao = tk.BooleanVar(value=True)
+        self._checkbox(lateral, "Avisar quando sair versão nova do programa (ao abrir)", self.var_jf_avisar_versao)
+        self.var_jf_atualizar_sozinho = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Atualizar sozinho: baixar, instalar e reiniciar o programa (quando estiver livre)",
+                       self.var_jf_atualizar_sozinho)
+        self.var_jf_versao_avisada = tk.StringVar(value="")
+        self._separador(lateral)
+        # onde o programa está no computador (e, no Windows, o lugar fixo com atalhos)
+        self.lb_pasta_programa = ctk.CTkLabel(lateral, text="", font=ctk.CTkFont(Tema.FAMILIA, 11),
+                                              text_color=Tema.TEXTO_FRACO, anchor="w", justify="left", wraplength=600)
+        self.lb_pasta_programa.pack(anchor="w", **p)
+        self.bt_abrir_pasta_programa = self._botao(lateral, "Abrir a pasta do programa", self.ao_abrir_pasta_programa,
+                                                   "fantasma")
+        self.bt_abrir_pasta_programa.pack(anchor="w", **p)
+        self.bt_instalar_fixo = self._botao(lateral, "Instalar no lugar fixo (com atalhos)...", self.ao_instalar_fixo,
+                                            "secundario")
+        self._separador(lateral)
+        # levar tudo para outro computador (ou guardar uma cópia): opções, regras, canais e memória de downloads
+        self.bt_exportar_config = self._botao(lateral, "Exportar configurações...", self.ao_exportar_config)
+        self.bt_exportar_config.pack(anchor="w", pady=(4, 0), **p)
+        self.bt_importar_config = self._botao(lateral, "Importar configurações...", self.ao_importar_config)
+        self.bt_importar_config.pack(anchor="w", pady=(6, 0), **p)
         self._mostrar_campos_jf()
 
         self.tabela_jf, faixa = self._criar_tabela(
@@ -2355,6 +2332,234 @@ class JanelaModerna(ctk.CTk):
         # A lista fica com a maior parte da altura (antes dividia com o console e mostrava ~3 linhas)
         corpo.grid_rowconfigure(0, weight=5, minsize=300)
         corpo.grid_rowconfigure(2, weight=1, minsize=140)          # o registro da ação: ~4 linhas à vista
+
+    # ------------------------------------------------------------------ ⚙ Configurações (3ª aba)
+    ABA_CONFIG = "⚙ Configurações"
+    GRUPOS_CONFIG = (("BIBLIOTECA", ("Nomes e TMDB", "Organização e limpeza", "Vigia (automático)", "Espelhos (.strm)")),
+                     ("LEGENDAS E VOZ", ("Legendas", "Tradução (Claude)", "Legenda pelo áudio", "Dublagem")),
+                     ("SERVIDOR E AVISOS", ("Jellyfin", "Avisos e resumo do dia")),
+                     ("SISTEMA", ("Chaves de API", "Agendamentos", "Vídeos (busca)", "Geral, backup e versão")))
+    ICONES_CONFIG = {"Nomes e TMDB": "🏷", "Organização e limpeza": "🧹", "Vigia (automático)": "👁",
+                     "Espelhos (.strm)": "🔗", "Legendas": "💬", "Tradução (Claude)": "🌐", "Legenda pelo áudio": "🎧",
+                     "Dublagem": "🎙", "Jellyfin": "🖥", "Avisos e resumo do dia": "🔔", "Chaves de API": "🔑",
+                     "Agendamentos": "⏰", "Vídeos (busca)": "⬇", "Geral, backup e versão": "⚙"}
+
+    def _montar_aba_config(self, aba) -> None:
+        """Menu de categorias à esquerda e, à direita, as opções da categoria escolhida (rola se for comprida)."""
+        aba.grid_columnconfigure(0, weight=0)          # o menu tem largura fixa; o resto é do painel
+        aba.grid_columnconfigure(1, weight=1)
+        aba.grid_rowconfigure(0, weight=1)
+        menu = self._cartao(aba, width=250)
+        menu.grid(row=0, column=0, sticky="ns", padx=(28, 14), pady=(14, 14))
+        menu.pack_propagate(False)
+        self._botoes_config: dict[str, ctk.CTkButton] = {}
+        for grupo, nomes in self.GRUPOS_CONFIG:
+            ctk.CTkLabel(menu, text=grupo, font=ctk.CTkFont(Tema.FAMILIA, 10, "bold"), text_color=Tema.TEXTO_FRACO,
+                         anchor="w").pack(fill="x", padx=18, pady=(12, 2))
+            for nome in nomes:
+                botao = ctk.CTkButton(menu, text=f"{self.ICONES_CONFIG.get(nome, '')}  {nome}", anchor="w", height=32,
+                                      corner_radius=9, font=self.f_normal, fg_color="transparent",
+                                      hover_color=Tema.SECUNDARIA_HOVER, text_color=Tema.TEXTO_SUAVE,
+                                      command=lambda n=nome: self.mostrar_config(n))
+                botao.pack(fill="x", padx=10, pady=1)
+                self._botoes_config[nome] = botao
+        self.painel_config = ctk.CTkScrollableFrame(aba, fg_color=Tema.CARTAO, corner_radius=Tema.RAIO, border_width=1,
+                                                    border_color=Tema.CARTAO_BORDA,
+                                                    scrollbar_button_color=Tema.CARTAO_BORDA,
+                                                    scrollbar_button_hover_color=Tema.CAMPO_BORDA)
+        self.painel_config.grid(row=0, column=1, sticky="nsew", padx=(0, 28), pady=(14, 14))
+        self._secoes_config: dict[str, ctk.CTkFrame] = {}
+        self._config_atual = ""
+
+    def _secao_config(self, nome: str) -> ctk.CTkFrame:
+        """O quadro de uma categoria (criado na 1ª vez, com o título)."""
+        if nome not in self._secoes_config:
+            quadro = ctk.CTkFrame(self.painel_config, fg_color="transparent")
+            ctk.CTkLabel(quadro, text=nome, font=ctk.CTkFont(Tema.FAMILIA, 20, "bold"), text_color=Tema.TEXTO,
+                         anchor="w").pack(fill="x", padx=18, pady=(16, 8))
+            self._secoes_config[nome] = quadro
+        return self._secoes_config[nome]
+
+    def mostrar_config(self, nome: str) -> None:
+        """Mostra a categoria `nome` em ⚙ Configurações (e marca no menu)."""
+        for outro, quadro in self._secoes_config.items():
+            quadro.pack_forget()
+            self._botoes_config[outro].configure(fg_color="transparent", text_color=Tema.TEXTO_SUAVE)
+        self._secoes_config[nome].pack(fill="x", anchor="n", padx=(6, 140))
+        self._botoes_config[nome].configure(fg_color=Tema.SELECAO, text_color=Tema.TEXTO)
+        self._config_atual = nome
+        try:
+            self.painel_config._parent_canvas.yview_moveto(0)
+        except (AttributeError, tk.TclError):
+            pass
+
+    def _quebrar_textos_config(self, largura: int = 780) -> None:
+        """Textos compridos das Configurações quebram a linha em vez de sumir na borda do painel."""
+        pendentes = list(self._secoes_config.values())
+        while pendentes:
+            widget = pendentes.pop()
+            pendentes.extend(widget.winfo_children())
+            if isinstance(widget, ctk.CTkLabel) and not widget.cget("wraplength"):
+                widget.configure(wraplength=largura)
+
+    def config_atual(self) -> str:
+        return self._config_atual
+
+    def atualizar_resumo_config(self) -> None:
+        """A linha do contexto na aba Jellyfin: o que está ligado (o detalhe fica em ⚙ Configurações)."""
+        idiomas = ", ".join(c for c, v in self.vars_idioma_jf.items() if v.get())
+        outros = self.var_jf_outros_idiomas.get().strip()
+        partes = [("TMDB ✓" if self.var_jf_tmdb.get() else "TMDB desligado"),
+                  (f"Legendas: {idiomas}{', ' + outros if outros else ''}" if self.var_jf_legendas.get()
+                   else "Legendas: não baixa"),
+                  ("Lixo do torrent: apagar" if self.var_jf_lixo.get() else "Lixo do torrent: deixar"),
+                  f"Dublagem: {self.NOMES_MODO_VOZ[self.var_jf_modo_voz.get()]}",
+                  ("Vigia ligada" if self.var_jf_vigiar.get() else "Vigia desligada")]
+        self.lb_resumo_config.configure(text="   ·   ".join(partes))
+
+    # ---- Dublagem: o motor (Piper, Gemini ou Misto) e o que cada um usa
+    NOMES_MODO_VOZ = {"piper": "Piper", "gemini": "Gemini", "misto": "Misto (Gemini + Piper)"}
+
+    def _montar_config_dublagem(self, lateral) -> None:
+        p = dict(padx=18)
+        self._rotulo(lateral, "Quem lê as falas (o motor da voz):").pack(anchor="w", pady=(0, 6), **p)
+        self.var_jf_motor_voz = tk.StringVar(value=self.MOTORES_VOZ[0])
+        self.var_jf_figurantes_piper = tk.BooleanVar(value=False)
+        self.var_jf_modo_voz = tk.StringVar(value="piper")
+        modos = ctk.CTkFrame(lateral, fg_color="transparent")
+        modos.pack(fill="x", **p)
+        self._cartoes_modo_voz: dict[str, ctk.CTkFrame] = {}
+        for valor, titulo, texto in (
+                ("piper", "Piper", "Grátis, roda no seu PC. Voz mais robótica; uma voz para o filme todo."),
+                ("gemini", "Gemini (premium)", "Voz natural, com emoção. Pago por uso (Google AI Studio)."),
+                ("misto", "Misto: Gemini + Piper", "Principais com o Gemini, figurantes com o Piper. "
+                                                   "Economiza pedidos.")):
+            cartao = ctk.CTkFrame(modos, fg_color=Tema.CAMPO, corner_radius=12, border_width=1,
+                                  border_color=Tema.CAMPO_BORDA)
+            cartao.pack(side="left", fill="both", expand=True, padx=(0, 10))
+            ctk.CTkRadioButton(cartao, text=titulo, value=valor, variable=self.var_jf_modo_voz,
+                               command=self._ao_escolher_modo_voz, font=self.f_botao, text_color=Tema.TEXTO,
+                               fg_color=Tema.PRIMARIA, hover_color=Tema.PRIMARIA_HOVER).pack(anchor="w", padx=14,
+                                                                                              pady=(12, 4))
+            ctk.CTkLabel(cartao, text=texto, font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_SUAVE,
+                         anchor="w", justify="left", wraplength=220).pack(anchor="w", padx=14, pady=(0, 12))
+            self._cartoes_modo_voz[valor] = cartao
+        self.var_jf_motor_voz.trace_add("write", lambda *_: self._sincronizar_modo_voz())
+        self.var_jf_figurantes_piper.trace_add("write", lambda *_: self._sincronizar_modo_voz())
+
+        self._rotulo(lateral, "Vozes", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
+        self._rotulo(lateral, "Voz principal do Gemini:").pack(anchor="w", pady=(2, 2), **p)
+        self.var_jf_voz_gemini = tk.StringVar(value=self.VOZES_GEMINI[0])
+        menu = self._menu_opcoes(lateral, self.var_jf_voz_gemini, self.VOZES_GEMINI)
+        menu.configure(width=320)
+        menu.pack(anchor="w", **p)
+        self._rotulo(lateral, "Voz do Piper (no modo Piper, nos figurantes e nos filmes que vão com o Piper):").pack(
+            anchor="w", pady=(8, 2), **p)
+        self.var_jf_voz_dublagem = tk.StringVar(value="faber")
+        menu = self._menu_opcoes(lateral, self.var_jf_voz_dublagem, self.VOZES_DUBLAGEM)
+        menu.configure(width=320)
+        menu.pack(anchor="w", **p)
+        self.var_jf_voz_por_personagem = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Uma voz para cada personagem (o Gemini ouve o filme e separa quem fala; antes de "
+                                "dublar, a tabela \"Vozes dos personagens\" deixa trocar)",
+                       self.var_jf_voz_por_personagem)
+
+        self._rotulo(lateral, "Modo misto", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
+        self.campo_limite_figurante = self._numero(lateral, "É figurante quem tem menos de (falas no filme):", 20, 2,
+                                                   500, 5)
+        self.var_jf_perguntar_filmes = tk.BooleanVar(value=True)
+        self._checkbox(lateral, "Perguntar, a cada dublagem com vários filmes, quais vão com o Gemini (os outros vão "
+                                "inteiros com o Piper)", self.var_jf_perguntar_filmes)
+        self.var_jf_robo_so_piper = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Nos robôs agendados (--dublar), usar só o Piper (sem custo)",
+                       self.var_jf_robo_so_piper)
+
+        self._rotulo(lateral, "Texto da fala", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
+        self.var_jf_encurtar_falas = tk.BooleanVar(value=True)
+        self._checkbox(lateral, "Falas longas: o Claude reescreve mais curtas e naturais (em vez de acelerar). A "
+                                "legenda não muda: só o que a voz lê.", self.var_jf_encurtar_falas)
+        self._rotulo(lateral, "As chaves do Gemini e da Anthropic ficam em Chaves de API. O Gemini manda até 30 falas "
+                              "por pedido e guarda o progresso de cada filme: se o limite do dia acabar, a próxima "
+                              "dublagem continua de onde parou.", fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(
+            anchor="w", pady=(10, 4), **p)
+        self._sincronizar_modo_voz()
+
+    def _ao_escolher_modo_voz(self) -> None:
+        """O cartão escolhido (Piper / Gemini / Misto) vira o motor e a opção dos figurantes."""
+        modo = self.var_jf_modo_voz.get()
+        self.var_jf_motor_voz.set(self.MOTORES_VOZ[0] if modo == "piper" else self.MOTORES_VOZ[1])
+        self.var_jf_figurantes_piper.set(modo == "misto")
+
+    def _sincronizar_modo_voz(self) -> None:
+        """O contrário: o motor e os figurantes (do config.json, ou mudados por código) marcam o cartão certo."""
+        gemini = self.var_jf_motor_voz.get().startswith("Gemini")
+        modo = ("misto" if self.var_jf_figurantes_piper.get() else "gemini") if gemini else "piper"
+        if self.var_jf_modo_voz.get() != modo:
+            self.var_jf_modo_voz.set(modo)
+        for valor, cartao in getattr(self, "_cartoes_modo_voz", {}).items():
+            cartao.configure(border_color=Tema.PRIMARIA if valor == modo else Tema.CAMPO_BORDA,
+                             border_width=2 if valor == modo else 1)
+
+    # ---- Chaves de API: todas num lugar, cada uma com "Validar" e a situação ao lado
+    def _montar_config_chaves(self, lateral) -> None:
+        self._rotulo(lateral, "Validar não gasta crédito: só confere se a chave funciona.").pack(anchor="w", padx=18,
+                                                                                               pady=(0, 8))
+        grade = ctk.CTkFrame(lateral, fg_color="transparent")
+        grade.pack(fill="x", padx=18)
+        grade.grid_columnconfigure(1, weight=1)
+        self.var_jf_chave_claude = tk.StringVar()
+        self.var_jf_chave_gemini = tk.StringVar()
+
+        def estado():
+            return ctk.CTkLabel(grade, text="", font=self.f_rotulo, text_color=Tema.TEXTO_FRACO, anchor="w",
+                                justify="left", wraplength=260, width=260)
+        linhas = (("TMDB", "nomes, pôsteres, sinopse · grátis", self.var_jf_chave_tmdb,
+                   "themoviedb.org > Configurações > API", self.ao_testar_tmdb, "tmdb"),
+                  ("OpenSubtitles", "legendas · grátis", self.var_jf_chave_os, "opensubtitles.com > API consumers",
+                   self.ao_testar_legendas, "os"),
+                  ("SubDL", "legendas · grátis", self.var_jf_chave_subdl, "subdl.com > Painel > API",
+                   self.ao_testar_legendas, "subdl"),
+                  ("Anthropic (Claude)", "tradução e falas da dublagem · pago", self.var_jf_chave_claude,
+                   "console.anthropic.com > API Keys", self.ao_testar_claude, "claude"),
+                  ("Google AI Studio (Gemini)", "voz premium e por personagem · pago", self.var_jf_chave_gemini,
+                   "aistudio.google.com > Get API key", self.ao_testar_gemini, "gemini"),
+                  ("Jellyfin", "scan da biblioteca, TV ao vivo", self.var_jf_chave_jellyfin,
+                   "Painel > Avançado > Chaves de API", self.ao_testar_jellyfin, "jellyfin"))
+        for n, (nome, descricao, var, dica, comando, chave) in enumerate(linhas):
+            nomes = ctk.CTkFrame(grade, fg_color="transparent")
+            nomes.grid(row=n, column=0, sticky="w", pady=6)
+            rotulo = ctk.CTkLabel(nomes, text=nome, font=self.f_botao, text_color=Tema.TEXTO, anchor="w")
+            rotulo.pack(anchor="w")
+            ctk.CTkLabel(nomes, text=descricao, font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_FRACO,
+                         anchor="w").pack(anchor="w")
+            campo = self._entrada(grade, var, dica, show="•")
+            campo.grid(row=n, column=1, sticky="ew", padx=12)
+            botao = self._botao(grade, "Validar", comando, largura=110)
+            botao.grid(row=n, column=2)
+            lb = estado()
+            lb.grid(row=n, column=3, sticky="w", padx=(12, 0))
+            setattr(self, f"_rotulo_chave_{chave}", rotulo)
+            setattr(self, f"_campo_chave_{chave}", campo)
+            setattr(self, f"_botao_chave_{chave}", botao)
+            setattr(self, f"_estado_chave_{chave}", lb)
+        # nomes de sempre (o resto do programa e os testes usam estes)
+        self.campo_chave_tmdb, self.bt_testar_tmdb, self.lb_estado_tmdb = (
+            self._campo_chave_tmdb, self._botao_chave_tmdb, self._estado_chave_tmdb)
+        self.campo_chave_os, self.campo_chave_subdl = self._campo_chave_os, self._campo_chave_subdl
+        self.rot_chave_os, self.rot_chave_subdl = self._rotulo_chave_os, self._rotulo_chave_subdl
+        self.bt_testar_legendas, self.lb_estado_legendas = self._botao_chave_os, self._estado_chave_os
+        self._estado_chave_subdl.configure(text="(validada junto com o OpenSubtitles)")
+        self.bt_testar_claude, self.lb_estado_claude = self._botao_chave_claude, self._estado_chave_claude
+        self.bt_testar_gemini, self.lb_estado_gemini = self._botao_chave_gemini, self._estado_chave_gemini
+        self.bt_testar_jellyfin = self._botao_chave_jellyfin
+        self.bt_criar_chave_gemini = self._botao(lateral, "Criar a chave do Gemini no AI Studio (abre o site)",
+                                                 self.ao_criar_chave_gemini, "fantasma")
+        self.bt_criar_chave_gemini.pack(anchor="w", padx=18, pady=(6, 0))
+        self._separador(lateral)
+        self.var_jf_lembrar = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Lembrar as chaves neste computador", self.var_jf_lembrar)
+        self._rotulo(lateral, "Sem marcar, chaves e tokens valem só até fechar o programa.",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(2, 8), padx=18)
 
     # Situações que dá para esconder/mostrar na tabela (o filtro é só visual).
     FILTROS_JF = (("mover", "Vai mover"), ("movido", "Movido"), ("organizado", "Já organizado"),
@@ -2600,42 +2805,19 @@ class JanelaModerna(ctk.CTk):
         campo.bind("<Key>", lambda e: None if e.keysym in navegacao or (e.state & 0x4) else "break")  # 0x4 = Ctrl
         return campo
 
-    def _campo_pasta(self, master, rotulo: str, var: tk.StringVar, dica: str) -> ctk.CTkLabel:
-        lb = self._rotulo(master, rotulo)
-        lb.pack(anchor="w", padx=18, pady=(4, 4))
-        linha = ctk.CTkFrame(master, fg_color="transparent")
-        linha.pack(fill="x", padx=18, pady=(0, 6))
-        self._botao(linha, "Escolher...", lambda: self._escolher_pasta_em(var), largura=96).pack(side="right")
-        self._entrada(linha, var, dica).pack(side="left", fill="x", expand=True, padx=(0, 8))
-        return lb
-
     def _escolher_pasta_em(self, var: tk.StringVar) -> None:
         pasta = filedialog.askdirectory(initialdir=var.get() or ".")
         if pasta:
             var.set(pasta)
 
     def _mostrar_campos_jf(self) -> None:
-        """Mostra só os campos que fazem sentido para as escolhas atuais."""
+        """Mostra só os campos que fazem sentido para a fonte escolhida (as chaves ficam em Chaves de API)."""
         fonte = self.var_jf_fonte.get()
-        for campo in (self.rot_chave_os, self.campo_chave_os, self.rot_chave_subdl, self.campo_chave_subdl,
-                      self.campo_url_site, self.bt_testar_legendas, self.lb_estado_legendas):
-            campo.pack_forget()
-        if fonte == self.FONTES_LEGENDA[1]:                 # OpenSubtitles, com o SubDL de reserva
-            self.rot_chave_os.pack(anchor="w", padx=18, pady=(8, 0))
-            self.campo_chave_os.pack(fill="x", padx=18, pady=(2, 0))
-            self.rot_chave_subdl.configure(text="Reserva: chave do SubDL (usada quando o\n"
-                                                "OpenSubtitles atingir o limite; opcional):")
-            self.rot_chave_subdl.pack(anchor="w", padx=18, pady=(8, 0))
-            self.campo_chave_subdl.pack(fill="x", padx=18, pady=(2, 0))
-        elif fonte == self.FONTES_LEGENDA[3]:               # só o SubDL
-            self.rot_chave_subdl.configure(text="Chave da API do SubDL:")
-            self.rot_chave_subdl.pack(anchor="w", padx=18, pady=(8, 0))
-            self.campo_chave_subdl.pack(fill="x", padx=18, pady=(2, 0))
-        elif fonte == self.FONTES_LEGENDA[2]:
+        self.campo_url_site.pack_forget()
+        if fonte == self.FONTES_LEGENDA[2]:                 # site: o endereço da busca
             self.campo_url_site.pack(fill="x", padx=18, pady=(8, 0))
-        if fonte in (self.FONTES_LEGENDA[1], self.FONTES_LEGENDA[3]):   # fontes com chave: botão de teste
-            self.bt_testar_legendas.pack(fill="x", padx=18, pady=(8, 2))
-            self.lb_estado_legendas.pack(fill="x", padx=18)
+        # com o OpenSubtitles, o SubDL é a RESERVA (usada quando o OpenSubtitles atingir o limite; opcional)
+        self.rot_chave_subdl.configure(text="SubDL (reserva)" if fonte == self.FONTES_LEGENDA[1] else "SubDL")
 
     def _ao_trocar_modo(self, modo: str) -> None:
         """Filmes e Séries têm bibliotecas diferentes: cada modo lembra a sua pasta."""
@@ -2710,7 +2892,9 @@ class JanelaModerna(ctk.CTk):
             voz_gemini=self.var_jf_voz_gemini.get().split()[0], chave_gemini=self.var_jf_chave_gemini.get().strip(),
             encurtar_falas=self.var_jf_encurtar_falas.get(),
             voz_por_personagem=self.var_jf_voz_por_personagem.get(),
-            figurantes_piper=self.var_jf_figurantes_piper.get(), resumo_diario=self.var_jf_resumo_diario.get(),
+            figurantes_piper=self.var_jf_figurantes_piper.get(),
+            limite_figurante=int(self.campo_limite_figurante.get()), perguntar_filmes=self.var_jf_perguntar_filmes.get(),
+            robo_so_piper=self.var_jf_robo_so_piper.get(), resumo_diario=self.var_jf_resumo_diario.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
     def idiomas_jf(self) -> str:
@@ -2824,7 +3008,8 @@ class JanelaModerna(ctk.CTk):
                   "whisper_gpu": self.var_jf_whisper_gpu, "resumo_diario": self.var_jf_resumo_diario,
                   "encurtar_falas": self.var_jf_encurtar_falas,
                   "voz_por_personagem": self.var_jf_voz_por_personagem,
-                  "figurantes_piper": self.var_jf_figurantes_piper}
+                  "figurantes_piper": self.var_jf_figurantes_piper,
+                  "perguntar_filmes": self.var_jf_perguntar_filmes, "robo_so_piper": self.var_jf_robo_so_piper}
         for chave, var in textos.items():
             if dados.get(chave):
                 var.set(dados[chave])
@@ -2836,6 +3021,8 @@ class JanelaModerna(ctk.CTk):
         if dados.get("voz_gemini"):                      # salvo só o nome ("Kore"); o menu mostra com a descrição
             self.var_jf_voz_gemini.set(next((v for v in self.VOZES_GEMINI if v.split()[0] == dados["voz_gemini"]),
                                             self.VOZES_GEMINI[0]))
+        if dados.get("limite_figurante"):
+            self.campo_limite_figurante.set(int(dados["limite_figurante"]))
         if dados.get("vigiar_min"):
             self.campo_vigia_min.set(float(dados["vigiar_min"]))
         if dados.get("pastas_vigiadas"):

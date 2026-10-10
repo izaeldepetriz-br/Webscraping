@@ -988,11 +988,12 @@ def test_abrir_log_abre_so_a_acao_escolhida(app, tmp_path):
 
 def test_subdl_na_janela_como_fonte_e_como_reserva(app):
     from jellyfin_tools import ProvedorOpenSubtitles, ProvedorSubDL
-    app.mostrar_aba("Jellyfin")
+    app.mostrar_aba(app.ABA_CONFIG)                                     # as chaves ficam em Configurações
+    app.mostrar_config("Chaves de API")
     app.var_jf_fonte.set("OpenSubtitles (API)")
     app._mostrar_campos_jf()
     app.update()
-    assert app.campo_chave_subdl.winfo_ismapped() and "Reserva" in app.rot_chave_subdl.cget("text")
+    assert app.campo_chave_subdl.winfo_ismapped() and "reserva" in app.rot_chave_subdl.cget("text")
     app.var_jf_chave_os.set("chave-os")
     with app._provedores(app.obter_opcoes_jellyfin()) as provedores:      # sem chave do SubDL: só o OS
         assert [type(p) for p in provedores] == [ProvedorOpenSubtitles]
@@ -1003,7 +1004,7 @@ def test_subdl_na_janela_como_fonte_e_como_reserva(app):
     app.var_jf_fonte.set("SubDL (API)")
     app._mostrar_campos_jf()
     app.update()
-    assert not app.campo_chave_os.winfo_ismapped() and app.rot_chave_subdl.cget("text") == "Chave da API do SubDL:"
+    assert app.rot_chave_subdl.cget("text") == "SubDL"                   # só o SubDL: não é mais a reserva
     app.var_jf_chave_subdl.set("")
     assert "SubDL" in app._problema_legendas(app.obter_opcoes_jellyfin())
     assert "chave_subdl" in app_moderna.SEGREDOS                         # só é salva se pedir
@@ -1311,7 +1312,8 @@ def test_botao_testar_chaves_das_legendas(app, api_falsa, monkeypatch):
     monkeypatch.setattr(app_moderna, "ProvedorSubDL", lambda k: ProvedorSubDL(k, base_url=base + "/api/v1"))
     api_falsa.rotas["/os/subtitles"] = lambda q: (200, {"total_count": 7, "data": []})
     api_falsa.rotas["/api/v1/subtitles"] = lambda q: (403, {"status": False, "error": "invalid api key"})
-    app.mostrar_aba("Jellyfin")
+    app.mostrar_aba(app.ABA_CONFIG)                                     # Configurações > Chaves de API
+    app.mostrar_config("Chaves de API")
     app.var_jf_fonte.set("OpenSubtitles (API)")
     app._mostrar_campos_jf()
     app.update()
@@ -1326,10 +1328,15 @@ def test_botao_testar_chaves_das_legendas(app, api_falsa, monkeypatch):
     assert estado == ("✓  OpenSubtitles: chave aceita (7 legenda(s) de teste encontradas)\n"
                       "✕  SubDL: SubDL recusou a chave da API")
     assert app.caixas[-1][0] == "erro"
+    app.mostrar_config("Legendas")
+    app.var_jf_fonte.set("Site de busca (URL)")
+    app._mostrar_campos_jf()
+    app.update()
+    assert app.campo_url_site.winfo_ismapped()                          # site de busca: o endereço dele
     app.var_jf_fonte.set("Site de demonstração")
     app._mostrar_campos_jf()
     app.update()
-    assert not app.bt_testar_legendas.winfo_ismapped()                    # o site demo não tem chave
+    assert not app.campo_url_site.winfo_ismapped()                      # o site demo não precisa de nada
 
 
 def test_conferir_espelhos_e_desfazer_pela_janela(app, tmp_path, api_falsa, monkeypatch):
@@ -3919,3 +3926,42 @@ def test_dublagem_mista_por_filme_e_figurantes(app, tmp_path, monkeypatch):
     assert tabela.vars["Guarda"].get() == "Piper faber (grátis, no PC)"
     tabela.bt_dublar.invoke()
     assert tabela.resultado == {"Conde": "Charon", "Guarda": "piper:faber"}
+
+
+def test_tela_de_configuracoes(app):
+    """⚙ Configurações: menu por categoria, os 3 modos da dublagem, resumo na aba Jellyfin e salvar ao sair."""
+    from videoscraper import config
+    assert app.seletor_aba.cget("values")[-1] == app.ABA_CONFIG
+    app.mostrar_aba(app.ABA_CONFIG)
+    assert app.aba_config.winfo_manager() and not app.aba_jellyfin.winfo_manager()
+    todas = [n for _, nomes in app.GRUPOS_CONFIG for n in nomes]
+    assert set(todas) == set(app._secoes_config)                         # cada categoria tem a sua tela
+    app._botoes_config["Dublagem"].invoke()
+    app.update()
+    assert app.config_atual() == "Dublagem" and app._secoes_config["Dublagem"].winfo_ismapped()
+    assert not app._secoes_config["Nomes e TMDB"].winfo_ismapped()
+    # os cartões Piper / Gemini / Misto mudam o motor e os figurantes...
+    for modo, motor, figurantes in (("misto", app.MOTORES_VOZ[1], True), ("gemini", app.MOTORES_VOZ[1], False),
+                                    ("piper", app.MOTORES_VOZ[0], False)):
+        app.var_jf_modo_voz.set(modo)
+        app._ao_escolher_modo_voz()
+        assert (app.var_jf_motor_voz.get(), app.var_jf_figurantes_piper.get()) == (motor, figurantes)
+    # ...e o contrário (config.json antigo, ou mudado por código) marca o cartão certo
+    app.var_jf_motor_voz.set(app.MOTORES_VOZ[1])
+    app.var_jf_figurantes_piper.set(True)
+    assert app.var_jf_modo_voz.get() == "misto"
+    assert app._cartoes_modo_voz["misto"].cget("border_color") == app_moderna.Tema.PRIMARIA
+    app.campo_limite_figurante.set(12)
+    app.var_jf_robo_so_piper.set(True)
+    o = app.obter_opcoes_jellyfin()
+    assert (o.limite_figurante, o.robo_so_piper, o.perguntar_filmes) == (12, True, True)
+    # sair das Configurações já salva; na aba Jellyfin, o resumo do que está ligado
+    app.var_jf_tmdb.set(True)
+    app.mostrar_aba("Jellyfin")
+    salvo = config.carregar()["jellyfin"]
+    assert salvo["limite_figurante"] == 12 and salvo["figurantes_piper"] is True
+    resumo = app.lb_resumo_config.cget("text")
+    assert "TMDB ✓" in resumo and "Dublagem: Misto (Gemini + Piper)" in resumo and "Legendas: pt-BR" in resumo
+    # as opções que eram do painel lateral continuam funcionando (agora em Configurações)
+    assert app.bt_simular_vigia.master is app._secoes_config["Vigia (automático)"]
+    assert app.bt_testar_gemini.master.master is app._secoes_config["Chaves de API"]

@@ -303,3 +303,23 @@ def test_robo_dublagem_mista_figurantes_no_piper(casa, tmp_path, monkeypatch):
     assert automacao.main(["--dublar"]) == automacao.OK
     assert quem == {"Olá!": "gemini", "Tchau.": "gemini",
                     "Uma fala comprida demais para caber nesse pedacinho de tempo.": "piper edresson"}
+
+
+def test_robo_so_com_o_piper(casa, tmp_path, monkeypatch):
+    """Opção "Nos robôs agendados, usar só o Piper": mesmo com o Gemini na tela, o --dublar não gasta nada."""
+    from jellyfin_tools import dublagem, voz_gemini
+    from test_dublagem import FFMPEG, SRT, VozFalsa, video_de_teste
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    filmes = tmp_path / "Filmes"
+    (filmes / "A (2001)").mkdir(parents=True)
+    video_de_teste(filmes / "A (2001)" / "A (2001).mkv")
+    (filmes / "A (2001)" / "A (2001).pt-BR.srt").write_text(SRT, encoding="utf-8")
+    monkeypatch.setattr(automacao, "videos_para_dublar",
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+    monkeypatch.setattr(voz_gemini, "MotorGemini", lambda *a, **k: pytest.fail("o robô não deveria usar o Gemini"))
+    piper = VozFalsa()
+    monkeypatch.setattr(automacao, "motor_piper", lambda o, voz="", **k: piper)
+    casa(destino_filmes=str(filmes), motor_voz="Gemini (premium, Google AI Studio)", chave_gemini="AIza",
+         voz_por_personagem=True, robo_so_piper=True, encurtar_falas=False)
+    assert automacao.main(["--dublar"]) == automacao.OK and piper.textos

@@ -25,4 +25,5 @@ Suas configurações ficam em `C:\Users\<você>\.videoscraper\` e continuam vale
 - **Dublagem mais natural e voz premium:** falas longas reescritas mais curtas pelo Claude (fiéis ao sentido); voz premium do Gemini (Google AI Studio, vozes prontas, pago por uso) no lugar do Piper; botão "O que a vigia faria agora?" (simulação, sem mover nada).
 - **Gemini econômico e voz por personagem:** blocos de até 30 falas por pedido, progresso guardado por filme (continua de onde parou se o limite do dia acabar) e uma voz para cada personagem (o Gemini ouve o filme; você confere na tabela "Vozes dos personagens").
 - **Dublagem mista:** figurantes com o Piper (grátis) e os principais com o Gemini; ou escolha quais filmes vão com o Gemini e o resto com o Piper.
+- **Nova tela ⚙ Configurações:** todas as opções num lugar, por categoria; Vídeos e Jellyfin sem painel lateral (a lista ocupa a tela); chaves de API centralizadas com Validar; dublagem com os modos Piper, Gemini e Misto.
 - **Correções:** a pasta vigiada se organiza dentro dela mesma (opção marcada); "Conferir 1 selecionado" na TV não é mais seguido pela conferência automática de todos os canais.

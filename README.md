@@ -72,8 +72,8 @@ API só são salvas se você marcar "Lembrar as chaves neste computador".
 
 ### Melhorias na aba Jellyfin (as mesmas do script)
 
-O painel lateral tem as seções **Nomes e metadados (TMDB)**, **Servidor Jellyfin** (com "Testar
-conexão") e **Avisos** (com "Enviar aviso de teste"). Ao **Organizar**, depois de mover, o programa
+Em **⚙ Configurações** ficam **Nomes e TMDB**, **Jellyfin**, **Avisos e resumo do dia** (com "Enviar aviso de
+teste") e **Chaves de API** (cada chave com "Validar"). Ao **Organizar**, depois de mover, o programa
 baixa legenda, pôster/backdrop e `.nfo`, avisa no Discord/Telegram e pede **um** scan ao Jellyfin.
 **Completar biblioteca** faz o mesmo (sem avisos) nos filmes que já estão organizados. **Abrir log**
 mostra o `jellyfin_organizer.log` (fica em `~/.videoscraper/`).
@@ -242,7 +242,20 @@ primeira falha (antes esperava o tempo limite em cada filme).
 
 ### Novidades da v2.12.0
 
-- **Criar legenda pelo áudio** (aba Jellyfin > Legendas): para os vídeos **sem nenhuma legenda**, o
+- **Nova tela ⚙ Configurações** (3ª aba, ao lado de Vídeos e Jellyfin): todas as opções num lugar só, com um
+  menu de categorias à esquerda — Biblioteca (Nomes e TMDB, Organização e limpeza, Vigia, Espelhos), Legendas e voz
+  (Legendas, Tradução, Legenda pelo áudio, Dublagem), Servidor e avisos (Jellyfin, Avisos e resumo do dia) e Sistema
+  (Chaves de API, Agendamentos, Vídeos, Geral). Sair da tela já salva.
+  - **Telas de trabalho limpas**: Vídeos e Jellyfin perdem o painel lateral; a lista (com os filtros por coluna)
+    ocupa a largura toda. No Jellyfin ficam só Filmes/Séries, as duas pastas, um resumo do que está ligado
+    ("TMDB ✓ · Legendas: pt-BR · Dublagem: Misto") e a barra "Legendas e voz" (Traduzir, Legenda pelo áudio,
+    Sincronizar, Dublar).
+  - **Chaves de API** num lugar só: TMDB, OpenSubtitles, SubDL, Anthropic, Gemini e Jellyfin, cada uma com
+    **Validar** e a situação ao lado.
+  - **Dublagem** com três modos em cartões: **Piper**, **Gemini** ou **Misto** (figurantes com menos de N falas no
+    Piper; perguntar quais filmes vão com o Gemini; robôs agendados só com o Piper, sem custo).
+
+- **Criar legenda pelo áudio** (aba Jellyfin, barra "Legendas e voz"; opções em ⚙ Configurações > Legenda pelo áudio): para os vídeos **sem nenhuma legenda**, o
   **Whisper** (código aberto, roda no seu PC, grátis) ouve o áudio e escreve as falas com os horários
   (`Nome.en.srt`, no idioma do áudio); se o áudio não é português, o **Claude** traduz para `Nome.pt-BR.srt`.
   Áudio já em português sai direto, sem gastar com a API. Escolha o modelo do Whisper (`tiny` ... `large-v3`,
@@ -309,7 +322,7 @@ primeira falha (antes esperava o tempo limite em cada filme).
 
 ### Novidades da v2.11.0
 
-- **Traduzir legendas com IA** (aba Jellyfin, seção Legendas, botão **"Traduzir legendas com IA..."**): acha nas
+- **Traduzir legendas com IA** (aba Jellyfin, barra "Legendas e voz", botão **"Traduzir legendas com IA..."**): acha nas
   bibliotecas os vídeos que só têm legenda `.srt` em outro idioma (inglês tem preferência) e nenhuma em
   português, mostra quantos são e o **custo estimado**, e, se você confirmar, cria `Nome.pt-BR.srt` com os
   **mesmos horários**. Usa a API da Anthropic (Claude), com o modelo padrão **`claude-sonnet-4-6`** (dá para
@@ -639,7 +652,7 @@ primeira falha (antes esperava o tempo limite em cada filme).
   biblioteca ("scan pedido") ou por que não (sem a chave de API, erro de conexão). Antes isso ia só para o log.
 - O estado da vigia avisa (em laranja) quando falta a chave do Jellyfin: sem "Lembrar as chaves", ela some ao
   reiniciar o programa e o scan deixava de ser pedido.
-- Botão **"Atualizar a biblioteca agora"** (aba Jellyfin, embaixo de "Testar conexão").
+- Botão **"Atualizar a biblioteca agora"** (⚙ Configurações > Jellyfin).
 - **Lugar fixo do programa (Windows):** ao abrir o .exe de fora dele (ex.: Downloads), o programa oferece se
   instalar em `C:\Users\<você>\AppData\Local\Programs\videoscraper` (sem precisar de administrador), cria o
   atalho **videoscraper** na Área de Trabalho e no Menu Iniciar e reabre de lá. As atualizações vão sempre para

@@ -538,6 +538,8 @@ def sincronizar_legendas(log: logging.Logger, limite_videos: int = 5) -> Resulta
 def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
     """Os filmes com legenda em português e sem áudio em português ganham 'Nome - Dublado IA.mkv'."""
     o, pastas = opcoes_salvas()
+    if o.robo_so_piper:                               # opção "Nos robôs agendados, usar só o Piper (sem custo)"
+        o.motor_voz, o.voz_por_personagem, o.figurantes_piper = "Piper (grátis, no PC)", False, False
     filmes = pastas["Filmes"]
     if not filmes or not Path(filmes).is_dir():
         raise FaltaConfiguracao("Escolha a biblioteca de Filmes na aba Jellyfin (a dublagem é só para filmes).")
@@ -558,7 +560,8 @@ def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
             try:
                 lista = ouvir_personagens(o, item.video, falas_da_legenda(item.legenda))
                 vozes = personagens.vozes_por_fala(lista, personagens.distribuir_vozes(lista, o.voz_gemini,
-                                                                                       figurante(o)))
+                                                                                       figurante(o),
+                                                                                       o.limite_figurante))
             except (ErroDublagem, OSError, ErroLegenda) as erro:
                 log.warning("Voz por personagem em %s: %s (segue com uma voz só)", item.video.name, erro)
         r = dublar_video(item.video, item.legenda, motor, adaptar=adaptador(o, item.video.stem),
