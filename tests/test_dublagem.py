@@ -212,3 +212,131 @@ def test_baixa_o_piper_e_a_voz_so_na_primeira_vez(tmp_path):
     assert len(baixados) == 3                                                    # da 2ª vez, nada baixa
     with pytest.raises(ErroDublagem, match="voz desconhecida"):
         preparar_voz("ator-famoso", tmp_path / "vozes", baixar)
+
+
+SRT_APERTADA = SRT.replace("♪ [música] ♪", "Tchau.")       # a fala 2 só tem 1,5 s até a 3 começar
+
+
+@pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
+def test_fala_longa_e_reescrita_mais_curta_em_vez_de_acelerar(tmp_path):
+    """A fala 2 (61 letras, ~3 s) tem 1,5 s: a IA reescreve até 28 letras e a voz lê a versão curta."""
+    pasta = tmp_path / "Filme (2003)"
+    pasta.mkdir()
+    video = video_de_teste(pasta / "Filme (2003).mkv")
+    (pasta / "Filme (2003).pt-BR.srt").write_text(SRT_APERTADA, encoding="utf-8")
+    pedidos = []
+
+    def adaptar(itens):
+        pedidos.extend(itens)
+        return {k: "Fala longa demais pro tempo." for k, *_ in itens}
+    voz = VozFalsa()
+    r = dublar_video(video, pasta / "Filme (2003).pt-BR.srt", voz, FFMPEG, sondar=lambda v: (6.0, ["eng"]),
+                     adaptar=adaptar)
+    assert r.status == "dublado" and r.adaptadas == 1, r.detalhe
+    assert pedidos == [(1, "Uma fala comprida demais para caber nesse pedacinho de tempo.", 28, "Olá!")]
+    assert voz.textos[-1] == "Fala longa demais pro tempo."                   # a voz leu a versão curta
+    legenda = (pasta / "Filme (2003).pt-BR.srt").read_text(encoding="utf-8")
+    assert "Uma fala comprida demais" in legenda                              # a legenda não muda
+
+
+@pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
+def test_sem_a_ia_a_dublagem_segue_como_antes(tmp_path):
+    pasta = tmp_path / "Filme (2003)"
+    pasta.mkdir()
+    video = video_de_teste(pasta / "Filme (2003).mkv")
+    (pasta / "Filme (2003).pt-BR.srt").write_text(SRT_APERTADA, encoding="utf-8")
+    avisos = []
+
+    def adaptar(itens):
+        raise RuntimeError("sem crédito")
+    r = dublar_video(video, pasta / "Filme (2003).pt-BR.srt", VozFalsa(), FFMPEG, sondar=lambda v: (6.0, ["eng"]),
+                     adaptar=adaptar, avisar=avisos.append)
+    assert r.status == "dublado" and r.adaptadas == 0
+    assert "não adaptadas (sem crédito)" in avisos[0]
+
+
+def test_adaptador_pede_ao_claude_e_so_aceita_o_que_encurtou():
+    import json
+    from types import SimpleNamespace
+    from jellyfin_tools.adaptacao import Adaptador, limite_de_letras
+    from jellyfin_tools.traducao import Tradutor
+
+    class Claude:
+        def __init__(self):
+            self.pedidos = []
+            self.messages = self
+
+        def create(self, **k):
+            self.pedidos.append(k)
+            falas = json.loads(k["messages"][0]["content"].split("Falas:\n", 1)[1])
+            volta = [{"id": f["id"], "texto": f["texto"][:f["max"]] if f["id"] != 7 else f["texto"] + " mais"}
+                     for f in falas]
+            return SimpleNamespace(stop_reason="end_turn", usage=SimpleNamespace(input_tokens=50, output_tokens=20),
+                                   content=[SimpleNamespace(type="text", text=json.dumps({"falas": volta}))])
+    claude = Claude()
+    tradutor = Tradutor(cliente=claude)
+    adaptar = Adaptador(tradutor, "Matrix")
+    assert adaptar([(3, "Eu não acredito que você fez isso", 20, "Oi"), (7, "Curta", 3, "")]) == \
+        {3: "Eu não acredito que"[:20].strip()}                                # a 7 voltou MAIOR: fica a original
+    pedido = claude.pedidos[0]
+    assert "dublagem" in pedido["system"].lower() and "Filme: Matrix" in pedido["messages"][0]["content"]
+    assert '"antes": "Oi"' in pedido["messages"][0]["content"] and tradutor.tokens_entrada == 50
+    assert limite_de_letras("x" * 60, duracao=3.0, vaga=1.5) == 28 and limite_de_letras("abc", 3.0, 0.1) == 4
+
+
+def test_motor_gemini_gera_cada_fala_com_voz_pronta_e_espera_o_limite(tmp_path):
+    import base64
+    import io
+    from types import SimpleNamespace
+    from jellyfin_tools import voz_gemini
+    from jellyfin_tools.dublagem import ErroDublagem
+
+    def wav_bytes(segundos):
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(24000)
+            w.writeframes(b"\0\0" * int(24000 * segundos))
+        return buf.getvalue()
+
+    class Limite(Exception):
+        code = 429
+
+    class Gemini:
+        def __init__(self):
+            self.pedidos, self.falhar = [], 1
+            self.interactions = self
+            self.models = SimpleNamespace(get=lambda model: SimpleNamespace(display_name="Gemini 3.8 Flash TTS"))
+
+        def create(self, **k):
+            if self.falhar:
+                self.falhar -= 1
+                raise Limite("RESOURCE_EXHAUSTED")
+            self.pedidos.append(k)
+            texto = k["input"][0]["text"]
+            dados = wav_bytes(0.1) if texto != "pcm" else b"\0\0" * 2400
+            return SimpleNamespace(output_audio=SimpleNamespace(data=base64.b64encode(dados).decode(),
+                                                                mime_type="audio/wav"))
+    gemini, esperas = Gemini(), []
+    motor = voz_gemini.MotorGemini("chave", voz="Kore", cliente=gemini, simultaneos=1, esperar=esperas.append)
+    motor.sintetizar([("Olá!", tmp_path / "1.wav"), ("pcm", tmp_path / "2.wav")])
+    assert esperas == [2] and motor.falas_geradas == 2                      # esperou o limite e tentou de novo
+    for nome in ("1.wav", "2.wav"):
+        with wave.open(str(tmp_path / nome), "rb") as w:
+            assert (w.getframerate(), w.getnchannels(), w.getsampwidth()) == (24000, 1, 2)
+    pedido = gemini.pedidos[0]
+    assert pedido["generation_config"] == {"speech_config": [{"voice": "Kore"}]}
+    assert pedido["model"] == "gemini-3.8-flash-tts" and "português do Brasil" in \
+        pedido["input"][0]["annotations"][0]["style"]
+    assert voz_gemini.testar_chave("chave", cliente=gemini) == "Gemini 3.8 Flash TTS"
+    with pytest.raises(ErroDublagem, match="desconhecida"):
+        voz_gemini.MotorGemini("chave", voz="Fulano", cliente=gemini)    # só as vozes prontas da lista
+    with pytest.raises(ErroDublagem, match="preencha"):
+        voz_gemini.testar_chave("  ")
+    recusada = SimpleNamespace(models=SimpleNamespace(get=lambda model: (_ for _ in ()).throw(
+        type("ClientError", (Exception,), {"code": 400})("API key not valid"))))
+    with pytest.raises(ErroDublagem, match="chave do Google AI Studio foi recusada"):
+        voz_gemini.testar_chave("errada", cliente=recusada)
+    minimo, maximo = voz_gemini.estimar_custo(3600)                       # 1 h de fala
+    assert 0.5 < minimo < maximo < 5

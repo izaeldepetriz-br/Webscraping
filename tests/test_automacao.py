@@ -193,13 +193,18 @@ def test_dublar_pelo_robo(casa, tmp_path, monkeypatch):
     (filmes / "A (2001)").mkdir(parents=True)
     video_de_teste(filmes / "A (2001)" / "A (2001).mkv")
     (filmes / "A (2001)" / "A (2001).pt-BR.srt").write_text(SRT, encoding="utf-8")
-    monkeypatch.setattr(automacao, "preparar_piper", lambda pasta: Path("piper"))
-    monkeypatch.setattr(automacao, "preparar_voz", lambda voz, pasta: Path("v.onnx"))
+    monkeypatch.setattr(automacao, "preparar_piper", lambda pasta, **k: Path("piper"))
+    monkeypatch.setattr(automacao, "preparar_voz", lambda voz, pasta, **k: Path("v.onnx"))
     monkeypatch.setattr(automacao, "MotorPiper", lambda exe, modelo: VozFalsa())
     monkeypatch.setattr(automacao, "videos_para_dublar",
                         lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
     casa()
     assert automacao.main(["--dublar"]) == automacao.FALTA_CONFIGURACAO
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    casa(destino_filmes=str(filmes), motor_voz="Gemini (premium, Google AI Studio)")    # voz premium sem chave
+    assert automacao.main(["--dublar"]) == automacao.FALTA_CONFIGURACAO
+    assert "aistudio.google.com" in resultado(tmp_path)["comandos"][0]["resumo"]
     casa(destino_filmes=str(filmes))
     assert automacao.main(["--dublar"]) == automacao.OK
     assert resultado(tmp_path)["comandos"][0]["resumo"] == "1 de 1 filme(s) dublado(s), 0 erro(s)."

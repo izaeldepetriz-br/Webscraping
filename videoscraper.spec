@@ -11,7 +11,8 @@ if os.path.exists("videoscraper/versao_build.txt"):                          # a
 binaries, hiddenimports = [], ["videoscraper.app_moderna", "videoscraper.gui", "videoscraper.menu"]
 hiddenimports += ["pystray._win32", "PIL.Image", "PIL.ImageDraw"]               # ícone perto do relógio
 for pacote in ("imageio_ffmpeg", "playwright", "pystray",                   # ffmpeg, instalador do navegador, ícone
-               "faster_whisper", "ctranslate2", "onnxruntime", "av", "tokenizers"):   # Whisper (legenda pelo áudio)
+               "faster_whisper", "ctranslate2", "onnxruntime", "av", "tokenizers",    # Whisper (legenda pelo áudio)
+               "google.genai"):                                                    # Gemini (voz premium)
     d, b, h = collect_all(pacote)
     datas, binaries, hiddenimports = datas + d, binaries + b, hiddenimports + h
 

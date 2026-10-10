@@ -263,6 +263,16 @@ primeira falha (antes esperava o tempo limite em cada filme).
   legendar, dublar, sincronizar...), botões **"Marcar todas"**, **"Desmarcar todas"** e **"Marcar as já agendadas"**,
   a frequência e o 1º horário. Marque **várias de uma vez**: elas rodam uma a cada 15 minutos (não todas juntas).
   **"Tirar do agendamento"** remove as marcadas. Vai para o **Agendador de Tarefas do Windows** (pasta "Maestro").
+- **Dublagem mais natural**: a fala que não cabe no tempo da cena é **reescrita mais curta pelo Claude**, fiel ao
+  sentido e no português falado (como um tradutor de dublagem faz), e lida de novo, em vez de acelerada ou
+  cortada. Só essas falas vão para a API (custo pequeno); a legenda e o vídeo não mudam. Opção "Falas longas: o
+  Claude reescreve..." (marcada; precisa da chave da Anthropic).
+- **Voz premium do Gemini (Google AI Studio)**: em "Motor da voz", escolha **Gemini** no lugar do Piper: voz bem
+  mais natural, com entonação. Seis vozes prontas (masculinas e femininas); o Maestro nunca clona a voz de ninguém.
+  Pago por uso: a confirmação mostra uma estimativa. Botões **"Criar a chave no AI Studio"** e **"Testar chave do
+  Gemini"** (o teste não gera áudio). O painel de saúde mostra "Gemini (voz) ativa" quando ele está escolhido.
+- **Simular a vigia**: o botão **"O que a vigia faria agora?"** mostra na lista o que ela moveria (com as mesmas
+  regras: só o que terminou de baixar, "dentro dela mesma", os desmarcados), **sem mover nada**.
 - **Pasta vigiada no lugar**: a opção **"Organizar cada pasta vigiada dentro dela mesma"** (já marcada) arruma
   `E:\Series_Organizadas\NOVELAS` dentro de `E:\Series_Organizadas\NOVELAS`, sem levar nada para a pasta de
   origem nem para as bibliotecas da tela. Desmarque para o jeito antigo (do uTorrent para as bibliotecas).
@@ -905,6 +915,8 @@ jellyfin_tools/
   traducao_lote.py      a mesma tradução em lote (metade do preço, pronta em até 24 h)
   transcricao.py        cria a legenda ouvindo o áudio (Whisper, no PC)
   dublagem.py           lê a legenda com voz sintética (Piper) e junta ao vídeo (ffmpeg)
+  adaptacao.py          reescreve (Claude) as falas da dublagem que não cabem no tempo da cena
+  voz_gemini.py         voz premium da dublagem: Gemini (Google AI Studio), só vozes prontas
   sincronia.py          acerta legenda adiantada/atrasada comparando com a voz do áudio
   resumo_diario.py      o resumo do dia no Discord/Telegram
   registro.py           log em arquivo (logging)

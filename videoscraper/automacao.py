@@ -62,7 +62,8 @@ from jellyfin_tools.dublagem import (ErroDublagem, MotorPiper, dublar_video, pre
 from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, ClienteTV, carregar_canais, carregar_historico,
                                        conferir_canais, mensagem_fora_do_ar, publicar, registrar_no_historico,
                                        salvar_historico)
-from jellyfin_tools import vigia
+from jellyfin_tools import vigia, voz_gemini
+from jellyfin_tools.adaptacao import Adaptador
 from jellyfin_tools.vigia import filtro_prontos
 
 from . import config
@@ -77,7 +78,8 @@ OK, PROBLEMA, FALTA_CONFIGURACAO, ERRO_INESPERADO = 0, 1, 2, 3
 VARIAVEIS = {"chave_tmdb": "TMDB_API_KEY", "chave_opensubtitles": "OPENSUBTITLES_API_KEY",
              "chave_subdl": "SUBDL_API_KEY", "jellyfin_url": "JELLYFIN_URL", "jellyfin_api_key": "JELLYFIN_API_KEY",
              "discord_webhook": "DISCORD_WEBHOOK_URL", "telegram_token": "TELEGRAM_BOT_TOKEN",
-             "telegram_chat_id": "TELEGRAM_CHAT_ID", "chave_claude": "ANTHROPIC_API_KEY"}
+             "telegram_chat_id": "TELEGRAM_CHAT_ID", "chave_claude": "ANTHROPIC_API_KEY",
+             "chave_gemini": "GEMINI_API_KEY"}
 # Os campos sem valor padrão na OpcoesJellyfin: os mesmos valores com que a janela abre da 1ª vez
 PADROES = {"modo": "filmes", "origem": "", "destino": "", "tmdb": False, "chave_tmdb": "", "incluir_tmdbid": False,
            "exigir_catalogo": False, "limpar_lixo": True, "apagar_pasta_origem": False, "legendas": True,
@@ -170,6 +172,34 @@ def montar_config_pos(o: OpcoesJellyfin, provedores_legenda: list, notificar: bo
     return ConfigPos(provedores=provedores_legenda, idioma=o.idioma, tmdb=tmdb, imagens=o.imagens_tmdb,
                      nfo=o.gerar_nfo, notificar=notificar, sobrescrever=o.sobrescrever, notificador=notificador(o),
                      jellyfin_url=o.jellyfin_url, jellyfin_api_key=o.jellyfin_api_key if o.atualizar_jellyfin else "")
+
+
+def usa_gemini(o: OpcoesJellyfin) -> bool:
+    return o.motor_voz.startswith("Gemini")
+
+
+def chave_gemini(o: OpcoesJellyfin) -> str:
+    """A chave do Google AI Studio: a do campo ou, vazio, a variável GEMINI_API_KEY."""
+    return o.chave_gemini or os.environ.get("GEMINI_API_KEY", "")
+
+
+def preparar_motor(o: OpcoesJellyfin, progresso_piper=None, progresso_voz=None):
+    """A voz da dublagem: Gemini (premium, com a chave do AI Studio) ou Piper (grátis; baixa na 1ª vez)."""
+    if usa_gemini(o):
+        if not chave_gemini(o):
+            raise FaltaConfiguracao("Para a voz premium do Gemini, crie a chave em aistudio.google.com (Get API key) "
+                                    "e cole no campo \"Chave do Google AI Studio\" (ou use o Piper, grátis).")
+        return voz_gemini.MotorGemini(chave_gemini(o), o.voz_gemini)
+    pasta = config.ARQUIVO.parent
+    return MotorPiper(preparar_piper(pasta / "piper", ao_progresso=progresso_piper),
+                      preparar_voz(o.voz_dublagem, pasta / "vozes", ao_progresso=progresso_voz))
+
+
+def adaptador(o: OpcoesJellyfin, titulo: str = ""):
+    """Quem reescreve as falas longas (o Claude), ou None: opção desligada ou sem a chave da Anthropic."""
+    if not o.encurtar_falas or not (o.chave_claude or os.environ.get("ANTHROPIC_API_KEY")):
+        return None
+    return Adaptador(Tradutor(chave=o.chave_claude, modelo=o.modelo_traducao, idioma="pt-BR"), titulo)
 
 
 # ============================================================================ os comandos
@@ -486,18 +516,21 @@ def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
     if not itens:
         return Resultado("--dublar", OK, "Nenhum filme para dublar.")
     escolhidos = itens[:limite_videos] if limite_videos > 0 else itens
-    pasta = config.ARQUIVO.parent
     try:
-        motor = MotorPiper(preparar_piper(pasta / "piper"), preparar_voz(o.voz_dublagem, pasta / "vozes"))
+        motor = preparar_motor(o)
     except ErroDublagem as erro:
         return Resultado("--dublar", PROBLEMA, f"Não deu para preparar a voz: {erro}")
-    log.info("Dublar: %d filme(s), %d nesta execução (voz %s)", len(itens), len(escolhidos), o.voz_dublagem)
+    voz = f"Gemini {o.voz_gemini}" if usa_gemini(o) else f"Piper {o.voz_dublagem}"
+    log.info("Dublar: %d filme(s), %d nesta execução (voz %s)", len(itens), len(escolhidos), voz)
     resultados = []
     for item in escolhidos:
-        r = dublar_video(item.video, item.legenda, motor)
+        r = dublar_video(item.video, item.legenda, motor, adaptar=adaptador(o, item.video.stem),
+                         avisar=lambda texto: log.warning("Dublagem: %s", texto))
         resultados.append(r)
-        (log.error if r.status == "erro" else log.info)("[%s] %s%s", r.status, r.video.name,
-                                                         f" ({r.detalhe})" if r.detalhe else "")
+        (log.error if r.status == "erro" else log.info)("[%s] %s%s (%d falas, %d adaptadas, %d aceleradas)",
+                                                         r.status, r.video.name,
+                                                         f" ({r.detalhe})" if r.detalhe else "", r.falas,
+                                                         r.adaptadas, r.aceleradas)
     feitos = [r for r in resultados if r.status == "dublado"]
     erros = [r for r in resultados if r.status == "erro"]
     if feitos and o.atualizar_jellyfin and o.jellyfin_url and o.jellyfin_api_key:

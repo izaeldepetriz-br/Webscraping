@@ -9,7 +9,8 @@ O que o programa faz:
   1. Piper (código aberto, roda no PC, sem custo): lê cada fala da legenda e grava um .wav. Na 1ª vez baixa o
      programa do Piper (GitHub, ~25 MB) e a voz escolhida (~60 MB). Vozes GENÉRICAS: nada de imitar a voz de atores.
   2. Monta uma trilha do tamanho do filme: cada fala começa no horário da legenda. Fala que não cabe no tempo dela
-     é acelerada um pouco (até ACELERAR_MAX); se ainda passar, é cortada quando a próxima começa.
+     é REESCRITA mais curta pela IA (opcional, ver adaptacao.py: como um tradutor de dublagem) e lida de novo; se
+     ainda passar, é acelerada um pouco (até ACELERAR_MAX) e, por último, cortada quando a próxima começa.
   3. ffmpeg: grava 'Nome - Dublado IA.mkv' com o vídeo COPIADO (sem perder qualidade), a faixa dublada como a 1ª
      e padrão, e o áudio original logo depois. O arquivo original não é tocado. O Jellyfin mostra os dois como
      VERSÕES do mesmo filme ("Dublado IA" aparece na escolha de versão).
@@ -203,6 +204,17 @@ def acelerar_com_ffmpeg(ffmpeg: str):
     return acelerar
 
 
+def vagas(clipes: list[tuple[float, float, Path]], duracao: float) -> list[float]:
+    """Quanto tempo cada fala tem: do início dela até a próxima começar (ou até o fim da legenda, se for mais)."""
+    return [max((clipes[k + 1][0] if k + 1 < len(clipes) else max(duracao, fim)) - inicio, fim - inicio, 0.2)
+            for k, (inicio, fim, _) in enumerate(clipes)]
+
+
+def duracao_wav(wav: Path) -> float:
+    with wave.open(str(wav), "rb") as w:
+        return w.getnframes() / w.getframerate()
+
+
 def montar_trilha(clipes: list[tuple[float, float, Path]], duracao: float, destino: Path, acelerar=None) -> dict:
     """clipes: [(início, fim da fala na legenda, .wav)] em ordem. Grava 'destino' (mono, 16 bits) do tamanho do
     vídeo, com cada fala no horário. Devolve {"aceleradas": n, "cortadas": n}."""
@@ -224,9 +236,8 @@ def montar_trilha(clipes: list[tuple[float, float, Path]], duracao: float, desti
                 saida.writeframes(silencio_1s[:pedaco * largura])
                 n -= pedaco
 
-        for k, (inicio, fim, wav) in enumerate(clipes):
+        for k, ((inicio, fim, wav), vaga) in enumerate(zip(clipes, vagas(clipes, duracao))):
             proximo = clipes[k + 1][0] if k + 1 < len(clipes) else max(duracao, fim)
-            vaga = max(proximo - inicio, fim - inicio, 0.2)    # pode usar o silêncio até a próxima fala
             with wave.open(str(wav), "rb") as w:
                 n = w.getnframes()
             if n / taxa > vaga and acelerar is not None:
@@ -363,12 +374,15 @@ class ResultadoDublagem:
     falas: int = 0
     aceleradas: int = 0
     cortadas: int = 0
+    adaptadas: int = 0             # falas que a IA reescreveu mais curtas para caber no tempo
 
 
 def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | None = None,
                  pasta_trabalho: str | Path | None = None, parar=None, ao_progresso=None,
-                 sondar=faixas_de_audio) -> ResultadoDublagem:
-    """Lê a legenda com a voz, monta a trilha e grava 'Nome - Dublado IA.mkv'. O original não é tocado."""
+                 sondar=faixas_de_audio, adaptar=None, avisar=None) -> ResultadoDublagem:
+    """Lê a legenda com a voz, monta a trilha e grava 'Nome - Dublado IA.mkv'. O original não é tocado.
+    adaptar([(id, texto, máx. letras, fala anterior)]) -> {id: texto mais curto}: as falas que não cabem no tempo
+    são reescritas (ver adaptacao.py) e lidas de novo. Se falhar, segue sem adaptar. avisar(texto): para o log."""
     video, legenda = Path(video), Path(legenda)
     destino = caminho_dublado(video)
     if destino.exists():
@@ -395,8 +409,12 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
         pasta = Path(pasta)
         pedidos = [(t, pasta / f"{k:05d}.wav") for k, (_, t) in enumerate(falas)]
         try:
-            motor.sintetizar(pedidos, parar=parar, ao_progresso=lambda f: andamento(0.6 * f))
+            motor.sintetizar(pedidos, parar=parar, ao_progresso=lambda f: andamento(0.5 * f))
             clipes = [(*horarios(f.tempo), w) for (f, _), (_, w) in zip(falas, pedidos)]
+            adaptadas = 0
+            if adaptar is not None:
+                clipes, adaptadas = _adaptar(clipes, [t for _, t in falas], duracao, motor, adaptar, parar, avisar)
+            andamento(0.6)
             contas = montar_trilha(clipes, duracao, pasta / "trilha.wav", acelerar_com_ffmpeg(ffmpeg))
             andamento(0.7)
             mixar(ffmpeg, video, pasta / "trilha.wav", destino, duracao, len(idiomas), parar,
@@ -406,4 +424,33 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
         except (OSError, wave.Error, subprocess.SubprocessError) as erro:
             return ResultadoDublagem(video, "erro", f"{type(erro).__name__}: {erro}", falas=len(falas))
     andamento(1.0)
-    return ResultadoDublagem(video, "dublado", "", destino, len(falas), contas["aceleradas"], contas["cortadas"])
+    return ResultadoDublagem(video, "dublado", "", destino, len(falas), contas["aceleradas"], contas["cortadas"],
+                             adaptadas)
+
+
+def _adaptar(clipes, textos, duracao, motor, adaptar, parar, avisar):
+    """Reescreve (IA) as falas que só caberiam muito aceleradas e as lê de novo. Fica a versão que soar MAIS CURTA."""
+    from .adaptacao import NATURAL, limite_de_letras
+    longas = []
+    for k, ((_, _, wav), vaga) in enumerate(zip(clipes, vagas(clipes, duracao))):
+        dur = duracao_wav(wav)
+        if dur / vaga > NATURAL:
+            longas.append((k, textos[k], limite_de_letras(textos[k], dur, vaga), textos[k - 1] if k else ""))
+    if not longas:
+        return clipes, 0
+    try:
+        novos = adaptar(longas)
+    except Exception as erro:                                 # sem crédito, sem internet...: segue sem adaptar
+        if avisar:
+            avisar(f"falas longas não adaptadas ({str(erro)[:150]}): ficam aceleradas como antes")
+        return clipes, 0
+    if not novos:
+        return clipes, 0
+    pedidos = [(texto, Path(clipes[k][2]).with_name(f"{k:05d}-curta.wav")) for k, texto in novos.items()]
+    motor.sintetizar(pedidos, parar=parar)
+    clipes, adaptadas = list(clipes), 0
+    for (k, _), (_, wav) in zip(novos.items(), pedidos):
+        if wav.is_file() and duracao_wav(wav) < duracao_wav(clipes[k][2]):
+            clipes[k] = (clipes[k][0], clipes[k][1], wav)
+            adaptadas += 1
+    return clipes, adaptadas

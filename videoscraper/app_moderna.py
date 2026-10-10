@@ -48,8 +48,7 @@ from jellyfin_tools import traducao_lote
 from jellyfin_tools.transcricao import (Transcritor, estimar as estimar_audio, legendar_pelo_audio, modelo_baixado,
                                         videos_sem_legenda)
 from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sincronizar
-from jellyfin_tools.dublagem import (ErroDublagem, MotorPiper, dublar_video, preparar_piper, preparar_voz,
-                                     videos_para_dublar, voz_pronta)
+from jellyfin_tools.dublagem import ErroDublagem, dublar_video, videos_para_dublar, voz_pronta
 from jellyfin_tools.paralelo import prioridade_baixa
 from jellyfin_tools.lixeira import apagar_lotes, lotes_antigos, tamanho_legivel
 from jellyfin_tools.tv_ao_vivo import carregar_canais, conferir_canais, mensagem_fora_do_ar
@@ -61,7 +60,7 @@ from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, inicia
 from jellyfin_tools.relatorio import gerar_relatorio, resumo, salvar_csv
 from jellyfin_tools.resumo_diario import ResumoDiario, mensagem as mensagem_resumo
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca, indice_da_biblioteca, testar_conexao
-from jellyfin_tools import vigia
+from jellyfin_tools import vigia, voz_gemini
 from jellyfin_tools.vigia import filtro_prontos
 
 from . import config
@@ -121,7 +120,7 @@ SITUACAO_ESPELHO = {"criado": ("espelhado", "ok"), "ja_existe": ("já espelhado"
 
 # Chaves e tokens: só vão para o config.json se o usuário marcar "Lembrar as chaves".
 SEGREDOS = ("chave_tmdb", "chave_opensubtitles", "chave_subdl", "jellyfin_api_key", "discord_webhook",
-            "telegram_token", "chave_claude")
+            "telegram_token", "chave_claude", "chave_gemini")
 
 
 class _LogParaFila(logging.Handler):
@@ -697,6 +696,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
             fracao, texto = dado
             self.definir_progresso_total(fracao, texto)
             self.definir_progresso_rodape(fracao, texto)
+        elif tipo == "gemini_estado":
+            self._saude_gemini = dado
+            self.definir_estado_gemini(*dado)
+            self.definir_saude(self.itens_saude())
         elif tipo == "claude_estado":
             self._saude_claude = dado
             self.definir_estado_claude(*dado)
@@ -1286,6 +1289,45 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.fila.put(("vigia_resultado", (novos, o)))
 
         threading.Thread(target=conferir, daemon=True).start()
+
+    def ao_simular_vigia(self) -> None:
+        """Botão "O que a vigia faria agora?": a MESMA conta da vigia (pastas, "dentro dela mesma", só o que
+        terminou de baixar, o que você desmarcou), mas sem mover nada. O resultado aparece na lista."""
+        o = self.obter_opcoes_jellyfin()
+        alvos = [a for a in self._alvos_da_vigia(o) if a[1] or a[2]]
+        if not alvos:
+            self.mostrar_mensagem("Simular a vigia", "Escolha as pastas vigiadas (ou a pasta de origem) e, se a "
+                                  "opção \"dentro dela mesma\" estiver desmarcada, as bibliotecas de Filmes/Séries.",
+                                  "aviso")
+            return
+        fora = frozenset(self._lembrar_desmarcados())
+        self._previa = None
+        self.liberar_organizar(False)                 # é só uma simulação: o Organizar não vale para ela
+
+        def tarefa():
+            todos = []
+            for pasta, filmes, series in alvos:
+                self._log.info("Simulando a vigia: %s (filmes -> %s, séries -> %s)", pasta, filmes or "—",
+                               series or "—")
+                todos += organizar_misto(pasta, filmes, series, self._catalogo(o), filtro=filtro_prontos(),
+                                         aplicar=False, incluir_tmdbid=o.incluir_tmdbid,
+                                         exigir_catalogo=o.exigir_catalogo, limpar_lixo=o.limpar_lixo,
+                                         apagar_pasta_origem=o.apagar_pasta_origem, nomes_episodios=o.nomes_episodios,
+                                         protegidas=o.pastas_protegidas, regras=self.regras_de_nome(), fora=fora,
+                                         ao_analisar=self._avisar_analise, parar=self.evento_parar.is_set)
+            for m in todos:
+                self._log.info("[simulação] %s", m)
+            self.fila.put(("jf_movimentos", todos))
+            mover = sum(m.status == "simulado" for m in todos)
+            prontos = sum(m.status == "organizado" for m in todos)
+            self.fila.put(("status_fim", f"Simulação da vigia: {mover} seriam movidos, {prontos} já organizado(s), "
+                                         f"{len(todos) - mover - prontos} com pendência. NADA foi movido."))
+            if not mover:
+                self.fila.put(("msg", ("Simular a vigia", "Agora a vigia não moveria nada: nenhum arquivo novo que já "
+                                       "terminou de baixar (os que estão baixando, ou mudaram há menos de 2 minutos, "
+                                       "esperam a próxima conferência).", "info")))
+
+        self._rodar("Simulando a vigia (nada é movido)...", tarefa)
 
     def _vigia_organizar(self, novos: int, o) -> None:
         self._vigia_conferindo = False
@@ -2368,14 +2410,37 @@ class AppModerna(TVAoVivo, JanelaModerna):
         espaco = sum(i.tamanho for i in itens)
         exemplos = "\n".join(f"• {i.video.name} ({i.falas} falas)" for i in itens[:5]) + (
             f"\n... e mais {len(itens) - 5}" if len(itens) > 5 else "")
+        if automacao.usa_gemini(o):
+            if not automacao.chave_gemini(o):
+                self.mostrar_mensagem("Dublar filmes", "A voz premium do Gemini precisa da chave do Google AI Studio: "
+                                      "clique em \"Criar a chave no AI Studio\", entre com sua conta Google, clique em "
+                                      "\"Get API key\" (ou \"Create API key\") e cole a chave no campo.\n\nSem chave, "
+                                      "escolha o motor \"Piper (grátis, no PC)\".", "aviso")
+                return
+            fala = sum(i.falas for i in itens) * 2.5               # ~2,5 s por fala, para a estimativa
+            minimo, maximo = voz_gemini.estimar_custo(fala)
+            voz = (f"pela voz premium \"{o.voz_gemini}\" do Gemini (Google AI Studio, pago por uso: estimativa entre "
+                   f"US$ {minimo:.2f} e US$ {maximo:.2f} para ~{int(fala // 60)} min de fala; confira o preço atual no "
+                   "AI Studio)")
+            download = ""
+        else:
+            voz = f"pela voz \"{o.voz_dublagem}\" (Piper, no seu PC, grátis)"
+            download = " Na 1ª vez baixa o Piper (~25 MB) e a voz (~60 MB)."
+        tem_claude = bool(o.chave_claude or os.environ.get("ANTHROPIC_API_KEY"))
+        encurtar = ("\n\nFalas longas demais para o tempo da cena: o Claude reescreve só elas mais curtas, fiéis ao "
+                    "sentido e no português falado (como numa dublagem de estúdio); a legenda não muda. Custo pequeno "
+                    "na API da Anthropic." if o.encurtar_falas and tem_claude else
+                    "\n\nFalas longas demais: são aceleradas (até 35%)" + (
+                        " — preencha a chave da Anthropic para o Claude reescrevê-las mais curtas e naturais."
+                        if o.encurtar_falas else "."))
         escolha = self.escolher(
             "Dublar filmes (voz sintética)",
             f"{len(itens)} filme(s) com legenda em português e sem áudio em português:\n{exemplos}\n\n"
-            f"Cada um ganha 'Nome - Dublado IA.mkv': a legenda é lida pela voz \"{o.voz_dublagem}\" (Piper, no seu PC, "
-            "grátis) e a voz original fica mais baixa por baixo, no estilo narração de documentário. A boca dos atores "
-            "não acompanha. O Jellyfin mostra as duas versões do filme.\n\n"
-            f"Espaço em disco: cerca de {tamanho_legivel(espaco)} (o vídeo é copiado, sem perder qualidade). "
-            "Na 1ª vez baixa o Piper (~25 MB) e a voz (~60 MB). O arquivo original não é tocado.",
+            f"Cada um ganha 'Nome - Dublado IA.mkv': a legenda é lida {voz} e a voz original fica mais baixa por "
+            "baixo, no estilo narração de documentário. A boca dos atores não acompanha. O Jellyfin mostra as duas "
+            f"versões do filme.{encurtar}\n\n"
+            f"Espaço em disco: cerca de {tamanho_legivel(espaco)} (o vídeo é copiado, sem perder qualidade).{download} "
+            "O arquivo original não é tocado.",
             (f"Dublar os {len(itens)}",))
         if escolha is None:
             return
@@ -2383,17 +2448,19 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
     def _dublar(self, itens: list, o) -> None:
         def tarefa():
-            pasta = config.ARQUIVO.parent
             try:
-                self.fila.put(("jf_analise", (0.0, "Preparando o Piper (só na 1ª vez baixa)...")))
-                exe = preparar_piper(pasta / "piper", ao_progresso=lambda f: self.fila.put(
-                    ("jf_analise", (f * 0.5, f"Baixando o Piper: {int(f * 100)}%"))))
-                modelo = preparar_voz(o.voz_dublagem, pasta / "vozes", ao_progresso=lambda f: self.fila.put(
-                    ("jf_analise", (0.5 + f * 0.5, f"Baixando a voz \"{o.voz_dublagem}\": {int(f * 100)}%"))))
-            except ErroDublagem as erro:
+                if not automacao.usa_gemini(o):
+                    self.fila.put(("jf_analise", (0.0, "Preparando o Piper (só na 1ª vez baixa)...")))
+                motor = automacao.preparar_motor(
+                    o, progresso_piper=lambda f: self.fila.put(
+                        ("jf_analise", (f * 0.5, f"Baixando o Piper: {int(f * 100)}%"))),
+                    progresso_voz=lambda f: self.fila.put(
+                        ("jf_analise", (0.5 + f * 0.5, f"Baixando a voz \"{o.voz_dublagem}\": {int(f * 100)}%"))))
+            except (ErroDublagem, automacao.FaltaConfiguracao) as erro:
                 self.fila.put(("msg", ("Dublar filmes", f"Não deu para preparar a voz: {erro}", "erro")))
                 return
-            motor, resultados, total, inicio = MotorPiper(exe, modelo), [], len(itens), time.monotonic()
+            resultados, total, inicio = [], len(itens), time.monotonic()
+            adaptadores = []
             for k, item in enumerate(itens):
                 if self.evento_parar.is_set():
                     break
@@ -2403,12 +2470,16 @@ class AppModerna(TVAoVivo, JanelaModerna):
                     etapa = "lendo as falas" if fracao < 0.6 else "juntando ao vídeo"
                     self.fila.put(("jf_analise", (geral, f"Dublando {k + 1} de {total}: {item.video.stem} – {etapa} "
                                                          f"({int(fracao * 100)}%)")))
+                adaptar = automacao.adaptador(o, item.video.stem)
+                if adaptar is not None:
+                    adaptadores.append(adaptar)
                 r = dublar_video(item.video, item.legenda, motor, parar=self.evento_parar.is_set,
-                                 ao_progresso=andamento)
+                                 ao_progresso=andamento, adaptar=adaptar,
+                                 avisar=lambda texto: self._log.warning("Dublagem: %s", texto))
                 resultados.append(r)
                 (self._log.error if r.status == "erro" else self._log.info)(
-                    "[%s] %s%s (%d falas, %d aceleradas, %d cortadas)", r.status, r.video.name,
-                    f" ({r.detalhe})" if r.detalhe else "", r.falas, r.aceleradas, r.cortadas)
+                    "[%s] %s%s (%d falas, %d adaptadas, %d aceleradas, %d cortadas)", r.status, r.video.name,
+                    f" ({r.detalhe})" if r.detalhe else "", r.falas, r.adaptadas, r.aceleradas, r.cortadas)
             feitos = [r for r in resultados if r.status == "dublado"]
             self.resumo_diario.registrar("dublados", len(feitos))
             erros = [r for r in resultados if r.status == "erro"]
@@ -2417,7 +2488,11 @@ class AppModerna(TVAoVivo, JanelaModerna):
                     atualizar_biblioteca(o.jellyfin_url, o.jellyfin_api_key)
                 except ErroJellyfin as erro:
                     self._log.warning("Jellyfin: scan não pedido (%s)", erro)
+            adaptadas = sum(r.adaptadas for r in feitos)
+            custos = [a.tradutor.custo for a in adaptadores if a.tradutor.pedidos and a.tradutor.custo is not None]
             texto = (f"Dublados: {len(feitos)} de {total}\nCom erro: {len(erros)}"
+                     + (f"\nFalas longas reescritas pelo Claude: {adaptadas}"
+                        + (f" (custo: US$ {sum(custos):.2f})" if custos else "") if adaptadas else "")
                      + (f" (ex.: {erros[0].video.name}: {erros[0].detalhe})" if erros else "")
                      + (f"\nNão feitos (parou antes): {total - len(resultados)}" if len(resultados) < total else "")
                      + f"\n\nTempo: {self._texto_duracao(time.monotonic() - inicio)}"
@@ -2485,6 +2560,38 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                    "sucesso")))
 
         self._rodar("Testando a chave da Anthropic...", tarefa)
+
+    def ao_criar_chave_gemini(self) -> None:
+        """Abre a página do Google AI Studio onde se cria a chave (entra com a conta Google)."""
+        webbrowser.open("https://aistudio.google.com/apikey")
+        self.mostrar_mensagem("Chave do Gemini", "No site que abriu: entre com sua conta Google, clique em \"Create "
+                              "API key\" e copie a chave. Cole no campo \"Chave do Google AI Studio\" e clique em "
+                              "\"Validar chave do Gemini\".\n\nA voz do Gemini é paga por uso (a camada grátis tem "
+                              "limites baixos). Ela fica guardada só se \"Lembrar as chaves\" estiver marcado.", "info")
+
+    def ao_testar_gemini(self) -> None:
+        """Botão "Validar chave do Gemini": a chave funciona e o modelo de voz existe? Não gera áudio (sem custo)."""
+        o = self.obter_opcoes_jellyfin()
+        if not automacao.chave_gemini(o):
+            self.mostrar_mensagem("Gemini (voz premium)", "Cole a chave do Google AI Studio no campo acima (botão "
+                                  "\"Criar a chave no AI Studio\").", "aviso")
+            return
+
+        def tarefa():
+            try:
+                nome = voz_gemini.testar_chave(automacao.chave_gemini(o))
+            except ErroDublagem as erro:
+                self._log.warning("Gemini: %s", erro)
+                self.fila.put(("gemini_estado", (False, f"Não funcionou: {erro}")))
+                self.fila.put(("msg", ("Gemini (voz premium)", f"A chave não funcionou: {erro}.", "erro")))
+                return
+            self._log.info("Gemini: chave ativa (%s)", nome)
+            self.fila.put(("gemini_estado", (True, f"Voz premium ativa · {nome}")))
+            self.fila.put(("msg", ("Gemini (voz premium)", f"Tudo certo: a chave funciona e o modelo de voz \"{nome}\" "
+                                   "está disponível. Este teste não gera áudio (não gasta).\n\nPara usar: em \"Motor "
+                                   "da voz\", escolha \"Gemini (premium)\".", "sucesso")))
+
+        self._rodar("Testando a chave do Gemini...", tarefa)
 
     def ao_testar_tmdb(self) -> None:
         o = self.obter_opcoes_jellyfin()
@@ -3174,6 +3281,14 @@ class AppModerna(TVAoVivo, JanelaModerna):
             itens.append(("Claude (API): chave recusada", False))
         else:
             itens.append(("Claude (API): chave não testada", None))
+        if self.var_jf_motor_voz.get().startswith("Gemini"):     # voz premium escolhida: mostra se está pronta
+            gemini = getattr(self, "_saude_gemini", None)
+            if not (self.var_jf_chave_gemini.get().strip() or os.environ.get("GEMINI_API_KEY")):
+                itens.append(("Gemini (voz): sem chave", False))
+            elif gemini:
+                itens.append(("Gemini (voz) ativa" if gemini[0] else "Gemini (voz): chave recusada", gemini[0]))
+            else:
+                itens.append(("Gemini (voz): chave não testada", None))
         pasta = config.ARQUIVO.parent
         whisper = modelo_baixado(self.var_jf_modelo_whisper.get(), self.pasta_modelos_whisper)
         piper = voz_pronta(self.var_jf_voz_dublagem.get(), pasta / "piper", pasta / "vozes")

@@ -146,6 +146,10 @@ class OpcoesJellyfin:
     modelo_whisper: str = "small"    # legenda pelo áudio: tamanho do modelo do Whisper (maior = acerta mais, demora mais)
     whisper_gpu: bool = False        # usar a placa de vídeo NVIDIA na transcrição
     voz_dublagem: str = "faber"      # dublagem por IA: a voz sintética do Piper
+    motor_voz: str = "Piper (grátis, no PC)"   # ou "Gemini (premium, Google AI Studio)"
+    voz_gemini: str = "Charon"       # voz pronta do Gemini (nunca clonagem de voz)
+    chave_gemini: str = ""           # Google AI Studio > Get API key (vazio = variável GEMINI_API_KEY)
+    encurtar_falas: bool = True      # dublagem: o Claude reescreve mais curtas as falas que não cabem no tempo
     resumo_diario: bool = False      # mandar no Discord/Telegram, uma vez por dia, o que o Maestro fez
     hora_resumo: int = 21
 
@@ -1863,6 +1867,9 @@ class JanelaModerna(ctk.CTk):
     ORDEM_TELA_JF = ("n", "status", "atual", "novo", "fonte", "legenda", "progresso")
     MODELOS_WHISPER = ("tiny", "base", "small", "medium", "large-v3", "turbo")
     VOZES_DUBLAGEM = ("faber", "edresson")
+    MOTORES_VOZ = ("Piper (grátis, no PC)", "Gemini (premium, Google AI Studio)")
+    VOZES_GEMINI = ("Charon (masculina, informativa)", "Orus (masculina, firme)", "Puck (masculina, animada)",
+                    "Kore (feminina, firme)", "Aoede (feminina, leve)", "Leda (feminina, jovem)")
     FONTES_LEGENDA = ("Site de demonstração", "OpenSubtitles (API)", "Site de busca (URL)", "SubDL (API)")
     IDIOMAS_JF = (("pt-BR", "Português"), ("en", "Inglês"), ("es", "Espanhol"))
     ROTULOS_DESTINO = {"Filmes": "Biblioteca de Filmes do Jellyfin:", "Séries": "Biblioteca de Séries do Jellyfin:"}
@@ -1975,6 +1982,10 @@ class JanelaModerna(ctk.CTk):
         self.var_jf_vigia_no_lugar = tk.BooleanVar(value=True)
         self._checkbox(lateral, "Organizar cada pasta vigiada dentro\ndela mesma (não leva para as bibliotecas)",
                        self.var_jf_vigia_no_lugar)
+        # simulação: mostra na lista o que a vigia moveria AGORA, sem mexer em nada
+        self.bt_simular_vigia = self._botao(lateral, "O que a vigia faria agora? (simular)", self.ao_simular_vigia,
+                                            "secundario")
+        self.bt_simular_vigia.pack(fill="x", pady=(2, 6), **p)
         # pastas que o organizador nunca mexe (ex.: as que o Sonarr/Radarr cuidam)
         self._rotulo(lateral, "Pastas protegidas, uma por linha (ex.: as do\nSonarr/Radarr). O organizador nunca\n"
                               "mexe nelas, nem entra nelas.").pack(anchor="w", pady=(4, 2), **p)
@@ -2116,6 +2127,29 @@ class JanelaModerna(ctk.CTk):
         self._rotulo(lateral, "Voz (Piper, português):").pack(anchor="w", pady=(2, 2), **p)
         self.var_jf_voz_dublagem = tk.StringVar(value="faber")
         self._menu_opcoes(lateral, self.var_jf_voz_dublagem, self.VOZES_DUBLAGEM).pack(fill="x", **p)
+        self.var_jf_encurtar_falas = tk.BooleanVar(value=True)
+        self._checkbox(lateral, "Falas longas: o Claude reescreve mais\ncurtas e naturais (em vez de acelerar)",
+                       self.var_jf_encurtar_falas)
+        # voz premium: o Gemini (Google AI Studio) lê as falas no lugar do Piper (só vozes prontas, nada de clonar)
+        self._rotulo(lateral, "Motor da voz:").pack(anchor="w", pady=(6, 2), **p)
+        self.var_jf_motor_voz = tk.StringVar(value=self.MOTORES_VOZ[0])
+        self._menu_opcoes(lateral, self.var_jf_motor_voz, self.MOTORES_VOZ).pack(fill="x", **p)
+        self._rotulo(lateral, "Voz do Gemini (premium):").pack(anchor="w", pady=(6, 2), **p)
+        self.var_jf_voz_gemini = tk.StringVar(value=self.VOZES_GEMINI[0])
+        self._menu_opcoes(lateral, self.var_jf_voz_gemini, self.VOZES_GEMINI).pack(fill="x", **p)
+        self._rotulo(lateral, "Chave do Google AI Studio (Gemini):").pack(anchor="w", pady=(6, 2), **p)
+        self.var_jf_chave_gemini = tk.StringVar()
+        self._entrada(lateral, self.var_jf_chave_gemini, "aistudio.google.com > Get API key", show="•").pack(
+            fill="x", **p)
+        self.bt_criar_chave_gemini = self._botao(lateral, "Criar a chave no AI Studio (abre o site)",
+                                                 self.ao_criar_chave_gemini, "fantasma")
+        self.bt_criar_chave_gemini.pack(fill="x", pady=(4, 0), **p)
+        # "Validar chave": consulta o modelo de voz com a chave (não gera áudio, não gasta) e mostra aqui e no painel
+        self.bt_testar_gemini = self._botao(lateral, "Validar chave do Gemini", self.ao_testar_gemini, "secundario")
+        self.bt_testar_gemini.pack(fill="x", pady=(4, 0), **p)
+        self.lb_estado_gemini = ctk.CTkLabel(lateral, text="", font=self.f_rotulo, text_color=Tema.TEXTO_FRACO,
+                                             anchor="w", justify="left", wraplength=250)
+        self.lb_estado_gemini.pack(fill="x", **p)
         self.bt_dublar = self._botao(lateral, "Dublar filmes...", self.ao_dublar)
         self.bt_dublar.pack(fill="x", pady=(8, 4), **p)
 
@@ -2550,7 +2584,9 @@ class JanelaModerna(ctk.CTk):
             chave_claude=self.var_jf_chave_claude.get().strip(),
             modelo_traducao=self.var_jf_modelo_traducao.get().strip() or "claude-sonnet-4-6",
             modelo_whisper=self.var_jf_modelo_whisper.get(), whisper_gpu=self.var_jf_whisper_gpu.get(),
-            voz_dublagem=self.var_jf_voz_dublagem.get(), resumo_diario=self.var_jf_resumo_diario.get(),
+            voz_dublagem=self.var_jf_voz_dublagem.get(), motor_voz=self.var_jf_motor_voz.get(),
+            voz_gemini=self.var_jf_voz_gemini.get().split()[0], chave_gemini=self.var_jf_chave_gemini.get().strip(),
+            encurtar_falas=self.var_jf_encurtar_falas.get(), resumo_diario=self.var_jf_resumo_diario.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
     def idiomas_jf(self) -> str:
@@ -2645,7 +2681,8 @@ class JanelaModerna(ctk.CTk):
                   "chave_opensubtitles": self.var_jf_chave_os, "url_site": self.var_jf_url_site,
                   "chave_subdl": self.var_jf_chave_subdl, "chave_claude": self.var_jf_chave_claude,
                   "modelo_traducao": self.var_jf_modelo_traducao, "modelo_whisper": self.var_jf_modelo_whisper,
-                  "voz_dublagem": self.var_jf_voz_dublagem,
+                  "voz_dublagem": self.var_jf_voz_dublagem, "motor_voz": self.var_jf_motor_voz,
+                  "chave_gemini": self.var_jf_chave_gemini,
                   "jellyfin_url": self.var_jf_url,
                   "jellyfin_api_key": self.var_jf_chave_jellyfin, "discord_webhook": self.var_jf_discord,
                   "telegram_token": self.var_jf_telegram_token, "telegram_chat_id": self.var_jf_telegram_chat}
@@ -2660,7 +2697,8 @@ class JanelaModerna(ctk.CTk):
                   "fechar_na_bandeja": self.var_jf_fechar_bandeja,
                   "gerar_nfo": self.var_jf_nfo, "atualizar_jellyfin": self.var_jf_atualizar,
                   "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar,
-                  "whisper_gpu": self.var_jf_whisper_gpu, "resumo_diario": self.var_jf_resumo_diario}
+                  "whisper_gpu": self.var_jf_whisper_gpu, "resumo_diario": self.var_jf_resumo_diario,
+                  "encurtar_falas": self.var_jf_encurtar_falas}
         for chave, var in textos.items():
             if dados.get(chave):
                 var.set(dados[chave])
@@ -2669,6 +2707,9 @@ class JanelaModerna(ctk.CTk):
                 var.set(bool(dados[chave]))
         if dados.get("idioma"):
             self.definir_idiomas_jf(dados["idioma"])
+        if dados.get("voz_gemini"):                      # salvo só o nome ("Kore"); o menu mostra com a descrição
+            self.var_jf_voz_gemini.set(next((v for v in self.VOZES_GEMINI if v.split()[0] == dados["voz_gemini"]),
+                                            self.VOZES_GEMINI[0]))
         if dados.get("vigiar_min"):
             self.campo_vigia_min.set(float(dados["vigiar_min"]))
         if dados.get("pastas_vigiadas"):
@@ -2834,6 +2875,12 @@ class JanelaModerna(ctk.CTk):
         cor = {True: Tema.SUCESSO, False: Tema.PERIGO}.get(ok, Tema.TEXTO_FRACO)
         simbolo = {True: self.SIMBOLO_SITUACAO["ok"] + "  ", False: self.SIMBOLO_SITUACAO["erro"] + "  "}.get(ok, "")
         self.lb_estado_claude.configure(text=simbolo + texto if texto else "", text_color=cor)
+
+    def definir_estado_gemini(self, ok: bool | None, texto: str) -> None:
+        """Linha abaixo de 'Validar chave do Gemini': verde (ativa), vermelha (recusada) ou neutra."""
+        cor = {True: Tema.SUCESSO, False: Tema.PERIGO}.get(ok, Tema.TEXTO_FRACO)
+        simbolo = {True: self.SIMBOLO_SITUACAO["ok"] + "  ", False: self.SIMBOLO_SITUACAO["erro"] + "  "}.get(ok, "")
+        self.lb_estado_gemini.configure(text=simbolo + texto if texto else "", text_color=cor)
 
     def definir_estado_tmdb(self, ok: bool | None, texto: str) -> None:
         """Linha abaixo do botão 'Testar conexão com o TMDB': verde (ok), vermelha (erro) ou neutra."""
@@ -3320,6 +3367,15 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_testar_claude(self) -> None:
+        pass
+
+    def ao_testar_gemini(self) -> None:
+        pass
+
+    def ao_criar_chave_gemini(self) -> None:
+        pass
+
+    def ao_simular_vigia(self) -> None:
         pass
 
     def ao_exportar_config(self) -> None:

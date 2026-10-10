@@ -1272,10 +1272,13 @@ def test_dublar_filmes_pela_janela(app, tmp_path, monkeypatch):
     app.var_jf_destino.set(str(filmes))
     assert app.obter_opcoes_jellyfin().voz_dublagem == "faber" and app.VOZES_DUBLAGEM == tuple(dublagem.VOZES)
     preparados = []
-    monkeypatch.setattr(app_moderna, "preparar_piper", lambda pasta, **k: preparados.append(pasta) or Path("piper"))
-    monkeypatch.setattr(app_moderna, "preparar_voz", lambda voz, pasta, **k: preparados.append(voz) or Path("v.onnx"))
+    from videoscraper import automacao
+    monkeypatch.setattr(automacao, "preparar_piper", lambda pasta, **k: preparados.append(pasta) or Path("piper"))
+    monkeypatch.setattr(automacao, "preparar_voz", lambda voz, pasta, **k: preparados.append(voz) or Path("v.onnx"))
     voz = VozFalsa()
-    monkeypatch.setattr(app_moderna, "MotorPiper", lambda exe, modelo: voz)
+    monkeypatch.setattr(automacao, "MotorPiper", lambda exe, modelo: voz)
+    app.var_jf_chave_claude.set("")                                    # sem a chave: falas longas só aceleram
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setattr(app_moderna, "videos_para_dublar",
                         lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
     perguntas = []
@@ -3690,3 +3693,90 @@ def test_testar_chave_da_anthropic_e_painel_de_saude(app, monkeypatch):
     esperar(app)
     assert ("Claude (API): chave recusada", False) in app.itens_saude() and app.caixas[-1][0] == "erro"
     assert any(t.startswith("Whisper (baixa na 1ª vez) · Piper (baixa na 1ª vez)") for t, _ in app.itens_saude())
+
+
+def test_simular_a_vigia_mostra_sem_mover_nada(app, tmp_path):
+    """Botão "O que a vigia faria agora?": a mesma conta da vigia, mas nada sai do lugar."""
+    import os
+    filmes = tmp_path / "Filmes_Organizados"
+    pronto, baixando = filmes / "Interestelar.2014.1080p.mkv", filmes / "Duna.2021.mkv"
+    for p, idade in ((pronto, 3600), (baixando, 0)):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"v" * 2048)
+        os.utime(p, (time.time() - idade, time.time() - idade))
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_legendas.set(False)
+    app.definir_pastas_vigiadas([str(filmes)])
+    app.bt_simular_vigia.invoke()
+    esperar(app)
+    assert pronto.is_file() and not (filmes / "Interestelar (2014)").exists()          # nada foi movido
+    assert "Simulação da vigia: 1 seriam movidos" in app.var_status.get() and "NADA foi movido" in app.var_status.get()
+    linhas = [app.tabela_jf.item(i, "values") for i in app.tabela_jf.get_children()]
+    assert any("Interestelar (2014)" in " ".join(map(str, v)) for v in linhas)
+    assert not any("Duna" in " ".join(map(str, v)) for v in linhas)                    # ainda baixando: fica fora
+    assert app.bt_organizar.cget("state") == "disabled"                                 # simulação não libera
+    pronto.unlink()
+    app.bt_simular_vigia.invoke()
+    esperar(app)
+    esperar(app)
+    assert "a vigia não moveria nada" in app.caixas[-1][2]
+
+
+def test_voz_premium_do_gemini_pela_janela(app, tmp_path, monkeypatch):
+    from jellyfin_tools import dublagem, voz_gemini
+    from tests.test_dublagem import FFMPEG, SRT, VozFalsa, video_de_teste
+    from videoscraper import automacao
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    app.mostrar_aba("Jellyfin")
+    # testar a chave (não gera áudio)
+    app.var_jf_chave_gemini.set("")
+    app.bt_testar_gemini.invoke()
+    assert "Cole a chave do Google AI Studio" in app.caixas[-1][2]
+    monkeypatch.setattr(voz_gemini, "testar_chave", lambda chave: f"Gemini 3.8 Flash TTS ({chave})")
+    app.var_jf_chave_gemini.set("AIza-teste")
+    app.var_jf_motor_voz.set(app.MOTORES_VOZ[1])
+    app.var_jf_voz_gemini.set("Kore (feminina, firme)")
+    app.bt_testar_gemini.invoke()
+    esperar(app)
+    assert "Voz premium ativa" in app.lb_estado_gemini.cget("text")
+    assert ("Gemini (voz) ativa", True) in app.itens_saude()
+    o = app.obter_opcoes_jellyfin()
+    assert (o.motor_voz, o.voz_gemini, o.chave_gemini) == (app.MOTORES_VOZ[1], "Kore", "AIza-teste")
+    # dublar com o Gemini: a confirmação mostra a estimativa e o motor é o do Gemini
+    filmes = tmp_path / "Filmes"
+    (filmes / "Nosferatu (1922)").mkdir(parents=True)
+    video_de_teste(filmes / "Nosferatu (1922)" / "Nosferatu (1922).mkv")
+    (filmes / "Nosferatu (1922)" / "Nosferatu (1922).pt-BR.srt").write_text(SRT, encoding="utf-8")
+    app._destinos.update({"Filmes": str(filmes), "Séries": ""})
+    app.var_jf_destino.set(str(filmes))
+    criados, voz = [], VozFalsa()
+    monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, nome: criados.append((chave, nome)) or voz)
+    monkeypatch.setattr(app_moderna, "videos_para_dublar",
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+    falas_longas = []
+
+    class Adaptar:                                                   # o Claude, de mentira
+        tradutor = type("T", (), {"pedidos": 1, "custo": 0.01})()
+
+        def __call__(self, itens):
+            falas_longas.extend(itens)
+            return {}
+    monkeypatch.setattr(automacao, "adaptador", lambda o, titulo: Adaptar())
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append(m), opcoes[0])[1]
+    app.bt_dublar.invoke()
+    esperar(app)
+    esperar(app)
+    assert "voz premium \"Kore\" do Gemini" in perguntas[0] and "US$" in perguntas[0]
+    assert criados == [("AIza-teste", "Kore")] and voz.textos
+    assert (filmes / "Nosferatu (1922)" / "Nosferatu (1922) - Dublado IA.mkv").is_file()
+    # sem a chave: avisa e não começa
+    (filmes / "Nosferatu (1922)" / "Nosferatu (1922) - Dublado IA.mkv").unlink()
+    app.var_jf_chave_gemini.set("")
+    criados.clear()
+    app.bt_dublar.invoke()
+    esperar(app)
+    esperar(app)
+    assert "precisa da chave do Google AI Studio" in app.caixas[-1][2] and not criados

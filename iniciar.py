@@ -72,6 +72,8 @@ def _verificar() -> int:
     from jellyfin_tools.tv_ao_vivo import ler_m3u  # noqa: F401
     import anthropic                                           # traduzir legendas: o SDK veio inteiro?
     anthropic.Anthropic(api_key="autoteste")                  # (só monta o cliente; não chama a API)
+    from google import genai                                   # voz premium da dublagem (Gemini)
+    genai.Client(api_key="autoteste")                          # (só monta o cliente; não chama a API)
     import av  # noqa: F401                                   # legenda pelo áudio: Whisper, PyAV e o detector de voz
     import ctranslate2  # noqa: F401
     import faster_whisper
