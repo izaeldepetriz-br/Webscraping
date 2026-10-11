@@ -247,7 +247,7 @@ primeira falha (antes esperava o tempo limite em cada filme).
   vídeo, ou pronto); **Processar** pergunta e faz. Caixas **Legendar** e **Dublar**: só legenda, só dublagem ou os dois.
 - **Dublagem natural** (Configurações > Dublagem > "Como fica a dublagem"): um modelo de IA (UVR MDX-Net, grátis, no
   seu PC) **tira as vozes originais** e mantém a música e os efeitos; a dublagem entra no lugar delas, como num estúdio.
-  Baixa o modelo na 1ª vez (~67 MB). É mais lento: um filme de 2 h leva por volta de 40 min a mais num PC comum.
+  Baixa o modelo na 1ª vez (~67 MB). É lento: separa mais ou menos no ritmo do próprio vídeo, então um filme de 2 h leva de 1 a 3 horas a mais, conforme o processador (no autoteste do GitHub, 12 s de áudio em 17 s). Dica: use a amostra de 1 minuto e a fase de teste antes, e deixe os filmes longos dublando à noite (robô agendado).
   Desmarcado, fica o "voice-over" de antes (o áudio original só abaixa enquanto a voz fala).
 - **Dublagem e legenda DENTRO do próprio vídeo**: a faixa "Português (dublagem IA)" (padrão no Jellyfin) e a legenda
   "Português" entram no arquivo original; o áudio original continua lá como 2ª faixa. Antes de trocar o original, o

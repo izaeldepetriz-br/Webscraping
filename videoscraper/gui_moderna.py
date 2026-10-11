@@ -2950,7 +2950,8 @@ class JanelaModerna(ctk.CTk):
         self.var_jf_separar_vozes = tk.BooleanVar(value=True)
         self._checkbox(lateral, "Dublagem natural: tirar as vozes originais (fica a música e os efeitos)",
                        self.var_jf_separar_vozes)
-        self._rotulo(lateral, "IA no seu PC, grátis. Mais lento: um filme de 2 h leva uns 40 min a mais. Desmarcado: "
+        self._rotulo(lateral, "IA no seu PC, grátis, porém LENTA: um filme de 2 h leva de 1 a 3 horas a mais (depende do "
+                              "processador). Desmarcado: "
                               "\"voice-over\" (o áudio original só abaixa enquanto a voz fala).",
                      fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", padx=(46, 18), pady=(0, 6))
         self.var_jf_dublagem_no_original = tk.BooleanVar(value=True)
