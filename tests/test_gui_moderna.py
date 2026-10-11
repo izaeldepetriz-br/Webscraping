@@ -4241,4 +4241,7 @@ def test_gastos_do_mes_na_tela(app):
     assert atual.teto == 30 and atual.fator == pytest.approx(5.175)
     assert app.lb_gastos_mes.cget("text") == "R$ 21,73 (Claude R$ 5,17 · Gemini R$ 16,56) de R$ 30,00"
     assert app.lb_cotacao.cget("text") == "US$ 1 = R$ 5,00 (cotação fixa) + IOF 3,5%"
+    assert (app.campo_cotacao_dolar.var.get(), app.campo_iof.var.get()) == ("5,00", "3,5")    # jeito brasileiro
+    app.campo_cotacao_dolar.var.set("5,44")                          # digitado com vírgula
+    assert app.campo_cotacao_dolar.get() == pytest.approx(5.44)
     assert ("Gastos do mês: R$ 21,73 de R$ 30,00", True) in app.itens_saude()       # 72% do teto: ainda ok

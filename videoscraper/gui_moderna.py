@@ -178,10 +178,13 @@ class CampoNumerico(ctk.CTkFrame):
     """Seletor numérico moderno ( -  [ valor ]  + ). O CustomTkinter não tem Spinbox."""
 
     def __init__(self, master, valor: float, minimo: float, maximo: float, passo: float = 1,
-                 decimal: bool = False, largura: int = 120):
+                 decimal: bool = False, largura: int = 120, casas: int = 1, virgula: bool = False):
+        """casas: casas decimais mostradas; virgula: mostra '5,44' (dinheiro, jeito brasileiro). Digitar com ponto
+        ou vírgula funciona nos dois casos."""
         super().__init__(master, fg_color=Tema.CAMPO, corner_radius=Tema.RAIO_CONTROLE,
                          border_width=1, border_color=Tema.CAMPO_BORDA, width=largura, height=38)
         self.minimo, self.maximo, self.passo, self.decimal = minimo, maximo, passo, decimal
+        self.casas, self.virgula = casas, virgula
         self.var = tk.StringVar(value=self._formatar(valor))
         fonte = ctk.CTkFont(Tema.FAMILIA, 13)
         estilo_botao = dict(width=30, height=30, corner_radius=8, fg_color="transparent",
@@ -197,7 +200,10 @@ class CampoNumerico(ctk.CTkFrame):
         self.entrada.bind("<Down>", lambda e: self._somar(-1))
 
     def _formatar(self, valor: float) -> str:
-        return f"{valor:.1f}" if self.decimal else str(int(valor))
+        if not self.decimal:
+            return str(int(valor))
+        texto = f"{valor:.{getattr(self, 'casas', 1)}f}"
+        return texto.replace(".", ",") if getattr(self, "virgula", False) else texto
 
     def _somar(self, sinal: int) -> None:
         self.set(self.get() + sinal * self.passo)
@@ -1997,10 +2003,11 @@ class JanelaModerna(ctk.CTk):
         self.bt_escolher = self._botao(lateral, "Escolher...", self.ao_escolher_pasta)
         self.bt_escolher.pack(fill="x", pady=(8, 14), **p)
 
-    def _numero(self, master, texto, valor, minimo, maximo, passo, decimal=False):
+    def _numero(self, master, texto, valor, minimo, maximo, passo, decimal=False, casas=1, virgula=False):
         linha = ctk.CTkFrame(master, fg_color="transparent")
         linha.pack(fill="x", padx=18, pady=(0, 6))
-        campo = CampoNumerico(linha, valor, minimo, maximo, passo, decimal, largura=128)   # cabe "100000"
+        campo = CampoNumerico(linha, valor, minimo, maximo, passo, decimal, largura=128,   # cabe "100000"
+                              casas=casas, virgula=virgula)
         campo.pack(side="right")
         self._rotulo(linha, texto).pack(side="left", fill="x", expand=True)
         return campo
@@ -2492,9 +2499,9 @@ class JanelaModerna(ctk.CTk):
                                               0, 0, 100000, 10)
         self.campo_cotacao_dolar = self._numero(lateral, "Cotação do dólar em R$ (0 = automática: PTAX do Banco "
                                                          "Central, consultada uma vez por dia)", 0, 0, 50, 0.05,
-                                                decimal=True)
+                                                decimal=True, casas=2, virgula=True)
         self.campo_iof = self._numero(lateral, "IOF da compra internacional no cartão, em % (confira na fatura)",
-                                      3.5, 0, 20, 0.1, decimal=True)
+                                      3.5, 0, 20, 0.1, decimal=True, virgula=True)
         self._rotulo(lateral, "Atenção: a API é cobrada À PARTE da sua assinatura. A assinatura do Claude (Pro/Max) e "
                               "a do Google (Gemini/AI Pro) cobrem o uso no site e no app, não a chave de API que o "
                               "Maestro usa. O valor oficial está em console.anthropic.com (Claude) e em "
