@@ -330,17 +330,24 @@ def faixas_de_audio(video: Path) -> tuple[float | None, list[str]]:
         return None, [""]
 
 
-def comando_mixar(ffmpeg: str, video: Path, trilha: Path, saida: Path, faixas: int, legendas: bool) -> list[str]:
-    """O comando do ffmpeg: vídeo copiado, a dublagem como 1ª faixa (padrão) e as originais depois."""
+def comando_mixar(ffmpeg: str, video: Path, trilha: Path, saida: Path, faixas: int, legendas: bool,
+                  trecho: tuple[float, float] | None = None) -> list[str]:
+    """O comando do ffmpeg: vídeo copiado, a dublagem como 1ª faixa (padrão) e as originais depois.
+    trecho (início, fim): só esse pedaço (a AMOSTRA); aí o vídeo é recodificado, para começar no ponto exato e a voz
+    não ficar adiantada (copiando, o corte cai no quadro-chave anterior, até alguns segundos antes)."""
     filtro = ("[0:a:0]aresample=48000,aformat=channel_layouts=stereo[orig];"
               "[1:a]aresample=48000,aformat=channel_layouts=stereo,volume=1.5,asplit=2[voz][chave];"
               "[orig][chave]sidechaincompress=threshold=0.02:ratio=8:attack=20:release=400[abaixada];"
               "[abaixada][voz]amix=inputs=2:duration=first:normalize=0[dub]")
-    comando = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(video), "-i", str(trilha),
-               "-filter_complex", filtro, "-map", "0:v?", "-map", "[dub]", "-map", "0:a"]
-    if legendas:                                    # do .mkv dá para copiar as legendas embutidas como estão
+    corte = ["-ss", f"{trecho[0]:.3f}", "-t", f"{trecho[1] - trecho[0]:.3f}"] if trecho else []
+    comando = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", *corte, "-i", str(video), "-i", str(trilha),
+               "-filter_complex", filtro, "-map", "0:v:0?" if trecho else "0:v?", "-map", "[dub]", "-map", "0:a"]
+    if legendas and not trecho:                     # do .mkv dá para copiar as legendas embutidas como estão
         comando += ["-map", "0:s?", "-map", "0:t?"]
-    comando += ["-c", "copy", "-c:a:0", "aac", "-b:a:0", "192k",
+    comando += ["-c", "copy"]
+    if trecho:
+        comando += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
+    comando += ["-c:a:0", "aac", "-b:a:0", "192k",
                 "-metadata:s:a:0", "language=por", "-metadata:s:a:0", "title=Português (dublagem IA)",
                 "-disposition:a:0", "default"]
     for i in range(faixas):
@@ -349,9 +356,9 @@ def comando_mixar(ffmpeg: str, video: Path, trilha: Path, saida: Path, faixas: i
 
 
 def mixar(ffmpeg: str, video: Path, trilha: Path, destino: Path, duracao: float, faixas: int = 1,
-          parar=None, ao_progresso=None) -> None:
+          parar=None, ao_progresso=None, trecho: tuple[float, float] | None = None) -> None:
     parcial = destino.with_name(destino.name + ".part")
-    comando = comando_mixar(ffmpeg, video, trilha, parcial, max(faixas, 1), video.suffix.lower() == ".mkv")
+    comando = comando_mixar(ffmpeg, video, trilha, parcial, max(faixas, 1), video.suffix.lower() == ".mkv", trecho)
     processo = subprocess.Popen(comando, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                 encoding="utf-8", errors="replace", **SEM_JANELA)
     try:
@@ -384,14 +391,52 @@ class ParaDublar:
     falas: int = 0
     duracao: float | None = None
     tamanho: int = 0               # bytes do vídeo (a versão dublada ocupa quase o mesmo)
+    destino: Path | None = None    # onde grava a versão dublada (None = 'Nome - Dublado IA.mkv' ao lado)
+    serie: str = ""                # episódio: o nome da série (o elenco e as vozes valem para todos os episódios)
 
 
 def caminho_dublado(video: Path) -> Path:
     return video.with_name(video.stem + MARCA_DUBLADO + ".mkv")
 
 
-def videos_para_dublar(*pastas, idioma: str = "pt-BR", sondar=faixas_de_audio) -> list[ParaDublar]:
-    """Filmes com legenda no idioma pedido, sem versão dublada e sem áudio em português."""
+SUFIXO_SERIES_DUBLADAS = " (Dublado IA)"
+
+
+def pasta_series_dubladas(raiz_series: str | Path) -> Path:
+    """Os episódios dublados ficam numa pasta IRMÃ da biblioteca de séries ('Séries (Dublado IA)'), com as mesmas
+    subpastas: na mesma pasta, o Jellyfin mostraria o episódio repetido. No Jellyfin, adicione-a como outra
+    biblioteca de séries."""
+    raiz = Path(raiz_series)
+    return raiz.parent / (raiz.name + SUFIXO_SERIES_DUBLADAS)
+
+
+def destino_episodio(video: Path, raiz_series: str | Path) -> Path:
+    """'Séries/Show/Season 01/Show S01E01.mp4' -> 'Séries (Dublado IA)/Show/Season 01/Show S01E01.mkv'."""
+    relativo = Path(video).relative_to(Path(raiz_series))
+    return pasta_series_dubladas(raiz_series) / relativo.with_suffix(".mkv")
+
+
+def nome_da_serie(video: Path, raiz_series: str | Path) -> str:
+    """A 1ª pasta dentro da biblioteca de séries ('Show (2010)'); vídeo solto na raiz: o próprio nome."""
+    partes = Path(video).relative_to(Path(raiz_series)).parts
+    return partes[0] if len(partes) > 1 else Path(video).stem
+
+
+def episodios_para_dublar(raiz_series: str | Path, idioma: str = "pt-BR", sondar=faixas_de_audio) -> list[ParaDublar]:
+    """Os episódios com legenda em português e sem áudio em português, com o destino na pasta irmã e a série."""
+    if not raiz_series or not Path(raiz_series).is_dir():
+        return []
+    itens = videos_para_dublar(raiz_series, idioma=idioma, sondar=sondar,
+                               destino_de=lambda v: destino_episodio(v, raiz_series))
+    for item in itens:
+        item.serie = nome_da_serie(item.video, raiz_series)
+    return itens
+
+
+def videos_para_dublar(*pastas, idioma: str = "pt-BR", sondar=faixas_de_audio, destino_de=None) -> list[ParaDublar]:
+    """Filmes com legenda no idioma pedido, sem versão dublada e sem áudio em português. destino_de(vídeo): onde
+    fica a versão dublada (séries: a pasta irmã); sem ele, ao lado ('Nome - Dublado IA.mkv')."""
+    destino_de = destino_de or caminho_dublado
     portugues = _PORTUGUES | {idioma.lower(), idioma.lower().split("-")[0]}
     achados, vistos = [], set()
     for pasta in pastas:
@@ -400,7 +445,7 @@ def videos_para_dublar(*pastas, idioma: str = "pt-BR", sondar=faixas_de_audio) -
         for video in sorted(Path(pasta).rglob("*")):
             if ".organizador" in video.parts or not video.is_file() or not eh_video_da_biblioteca(video):
                 continue
-            if video.stem.endswith(MARCA_DUBLADO) or caminho_dublado(video).exists():
+            if video.stem.endswith(MARCA_DUBLADO) or destino_de(video).exists():
                 continue
             if (chave := str(video.resolve()).lower()) in vistos:
                 continue
@@ -417,8 +462,32 @@ def videos_para_dublar(*pastas, idioma: str = "pt-BR", sondar=faixas_de_audio) -
             except (OSError, ErroLegenda):
                 continue
             if falas:
-                achados.append(ParaDublar(video, legenda, falas, duracao, video.stat().st_size))
+                achados.append(ParaDublar(video, legenda, falas, duracao, video.stat().st_size, destino_de(video)))
     return achados
+
+
+# ----------------------------------------------------------------- amostra (ouvir antes de pagar o filme inteiro)
+AMOSTRA = 60.0                     # segundos
+
+
+def trecho_de_amostra(falas: list, segundos: float = AMOSTRA) -> tuple[float, float]:
+    """(início, fim) do minuto com MAIS falas: a amostra mostra bem a voz, o ritmo e a tradução."""
+    inicios = [horarios(f.tempo)[0] for f, _ in falas]
+    if not inicios:
+        raise ErroDublagem("a legenda não tem nenhuma fala")
+    melhor, quantas, fim = inicios[0], 0, 0
+    for k, comeco in enumerate(inicios):
+        while fim < len(inicios) and inicios[fim] < comeco + segundos:
+            fim += 1
+        if fim - k > quantas:
+            melhor, quantas = comeco, fim - k
+    inicio = max(0.0, melhor - 0.5)
+    return inicio, inicio + segundos
+
+
+def caminho_amostra(pasta_cache: str | Path, video: Path) -> Path:
+    """A amostra fica junto do progresso guardado do filme (fora da biblioteca: o Jellyfin não a mostra)."""
+    return pasta_do_filme(pasta_cache, video) / "amostra.mkv"
 
 
 # ----------------------------------------------------------------- um filme
@@ -473,16 +542,20 @@ def _sintetizar(motor, pedidos, parar, ao_progresso=None) -> None:
 def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | None = None,
                  pasta_trabalho: str | Path | None = None, parar=None, ao_progresso=None,
                  sondar=faixas_de_audio, adaptar=None, avisar=None, vozes: dict | None = None,
-                 pasta_cache: str | Path | None = None) -> ResultadoDublagem:
+                 pasta_cache: str | Path | None = None, trecho: tuple[float, float] | None = None,
+                 destino: str | Path | None = None) -> ResultadoDublagem:
     """Lê a legenda com a voz, monta a trilha e grava 'Nome - Dublado IA.mkv'. O original não é tocado.
     adaptar([(id, texto, máx. letras, fala anterior)]) -> {id: texto mais curto}: as falas que não cabem no tempo
     são reescritas (ver adaptacao.py) e lidas de novo. Se falhar, segue sem adaptar. avisar(texto): para o log.
     vozes: {número da fala: voz} (uma voz por personagem; ver personagens.py).
     pasta_cache: guarda as falas já geradas (e as reescritas) por filme. Se parar no meio (limite do Gemini, sem
-    internet, botão Parar), a próxima vez continua de onde parou, sem pedir (nem pagar) de novo."""
+    internet, botão Parar), a próxima vez continua de onde parou, sem pedir (nem pagar) de novo.
+    trecho (início, fim) + destino: só as falas desse pedaço, num vídeo curto (a AMOSTRA). As falas ficam no mesmo
+    progresso guardado: o filme inteiro, depois, não paga de novo por elas."""
     video, legenda = Path(video), Path(legenda)
-    destino = caminho_dublado(video)
-    if destino.exists():
+    destino = Path(destino) if destino else caminho_dublado(video)
+    destino.parent.mkdir(parents=True, exist_ok=True)               # episódio: a pasta irmã da série
+    if destino.exists() and not trecho:
         return ResultadoDublagem(video, "ja_existe", "a versão dublada já existe", destino)
     ffmpeg = ffmpeg or localizar_ffmpeg()
     if not ffmpeg:
@@ -502,6 +575,13 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
         return ResultadoDublagem(video, "erro", "o vídeo não tem áudio")
     duracao = duracao or horarios(falas[-1][0].tempo)[1] + 2
     vozes = vozes or {}
+    indices = list(range(len(falas)))
+    inicio = 0.0
+    if trecho:
+        inicio, duracao = trecho[0], trecho[1] - trecho[0]
+        indices = [k for k, (f, _) in enumerate(falas) if trecho[0] <= horarios(f.tempo)[0] < trecho[1]]
+        if not indices:
+            return ResultadoDublagem(video, "erro", "nenhuma fala nesse trecho")
     if pasta_cache:
         lugar = contextlib.nullcontext(pasta_do_filme(pasta_cache, video))
     else:
@@ -509,21 +589,23 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
     with lugar as pasta:
         pasta = Path(pasta)
         pasta.mkdir(parents=True, exist_ok=True)
-        pedidos = [(t, pasta / _nome_wav(k, t, vozes.get(k, "")), vozes.get(k, "")) for k, (_, t) in enumerate(falas)]
+        pedidos = [(falas[k][1], pasta / _nome_wav(k, falas[k][1], vozes.get(k, "")), vozes.get(k, ""))
+                   for k in indices]
         retomadas = sum(1 for _, w, _ in pedidos if _pronto(w))
         try:
             _sintetizar(motor, pedidos, parar, lambda f: andamento(0.5 * f))
-            clipes = [(*horarios(f.tempo), w) for (f, _), (_, w, _) in zip(falas, pedidos)]
+            clipes = [(a - inicio, b - inicio, w) for k, (_, w, _) in zip(indices, pedidos)
+                      for a, b in [horarios(falas[k][0].tempo)]]
             adaptadas = 0
             if adaptar is not None:
                 clipes, adaptadas = _adaptar(clipes, [t for _, t in falas], duracao, motor, adaptar, parar, avisar,
-                                             vozes, pasta)
+                                             vozes, pasta, indices)
             andamento(0.6)
             contas = montar_trilha(clipes, duracao, pasta / "trilha.wav", acelerar_com_ffmpeg(ffmpeg),
                                    reamostrar_com_ffmpeg(ffmpeg))
             andamento(0.7)
             mixar(ffmpeg, video, pasta / "trilha.wav", destino, duracao, len(idiomas), parar,
-                  lambda f: andamento(0.7 + 0.3 * f))
+                  lambda f: andamento(0.7 + 0.3 * f), trecho)
         except (ErroDublagem, OSError, wave.Error, subprocess.SubprocessError) as erro:
             detalhe = str(erro) if isinstance(erro, ErroDublagem) else f"{type(erro).__name__}: {erro}"
             if pasta_cache:
@@ -533,16 +615,19 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
             return ResultadoDublagem(video, "erro", detalhe, falas=len(falas), retomadas=retomadas)
         if pasta_cache:
             (pasta / "trilha.wav").unlink(missing_ok=True)
-    if pasta_cache:
+    if pasta_cache and not trecho:
         shutil.rmtree(pasta_do_filme(pasta_cache, video), ignore_errors=True)      # pronto: o progresso não serve mais
     andamento(1.0)
-    return ResultadoDublagem(video, "dublado", "", destino, len(falas), contas["aceleradas"], contas["cortadas"],
+    return ResultadoDublagem(video, "dublado", "", destino, len(indices), contas["aceleradas"], contas["cortadas"],
                              adaptadas, retomadas)
 
 
-def _adaptar(clipes, textos, duracao, motor, adaptar, parar, avisar, vozes, pasta):
+def _adaptar(clipes, textos, duracao, motor, adaptar, parar, avisar, vozes, pasta, indices=None):
     """Reescreve (IA) as falas que só caberiam muito aceleradas e as lê de novo. Fica a versão que soar MAIS CURTA.
-    As reescritas ficam guardadas (adaptadas.json): ao continuar um filme, não se paga de novo por elas."""
+    As reescritas ficam guardadas (adaptadas.json) pelo número da fala NO FILME: ao continuar um filme (ou depois
+    de uma amostra), não se paga de novo por elas. indices: o número de cada clipe no filme (amostra)."""
+    ids = list(indices) if indices is not None else list(range(len(clipes)))
+    posicao = {k: pos for pos, k in enumerate(ids)}
     from .adaptacao import NATURAL, limite_de_letras
     arquivo = Path(pasta) / "adaptadas.json"
     try:
@@ -550,7 +635,8 @@ def _adaptar(clipes, textos, duracao, motor, adaptar, parar, avisar, vozes, past
     except (OSError, ValueError):
         guardadas = {}
     longas = []
-    for k, ((_, _, wav), vaga) in enumerate(zip(clipes, vagas(clipes, duracao))):
+    for pos, ((_, _, wav), vaga) in enumerate(zip(clipes, vagas(clipes, duracao))):
+        k = ids[pos]
         dur = duracao_wav(wav)
         if dur / vaga > NATURAL and k not in guardadas:
             longas.append((k, textos[k], limite_de_letras(textos[k], dur, vaga), textos[k - 1] if k else ""))
@@ -566,12 +652,14 @@ def _adaptar(clipes, textos, duracao, motor, adaptar, parar, avisar, vozes, past
             pass
     if not guardadas:
         return clipes, 0
+    usar = [(k, texto) for k, texto in guardadas.items() if k in posicao]
     pedidos = [(texto, Path(pasta) / _nome_wav(k, texto, vozes.get(k, ""), "-curta"), vozes.get(k, ""))
-               for k, texto in guardadas.items() if k < len(clipes)]
+               for k, texto in usar]
     _sintetizar(motor, pedidos, parar)
     clipes, adaptadas = list(clipes), 0
-    for (k, _), (_, wav, _) in zip(((k, t) for k, t in guardadas.items() if k < len(clipes)), pedidos):
-        if _pronto(wav) and duracao_wav(wav) < duracao_wav(clipes[k][2]):
-            clipes[k] = (clipes[k][0], clipes[k][1], wav)
+    for (k, _), (_, wav, _) in zip(usar, pedidos):
+        pos = posicao[k]
+        if _pronto(wav) and duracao_wav(wav) < duracao_wav(clipes[pos][2]):
+            clipes[pos] = (clipes[pos][0], clipes[pos][1], wav)
             adaptadas += 1
     return clipes, adaptadas

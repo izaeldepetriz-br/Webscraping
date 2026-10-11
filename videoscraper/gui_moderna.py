@@ -159,6 +159,9 @@ class OpcoesJellyfin:
     perguntar_filmes: bool = True    # Gemini com vários filmes: perguntar quais vão com o Gemini (o resto, Piper)
     robo_so_piper: bool = False      # robôs agendados (--dublar): só o Piper, sem custo
     guardar_gravacoes: bool = False  # voz clonada: guardar as gravações no PC (para clonar de novo com um clique)
+    teto_gastos: float = 0.0         # US$ por mês nas APIs pagas (Claude + Gemini); 0 = sem teto
+    pasta_avulsos: str = ""          # "Vídeos avulsos": a caixa de entrada para legendar, traduzir e dublar
+    avulsos_dublar: bool = True      # vídeos avulsos: dublar também (desmarcado = só a legenda em português)
     resumo_diario: bool = False      # mandar no Discord/Telegram, uma vez por dia, o que o Maestro fez
     hora_resumo: int = 21
 
@@ -2236,8 +2239,10 @@ class JanelaModerna(ctk.CTk):
         self.bt_traduzir_legendas = self._botao(voz, "Traduzir legendas com IA...", self.ao_traduzir_legendas)
         self.bt_legendar_audio = self._botao(voz, "Criar legenda pelo áudio...", self.ao_legendar_audio)
         self.bt_sincronizar = self._botao(voz, "Sincronizar legendas...", self.ao_sincronizar_legendas)
-        self.bt_dublar = self._botao(voz, "Dublar filmes...", self.ao_dublar)
-        for b in (self.bt_traduzir_legendas, self.bt_legendar_audio, self.bt_sincronizar, self.bt_dublar):
+        self.bt_dublar = self._botao(voz, "Dublar...", self.ao_dublar)
+        self.bt_avulsos = self._botao(voz, "📥 Vídeos avulsos...", self.ao_avulsos)
+        for b in (self.bt_traduzir_legendas, self.bt_legendar_audio, self.bt_sincronizar, self.bt_dublar,
+                  self.bt_avulsos):
             b.configure(height=34)
             b.pack(side="left", padx=(0, 8))
 
@@ -2412,6 +2417,26 @@ class JanelaModerna(ctk.CTk):
         # ===================================================== Dublagem
         self._montar_config_dublagem(self._secao_config("Dublagem"))
 
+        # ===================================================== Vídeos avulsos (caixa de entrada)
+        lateral = self._secao_config("Vídeos avulsos")
+        self._rotulo(lateral, "Uma caixa de entrada para vídeos fora das bibliotecas: o que você colocar nesta pasta "
+                              "ganha a legenda em português (pelo áudio ou traduzindo a que já tiver) e, se marcado, "
+                              "a versão dublada. Os arquivos novos ficam ao lado do original, que nunca é alterado. "
+                              "Na barra \"Legendas e voz\", o botão \"Vídeos avulsos...\" também aceita arquivos de "
+                              "outras pastas; o robô --avulsos faz tudo sozinho no horário agendado.").pack(
+            anchor="w", pady=(0, 8), **p)
+        self._rotulo(lateral, "Pasta de vídeos avulsos:").pack(anchor="w", **p)
+        linha = ctk.CTkFrame(lateral, fg_color="transparent")
+        linha.pack(fill="x", pady=(2, 6), **p)
+        self.var_jf_pasta_avulsos = tk.StringVar()
+        self._entrada(linha, self.var_jf_pasta_avulsos, r"ex.: D:\Para Dublar").pack(side="left", fill="x",
+                                                                                       expand=True)
+        self._botao(linha, "Escolher...", lambda: self._escolher_pasta_em(self.var_jf_pasta_avulsos),
+                    "secundario").pack(side="left", padx=(8, 0))
+        self.var_jf_avulsos_dublar = tk.BooleanVar(value=True)
+        self._checkbox(lateral, "Dublar também (com o motor e as vozes de Configurações > Dublagem)",
+                       self.var_jf_avulsos_dublar)
+
         # ===================================================== Jellyfin (servidor)
         lateral = self._secao_config("Jellyfin")
         self.var_jf_url = tk.StringVar(value="http://localhost:8096")
@@ -2443,6 +2468,21 @@ class JanelaModerna(ctk.CTk):
 
         # ===================================================== Chaves de API (todas num lugar, cada uma com Validar)
         self._montar_config_chaves(self._secao_config("Chaves de API"))
+
+        # ===================================================== Gastos (APIs pagas)
+        lateral = self._secao_config("Gastos (APIs pagas)")
+        self._rotulo(lateral, "Quanto o Maestro gastou neste mês nas APIs pagas (estimativa pelos pedidos feitos):",
+                     suave=False).pack(anchor="w", pady=(0, 4), **p)
+        self.lb_gastos_mes = ctk.CTkLabel(lateral, text="US$ 0.00 (nada ainda)", font=self.f_secao,
+                                          text_color=Tema.TEXTO, anchor="w")
+        self.lb_gastos_mes.pack(anchor="w", pady=(0, 10), **p)
+        self.campo_teto_gastos = self._numero(lateral, "Teto do mês em US$ (0 = sem teto): ao chegar nele, as tarefas "
+                                                       "pagas param e o que ficou pronto é guardado", 0, 0, 1000, 1)
+        self._rotulo(lateral, "Atenção: a API é cobrada À PARTE da sua assinatura. A assinatura do Claude (Pro/Max) e "
+                              "a do Google (Gemini/AI Pro) cobrem o uso no site e no app, não a chave de API que o "
+                              "Maestro usa. O valor oficial está em console.anthropic.com (Claude) e em "
+                              "aistudio.google.com (Gemini); aqui é uma estimativa (na voz, pelo preço mais alto).",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(8, 0), **p)
 
         # ===================================================== Agendamentos
         lateral = self._secao_config("Agendamentos")
@@ -2487,7 +2527,9 @@ class JanelaModerna(ctk.CTk):
         self.tabela_jf, faixa = self._criar_tabela(
             corpo, "Arquivos", self.COLUNAS_JF,
             "Escolha as pastas e clique em Pré-visualizar. Nada é movido sem você confirmar.")
-        self.tabela_jf.configure(displaycolumns=self.ORDEM_TELA_JF)
+        # pede só 3 linhas: o resto da altura vem do "peso" da grade. Pedindo 10, a soma com o painel e o console
+        # passava da janela (até em 1000 px) e o Tk espremia tudo: a lista nunca crescia e o console ficava cortado
+        self.tabela_jf.configure(displaycolumns=self.ORDEM_TELA_JF, height=3)
         self.tabela_jf.bind("<<TreeviewSelect>>", lambda e: self.ao_selecionar_jf())
         self.tabela_jf.bind("<Button-1>", self._ao_clicar_tabela_jf)
         self._fora_jf: set[str] = set()       # "vai mover" desmarcados (☐): o Organizar deixa onde estão
@@ -2513,19 +2555,23 @@ class JanelaModerna(ctk.CTk):
         self._cartao_console_jf = self._criar_console(corpo, linha=2, altura=70).master
         # A lista fica com a maior parte da altura (antes dividia com o console e mostrava ~3 linhas)
         self._corpo_jf = corpo
-        corpo.grid_rowconfigure(0, weight=5, minsize=300)
+        corpo.grid_rowconfigure(0, weight=5, minsize=self.MINIMO_LISTA_JF)
         corpo.grid_rowconfigure(2, weight=1, minsize=self.ALTURA_CONSOLE_JF)   # o registro da ação: ~4 linhas
+        aba.bind("<Configure>", self._ajustar_altura_jf, add="+")
 
     # ------------------------------------------------------------------ ⚙ Configurações (3ª aba)
     ABA_CONFIG = "⚙ Configurações"
     GRUPOS_CONFIG = (("BIBLIOTECA", ("Nomes e TMDB", "Organização e limpeza", "Vigia (automático)", "Espelhos (.strm)")),
-                     ("LEGENDAS E VOZ", ("Legendas", "Tradução (Claude)", "Legenda pelo áudio", "Dublagem")),
+                     ("LEGENDAS E VOZ", ("Legendas", "Tradução (Claude)", "Legenda pelo áudio", "Dublagem",
+                                         "Vídeos avulsos")),
                      ("SERVIDOR E AVISOS", ("Jellyfin", "Avisos e resumo do dia")),
-                     ("SISTEMA", ("Chaves de API", "Agendamentos", "Vídeos (busca)", "Geral, backup e versão")))
+                     ("SISTEMA", ("Chaves de API", "Gastos (APIs pagas)", "Agendamentos", "Vídeos (busca)",
+                                  "Geral, backup e versão")))
     ICONES_CONFIG = {"Nomes e TMDB": "🏷", "Organização e limpeza": "🧹", "Vigia (automático)": "👁",
                      "Espelhos (.strm)": "🔗", "Legendas": "💬", "Tradução (Claude)": "🌐", "Legenda pelo áudio": "🎧",
                      "Dublagem": "🎙", "Jellyfin": "🖥", "Avisos e resumo do dia": "🔔", "Chaves de API": "🔑",
-                     "Agendamentos": "⏰", "Vídeos (busca)": "⬇", "Geral, backup e versão": "⚙"}
+                     "Agendamentos": "⏰", "Vídeos (busca)": "⬇", "Geral, backup e versão": "⚙",
+                     "Vídeos avulsos": "📥", "Gastos (APIs pagas)": "💲"}
 
     def _montar_aba_config(self, aba) -> None:
         """Menu de categorias à esquerda e, à direita, as opções da categoria escolhida (rola se for comprida)."""
@@ -2722,6 +2768,15 @@ class JanelaModerna(ctk.CTk):
 
     def ao_clonar_voz(self) -> None:                    # o app faz (precisa da chave e da internet)
         pass
+
+    def ao_avulsos(self) -> None:
+        pass
+
+    def _pedir_arquivos_video(self) -> tuple:
+        """Janela do sistema para escolher um ou mais vídeos (em qualquer pasta)."""
+        tipos = "*.mp4 *.mkv *.avi *.mov *.m4v *.wmv *.m2ts *.webm *.mpg *.mpeg"
+        return tuple(filedialog.askopenfilenames(parent=self, title="Escolha os vídeos",
+                                                 filetypes=[("Vídeos", tipos), ("Todos os arquivos", "*.*")]))
 
     def ao_remover_voz_clonada(self) -> None:
         pass
@@ -3040,18 +3095,35 @@ class JanelaModerna(ctk.CTk):
         return cartao
 
     ALTURA_CONSOLE_JF = 140
+    MINIMO_LISTA_JF = 160
+    # Altura da aba a partir da qual cabe cada parte (medida: lista + painel + console pedem ~880 px; numa janela
+    # de 900 px, a aba tem ~736). Abaixo disso, o que não cabe sai sozinho, em vez de ficar cortado.
+    ABA_COM_CONSOLE = 880
+    ABA_COM_DETALHE = 700
+
+    def partes_visiveis_jf(self, altura: int | None = None) -> tuple[bool, bool]:
+        """(painel Antes → Depois, console) que cabem nesta altura da aba (e com a lista não ampliada)."""
+        altura = self.aba_jellyfin.winfo_height() if altura is None else altura
+        if self._lista_ampliada:
+            return False, False
+        return altura >= self.ABA_COM_DETALHE, altura >= self.ABA_COM_CONSOLE
+
+    def _ajustar_altura_jf(self, _evento=None) -> None:
+        """A janela mudou de tamanho: mostra só o que cabe (em notebook, a lista fica com a altura toda)."""
+        detalhe, console = self.partes_visiveis_jf()
+        for cartao, mostrar in ((self._cartao_detalhe_jf, detalhe), (self._cartao_console_jf, console)):
+            if mostrar and not cartao.winfo_manager():
+                cartao.grid()
+            elif not mostrar and cartao.winfo_manager():
+                cartao.grid_remove()
+        # a altura mínima da linha do console vai junto: sem isso, o espaço continuava reservado e a lista não crescia
+        self._corpo_jf.grid_rowconfigure(2, minsize=self.ALTURA_CONSOLE_JF if console else 0)
 
     def alternar_lista_jf(self) -> None:
         """'Ampliar lista': esconde o painel Antes → Depois e o console; a tabela ocupa tudo.
-        O andamento continua no rodapé (porcentagem e barra). A altura mínima da linha do console vai junto: em
-        tela baixa (notebook), ela continuava reservando o espaço e a lista não crescia."""
+        O andamento continua no rodapé (porcentagem e barra). 'Reduzir' volta ao que cabe na tela."""
         self._lista_ampliada = not self._lista_ampliada
-        for cartao in (self._cartao_detalhe_jf, self._cartao_console_jf):
-            if self._lista_ampliada:
-                cartao.grid_remove()
-            else:
-                cartao.grid()
-        self._corpo_jf.grid_rowconfigure(2, minsize=0 if self._lista_ampliada else self.ALTURA_CONSOLE_JF)
+        self._ajustar_altura_jf()
         self.bt_ampliar_jf.configure(text="⤡  Reduzir lista" if self._lista_ampliada else "⤢  Ampliar lista")
 
     def _campo_leitura(self, master, var) -> ctk.CTkEntry:
@@ -3153,6 +3225,8 @@ class JanelaModerna(ctk.CTk):
             figurantes_piper=self.var_jf_figurantes_piper.get(),
             limite_figurante=int(self.campo_limite_figurante.get()), perguntar_filmes=self.var_jf_perguntar_filmes.get(),
             robo_so_piper=self.var_jf_robo_so_piper.get(), guardar_gravacoes=self.var_jf_guardar_gravacoes.get(),
+            teto_gastos=float(self.campo_teto_gastos.get()), pasta_avulsos=self.var_jf_pasta_avulsos.get().strip(),
+            avulsos_dublar=self.var_jf_avulsos_dublar.get(),
             resumo_diario=self.var_jf_resumo_diario.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
@@ -3252,7 +3326,8 @@ class JanelaModerna(ctk.CTk):
                   "chave_gemini": self.var_jf_chave_gemini,
                   "jellyfin_url": self.var_jf_url,
                   "jellyfin_api_key": self.var_jf_chave_jellyfin, "discord_webhook": self.var_jf_discord,
-                  "telegram_token": self.var_jf_telegram_token, "telegram_chat_id": self.var_jf_telegram_chat}
+                  "telegram_token": self.var_jf_telegram_token, "telegram_chat_id": self.var_jf_telegram_chat,
+                  "pasta_avulsos": self.var_jf_pasta_avulsos}
         marcas = {"tmdb": self.var_jf_tmdb, "incluir_tmdbid": self.var_jf_tmdbid,
                   "exigir_catalogo": self.var_jf_exigir, "legendas": self.var_jf_legendas,
                   "limpar_lixo": self.var_jf_lixo, "imagens_tmdb": self.var_jf_imagens,
@@ -3269,7 +3344,8 @@ class JanelaModerna(ctk.CTk):
                   "voz_por_personagem": self.var_jf_voz_por_personagem,
                   "figurantes_piper": self.var_jf_figurantes_piper,
                   "perguntar_filmes": self.var_jf_perguntar_filmes, "robo_so_piper": self.var_jf_robo_so_piper,
-                  "guardar_gravacoes": self.var_jf_guardar_gravacoes}
+                  "guardar_gravacoes": self.var_jf_guardar_gravacoes,
+                  "avulsos_dublar": self.var_jf_avulsos_dublar}
         for chave, var in textos.items():
             if dados.get(chave):
                 var.set(dados[chave])
@@ -3283,6 +3359,8 @@ class JanelaModerna(ctk.CTk):
                                              if valor_da_voz(v) == dados["voz_gemini"]), self.VOZES_GEMINI[0]))
         if dados.get("limite_figurante"):
             self.campo_limite_figurante.set(int(dados["limite_figurante"]))
+        if dados.get("teto_gastos"):
+            self.campo_teto_gastos.set(float(dados["teto_gastos"]))
         if dados.get("vigiar_min"):
             self.campo_vigia_min.set(float(dados["vigiar_min"]))
         if dados.get("pastas_vigiadas"):

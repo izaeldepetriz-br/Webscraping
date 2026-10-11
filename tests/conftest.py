@@ -269,6 +269,15 @@ def _cache_tmdb_limpo():
     CatalogoTMDB.limpar_cache()
 
 
+@pytest.fixture(autouse=True)
+def _gastos_desligados():
+    """O registro de gastos é global (o app e os robôs ligam): cada teste começa e termina com ele desligado."""
+    from jellyfin_tools import gastos
+    gastos.configurar(None)
+    yield
+    gastos.configurar(None)
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     """Diagnóstico: quando um teste FALHA, o relatório mostra o que as outras threads estavam fazendo naquela hora

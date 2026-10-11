@@ -88,14 +88,16 @@ def _carregar(arquivo: Path | None) -> dict:
 
 def identificar(video: str | Path, falas: list, cliente, ffmpeg: str, arquivo: str | Path | None = None,
                 ao_progresso=None, parar=None, extrair=audio_do_trecho, tamanho: float = TRECHO,
-                esperar=None) -> list[Personagem]:
+                esperar=None, elenco: list[dict] | None = None) -> list[Personagem]:
     """Quem fala cada fala. falas: [(Fala, texto)] (dublagem.falas_da_legenda). arquivo: onde guardar o progresso
-    (um trecho já ouvido não é pedido de novo)."""
+    (um trecho já ouvido não é pedido de novo). elenco: quem já foi identificado nos OUTROS episódios da série
+    ([{rotulo, genero, descricao}]): o Gemini reusa os mesmos rótulos, e cada um continua com a mesma voz."""
     video = Path(video)
     arquivo = Path(arquivo) if arquivo else None
     progresso = _carregar(arquivo)
     feitos = set(progresso.get("trechos", []))
-    pessoas: dict[str, dict] = {p["rotulo"]: p for p in progresso.get("pessoas", [])}
+    pessoas: dict[str, dict] = {p["rotulo"]: dict(p) for p in (elenco or []) if p.get("rotulo")}
+    pessoas.update({p["rotulo"]: p for p in progresso.get("pessoas", [])})
     de_quem: dict[int, str] = {int(k): v for k, v in progresso.get("falas", {}).items()}
     partes = trechos(falas, tamanho)
     for n, (inicio, fim, ids) in enumerate(partes):
@@ -144,16 +146,21 @@ def identificar(video: str | Path, falas: list, cliente, ffmpeg: str, arquivo: s
 
 
 def distribuir_vozes(personagens: list[Personagem], voz_principal: str = VOZ_PADRAO,
-                     figurante: str | None = None, limite: int = FIGURANTE) -> dict[str, str]:
+                     figurante: str | None = None, limite: int = FIGURANTE,
+                     fixas: dict[str, str] | None = None) -> dict[str, str]:
     """{rótulo: voz}. Quem mais fala fica com a voz principal (se o gênero combinar); os outros, vozes do mesmo
     gênero ainda não usadas (repetem só quando acabam). Quem fala pouco fica com a voz principal. Uma voz clonada
     ("clone:Nome") como principal vai para quem mais fala, qualquer que seja o gênero (dá para trocar na tabela).
     figurante ("piper:faber"): dublagem MISTA, quem tem menos de `limite` falas vai para essa voz (Piper, grátis)."""
     clonada = voz_principal.startswith("clone:")       # a SUA voz clonada como principal: vai para quem mais fala
     principal = voz_principal if voz_principal in VOZES or clonada else VOZ_PADRAO
-    usadas: Counter = Counter()
+    fixas = fixas or {}
+    usadas: Counter = Counter(fixas.values())
     mapa = {}
     for p in personagens:                              # já vêm de quem fala mais para quem fala menos
+        if p.rotulo in fixas:                          # série: a voz que esse personagem já tinha
+            mapa[p.rotulo] = fixas[p.rotulo]
+            continue
         if figurante and len(p.falas) < limite:
             mapa[p.rotulo] = figurante
             continue
@@ -168,6 +175,29 @@ def distribuir_vozes(personagens: list[Personagem], voz_principal: str = VOZ_PAD
         mapa[p.rotulo] = voz
         usadas[voz] += 1
     return mapa
+
+
+def carregar_elenco(arquivo: str | Path) -> dict:
+    """{"pessoas": [{rotulo, genero, descricao}], "vozes": {rotulo: voz}} de uma série (vazio se ainda não tem)."""
+    try:
+        dados = json.loads(Path(arquivo).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"pessoas": [], "vozes": {}}
+    return {"pessoas": [p for p in dados.get("pessoas", []) if isinstance(p, dict) and p.get("rotulo")],
+            "vozes": {str(k): str(v) for k, v in dict(dados.get("vozes", {})).items()}}
+
+
+def salvar_elenco(arquivo: str | Path, personagens: list[Personagem], mapa: dict[str, str]) -> None:
+    """Junta ao elenco da série quem apareceu neste episódio e a voz de cada um (a escolhida vale para os próximos)."""
+    elenco = carregar_elenco(arquivo)
+    pessoas = {p["rotulo"]: p for p in elenco["pessoas"]}
+    for p in personagens:
+        pessoas[p.rotulo] = {"rotulo": p.rotulo, "genero": p.genero, "descricao": p.descricao}
+    vozes = {**elenco["vozes"], **{r: v for r, v in mapa.items() if v}}
+    arquivo = Path(arquivo)
+    arquivo.parent.mkdir(parents=True, exist_ok=True)
+    arquivo.write_text(json.dumps({"pessoas": list(pessoas.values()), "vozes": vozes}, ensure_ascii=False, indent=2),
+                       encoding="utf-8")
 
 
 def vozes_por_fala(personagens: list[Personagem], mapa: dict[str, str]) -> dict[int, str]:

@@ -32,6 +32,7 @@ from array import array
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from . import gastos
 from .dublagem import ErroDublagem
 
 MODELO_PADRAO = "gemini-3.8-flash-tts"
@@ -51,6 +52,8 @@ ESTILO = ("Dublagem brasileira de filme: fale em português do Brasil, natural e
 TAXA = 24000                  # o Gemini devolve 24 kHz, mono, 16 bits
 TOKENS_POR_SEGUNDO = 32       # áudio vira ~32 tokens por segundo (para a ESTIMATIVA de custo)
 PRECO_SAIDA = (6.0, 20.0)     # US$ por milhão de tokens de áudio: faixa dos modelos TTS do Gemini (confira o atual)
+PRECO_OUVIR = 1.0             # US$ por milhão de tokens de áudio ENVIADO (ouvir quem fala; estimativa, confira)
+KBPS_OUVIR = 32               # o áudio enviado para ouvir vai em mp3 de 32 kbps (personagens.audio_do_trecho)
 SIMULTANEOS = 4               # blocos pedidos ao mesmo tempo
 TENTATIVAS = 6
 BLOCO = 30                    # falas por pedido
@@ -217,6 +220,20 @@ def testar_chave(chave: str, modelo: str = MODELO_PADRAO, cliente=None) -> str:
     return getattr(info, "display_name", "") or modelo
 
 
+def _conferir_teto() -> None:
+    """Antes de cada pedido pago: passou do teto de gastos do mês? Para (o que já ficou pronto fica guardado)."""
+    try:
+        gastos.conferir()
+    except gastos.TetoAtingido as erro:
+        raise ErroDublagem(str(erro)) from erro
+
+
+def custo_da_fala(segundos: float) -> float:
+    """O custo estimado de `segundos` de áudio gerado, pelo preço MAIS ALTO da faixa (para o teto não ser
+    ultrapassado por engano)."""
+    return segundos * TOKENS_POR_SEGUNDO * PRECO_SAIDA[1] / 1_000_000
+
+
 def _com_tentativas(chamar, esperar=time.sleep):
     """Chama a API; no limite por minuto (429) ou instabilidade (5xx) espera 2, 4, 8, 16, 32 s e tenta de novo."""
     for tentativa in range(TENTATIVAS):
@@ -256,8 +273,11 @@ def perguntar_sobre_audio(cliente, pergunta: str, mp3: bytes, modelo: str = MODE
     """Manda um trecho de áudio (mp3) e uma pergunta ao Gemini; devolve o texto da resposta."""
     entrada = [{"type": "text", "text": pergunta},
                {"type": "audio", "data": base64.b64encode(mp3).decode(), "mime_type": "audio/mp3"}]
-    return texto_da_resposta(_com_tentativas(lambda: cliente.interactions.create(model=modelo, input=entrada),
-                                             esperar))
+    _conferir_teto()
+    resposta = _com_tentativas(lambda: cliente.interactions.create(model=modelo, input=entrada), esperar)
+    segundos = len(mp3) * 8 / (KBPS_OUVIR * 1000)
+    gastos.registrar("Gemini", segundos * TOKENS_POR_SEGUNDO * PRECO_OUVIR / 1_000_000)
+    return texto_da_resposta(resposta)
 
 
 FRASE_DE_TESTE = ("Olá! Esta é a voz que vai dublar os seus filmes no Maestro. Que tal? Se não gostar, é só "
@@ -311,12 +331,15 @@ class MotorGemini:
         def chamar():
             return self.cliente.interactions.create(model=self.modelo, input=entrada, response_format={"type": "audio"},
                                                     generation_config={"speech_config": config})
+        _conferir_teto()
         resposta = _com_tentativas(chamar, self._esperar)
         self.pedidos += 1
         audio = getattr(resposta, "output_audio", None)
         if audio is None or not getattr(audio, "data", None):
             raise ErroDublagem("o Gemini não devolveu áudio")
-        return _ler_audio(audio.data)
+        amostras, taxa = _ler_audio(audio.data)
+        gastos.registrar("Gemini", custo_da_fala(len(amostras) / taxa))       # o painel de gastos do mês
+        return amostras, taxa
 
     def conhece(self, voz: str) -> bool:
         return voz in VOZES or voz in self.clonadas

@@ -18,6 +18,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from . import gastos
 from .legendas import ErroLegenda, extrair_srt
 from .traducao import (CONTEXTO_ANTERIOR, LINHAS_POR_PEDIDO, ErroTraducao, Fala, ResultadoTraducao, Tradutor,
                        _explicar, ajustar_linhas, gerar_srt, ler_resposta, ler_srt)
@@ -51,6 +52,7 @@ def enviar(pendentes: list, tradutor: Tradutor, pasta_lotes: str | Path) -> tupl
                 lote, Path(p.video).stem, anteriores, ROTULO_CONTEXTO)})
     if not requisicoes:
         raise ErroTraducao("nenhuma legenda com falas para enviar")
+    tradutor.conferir_teto()
     try:
         envio = tradutor.cliente.messages.batches.create(requests=requisicoes)
     except Exception as erro:
@@ -100,8 +102,10 @@ def coletar(arquivo_lote: str | Path, tradutor: Tradutor) -> list[ResultadoTradu
         traduzidas.setdefault(n, {}).update({i: textos[i] for i in ids if i in textos})
         refazer.setdefault(n, []).extend(i for i in ids if i not in textos)
     # os tokens do lote custam metade: soma no tradutor como meio token (o custo final fica certo)
+    antes = tradutor.custo or 0.0
     tradutor.tokens_entrada += tokens[0] // 2
     tradutor.tokens_saida += tokens[1] // 2
+    gastos.registrar("Claude", (tradutor.custo or 0.0) - antes)
     resultados = []
     for n, info in enumerate(dados["arquivos"]):
         origem, destino = Path(info["origem"]), Path(info["destino"])

@@ -58,13 +58,13 @@ from jellyfin_tools import traducao_lote
 from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sincronizar
 from jellyfin_tools.transcricao import Transcritor, legendar_pelo_audio, videos_sem_legenda
 from jellyfin_tools.dublagem import (PREFIXO_PIPER, ErroDublagem, MotorMisto, MotorPiper, dublar_video,
-                                     falas_da_legenda, localizar_ffmpeg, pasta_do_filme, preparar_piper, preparar_voz,
-                                     videos_para_dublar)
+                                     episodios_para_dublar, falas_da_legenda, localizar_ffmpeg, pasta_do_filme,
+                                     preparar_piper, preparar_voz, videos_para_dublar)
 from jellyfin_tools.legendas import ErroLegenda
 from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, ClienteTV, carregar_canais, carregar_historico,
                                        conferir_canais, mensagem_fora_do_ar, publicar, registrar_no_historico,
                                        salvar_historico)
-from jellyfin_tools import personagens, vigia, voz_clonada, voz_gemini
+from jellyfin_tools import gastos, personagens, vigia, voz_clonada, voz_gemini
 from jellyfin_tools.adaptacao import Adaptador
 from jellyfin_tools.vigia import filtro_prontos
 
@@ -73,7 +73,7 @@ from .gui_moderna import JanelaModerna, OpcoesJellyfin
 
 # Ordem em que rodam quando vêm juntos (organizar primeiro: as legendas novas já entram na tradução)
 COMANDOS = ("--organizar", "--conferir-espelhos", "--conferir-canais", "--enviar-tv", "--traduzir-legendas",
-            "--legendar-audio", "--sincronizar-legendas", "--dublar")
+            "--legendar-audio", "--sincronizar-legendas", "--dublar", "--avulsos")
 OK, PROBLEMA, FALTA_CONFIGURACAO, ERRO_INESPERADO = 0, 1, 2, 3
 
 # Chave não lembrada no config.json? Vem destas variáveis de ambiente (as mesmas que a janela usa).
@@ -116,7 +116,13 @@ def opcoes_salvas() -> tuple[OpcoesJellyfin, dict]:
         setattr(o, nome, tuple(getattr(o, nome) or ()))
     pastas = {"Filmes": dados.get("destino_filmes") or "", "Séries": dados.get("destino_series") or "",
               "Vídeos comuns": tudo.get("espelho", {}).get("pasta_videos_comuns") or ""}
+    gastos.configurar(arquivo_gastos(), o.teto_gastos)     # os robôs também anotam os gastos e respeitam o teto
     return o, pastas
+
+
+def arquivo_gastos() -> Path:
+    """Os gastos estimados por mês nas APIs pagas (Claude e Gemini), junto das configurações."""
+    return config.ARQUIVO.parent / "gastos.json"
 
 
 def bibliotecas(pastas: dict) -> list[str]:
@@ -239,14 +245,37 @@ def pasta_dublagem() -> Path:
     return config.ARQUIVO.parent / "dublagem"
 
 
-def ouvir_personagens(o: OpcoesJellyfin, video: Path, falas: list, cliente=None, ao_progresso=None, parar=None):
-    """O Gemini ouve o filme e diz quem fala cada fala (ver personagens.py). O que já ouviu fica guardado."""
+def ouvir_personagens(o: OpcoesJellyfin, video: Path, falas: list, cliente=None, ao_progresso=None, parar=None,
+                      serie: str = ""):
+    """O Gemini ouve o filme e diz quem fala cada fala (ver personagens.py). O que já ouviu fica guardado.
+    serie: episódio; o elenco dos outros episódios vai junto, para os mesmos personagens terem os mesmos rótulos."""
     ffmpeg = localizar_ffmpeg()
     if not ffmpeg:
         raise ErroDublagem("falta o ffmpeg (pip install imageio-ffmpeg)")
     cliente = cliente or voz_gemini._cliente(chave_gemini(o))
     arquivo = pasta_do_filme(pasta_dublagem(), video) / "personagens.json"
-    return personagens.identificar(video, falas, cliente, ffmpeg, arquivo, ao_progresso=ao_progresso, parar=parar)
+    elenco = personagens.carregar_elenco(arquivo_elenco(serie))["pessoas"] if serie else None
+    return personagens.identificar(video, falas, cliente, ffmpeg, arquivo, ao_progresso=ao_progresso, parar=parar,
+                                   elenco=elenco)
+
+
+def arquivo_elenco(serie: str) -> Path:
+    """O elenco de uma série (quem fala e a voz de cada um), para os próximos episódios."""
+    nome = re.sub(r"[^\w() -]", "_", serie).strip()[:80] or "serie"
+    return pasta_dublagem() / "series" / f"{nome}.json"
+
+
+def vozes_da_serie(serie: str) -> dict:
+    """{rótulo: voz} já escolhidas nos episódios anteriores (vazio: filme, ou 1º episódio)."""
+    return personagens.carregar_elenco(arquivo_elenco(serie))["vozes"] if serie else {}
+
+
+def itens_para_dublar(pastas: dict, idioma: str = "pt-BR", sondar=None) -> list:
+    """Os filmes (versão ao lado) e os episódios das séries (na pasta irmã 'Séries (Dublado IA)') para dublar."""
+    extra = {"sondar": sondar} if sondar else {}
+    filmes = pastas.get("Filmes") or ""
+    itens = videos_para_dublar(filmes, idioma=idioma, **extra) if filmes and Path(filmes).is_dir() else []
+    return itens + episodios_para_dublar(pastas.get("Séries") or "", idioma=idioma, **extra)
 
 
 def adaptador(o: OpcoesJellyfin, titulo: str = ""):
@@ -561,16 +590,16 @@ def sincronizar_legendas(log: logging.Logger, limite_videos: int = 5) -> Resulta
 
 
 def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
-    """Os filmes com legenda em português e sem áudio em português ganham 'Nome - Dublado IA.mkv'."""
+    """Os filmes e episódios com legenda em português e sem áudio em português ganham a versão dublada (filmes:
+    'Nome - Dublado IA.mkv' ao lado; episódios: na pasta irmã 'Séries (Dublado IA)')."""
     o, pastas = opcoes_salvas()
     if o.robo_so_piper:                               # opção "Nos robôs agendados, usar só o Piper (sem custo)"
         o.motor_voz, o.voz_por_personagem, o.figurantes_piper = "Piper (grátis, no PC)", False, False
-    filmes = pastas["Filmes"]
-    if not filmes or not Path(filmes).is_dir():
-        raise FaltaConfiguracao("Escolha a biblioteca de Filmes na aba Jellyfin (a dublagem é só para filmes).")
-    itens = videos_para_dublar(filmes, idioma=o.idioma.split(",")[0].strip() or "pt-BR")
+    if not any(pastas.get(t) and Path(pastas[t]).is_dir() for t in ("Filmes", "Séries")):
+        raise FaltaConfiguracao("Escolha a biblioteca de Filmes e/ou de Séries na aba Jellyfin.")
+    itens = itens_para_dublar(pastas, o.idioma.split(",")[0].strip() or "pt-BR")
     if not itens:
-        return Resultado("--dublar", OK, "Nenhum filme para dublar.")
+        return Resultado("--dublar", OK, "Nenhum filme ou episódio para dublar.")
     escolhidos = itens[:limite_videos] if limite_videos > 0 else itens
     try:
         motor = preparar_motor(o)
@@ -580,18 +609,7 @@ def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
     log.info("Dublar: %d filme(s), %d nesta execução (voz %s)", len(itens), len(escolhidos), voz)
     resultados = []
     for item in escolhidos:
-        vozes = None
-        if usa_gemini(o) and o.voz_por_personagem:
-            try:
-                lista = ouvir_personagens(o, item.video, falas_da_legenda(item.legenda))
-                vozes = personagens.vozes_por_fala(lista, personagens.distribuir_vozes(lista, o.voz_gemini,
-                                                                                       figurante(o),
-                                                                                       o.limite_figurante))
-            except (ErroDublagem, OSError, ErroLegenda) as erro:
-                log.warning("Voz por personagem em %s: %s (segue com uma voz só)", item.video.name, erro)
-        r = dublar_video(item.video, item.legenda, motor, adaptar=adaptador(o, item.video.stem),
-                         avisar=lambda texto: log.warning("Dublagem: %s", texto), vozes=vozes,
-                         pasta_cache=pasta_dublagem())
+        r = dublar_item(o, item, motor, log)
         resultados.append(r)
         (log.error if r.status == "erro" else log.info)("[%s] %s%s (%d falas, %d adaptadas, %d aceleradas)",
                                                          r.status, r.video.name,
@@ -604,10 +622,143 @@ def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
             atualizar_biblioteca(o.jellyfin_url, o.jellyfin_api_key)
         except ErroJellyfin as erro:
             log.warning("Jellyfin: scan não pedido (%s)", erro)
-    resumo = (f"{len(feitos)} de {len(resultados)} filme(s) dublado(s), {len(erros)} erro(s)"
+    resumo = (f"{len(feitos)} de {len(resultados)} vídeo(s) dublado(s), {len(erros)} erro(s)"
               + (f", {len(itens) - len(resultados)} para a próxima vez." if len(resultados) < len(itens) else "."))
     return Resultado("--dublar", PROBLEMA if erros else OK, resumo, [f"{r.video.name}: {r.detalhe}" for r in erros],
                      {"dublados": len(feitos)})
+
+
+def vozes_automaticas(o: OpcoesJellyfin, item, log: logging.Logger) -> dict | None:
+    """Robôs e vídeos avulsos (sem ninguém para conferir a tabela): uma voz por personagem escolhida sozinha."""
+    if not (usa_gemini(o) and o.voz_por_personagem):
+        return None
+    try:
+        lista = ouvir_personagens(o, item.video, falas_da_legenda(item.legenda), serie=item.serie)
+        mapa = personagens.distribuir_vozes(lista, o.voz_gemini, figurante(o), o.limite_figurante,
+                                            fixas=vozes_da_serie(item.serie))
+        if item.serie:                                # os próximos episódios usam as mesmas vozes
+            personagens.salvar_elenco(arquivo_elenco(item.serie), lista, mapa)
+        return personagens.vozes_por_fala(lista, mapa)
+    except (ErroDublagem, OSError, ErroLegenda) as erro:
+        log.warning("Voz por personagem em %s: %s (segue com uma voz só)", item.video.name, erro)
+        return None
+
+
+def dublar_item(o: OpcoesJellyfin, item, motor, log: logging.Logger, parar=None, ao_progresso=None):
+    return dublar_video(item.video, item.legenda, motor, adaptar=adaptador(o, item.video.stem),
+                        avisar=lambda texto: log.warning("Dublagem: %s", texto), vozes=vozes_automaticas(o, item, log),
+                        pasta_cache=pasta_dublagem(), destino=item.destino, parar=parar, ao_progresso=ao_progresso)
+
+
+# ============================================================================ vídeos avulsos
+@dataclasses.dataclass
+class PlanoAvulsos:
+    """O que a caixa de entrada (ou os arquivos escolhidos) tem para fazer."""
+    traduzir: list                 # legendas em outro idioma -> português (Claude)
+    pelo_audio: list               # vídeos sem nenhuma legenda -> Whisper (+ Claude)
+    dublar: list                   # já com legenda em português, sem versão dublada
+    videos: int = 0                # quantos vídeos olhados
+
+    @property
+    def vazio(self) -> bool:
+        return not (self.traduzir or self.pelo_audio or self.dublar)
+
+
+def _so_estes(itens: list, arquivos) -> list:
+    if not arquivos:
+        return itens
+    escolhidos = {str(Path(a).resolve()).lower() for a in arquivos}
+    return [i for i in itens if str(Path(i.video).resolve()).lower() in escolhidos]
+
+
+def planejar_avulsos(o: OpcoesJellyfin, pasta: str = "", arquivos=(), sondar=None) -> PlanoAvulsos:
+    """A pasta de vídeos avulsos inteira, ou só os arquivos escolhidos (em qualquer pasta)."""
+    from jellyfin_tools.dublagem import MARCA_DUBLADO
+    from jellyfin_tools.nomes import eh_video
+    onde = sorted({str(Path(a).parent) for a in arquivos}) if arquivos else [pasta]
+    onde = [p for p in onde if p and Path(p).is_dir()]
+    idioma = o.idioma.split(",")[0].strip() or "pt-BR"
+    extra = {"sondar": sondar} if sondar else {}
+    videos = (len(arquivos) if arquivos else
+              sum(1 for p in onde for v in Path(p).rglob("*")
+                  if v.is_file() and eh_video(v) and not v.stem.endswith(MARCA_DUBLADO)))
+    return PlanoAvulsos(_so_estes(legendas_para_traduzir(*onde, idioma=idioma), arquivos),
+                        _so_estes(videos_sem_legenda(*onde, idioma=idioma), arquivos),
+                        _so_estes(videos_para_dublar(*onde, idioma=idioma, **extra), arquivos) if o.avulsos_dublar
+                        else [], videos)
+
+
+def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", arquivos=(), parar=None,
+                      avisar=None, sondar=None, motor=None) -> Resultado:
+    """Caixa de entrada: (1) traduz a legenda que já existe; (2) cria pelo áudio a dos que não têm nenhuma; (3) se
+    marcado, dubla os que ficaram com legenda em português. Tudo ao lado do original, que não é alterado."""
+    avisar = avisar or (lambda texto: None)
+    parado = parar or (lambda: False)
+    idioma = o.idioma.split(",")[0].strip() or "pt-BR"
+    plano = planejar_avulsos(o, pasta, arquivos, sondar)
+    tradutor = (Tradutor(chave=o.chave_claude, modelo=o.modelo_traducao, idioma=idioma)
+                if o.chave_claude or os.environ.get("ANTHROPIC_API_KEY") else None)
+    contas, erros = {"traduzidas": 0, "pelo_audio": 0, "dublados": 0}, []
+    if plano.traduzir and tradutor is None:
+        erros.append(f"{len(plano.traduzir)} legenda(s) em outro idioma: falta a chave da Anthropic para traduzir")
+    for k, p in enumerate(plano.traduzir if tradutor else []):
+        if parado():
+            break
+        avisar(f"Traduzindo a legenda {k + 1} de {len(plano.traduzir)}: {p.video.stem}")
+        r = traduzir_arquivo(p.origem, p.destino, tradutor, titulo=p.video.stem)
+        log.info("[%s] avulso %s -> %s%s", r.status, r.origem.name, r.destino.name,
+                 f" ({r.detalhe})" if r.detalhe else "")
+        if r.status == "erro":
+            erros.append(f"{p.origem.name}: {r.detalhe}")
+        else:
+            contas["traduzidas"] += 1
+    if plano.pelo_audio and not parado():
+        transcritor = Transcritor(modelo=o.modelo_whisper, usar_gpu=o.whisper_gpu,
+                                  pasta_modelos=str(config.ARQUIVO.parent / "modelos_whisper"))
+        for k, item in enumerate(plano.pelo_audio):
+            if parado():
+                break
+            avisar(f"Criando a legenda pelo áudio {k + 1} de {len(plano.pelo_audio)}: {item.video.stem}")
+            r = legendar_pelo_audio(item.video, transcritor, tradutor, idioma)
+            log.info("[%s] avulso %s%s", r.status, r.video.name, f" ({r.detalhe})" if r.detalhe else "")
+            if r.status == "erro":
+                erros.append(f"{item.video.name}: {r.detalhe}")
+            else:
+                contas["pelo_audio"] += 1
+    dublar_agora = []
+    if o.avulsos_dublar and not parado():            # de novo: as legendas novas entram na dublagem
+        dublar_agora = planejar_avulsos(o, pasta, arquivos, sondar).dublar
+    if dublar_agora:
+        try:
+            motor = motor or preparar_motor(o)
+        except (ErroDublagem, FaltaConfiguracao) as erro:
+            erros.append(f"dublagem: não deu para preparar a voz: {erro}")
+            dublar_agora = []
+        for k, item in enumerate(dublar_agora):
+            if parado():
+                break
+            avisar(f"Dublando {k + 1} de {len(dublar_agora)}: {item.video.stem}")
+            r = dublar_item(o, item, motor, log, parar)
+            log.info("[%s] avulso %s%s", r.status, r.video.name, f" ({r.detalhe})" if r.detalhe else "")
+            if r.status == "erro":
+                erros.append(f"{item.video.name}: {r.detalhe}")
+            elif r.status == "dublado":
+                contas["dublados"] += 1
+    resumo = (f"Vídeos avulsos: {contas['traduzidas']} legenda(s) traduzida(s), {contas['pelo_audio']} criada(s) pelo "
+              f"áudio, {contas['dublados']} dublado(s)" + (f", {len(erros)} problema(s)." if erros else "."))
+    if plano.vazio and not dublar_agora:
+        resumo = "Vídeos avulsos: nada a fazer (já têm legenda em português e versão dublada, ou não há vídeos)."
+    return Resultado("--avulsos", PROBLEMA if erros else OK, resumo, erros, contas)
+
+
+def avulsos(log: logging.Logger) -> Resultado:
+    """Robô --avulsos: a caixa de entrada inteira (Configurações > Vídeos avulsos)."""
+    o, _ = opcoes_salvas()
+    if not o.pasta_avulsos or not Path(o.pasta_avulsos).is_dir():
+        raise FaltaConfiguracao("Escolha a pasta de vídeos avulsos (Configurações > Vídeos avulsos).")
+    if o.robo_so_piper:                               # opção "Nos robôs agendados, usar só o Piper (sem custo)"
+        o.motor_voz, o.voz_por_personagem, o.figurantes_piper = "Piper (grátis, no PC)", False, False
+    return processar_avulsos(o, log, o.pasta_avulsos, avisar=lambda texto: log.info("%s", texto))
 
 
 # ============================================================================ entrada
@@ -641,7 +792,8 @@ def _rodar(comando: str, args, log: logging.Logger) -> Resultado:
              "--traduzir-legendas": lambda: traduzir_legendas(log, args.limite_dolares, args.economico),
              "--legendar-audio": lambda: legendar_audio(log, args.limite_videos, args.limite_dolares),
              "--sincronizar-legendas": lambda: sincronizar_legendas(log, args.limite_videos),
-             "--dublar": lambda: dublar(log, args.limite_videos)}
+             "--dublar": lambda: dublar(log, args.limite_videos),
+             "--avulsos": lambda: avulsos(log)}
     try:
         return acoes[comando]()
     except FaltaConfiguracao as falta:

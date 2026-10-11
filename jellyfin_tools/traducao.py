@@ -20,6 +20,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import gastos
 from .legendas import ErroLegenda, extrair_srt, nome_do_idioma
 from .nomes import eh_video_da_biblioteca
 
@@ -269,10 +270,19 @@ class Tradutor:
                 "output_config": {"format": {"type": "json_schema", "schema": _ESQUEMA}}}
 
     def contar(self, resposta) -> None:
+        antes = self.custo or 0.0
         self.pedidos += 1
         uso = getattr(resposta, "usage", None)
         self.tokens_entrada += getattr(uso, "input_tokens", 0) or 0
         self.tokens_saida += getattr(uso, "output_tokens", 0) or 0
+        gastos.registrar("Claude", (self.custo or 0.0) - antes)     # o painel de gastos do mês
+
+    def conferir_teto(self) -> None:
+        """Antes de cada pedido: passou do teto de gastos do mês? Para (o que já foi traduzido fica)."""
+        try:
+            gastos.conferir()
+        except gastos.TetoAtingido as erro:
+            raise ErroTraducao(str(erro)) from erro
 
     def traduzir_falas(self, textos: list[str], titulo: str = "", parar=None, ao_progresso=None) -> list[str]:
         """Os textos traduzidos, na mesma ordem. Falas vazias continuam vazias (não vão para a API)."""
@@ -293,6 +303,7 @@ class Tradutor:
 
     def _traduzir_lote(self, lote: dict[int, str], titulo: str, anteriores: list[str],
                        tentativa: int = 1) -> dict[int, str]:
+        self.conferir_teto()
         try:
             resposta = self.cliente.messages.create(**self.parametros(lote, titulo, anteriores))
         except Exception as erro:                    # erros do SDK (chave, conexão, limite...) em português

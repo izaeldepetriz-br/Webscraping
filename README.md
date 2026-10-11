@@ -240,6 +240,30 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.14.0
+
+- **Amostra de 1 minuto antes de dublar**: ao clicar em "Dublar...", o botão **"Ouvir uma amostra (1 min)"** dubla
+  só o minuto com mais falas, num vídeo curto fora da biblioteca, e abre no seu player. Você ouve a voz, o ritmo e
+  a tradução antes de pagar pelo filme inteiro. As falas da amostra ficam guardadas: a dublagem completa, depois,
+  **não paga de novo** por elas.
+- **Gastos do mês (APIs pagas)**: ⚙ Configurações > **Gastos** mostra quanto o Maestro gastou no mês com o
+  **Claude** (tradução, falas reescritas) e com o **Gemini** (voz, ouvir quem fala), e aceita um **teto** em US$.
+  Ao chegar no teto, as tarefas pagas param (o que ficou pronto é guardado e continua depois). O painel de saúde
+  avisa a partir de 80% do teto. Vale também para os robôs agendados. É uma estimativa: o valor oficial está em
+  console.anthropic.com e aistudio.google.com — e a API é cobrada **à parte** das assinaturas do Claude e do Gemini.
+- **Vídeos avulsos (caixa de entrada)**: ⚙ Configurações > **Vídeos avulsos** define uma pasta (ex.:
+  `D:\Para Dublar`). O botão **"📥 Vídeos avulsos..."** (barra "Legendas e voz") processa a pasta ou **arquivos de
+  qualquer pasta**: traduz a legenda que já existir, cria pelo áudio a dos que não têm nenhuma e, se marcado, dubla.
+  Tudo ao lado do original, que nunca é alterado. O robô **`--avulsos`** faz o mesmo no horário agendado.
+- **Dublar episódios de séries**: o "Dublar..." agora inclui a biblioteca de Séries. A versão dublada fica numa
+  **pasta irmã**, `Séries (Dublado IA)`, com as mesmas subpastas (na mesma pasta, o Jellyfin mostraria o episódio
+  repetido): adicione-a no Jellyfin como outra biblioteca de séries. Com "uma voz para cada personagem", cada
+  série guarda o **elenco**: os próximos episódios reconhecem os mesmos personagens e usam **as mesmas vozes**.
+- **Aba Jellyfin em notebooks**: a lista, o painel "Antes → Depois" e o console pediam mais altura do que a janela
+  tinha, e o Tk espremia tudo (a lista ficava com ~5 linhas e o console cortado, em qualquer tamanho). Agora sai
+  sozinho o que não cabe — primeiro o console (o andamento segue no rodapé e em "Abrir log"), depois o painel — e a
+  lista cresce: numa janela de 810 px, de 156 para 263 px.
+
 ### Novidades da v2.13.0
 
 - **Clonar uma voz (réplica do Gemini)**, sem placa de vídeo: em ⚙ Configurações > Dublagem, **"🎙 Clonar uma
@@ -976,6 +1000,7 @@ jellyfin_tools/
   voz_gemini.py         voz premium da dublagem: Gemini (Google AI Studio); blocos e cortes nas pausas
   voz_clonada.py        clonar a voz de quem autorizou (réplica do Gemini, com a frase de consentimento)
   microfone.py          gravar do microfone (sounddevice) para a clonagem
+  gastos.py             quanto o Maestro gastou no mês nas APIs pagas (Claude, Gemini) e o teto
   personagens.py        voz por personagem: o Gemini ouve o filme e diz quem fala cada fala
   sincronia.py          acerta legenda adiantada/atrasada comparando com a voz do áudio
   resumo_diario.py      o resumo do dia no Discord/Telegram

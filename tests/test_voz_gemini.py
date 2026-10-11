@@ -246,3 +246,33 @@ def test_trilha_junta_falas_de_taxas_diferentes(tmp_path):
         assert w.getframerate() == 24000 and abs(w.getnframes() / 24000 - 4.0) < 0.05   # a melhor das taxas
     with pytest.raises(ErroDublagem, match="formatos diferentes"):        # sem reamostrar: erro, como antes
         montar_trilha([(0.0, 1.0, piper), (2.0, 3.0, gemini)], 4.0, destino)
+
+
+def test_elenco_da_serie_mantem_rotulos_e_vozes_entre_episodios(tmp_path):
+    """Episódio 2: o Gemini recebe quem já apareceu na série (mesmos rótulos) e cada um fica com a mesma voz."""
+    elenco = tmp_path / "Show.json"
+    ep1 = [personagens.Personagem("Ana", "f", "mulher jovem", list(range(30))),
+           personagens.Personagem("Pessoa 1", "m", "voz grave", list(range(30, 50)))]
+    personagens.salvar_elenco(elenco, ep1, {"Ana": "Aoede", "Pessoa 1": "Orus"})
+    guardado = personagens.carregar_elenco(elenco)
+    assert guardado["vozes"] == {"Ana": "Aoede", "Pessoa 1": "Orus"}
+    perguntas = []
+
+    class Ouvinte:
+        interactions = None
+
+        def create(self, model, input):
+            perguntas.append(input[0]["text"])
+            return SimpleNamespace(output_text=json.dumps({"pessoas": [], "falas": [{"id": 0, "rotulo": "Ana"},
+                                                                                     {"id": 1, "rotulo": "Pessoa 1"}]}))
+    ouvinte = Ouvinte()
+    ouvinte.interactions = ouvinte
+    falas = [(Fala("00:00:01,000 --> 00:00:02,000", "Oi."), "Oi."),
+             (Fala("00:00:03,000 --> 00:00:04,000", "Olá."), "Olá.")]
+    lista = personagens.identificar("ep2.mkv", falas, ouvinte, "ffmpeg", extrair=lambda *a: b"mp3",
+                                    elenco=guardado["pessoas"])
+    assert '"Ana" (f): mulher jovem' in perguntas[0] and '"Pessoa 1" (m): voz grave' in perguntas[0]
+    assert {p.rotulo: p.genero for p in lista} == {"Ana": "f", "Pessoa 1": "m"}       # o gênero vem do elenco
+    mapa = personagens.distribuir_vozes(lista, "Charon", fixas=guardado["vozes"])
+    assert mapa == {"Ana": "Aoede", "Pessoa 1": "Orus"}                                # as mesmas do episódio 1
+    assert personagens.carregar_elenco(tmp_path / "nao_existe.json") == {"pessoas": [], "vozes": {}}

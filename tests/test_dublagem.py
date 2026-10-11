@@ -11,10 +11,11 @@ from pathlib import Path
 
 import pytest
 
+from jellyfin_tools import dublagem
 from jellyfin_tools.dublagem import (ACELERAR_MAX, ErroDublagem, MotorPiper, ParaDublar, caminho_dublado,
                                      comando_mixar, dublar_video, executavel_piper, horarios, localizar_ffmpeg,
                                      montar_trilha, preparar_piper, preparar_voz, texto_para_falar,
-                                     videos_para_dublar)
+                                     falas_da_legenda, videos_para_dublar)
 
 TAXA = 16000
 FFMPEG = localizar_ffmpeg()
@@ -162,7 +163,8 @@ def test_acha_os_filmes_para_dublar(tmp_path):
     filme("Nacional (2004)")
     audio = {"Nacional (2004).mkv": ["por"]}
     achados = videos_para_dublar(filmes, sondar=lambda v: (5400.0, audio.get(v.name, ["eng"])))
-    assert achados == [ParaDublar(a, filmes / "A (2001)" / "A (2001).pt-BR.srt", 2, 5400.0, 2_000_000)]
+    assert achados == [ParaDublar(a, filmes / "A (2001)" / "A (2001).pt-BR.srt", 2, 5400.0, 2_000_000,
+                                  caminho_dublado(a))]
 
 
 def test_motor_piper_conversa_com_o_programa(tmp_path):
@@ -340,3 +342,44 @@ def test_motor_gemini_gera_cada_fala_com_voz_pronta_e_espera_o_limite(tmp_path):
         voz_gemini.testar_chave("errada", cliente=recusada)
     minimo, maximo = voz_gemini.estimar_custo(3600)                       # 1 h de fala
     assert 0.5 < minimo < maximo < 5
+
+
+SRT_LONGA = "".join(f"{k + 1}\n00:{(k * 20) // 60:02d}:{(k * 20) % 60:02d},000 --> 00:{(k * 20) // 60:02d}:"
+                    f"{(k * 20) % 60:02d},800\nFala {k + 1}.\n\n" for k in range(3)) + \
+    "".join(f"{k + 4}\n00:01:{10 + k * 3:02d},000 --> 00:01:{10 + k * 3:02d},800\nConversa {k + 1}.\n\n"
+            for k in range(6))
+
+
+def test_trecho_de_amostra_e_o_minuto_com_mais_falas(tmp_path):
+    legenda = tmp_path / "f.pt-BR.srt"
+    legenda.write_text(SRT_LONGA, encoding="utf-8")
+    inicio, fim = dublagem.trecho_de_amostra(falas_da_legenda(legenda))
+    assert (inicio, fim) == (40 - 0.5, 100 - 0.5)                   # das 0:40 (fala 3) até a última conversa
+
+
+@pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
+def test_amostra_dubla_so_o_trecho_e_o_filme_aproveita_as_falas(tmp_path):
+    """A amostra (fora da biblioteca) só pede as falas do trecho; o filme inteiro, depois, não pede de novo."""
+    pasta = tmp_path / "Filme (2003)"
+    pasta.mkdir()
+    video = video_de_teste(pasta / "Filme (2003).mkv", segundos=8)
+    legenda = pasta / "Filme (2003).pt-BR.srt"
+    legenda.write_text(SRT, encoding="utf-8")
+    cache, voz = tmp_path / "cache", VozFalsa()
+    amostra = dublagem.caminho_amostra(cache, video)
+    r = dublar_video(video, legenda, voz, pasta_cache=cache, trecho=(1.5, 4.5), destino=amostra)
+    assert r.status == "dublado", r.detalhe
+    assert voz.textos == ["Uma fala comprida demais para caber nesse pedacinho de tempo."]   # só a do trecho
+    assert amostra.is_file() and not dublagem.caminho_dublado(video).exists()             # a biblioteca não muda
+    assert any("Video" in l for l in faixas(amostra)) and any("por" in l for l in faixas(amostra))
+    r = dublar_video(video, legenda, voz, pasta_cache=cache)                                # agora o filme inteiro
+    assert r.status == "dublado" and r.retomadas == 1
+    assert voz.textos[1:] == ["Olá!"]                              # a fala da amostra não foi pedida de novo
+
+
+def test_comando_da_amostra_corta_e_recodifica_o_video():
+    comando = dublagem.comando_mixar("ffmpeg", Path("f.mkv"), Path("t.wav"), Path("s.mkv"), 1, True, (10.0, 70.0))
+    assert comando[comando.index("-ss") + 1] == "10.000" and comando[comando.index("-t") + 1] == "60.000"
+    assert comando.index("-ss") < comando.index("-i") and "libx264" in comando and "0:s?" not in comando
+    normal = dublagem.comando_mixar("ffmpeg", Path("f.mkv"), Path("t.wav"), Path("s.mkv"), 1, True)
+    assert "-ss" not in normal and "libx264" not in normal and "0:s?" in normal

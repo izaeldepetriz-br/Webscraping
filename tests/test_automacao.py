@@ -207,7 +207,7 @@ def test_dublar_pelo_robo(casa, tmp_path, monkeypatch):
     assert "aistudio.google.com" in resultado(tmp_path)["comandos"][0]["resumo"]
     casa(destino_filmes=str(filmes))
     assert automacao.main(["--dublar"]) == automacao.OK
-    assert resultado(tmp_path)["comandos"][0]["resumo"] == "1 de 1 filme(s) dublado(s), 0 erro(s)."
+    assert resultado(tmp_path)["comandos"][0]["resumo"] == "1 de 1 vídeo(s) dublado(s), 0 erro(s)."
     assert (filmes / "A (2001)" / "A (2001) - Dublado IA.mkv").is_file()
 
 
@@ -297,7 +297,7 @@ def test_robo_dublagem_mista_figurantes_no_piper(casa, tmp_path, monkeypatch):
     monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, voz, **k: Voz("gemini"))
     monkeypatch.setattr(automacao, "motor_piper", lambda o, voz="", **k: Voz(f"piper {voz}"))
     monkeypatch.setattr(personagens, "distribuir_vozes",
-                        lambda lista, principal, figurante=None, limite=2: {"Conde": "Charon", "Guarda": figurante})
+                        lambda lista, principal, figurante=None, limite=2, **k: {"Conde": "Charon", "Guarda": figurante})
     casa(destino_filmes=str(filmes), motor_voz="Gemini (premium, Google AI Studio)", chave_gemini="AIza",
          voz_por_personagem=True, figurantes_piper=True, voz_dublagem="edresson", encurtar_falas=False)
     assert automacao.main(["--dublar"]) == automacao.OK
@@ -323,3 +323,31 @@ def test_robo_so_com_o_piper(casa, tmp_path, monkeypatch):
     casa(destino_filmes=str(filmes), motor_voz="Gemini (premium, Google AI Studio)", chave_gemini="AIza",
          voz_por_personagem=True, robo_so_piper=True, encurtar_falas=False)
     assert automacao.main(["--dublar"]) == automacao.OK and piper.textos
+
+
+def test_robo_avulsos_precisa_da_pasta_e_dubla_a_caixa_de_entrada(casa, tmp_path, monkeypatch):
+    from jellyfin_tools import dublagem
+    from tests.test_dublagem import FFMPEG, SRT, VozFalsa, video_de_teste
+    casa()
+    assert automacao.main(["--avulsos"]) == automacao.FALTA_CONFIGURACAO
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    caixa = tmp_path / "Para Dublar"
+    caixa.mkdir()
+    video = video_de_teste(caixa / "Aula.mkv")
+    (caixa / "Aula.pt-BR.srt").write_text(SRT, encoding="utf-8")
+    (caixa / "Sem legenda.mkv").write_bytes(b"")                    # sem legenda e sem chave: só o Whisper faria
+    voz = VozFalsa()
+    monkeypatch.setattr(automacao, "preparar_motor", lambda o, **k: voz)
+    monkeypatch.setattr(automacao, "videos_para_dublar",
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+    monkeypatch.setattr(automacao, "videos_sem_legenda", lambda *p, **k: [])
+    casa(pasta_avulsos=str(caixa), encurtar_falas=False)
+    assert automacao.main(["--avulsos"]) == automacao.OK
+    assert dublagem.caminho_dublado(video).is_file() and voz.textos
+    resumo = json.loads((tmp_path / "config" / "rpa" / "ultimo.json").read_text(encoding="utf-8"))
+    assert "1 dublado" in resumo["comandos"][0]["resumo"]
+    o, _ = automacao.opcoes_salvas()
+    o.avulsos_dublar = False                                        # só legenda: não dubla
+    plano = automacao.planejar_avulsos(o, str(caixa))
+    assert plano.dublar == [] and plano.videos == 2              # a versão dublada não conta como vídeo novo

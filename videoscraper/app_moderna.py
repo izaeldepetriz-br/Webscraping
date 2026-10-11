@@ -49,8 +49,9 @@ from jellyfin_tools import traducao_lote
 from jellyfin_tools.transcricao import (Transcritor, estimar as estimar_audio, legendar_pelo_audio, modelo_baixado,
                                         videos_sem_legenda)
 from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sincronizar
-from jellyfin_tools.dublagem import (ErroDublagem, dublar_video, falas_da_legenda, localizar_ffmpeg, videos_para_dublar,
-                                     voz_pronta)
+from jellyfin_tools.dublagem import (ErroDublagem, caminho_amostra, dublar_video, episodios_para_dublar,
+                                     falas_da_legenda, localizar_ffmpeg, pasta_series_dubladas, trecho_de_amostra,
+                                     videos_para_dublar, voz_pronta)
 from jellyfin_tools.paralelo import prioridade_baixa
 from jellyfin_tools.lixeira import apagar_lotes, lotes_antigos, tamanho_legivel
 from jellyfin_tools.tv_ao_vivo import carregar_canais, conferir_canais, mensagem_fora_do_ar
@@ -62,7 +63,7 @@ from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, inicia
 from jellyfin_tools.relatorio import gerar_relatorio, resumo, salvar_csv
 from jellyfin_tools.resumo_diario import ResumoDiario, mensagem as mensagem_resumo
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca, indice_da_biblioteca, testar_conexao
-from jellyfin_tools import microfone, personagens, vigia, voz_clonada, voz_gemini
+from jellyfin_tools import gastos, microfone, personagens, vigia, voz_clonada, voz_gemini
 from jellyfin_tools.vigia import filtro_prontos
 
 from . import config
@@ -191,6 +192,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._movimentos_previa: list = []      # o que a última pré-visualização mostrou
         self.atualizar_vozes_clonadas(automacao.vozes_clonadas())     # antes das opções: a voz salva pode ser uma
         self._carregar_config()
+        self._configurar_gastos()
         self._stdout, self._stderr = sys.stdout, sys.stderr
         self.protocol("WM_DELETE_WINDOW", self.fechar)
         self.redirecionar_saida()
@@ -717,6 +719,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.definir_saude(self.itens_saude())
         elif tipo == "tocar":
             self._tocar(dado)
+        elif tipo == "abrir_amostra":
+            self.after(50, lambda d=dado: self._mostrar_amostra(*d))
         elif tipo == "gemini_estado":
             self._saude_gemini = dado
             self.definir_estado_gemini(*dado)
@@ -792,6 +796,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._sincronizar_pendente = dado              # pergunta depois do "fim"
         elif tipo == "vozes_pendentes":
             self._vozes_pendente = dado                    # a tabela "Pessoa -> Voz" depois do "fim"
+        elif tipo == "avulsos_pendente":
+            self._avulsos_pendente = dado                  # pergunta (o que vai fazer e o custo) depois do "fim"
         elif tipo == "dublar_pendente":
             self._dublar_pendente = dado                   # pergunta (espaço em disco) depois do "fim"
         elif tipo == "legendar_audio_pendente":
@@ -872,6 +878,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
             if getattr(self, "_vozes_pendente", None):
                 vozes, self._vozes_pendente = self._vozes_pendente, None
                 self.after(50, lambda: self._escolher_vozes(*vozes))
+            if getattr(self, "_avulsos_pendente", None):
+                avulsos, self._avulsos_pendente = self._avulsos_pendente, None
+                self.after(50, lambda: self._confirmar_avulsos(*avulsos))
             if getattr(self, "_dublar_pendente", None):
                 dublar, self._dublar_pendente = self._dublar_pendente, None
                 self.after(50, lambda: self._confirmar_dublagem(*dublar))
@@ -2409,23 +2418,25 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
     # ================================================================== dublagem por IA (Piper)
     def ao_dublar(self) -> None:
-        """Botão "Dublar filmes...": os filmes com legenda em português e sem áudio em português ganham uma versão
-        'Nome - Dublado IA.mkv' com a legenda lida por uma voz sintética (o original não é tocado)."""
+        """Botão "Dublar...": os filmes e episódios com legenda em português e sem áudio em português ganham uma
+        versão dublada (filmes: 'Nome - Dublado IA.mkv' ao lado; episódios: na pasta irmã 'Séries (Dublado IA)', para
+        não aparecerem repetidos). O original não é tocado."""
         o = self.obter_opcoes_jellyfin()
-        filmes = self.destinos_jellyfin()["Filmes"]
-        if not filmes or not Path(filmes).is_dir():
-            self.mostrar_mensagem("Dublar filmes", "Escolha a biblioteca de Filmes (a dublagem é só para filmes, por "
-                                  "enquanto: em séries a versão dublada apareceria como episódio repetido).", "aviso")
+        destinos = self.destinos_jellyfin()
+        filmes, series = (destinos.get(t) or "" for t in ("Filmes", "Séries"))
+        if not any(p and Path(p).is_dir() for p in (filmes, series)):
+            self.mostrar_mensagem("Dublar", "Escolha a biblioteca de Filmes e/ou de Séries.", "aviso")
             return
         idioma = o.idioma.split(",")[0].strip() or "pt-BR"
         self._salvar_config()
 
         def tarefa():
-            itens = videos_para_dublar(filmes, idioma=idioma)
-            self._log.info("Dublar: %d filme(s) com legenda em %s e sem áudio em português", len(itens), idioma)
+            itens = videos_para_dublar(filmes, idioma=idioma) if filmes and Path(filmes).is_dir() else []
+            itens += episodios_para_dublar(series, idioma=idioma) if series else []
+            self._log.info("Dublar: %d vídeo(s) com legenda em %s e sem áudio em português", len(itens), idioma)
             self.fila.put(("dublar_pendente", (itens, o)))
 
-        self._rodar("Procurando filmes para dublar...", tarefa)
+        self._rodar("Procurando filmes e episódios para dublar...", tarefa)
 
     def _confirmar_dublagem(self, itens: list, o) -> None:
         if not itens:
@@ -2436,6 +2447,14 @@ class AppModerna(TVAoVivo, JanelaModerna):
         espaco = sum(i.tamanho for i in itens)
         exemplos = "\n".join(f"• {i.video.name} ({i.falas} falas)" for i in itens[:5]) + (
             f"\n... e mais {len(itens) - 5}" if len(itens) > 5 else "")
+        episodios = [i for i in itens if i.serie]
+        onde_series = ""
+        if episodios:
+            pasta = pasta_series_dubladas(self.destinos_jellyfin()["Séries"])
+            onde_series = (f"\n\nEpisódios ({len(episodios)}): a versão dublada fica em \"{pasta}\", com as mesmas "
+                           "pastas (na mesma pasta, o Jellyfin mostraria o episódio repetido). No Jellyfin, adicione "
+                           "essa pasta como outra biblioteca de séries (ex.: \"Séries dubladas\"). Com uma voz por "
+                           "personagem, cada série guarda o elenco: os próximos episódios usam as mesmas vozes.")
         if automacao.usa_gemini(o):
             if not automacao.chave_gemini(o):
                 self.mostrar_mensagem("Dublar filmes", "A voz premium do Gemini precisa da chave do Google AI Studio: "
@@ -2467,13 +2486,17 @@ class AppModerna(TVAoVivo, JanelaModerna):
         escolha = self.escolher(
             "Dublar filmes (voz sintética)",
             f"{len(itens)} filme(s) com legenda em português e sem áudio em português:\n{exemplos}\n\n"
-            f"Cada um ganha 'Nome - Dublado IA.mkv': a legenda é lida {voz} e a voz original fica mais baixa por "
+            f"Cada filme ganha 'Nome - Dublado IA.mkv': a legenda é lida {voz} e a voz original fica mais baixa por "
             "baixo, no estilo narração de documentário. A boca dos atores não acompanha. O Jellyfin mostra as duas "
-            f"versões do filme.{encurtar}\n\n"
+            f"versões do filme.{onde_series}{encurtar}\n\n"
             f"Espaço em disco: cerca de {tamanho_legivel(espaco)} (o vídeo é copiado, sem perder qualidade).{download} "
-            "O arquivo original não é tocado.",
-            (f"Dublar os {len(itens)}",))
+            "O arquivo original não é tocado.\n\nNa dúvida, ouça antes uma AMOSTRA de 1 minuto (o trecho com mais "
+            "falas): custa bem pouco, e o que ela gerar é reaproveitado quando você dublar o filme inteiro.",
+            (f"Dublar os {len(itens)}", self.BOTAO_AMOSTRA))
         if escolha is None:
+            return
+        if escolha == self.BOTAO_AMOSTRA:
+            self._amostra(itens, o)
             return
         premium = {str(i.video) for i in itens}
         if automacao.usa_gemini(o) and o.perguntar_filmes and len(itens) > 1:   # mista por filme: quais com o Gemini
@@ -2488,6 +2511,130 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._ouvir_personagens(itens, o, premium)
         else:
             self._dublar(itens, o, premium=premium)
+
+    # ---- Vídeos avulsos: a caixa de entrada (Configurações > Vídeos avulsos) ou arquivos de qualquer pasta
+    AVULSOS_PASTA, AVULSOS_ARQUIVOS, AVULSOS_CONFIGURAR = ("Processar a pasta", "Escolher arquivos...",
+                                                           "Configurar a pasta")
+
+    def ao_avulsos(self) -> None:
+        o = self.obter_opcoes_jellyfin()
+        self._salvar_config()
+        pasta = o.pasta_avulsos if o.pasta_avulsos and Path(o.pasta_avulsos).is_dir() else ""
+        if pasta:
+            texto = (f"Caixa de entrada: {pasta}\n\nOs vídeos dela ganham a legenda em português (traduzindo a que "
+                     "já tiver, ou pelo áudio) e" + (" a versão dublada" if o.avulsos_dublar else ", sem dublar")
+                     + ". Ou escolha arquivos de outra pasta.")
+            opcoes = (self.AVULSOS_PASTA, self.AVULSOS_ARQUIVOS)
+        else:
+            texto = ("Ainda não há uma pasta de vídeos avulsos (a caixa de entrada, que também dá para agendar). "
+                     "Escolha os arquivos agora, ou configure a pasta.")
+            opcoes = (self.AVULSOS_ARQUIVOS, self.AVULSOS_CONFIGURAR)
+        escolha = self.escolher("Vídeos avulsos", texto, opcoes)
+        if escolha is None:
+            return
+        if escolha == self.AVULSOS_CONFIGURAR:
+            self.mostrar_aba(self.ABA_CONFIG)
+            self.mostrar_config("Vídeos avulsos")
+            return
+        arquivos = ()
+        if escolha == self.AVULSOS_ARQUIVOS:
+            arquivos = self._pedir_arquivos_video()
+            if not arquivos:
+                return
+            pasta = ""
+
+        def tarefa():
+            plano = automacao.planejar_avulsos(o, pasta, arquivos)
+            self._log.info("Vídeos avulsos: %d vídeo(s); %d para traduzir, %d sem legenda, %d prontos para dublar",
+                           plano.videos, len(plano.traduzir), len(plano.pelo_audio), len(plano.dublar))
+            self.fila.put(("avulsos_pendente", (plano, o, pasta, arquivos)))
+
+        self._rodar("Olhando os vídeos avulsos...", tarefa)
+
+    def _confirmar_avulsos(self, plano, o, pasta: str, arquivos) -> None:
+        if plano.vazio:
+            self.mostrar_mensagem("Vídeos avulsos", f"Nada a fazer em {plano.videos} vídeo(s): já têm legenda em "
+                                  "português" + (" e versão dublada" if o.avulsos_dublar else "") + ".", "info")
+            return
+        tem_claude = bool(o.chave_claude or os.environ.get("ANTHROPIC_API_KEY"))
+        linhas = []
+        if plano.traduzir:
+            linhas.append(f"• {len(plano.traduzir)} legenda(s) em outro idioma: o Claude traduz para o português"
+                          + ("" if tem_claude else " (FALTA a chave da Anthropic: ficam sem traduzir)"))
+        if plano.pelo_audio:
+            linhas.append(f"• {len(plano.pelo_audio)} vídeo(s) sem nenhuma legenda: o Whisper ouve no seu PC (grátis)"
+                          + (" e o Claude traduz se o áudio não for português" if tem_claude else ""))
+        if o.avulsos_dublar:
+            motor = ("Gemini (pago por uso)" if automacao.usa_gemini(o) else f"Piper, voz \"{o.voz_dublagem}\" (grátis)")
+            linhas.append(f"• Depois, dubla os que ficarem com legenda em português ({len(plano.dublar)} já estão "
+                          f"prontos) com o {motor}: 'Nome - Dublado IA.mkv' ao lado do original")
+        atual = gastos.atual()
+        teto = (f"\n\nGastos do mês até agora: {atual.resumo()}." if atual is not None and atual.total() else "")
+        escolha = self.escolher("Vídeos avulsos", f"{plano.videos} vídeo(s):\n" + "\n".join(linhas) + "\n\nO original "
+                                "nunca é alterado; os arquivos novos ficam ao lado dele." + teto, ("Começar",))
+        if escolha is None:
+            return
+        self._processar_avulsos(o, pasta, arquivos)
+
+    def _processar_avulsos(self, o, pasta: str, arquivos) -> None:
+        def tarefa():
+            r = automacao.processar_avulsos(
+                o, self._log, pasta, arquivos, parar=self.evento_parar.is_set,
+                avisar=lambda texto: self.fila.put(("jf_analise", (0.0, texto))))
+            self.resumo_diario.registrar("dublados", r.contagens.get("dublados", 0))
+            detalhes = ("\n\nProblemas:\n" + "\n".join(f"• {d}" for d in r.detalhes[:6])) if r.detalhes else ""
+            self.fila.put(("status_fim", r.resumo))
+            self.fila.put(("msg", ("Vídeos avulsos", r.resumo + detalhes,
+                                   "erro" if r.detalhes and not any(r.contagens.values()) else "sucesso")))
+
+        self._rodar("Processando os vídeos avulsos...", tarefa)
+
+    BOTAO_AMOSTRA = "Ouvir uma amostra (1 min)"
+
+    def _amostra(self, itens: list, o) -> None:
+        """Dubla só o minuto com mais falas de um filme, num vídeo curto fora da biblioteca, e abre no player.
+        As falas ficam no progresso guardado do filme: a dublagem inteira, depois, não paga de novo por elas."""
+        escolha = 0 if len(itens) == 1 else self.escolher_da_lista(
+            "Amostra de 1 minuto", "De qual filme?", [f"{i.video.stem} ({i.falas} falas)" for i in itens],
+            "Fazer a amostra")
+        if escolha is None:
+            return
+        item = itens[escolha]
+
+        def tarefa():
+            try:
+                motor = automacao.preparar_motor(o)
+                trecho = trecho_de_amostra(falas_da_legenda(item.legenda))
+            except (ErroDublagem, OSError, ErroLegenda, automacao.FaltaConfiguracao) as erro:
+                self.fila.put(("msg", ("Amostra da dublagem", f"Não deu para fazer a amostra: {erro}", "erro")))
+                return
+            destino = caminho_amostra(automacao.pasta_dublagem(), item.video)
+            r = dublar_video(item.video, item.legenda, motor, parar=self.evento_parar.is_set,
+                             ao_progresso=lambda f: self.fila.put(("jf_analise", (f, f"Amostra: {int(f * 100)}%"))),
+                             adaptar=automacao.adaptador(o, item.video.stem),
+                             avisar=lambda texto: self._log.warning("Amostra: %s", texto),
+                             pasta_cache=automacao.pasta_dublagem(), trecho=trecho, destino=destino)
+            if r.status != "dublado":
+                self._log.error("Amostra de %s: %s", item.video.name, r.detalhe)
+                self.fila.put(("msg", ("Amostra da dublagem", f"Não deu para fazer a amostra: {r.detalhe}", "erro")))
+                return
+            minuto = f"{int(trecho[0]) // 60}:{int(trecho[0]) % 60:02d}"
+            self._log.info("Amostra de %s (a partir de %s, %d falas): %s", item.video.name, minuto, r.falas, destino)
+            self.fila.put(("abrir_amostra", (destino, item.video.stem, minuto, r.falas)))
+
+        self._rodar(f"Fazendo a amostra de 1 minuto de {item.video.stem}...", tarefa)
+
+    def _mostrar_amostra(self, destino: Path, nome: str, minuto: str, falas: int) -> None:
+        try:
+            self._abrir_no_sistema(str(destino))
+            abriu = "Ela abriu no seu player de vídeo."
+        except Exception as erro:                         # sem player associado: diz onde está
+            self._log.warning("Abrir a amostra: %s", erro)
+            abriu = "Abra no seu player de vídeo:"
+        self.mostrar_mensagem("Amostra da dublagem", f"A amostra de {nome} (1 minuto a partir de {minuto}, {falas} "
+                              f"falas) está pronta. {abriu}\n{destino}\n\nGostou? Clique em \"Dublar\" de novo e escolha "
+                              "\"Dublar\": as falas da amostra são reaproveitadas (não paga de novo por elas). Não "
+                              "gostou? Troque a voz em Configurações > Dublagem e faça outra amostra.", "sucesso")
 
     def _ouvir_personagens(self, itens: list, o, premium: set | None = None) -> None:
         """Voz por personagem, 1ª parte (numa tarefa): o Gemini ouve cada filme e diz quem fala cada fala. Depois,
@@ -2505,7 +2652,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 try:
                     falas = falas_da_legenda(item.legenda)
                     lista = automacao.ouvir_personagens(
-                        o, item.video, falas, cliente, parar=self.evento_parar.is_set,
+                        o, item.video, falas, cliente, parar=self.evento_parar.is_set, serie=item.serie,
                         ao_progresso=lambda f, k=k, item=item: self.fila.put(("jf_analise", (
                             (k + f) / len(ouvir), f"Ouvindo quem fala em {item.video.stem} ({k + 1} de {len(ouvir)})"))))
                     self._log.info("%s: %d pessoa(s) falando", item.video.name, len(lista))
@@ -2525,7 +2672,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             if not lista:                                      # não deu para ouvir: uma voz só
                 itens.append(item)
                 continue
-            sugestao = personagens.distribuir_vozes(lista, o.voz_gemini, automacao.figurante(o), o.limite_figurante)
+            sugestao = personagens.distribuir_vozes(lista, o.voz_gemini, automacao.figurante(o), o.limite_figurante,
+                                                    fixas=automacao.vozes_da_serie(item.serie))
             principais = [p for p in lista if len(p.falas) >= personagens.MINIMO_FALAS][:8]
             if not principais:
                 itens.append(item)
@@ -2537,8 +2685,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 continue
             itens.append(item)
             if escolha:
-                mapa = {p.rotulo: escolha.get(p.rotulo, o.voz_gemini) for p in lista}
+                mapa = {p.rotulo: escolha.get(p.rotulo, sugestao.get(p.rotulo, o.voz_gemini)) for p in lista}
                 vozes[str(item.video)] = personagens.vozes_por_fala(lista, mapa)
+                if item.serie:                                 # os próximos episódios usam as mesmas vozes
+                    personagens.salvar_elenco(automacao.arquivo_elenco(item.serie), lista, mapa)
                 self._log.info("%s: %s", item.video.name, ", ".join(f"{r} -> {v}" for r, v in escolha.items()))
         if itens:
             self._dublar(itens, o, vozes, premium)
@@ -2581,7 +2731,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 r = dublar_video(item.video, item.legenda, deste, parar=self.evento_parar.is_set,
                                  ao_progresso=andamento, adaptar=adaptar,
                                  avisar=lambda texto: self._log.warning("Dublagem: %s", texto),
-                                 vozes=vozes.get(str(item.video)), pasta_cache=automacao.pasta_dublagem())
+                                 vozes=vozes.get(str(item.video)), pasta_cache=automacao.pasta_dublagem(),
+                                 destino=item.destino)
                 resultados.append(r)
                 (self._log.error if r.status == "erro" else self._log.info)(
                     "[%s] %s%s (%d falas, %d adaptadas, %d aceleradas, %d cortadas, %d já prontas de antes)",
@@ -3551,6 +3702,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 itens.append(("Gemini (voz) ativa" if gemini[0] else "Gemini (voz): chave recusada", gemini[0]))
             else:
                 itens.append(("Gemini (voz): chave não testada", None))
+        if item_gastos := self.item_saude_gastos():
+            itens.append(item_gastos)
+        self.atualizar_gastos()
         for voz in self._vozes_clonadas:                     # chave da voz clonada vencendo (ou vencida)
             if aviso := voz_clonada.aviso_de_validade(voz):
                 itens.append((aviso, False))
@@ -3913,6 +4067,28 @@ class AppModerna(TVAoVivo, JanelaModerna):
         tudo = config.carregar()
         tudo["jellyfin"] = dados
         config.salvar(tudo)
+        self._configurar_gastos(o)
+
+    def _configurar_gastos(self, o=None) -> None:
+        """O registro dos gastos nas APIs pagas (gastos.json) com o teto do mês da tela."""
+        o = o or self.obter_opcoes_jellyfin()
+        gastos.configurar(automacao.arquivo_gastos(), o.teto_gastos)
+        self.atualizar_gastos()
+
+    def atualizar_gastos(self) -> None:
+        if (atual := gastos.atual()) is not None and hasattr(self, "lb_gastos_mes"):
+            self.lb_gastos_mes.configure(text=atual.resumo())
+
+    def item_saude_gastos(self):
+        """"Gastos do mês: US$ 1.20 de US$ 5.00" (aviso a partir de 80% do teto); nada se ainda não gastou."""
+        atual = gastos.atual()
+        if atual is None:
+            return None
+        total = atual.total()
+        if not total and not atual.teto:
+            return None
+        texto = f"Gastos do mês: US$ {total:.2f}" + (f" de US$ {atual.teto:.2f}" if atual.teto else "")
+        return (texto, None) if not atual.teto else (texto, total < 0.8 * atual.teto)
 
     @staticmethod
     def _abrir_no_sistema(pasta: str) -> None:

@@ -826,17 +826,36 @@ def test_ampliar_lista_esconde_painel_e_console(app):
     for i in range(40):
         app.adicionar_linha_jf(str(i), i + 1, "vai mover", None, f"a{i}.mkv", f"A {i}.mkv")
     app.update()
+    detalhe, console = app.partes_visiveis_jf()                    # o que cabe nesta tela
+    assert app._cartao_detalhe_jf.winfo_ismapped() == detalhe and app._cartao_console_jf.winfo_ismapped() == console
     altura = app.tabela_jf.winfo_height()
-    assert app._cartao_console_jf.winfo_ismapped() and app._cartao_detalhe_jf.winfo_ismapped()
     app.bt_ampliar_jf.invoke()
     app.update()
     assert not app._cartao_console_jf.winfo_ismapped() and not app._cartao_detalhe_jf.winfo_ismapped()
-    assert app.tabela_jf.winfo_height() > altura and app.bt_ampliar_jf.cget("text").endswith("Reduzir lista")
-    assert app._corpo_jf.grid_rowconfigure(2)["minsize"] == 0      # em tela baixa, o espaço do console vai p/ lista
+    assert app._corpo_jf.grid_rowconfigure(2)["minsize"] == 0      # o espaço do console vai para a lista
+    if detalhe or console:
+        assert app.tabela_jf.winfo_height() > altura
+    assert app.bt_ampliar_jf.cget("text").endswith("Reduzir lista")
     app.bt_ampliar_jf.invoke()
     app.update()
-    assert app._cartao_console_jf.winfo_ismapped() and app.bt_ampliar_jf.cget("text").endswith("Ampliar lista")
-    assert app._corpo_jf.grid_rowconfigure(2)["minsize"] == app.ALTURA_CONSOLE_JF
+    assert app._cartao_detalhe_jf.winfo_ismapped() == detalhe and app.bt_ampliar_jf.cget("text").endswith("Ampliar lista")
+
+
+def test_aba_jellyfin_mostra_so_o_que_cabe(app):
+    """Notebook: antes, lista + painel + console pediam mais altura do que a janela tinha; o Tk espremia tudo, a
+    lista ficava com ~5 linhas e o console cortado. Agora sai o que não cabe e a lista cresce."""
+    assert app.partes_visiveis_jf(536) == (False, False)          # janela de 700 px (tela 1366x768)
+    assert app.partes_visiveis_jf(736) == (True, False)           # janela de 900 px (Full HD): lista + Antes → Depois
+    assert app.partes_visiveis_jf(900) == (True, True)            # tela alta: tudo
+    app.mostrar_aba("Jellyfin")
+    app.geometry("1320x700")
+    for _ in range(20):
+        app.update()
+    assert not app._cartao_detalhe_jf.winfo_ismapped() and not app._cartao_console_jf.winfo_ismapped()
+    assert app.tabela_jf.winfo_height() > 156                        # antes: 156 px em qualquer tamanho
+    corpo = app._corpo_jf
+    filhos = [w for w in corpo.winfo_children() if w.winfo_ismapped()]
+    assert all(w.winfo_y() + w.winfo_height() <= corpo.winfo_height() + 2 for w in filhos)   # nada cortado embaixo
 
 
 def test_sobras_de_antes_aparecem_e_sao_apagadas_pela_janela(app, tmp_path):
@@ -4087,3 +4106,127 @@ def test_clonar_voz_pela_janela(app, tmp_path, monkeypatch):
     assert voz_clonada.carregar(automacao.arquivo_vozes_clonadas()) == [] and not pasta.exists()
     assert menu not in app.menu_voz_gemini.cget("values")
     assert app.var_jf_voz_gemini.get() == app.VOZES_GEMINI[0]
+
+
+def _dublagem_falsa(monkeypatch):
+    """Piper de mentira (tom por letra) e vídeos de teste com áudio em inglês: nada baixa, nada vai para a internet."""
+    from jellyfin_tools import dublagem
+    from tests.test_dublagem import VozFalsa
+    from videoscraper import automacao
+    voz = VozFalsa()
+    monkeypatch.setattr(automacao, "motor_piper", lambda o, voz_="", **k: voz)
+    monkeypatch.setattr(automacao, "preparar_motor", lambda o, **k: voz)
+    monkeypatch.setattr(automacao, "adaptador", lambda o, titulo="": None)
+    sondar = lambda v: (6.0, ["eng"])                               # noqa: E731
+    monkeypatch.setattr(app_moderna, "videos_para_dublar",
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=sondar, **k))
+    monkeypatch.setattr(app_moderna, "episodios_para_dublar",
+                        lambda *p, **k: dublagem.episodios_para_dublar(*p, sondar=sondar, **k))
+    return voz
+
+
+def test_amostra_de_1_minuto_antes_de_dublar(app, tmp_path, monkeypatch):
+    from jellyfin_tools import dublagem
+    from tests.test_dublagem import FFMPEG, SRT, video_de_teste
+    from videoscraper import automacao
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    voz = _dublagem_falsa(monkeypatch)
+    filmes = tmp_path / "Filmes"
+    (filmes / "Nosferatu (1922)").mkdir(parents=True)
+    video = video_de_teste(filmes / "Nosferatu (1922)" / "Nosferatu (1922).mkv")
+    (filmes / "Nosferatu (1922)" / "Nosferatu (1922).pt-BR.srt").write_text(SRT, encoding="utf-8")
+    app.mostrar_aba("Jellyfin")
+    app._destinos.update({"Filmes": str(filmes), "Séries": ""})
+    app.var_jf_destino.set(str(filmes))
+    abertos = []
+    app._abrir_no_sistema = lambda caminho: abertos.append(caminho)
+    app.escolher = lambda t, m, opcoes, **k: app.BOTAO_AMOSTRA if app.BOTAO_AMOSTRA in opcoes else opcoes[0]
+    app.bt_dublar.invoke()
+    esperar(app)
+    esperar(app)
+    amostra = dublagem.caminho_amostra(automacao.pasta_dublagem(), video)
+    assert amostra.is_file() and abertos == [str(amostra)]
+    assert "amostra" in app.caixas[-1][2].lower() and app.caixas[-1][0] == "sucesso"
+    assert not dublagem.caminho_dublado(video).exists()             # a biblioteca não muda
+    pedidas = list(voz.textos)
+    app.escolher = lambda t, m, opcoes, **k: opcoes[0]              # agora o filme inteiro
+    app.bt_dublar.invoke()
+    esperar(app)
+    esperar(app)
+    assert dublagem.caminho_dublado(video).is_file()
+    assert not set(pedidas) & set(voz.textos[len(pedidas):])        # as falas da amostra não foram pedidas de novo
+
+
+def test_dublar_episodios_na_pasta_irma(app, tmp_path, monkeypatch):
+    from jellyfin_tools import dublagem
+    from tests.test_dublagem import FFMPEG, SRT, video_de_teste
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    _dublagem_falsa(monkeypatch)
+    series = tmp_path / "Séries"
+    temporada = series / "Show (2010)" / "Season 01"
+    temporada.mkdir(parents=True)
+    video = video_de_teste(temporada / "Show (2010) S01E01.mkv")
+    (temporada / "Show (2010) S01E01.pt-BR.srt").write_text(SRT, encoding="utf-8")
+    app.mostrar_aba("Jellyfin")
+    app._destinos.update({"Filmes": "", "Séries": str(series)})
+    mensagens = []
+    app.escolher = lambda t, m, opcoes, **k: (mensagens.append(m), opcoes[0])[1]
+    app.bt_dublar.invoke()
+    esperar(app)
+    esperar(app)
+    destino = tmp_path / "Séries (Dublado IA)" / "Show (2010)" / "Season 01" / "Show (2010) S01E01.mkv"
+    assert destino.is_file() and destino == dublagem.destino_episodio(video, series)
+    assert not dublagem.caminho_dublado(video).exists()             # nada repetido na biblioteca de séries
+    assert "Séries (Dublado IA)" in mensagens[0]
+
+
+def test_videos_avulsos_pela_caixa_de_entrada(app, tmp_path, monkeypatch):
+    from jellyfin_tools import dublagem
+    from tests.test_dublagem import FFMPEG, SRT, video_de_teste
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    voz = _dublagem_falsa(monkeypatch)
+    from videoscraper import automacao
+    monkeypatch.setattr(automacao, "videos_para_dublar", app_moderna.videos_para_dublar)
+    caixa = tmp_path / "Para Dublar"
+    caixa.mkdir()
+    video = video_de_teste(caixa / "Palestra.mkv")
+    (caixa / "Palestra.pt-BR.srt").write_text(SRT, encoding="utf-8")
+    app.mostrar_aba("Jellyfin")
+    # sem pasta: oferece escolher arquivos ou configurar a pasta
+    app.var_jf_pasta_avulsos.set("")
+    vistas = []
+    app.escolher = lambda t, m, opcoes, **k: (vistas.append(opcoes), None)[1]
+    app.bt_avulsos.invoke()
+    assert vistas[-1] == (app.AVULSOS_ARQUIVOS, app.AVULSOS_CONFIGURAR)
+    # com a pasta: processa tudo (aqui, só falta dublar)
+    app.var_jf_pasta_avulsos.set(str(caixa))
+    app.escolher = lambda t, m, opcoes, **k: opcoes[0]
+    app.bt_avulsos.invoke()
+    esperar(app)
+    esperar(app)
+    assert dublagem.caminho_dublado(video).is_file() and voz.textos
+    assert app.caixas[-1][0] == "sucesso" and "1 dublado" in app.caixas[-1][2]
+    # arquivos de outra pasta (escolhidos na hora): já dublado, nada a fazer
+    app._pedir_arquivos_video = lambda: (str(video),)
+    app.escolher = lambda t, m, opcoes, **k: app.AVULSOS_ARQUIVOS if app.AVULSOS_ARQUIVOS in opcoes else opcoes[0]
+    app.bt_avulsos.invoke()
+    esperar(app)
+    assert "Nada a fazer" in app.caixas[-1][2]
+
+
+def test_gastos_do_mes_na_tela(app):
+    from jellyfin_tools import gastos
+    app.mostrar_aba(app.ABA_CONFIG)
+    app._botoes_config["Gastos (APIs pagas)"].invoke()
+    app.campo_teto_gastos.set(5)
+    app.mostrar_aba("Jellyfin")                                     # sair das Configurações salva (e liga o teto)
+    atual = gastos.atual()
+    assert atual is not None and atual.teto == 5
+    gastos.registrar("Claude", 1.0)
+    gastos.registrar("Gemini", 3.2)
+    assert ("Gastos do mês: US$ 4.20 de US$ 5.00", False) in app.itens_saude()      # passou de 80%: aviso
+    assert app.lb_gastos_mes.cget("text") == "US$ 4.20 (Claude 1.00 · Gemini 3.20) de US$ 5.00"
+    assert app.obter_opcoes_jellyfin().teto_gastos == 5

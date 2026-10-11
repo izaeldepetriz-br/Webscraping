@@ -61,6 +61,7 @@ class Adaptador:
         falas = [{"id": i, "texto": t, "max": m, **({"antes": a} if a else {})} for i, t, m, a in lote]
         pedido = (f"Filme: {self.titulo or '(desconhecido)'}\n\nAdapte cada fala para caber no limite de letras.\n"
                   f"Falas:\n{json.dumps(falas, ensure_ascii=False)}")
+        self.tradutor.conferir_teto()
         try:
             resposta = self.tradutor.cliente.messages.create(
                 model=self.tradutor.modelo, max_tokens=8000, system=_SISTEMA,

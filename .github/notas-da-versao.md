@@ -29,4 +29,9 @@ Suas configurações ficam em `C:\Users\<você>\.videoscraper\` e continuam vale
 - **Clonar a sua voz (réplica do Gemini, sem placa de vídeo):** em ⚙ Configurações > Dublagem, grave (microfone ou arquivo) um texto e a frase de consentimento; o Google confere que é a mesma pessoa. Só a sua voz ou de quem autorizou; a chave fica só no seu PC. A voz clonada aparece como voz principal e na tabela dos personagens; o painel de saúde avisa quando a chave vai vencer; opção de guardar as gravações para "Clonar de novo" com um clique.
 - **Ouvir uma frase de teste** com a voz escolhida (pronta ou clonada) antes de dublar.
 - **Atualização mais rápida**, com a janelinha "Atualizando o Maestro... (%)"; e "Ampliar lista" funcionando em telas baixas (notebooks).
+- **v2.14 — amostra antes de dublar:** "Ouvir uma amostra (1 min)" dubla só o minuto com mais falas; as falas são reaproveitadas no filme inteiro.
+- **v2.14 — gastos do mês:** Configurações > Gastos mostra o gasto estimado com Claude e Gemini e aceita um teto (as tarefas pagas param ao chegar nele).
+- **v2.14 — vídeos avulsos:** uma caixa de entrada (ou arquivos de qualquer pasta) que ganha legenda em português e dublagem; robô `--avulsos`.
+- **v2.14 — séries:** episódios dublados na pasta irmã "Séries (Dublado IA)", com as mesmas vozes para os mesmos personagens em todos os episódios.
+- **v2.14 — notebooks:** a aba Jellyfin mostra só o que cabe e a lista cresce (antes ficava espremida e o console cortado).
 - **Correções:** a pasta vigiada se organiza dentro dela mesma (opção marcada); "Conferir 1 selecionado" na TV não é mais seguido pela conferência automática de todos os canais.
