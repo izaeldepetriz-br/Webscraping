@@ -169,6 +169,9 @@ class OpcoesJellyfin:
     iof_cartao: float = 3.5          # % de IOF na compra internacional no cartão (confira na fatura)
     pasta_avulsos: str = ""          # "Vídeos avulsos": a caixa de entrada para legendar, traduzir e dublar
     avulsos_dublar: bool = True      # vídeos avulsos: dublar também (desmarcado = só a legenda em português)
+    avulsos_legendar: bool = True    # vídeos avulsos: a legenda em português entra como faixa DENTRO do vídeo
+    dublagem_no_original: bool = True   # a dublagem vira uma faixa do próprio arquivo (False: 'Nome - Dublado IA.mkv')
+    separar_vozes: bool = True       # tira as vozes originais (IA no PC) e a dublagem entra sobre a música e os efeitos
     resumo_diario: bool = False      # mandar no Discord/Telegram, uma vez por dia, o que o Maestro fez
     hora_resumo: int = 21
 

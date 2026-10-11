@@ -383,3 +383,121 @@ def test_comando_da_amostra_corta_e_recodifica_o_video():
     assert comando.index("-ss") < comando.index("-i") and "libx264" in comando and "0:s?" not in comando
     normal = dublagem.comando_mixar("ffmpeg", Path("f.mkv"), Path("t.wav"), Path("s.mkv"), 1, True)
     assert "-ss" not in normal and "libx264" not in normal and "0:s?" in normal
+
+
+def _separar_falso(chamadas):
+    """Faz o papel do separador de vozes: grava um 'fundo' (um tom) do tamanho pedido."""
+    def separar(video, destino, trecho, duracao, parar, ao_progresso):
+        segundos = (trecho[1] - trecho[0]) if trecho else duracao
+        chamadas.append((Path(video).name, Path(destino).name, trecho))
+        subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                        f"sine=f=440:duration={segundos}", "-ac", "2", "-ar", "44100", str(destino)], check=True)
+        ao_progresso(1.0)
+        return Path(destino)
+    return separar
+
+
+@pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
+@pytest.mark.parametrize("nome", ["Filme (2003).mkv", "Filme (2003).mp4"])
+def test_dublagem_como_faixa_do_proprio_arquivo_com_a_legenda(tmp_path, nome):
+    """no_original: a faixa 'Português (dublagem IA)' e a legenda entram no PRÓPRIO arquivo (o .mkv continua .mkv e o
+    .mp4 continua .mp4); a cópia é conferida antes de trocar; o .srt sai (está dentro do vídeo); com o separador, a
+    dublagem usa o fundo sem as vozes."""
+    video = video_de_teste(tmp_path / nome)
+    legenda = tmp_path / "Filme (2003).pt-BR.srt"
+    legenda.write_text(SRT, encoding="utf-8")
+    chamadas, andamento = [], []
+    r = dublar_video(video, legenda, VozFalsa(), FFMPEG, sondar=lambda v: (6.0, ["eng"]), no_original=True,
+                     legenda_no_video=True, separar=_separar_falso(chamadas), ao_progresso=andamento.append)
+    assert r.status == "dublado", r.detalhe
+    assert r.destino == video and video.is_file() and not legenda.exists()
+    assert not caminho_dublado(video).exists() and not dublagem.temporario_no_original(video).exists()
+    assert chamadas == [(nome, "fundo.flac", None)]
+    linhas = faixas(video)
+    audios = [l for l in linhas if "Audio" in l]
+    legendas = [l for l in linhas if "Subtitle" in l]
+    assert len(audios) == 2 and "(por)" in audios[0] and "(default)" in audios[0] and "(eng)" in audios[1]
+    assert len(legendas) == 1 and "(por)" in legendas[0]
+    assert andamento[-1] == 1.0 and sorted(andamento) == andamento                # a barra só anda para frente
+    # de novo: já tem áudio em português
+    legenda.write_text(SRT, encoding="utf-8")
+    assert dublar_video(video, legenda, VozFalsa(), FFMPEG, sondar=lambda v: (6.0, ["por", "eng"]),
+                        no_original=True).status == "ja_existe"
+
+
+@pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
+def test_avi_vira_mkv_e_copia_ruim_nao_troca_o_original(tmp_path):
+    video = tmp_path / "Velho (1999).avi"
+    subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                    "testsrc=duration=6:size=160x120:rate=10", "-f", "lavfi", "-i", "sine=duration=6",
+                    "-c:v", "mpeg4", "-c:a", "mp3", str(video)], check=True)
+    legenda = tmp_path / "Velho (1999).pt-BR.srt"
+    legenda.write_text(SRT, encoding="utf-8")
+    antes = video.read_bytes()
+    # a conferência acha um problema (a cópia "perdeu" o vídeo): nada é trocado
+    original = dublagem.inspecionar
+
+    def inspecionar_ruim(ffmpeg, arquivo):
+        f = original(ffmpeg, arquivo)
+        return f if Path(arquivo) == video else dublagem.Faixas(f.duracao, 0, f.audio, f.legenda)
+    dublagem.inspecionar = inspecionar_ruim
+    try:
+        r = dublar_video(video, legenda, VozFalsa(), FFMPEG, sondar=lambda v: (6.0, [""]), no_original=True)
+    finally:
+        dublagem.inspecionar = original
+    assert r.status == "erro" and "o original não foi alterado" in r.detalhe and "vídeo: 1 -> 0" in r.detalhe
+    assert video.read_bytes() == antes and not dublagem.temporario_no_original(video).exists()
+    assert not video.with_suffix(".mkv").exists() and legenda.exists()
+    # agora sim: vira .mkv com as duas faixas e o .avi sai
+    r = dublar_video(video, legenda, VozFalsa(), FFMPEG, sondar=lambda v: (6.0, [""]), no_original=True)
+    assert r.status == "dublado", r.detalhe
+    assert r.destino == video.with_suffix(".mkv") and not video.exists() and legenda.exists()
+    assert len([l for l in faixas(r.destino) if "Audio" in l]) == 2
+
+
+@pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
+def test_so_a_legenda_dentro_do_video(tmp_path):
+    video = video_de_teste(tmp_path / "Aula.mp4")
+    legenda = tmp_path / "Aula.pt-BR.srt"
+    legenda.write_text(SRT, encoding="utf-8")
+    final = dublagem.embutir_legenda(FFMPEG, video, legenda)
+    assert final == video and not legenda.exists()
+    linhas = faixas(video)
+    assert [l for l in linhas if "Subtitle" in l] and "(por)" in [l for l in linhas if "Subtitle" in l][0]
+    assert len([l for l in linhas if "Audio" in l]) == 1                           # o áudio continua o mesmo
+    f = dublagem.inspecionar(FFMPEG, video)
+    assert f.video == 1 and f.audio == 1 and f.legenda == 1 and abs(f.duracao - 6) < 0.5
+
+
+def test_amostra_separa_so_o_trecho_e_comando_com_fundo(tmp_path):
+    c = comando_mixar("ffmpeg", Path("F.mkv"), Path("t.wav"), Path("s.part"), 1, True, fundo=Path("fundo.flac"),
+                      legenda_nova=Path("F.pt-BR.srt"))
+    assert c[c.index("-filter_complex") + 1] == dublagem.FILTRO_SEM_VOZES and "fundo.flac" in c
+    assert c[c.index("F.pt-BR.srt") - 1] == "-i" and "3:0" in c and "language=por" in c
+    mp4 = comando_mixar("ffmpeg", Path("F.mp4"), Path("t.wav"), Path("s.part"), 1, True, legenda_nova=Path("l.srt"),
+                        formato="mp4")
+    assert mp4[-3:] == ["-f", "mp4", "s.part"] and "mov_text" in mp4 and "0:t?" not in mp4 and "2:0" in mp4
+    amostra = comando_mixar("ffmpeg", Path("F.mkv"), Path("t.wav"), Path("s.part"), 1, True, (10.0, 70.0),
+                            Path("fundo-10-70.flac"), Path("l.srt"))
+    assert "l.srt" not in amostra and "fundo-10-70.flac" in amostra       # a amostra não leva legenda
+    assert dublagem.destino_no_original(Path("a.MKV"))[1] == "matroska"
+    assert dublagem.destino_no_original(Path("a.m4v")) == (Path("a.m4v"), "mp4")
+    assert dublagem.destino_no_original(Path("a.ts")) == (Path("a.mkv"), "matroska")
+
+
+def test_no_original_ja_dublado_e_o_audio_em_portugues(tmp_path):
+    filmes = tmp_path / "Filmes"
+    (filmes / "A (2000)").mkdir(parents=True)
+    for nome in ("A (2000).mkv", "A (2000).pt-BR.srt"):
+        (filmes / "A (2000)" / nome).write_text("1\n00:00:01,000 --> 00:00:02,000\nOi.\n" if "srt" in nome else "x")
+    (filmes / "A (2000)" / "A (2000) - Dublado IA.mkv").write_text("x")       # de uma versão antiga
+    assert videos_para_dublar(filmes, sondar=lambda v: (60.0, ["eng"])) == []   # arquivo separado: já existe
+    itens = videos_para_dublar(filmes, sondar=lambda v: (60.0, ["eng"]), no_original=True)
+    assert [i.video.name for i in itens] == ["A (2000).mkv"] and itens[0].destino is None
+    assert videos_para_dublar(filmes, sondar=lambda v: (60.0, ["por", "eng"]), no_original=True) == []
+    series = tmp_path / "Séries"
+    (series / "Show" / "Season 01").mkdir(parents=True)
+    (series / "Show" / "Season 01" / "Show S01E01.mkv").write_text("x")
+    (series / "Show" / "Season 01" / "Show S01E01.pt-BR.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nOi.\n")
+    ep = dublagem.episodios_para_dublar(series, sondar=lambda v: (60.0, ["eng"]), no_original=True)
+    assert ep[0].destino is None and ep[0].serie == "Show"                       # sem a pasta irmã

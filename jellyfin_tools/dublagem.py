@@ -32,7 +32,7 @@ import tarfile
 import tempfile
 import wave
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .legendas import ErroLegenda, extrair_srt
@@ -330,35 +330,58 @@ def faixas_de_audio(video: Path) -> tuple[float | None, list[str]]:
         return None, [""]
 
 
+FILTRO_VOICE_OVER = ("[0:a:0]aresample=48000,aformat=channel_layouts=stereo[orig];"
+                     "[1:a]aresample=48000,aformat=channel_layouts=stereo,volume=1.5,asplit=2[voz][chave];"
+                     "[orig][chave]sidechaincompress=threshold=0.02:ratio=8:attack=20:release=400[abaixada];"
+                     "[abaixada][voz]amix=inputs=2:duration=first:normalize=0[dub]")
+# Com as vozes originais separadas: a dublagem entra sobre a música e os efeitos (o fundo só abaixa um pouco)
+FILTRO_SEM_VOZES = ("[2:a]aresample=48000,aformat=channel_layouts=stereo[fundo];"
+                    "[1:a]aresample=48000,aformat=channel_layouts=stereo,volume=1.5,asplit=2[voz][chave];"
+                    "[fundo][chave]sidechaincompress=threshold=0.05:ratio=3:attack=20:release=300[abaixado];"
+                    "[abaixado][voz]amix=inputs=2:duration=first:normalize=0[dub]")
+TITULO_LEGENDA = "Português"
+
+
 def comando_mixar(ffmpeg: str, video: Path, trilha: Path, saida: Path, faixas: int, legendas: bool,
-                  trecho: tuple[float, float] | None = None) -> list[str]:
+                  trecho: tuple[float, float] | None = None, fundo: Path | None = None,
+                  legenda_nova: Path | None = None, formato: str = "matroska") -> list[str]:
     """O comando do ffmpeg: vídeo copiado, a dublagem como 1ª faixa (padrão) e as originais depois.
     trecho (início, fim): só esse pedaço (a AMOSTRA); aí o vídeo é recodificado, para começar no ponto exato e a voz
-    não ficar adiantada (copiando, o corte cai no quadro-chave anterior, até alguns segundos antes)."""
-    filtro = ("[0:a:0]aresample=48000,aformat=channel_layouts=stereo[orig];"
-              "[1:a]aresample=48000,aformat=channel_layouts=stereo,volume=1.5,asplit=2[voz][chave];"
-              "[orig][chave]sidechaincompress=threshold=0.02:ratio=8:attack=20:release=400[abaixada];"
-              "[abaixada][voz]amix=inputs=2:duration=first:normalize=0[dub]")
+    não ficar adiantada (copiando, o corte cai no quadro-chave anterior, até alguns segundos antes).
+    fundo: a música e os efeitos SEM as vozes originais (separar_vozes): a dublagem fica "de verdade".
+    legenda_nova: a legenda em português também entra como faixa (a 1ª legenda do arquivo).
+    formato: "matroska" (.mkv) ou "mp4" (o .mp4 original continua .mp4)."""
     corte = ["-ss", f"{trecho[0]:.3f}", "-t", f"{trecho[1] - trecho[0]:.3f}"] if trecho else []
-    comando = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", *corte, "-i", str(video), "-i", str(trilha),
-               "-filter_complex", filtro, "-map", "0:v:0?" if trecho else "0:v?", "-map", "[dub]", "-map", "0:a"]
-    if legendas and not trecho:                     # do .mkv dá para copiar as legendas embutidas como estão
-        comando += ["-map", "0:s?", "-map", "0:t?"]
+    comando = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", *corte, "-i", str(video), "-i", str(trilha)]
+    if fundo:
+        comando += ["-i", str(fundo)]
+    indice_legenda = 3 if fundo else 2
+    if legenda_nova and not trecho:
+        comando += ["-i", str(legenda_nova)]
+    comando += ["-filter_complex", FILTRO_SEM_VOZES if fundo else FILTRO_VOICE_OVER,
+                "-map", "0:v:0?" if trecho else "0:v?", "-map", "[dub]", "-map", "0:a"]
+    if legenda_nova and not trecho:
+        comando += ["-map", f"{indice_legenda}:0"]           # a nova antes das outras: é a legenda nº 0 do arquivo
+    if legendas and not trecho:                     # do .mkv (ou .mp4 -> .mp4) dá para copiar as legendas como estão
+        comando += ["-map", "0:s?"] + (["-map", "0:t?"] if formato == "matroska" else [])
     comando += ["-c", "copy"]
     if trecho:
         comando += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
+    if formato == "mp4" and (legenda_nova or legendas) and not trecho:
+        comando += ["-c:s", "mov_text"]
     comando += ["-c:a:0", "aac", "-b:a:0", "192k",
                 "-metadata:s:a:0", "language=por", "-metadata:s:a:0", "title=Português (dublagem IA)",
                 "-disposition:a:0", "default"]
     for i in range(faixas):
         comando += [f"-disposition:a:{i + 1}", "0"]
-    return comando + ["-progress", "pipe:1", "-nostats", "-f", "matroska", str(saida)]
+    if legenda_nova and not trecho:
+        comando += ["-metadata:s:s:0", "language=por", "-metadata:s:s:0", f"title={TITULO_LEGENDA}",
+                    "-disposition:s:0", "0"]               # com a dublagem, a legenda não liga sozinha
+    return comando + ["-progress", "pipe:1", "-nostats", "-f", formato, str(saida)]
 
 
-def mixar(ffmpeg: str, video: Path, trilha: Path, destino: Path, duracao: float, faixas: int = 1,
-          parar=None, ao_progresso=None, trecho: tuple[float, float] | None = None) -> None:
-    parcial = destino.with_name(destino.name + ".part")
-    comando = comando_mixar(ffmpeg, video, trilha, parcial, max(faixas, 1), video.suffix.lower() == ".mkv", trecho)
+def _rodar_ffmpeg(comando: list[str], duracao: float | None, parar=None, ao_progresso=None,
+                  erro_padrao: str = "o ffmpeg não conseguiu juntar o áudio") -> None:
     processo = subprocess.Popen(comando, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                 encoding="utf-8", errors="replace", **SEM_JANELA)
     try:
@@ -372,15 +395,133 @@ def mixar(ffmpeg: str, video: Path, trilha: Path, destino: Path, duracao: float,
                 except ValueError:
                     pass
         erro = processo.stderr.read()
-        if processo.wait() != 0 or not parcial.is_file():
+        if processo.wait() != 0:
             detalhe = erro.strip()[-300:] or (f"o ffmpeg fechou sozinho (código {processo.returncode})"
                                               if processo.returncode < 0 else "sem detalhes")
-            raise ErroDublagem(f"o ffmpeg não conseguiu juntar o áudio: {detalhe}")
-        parcial.replace(destino)
+            raise ErroDublagem(f"{erro_padrao}: {detalhe}")
     finally:
         if processo.poll() is None:
             processo.kill()
+
+
+def mixar(ffmpeg: str, video: Path, trilha: Path, destino: Path, duracao: float, faixas: int = 1,
+          parar=None, ao_progresso=None, trecho: tuple[float, float] | None = None, fundo: Path | None = None,
+          legenda_nova: Path | None = None, formato: str = "matroska") -> None:
+    parcial = destino.with_name(destino.name + ".part")
+    copiar = video.suffix.lower() == ".mkv" or (formato == "mp4" and video.suffix.lower() in MESMO_MP4)
+    comando = comando_mixar(ffmpeg, video, trilha, parcial, max(faixas, 1), copiar, trecho, fundo, legenda_nova,
+                            formato)
+    try:
+        _rodar_ffmpeg(comando, duracao, parar, ao_progresso)
+        if not parcial.is_file():
+            raise ErroDublagem("o ffmpeg não conseguiu juntar o áudio: sem detalhes")
+        parcial.replace(destino)
+    finally:
         parcial.unlink(missing_ok=True)
+
+
+# ----------------------------------------------------------------- a faixa DENTRO do arquivo original
+MESMO_MP4 = (".mp4", ".m4v", ".mov")        # continuam .mp4/.m4v/.mov; os outros (.avi, .wmv, .ts...) viram .mkv
+
+
+@dataclass
+class Faixas:
+    duracao: float | None
+    video: int = 0
+    audio: int = 0
+    legenda: int = 0
+    idiomas_audio: list = field(default_factory=list)       # um por faixa ("" = sem idioma marcado)
+    idiomas_legenda: list = field(default_factory=list)
+
+    def tem_audio_portugues(self) -> bool:
+        return bool(set(self.idiomas_audio) & _PORTUGUES)
+
+    def tem_legenda_portugues(self) -> bool:
+        return bool(set(self.idiomas_legenda) & _PORTUGUES)
+
+
+def inspecionar(ffmpeg: str, arquivo: Path) -> Faixas:
+    """Duração e quantas faixas de cada tipo, pelo próprio ffmpeg (sem precisar do ffprobe nem do PyAV)."""
+    r = subprocess.run([ffmpeg, "-hide_banner", "-i", str(arquivo)], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", **SEM_JANELA)
+    texto = r.stderr
+    achado = re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", texto)
+    duracao = (int(achado[1]) * 3600 + int(achado[2]) * 60 + float(achado[3])) if achado else None
+    faixas = re.findall(r"Stream #\d+:\d+(?:\[\w+\])?(?:\((\w+)\))?.*?: (Video|Audio|Subtitle):", texto)
+    tipos = [tipo for _, tipo in faixas]
+
+    def idiomas(tipo):
+        return [("" if idioma == "und" else idioma.lower()) for idioma, t in faixas if t == tipo]
+    return Faixas(duracao, tipos.count("Video"), tipos.count("Audio"), tipos.count("Subtitle"),
+                  idiomas("Audio"), idiomas("Subtitle"))
+
+
+def destino_no_original(video: Path) -> tuple[Path, str]:
+    """(arquivo final, formato): o .mkv e o .mp4 continuam com o mesmo nome; os outros viram .mkv."""
+    if video.suffix.lower() == ".mkv":
+        return video, "matroska"
+    if video.suffix.lower() in MESMO_MP4:
+        return video, "mp4"
+    return video.with_suffix(".mkv"), "matroska"
+
+
+def temporario_no_original(video: Path) -> Path:
+    """Onde a cópia é gravada antes de trocar: ao lado, com um nome que o Jellyfin não pega como vídeo."""
+    return video.with_name(video.name + ".maestro-tmp")
+
+
+def trocar_original(ffmpeg: str, video: Path, copia: Path, final: Path, audios_a_mais: int, legendas: int | None,
+                    inspecionar_=None) -> Path:
+    """Confere a cópia (mesma duração, as faixas de antes e as novas) e só então troca o original por ela.
+    legendas: quantas faixas de legenda a cópia deve ter (None: não confere). Se algo não bater, apaga a cópia e o
+    original fica como estava."""
+    inspecionar_ = inspecionar_ or (lambda arquivo: inspecionar(ffmpeg, arquivo))
+    antes, depois = inspecionar_(video), inspecionar_(copia)
+    problemas = []
+    if antes.duracao is None or depois.duracao is None:
+        problemas.append("não deu para ler a duração")
+    elif abs(antes.duracao - depois.duracao) > max(2.0, antes.duracao * 0.01):
+        problemas.append(f"a duração mudou ({antes.duracao:.0f}s -> {depois.duracao:.0f}s)")
+    if depois.video != antes.video:
+        problemas.append(f"faixas de vídeo: {antes.video} -> {depois.video}")
+    if depois.audio != antes.audio + audios_a_mais:
+        problemas.append(f"faixas de áudio: {antes.audio} -> {depois.audio}")
+    if legendas is not None and depois.legenda != legendas:
+        problemas.append(f"faixas de legenda: {antes.legenda} -> {depois.legenda}")
+    if problemas:
+        copia.unlink(missing_ok=True)
+        raise ErroDublagem("a cópia não ficou igual ao original (" + "; ".join(problemas) + "); o original não foi "
+                           "alterado")
+    os.replace(copia, final)                       # na mesma pasta: troca de uma vez (nunca fica pela metade)
+    if final != video:
+        video.unlink(missing_ok=True)              # .avi -> .mkv: o antigo sai (o novo tem tudo dele e a dublagem)
+    return final
+
+
+def embutir_legenda(ffmpeg: str, video: str | Path, legenda: str | Path, apagar_srt: bool = True, parar=None,
+                    inspecionar_=None) -> Path:
+    """Só a legenda (sem dublar): ela entra como faixa 'Português' dentro do próprio vídeo. Devolve o arquivo final.
+    apagar_srt: o .srt ao lado sai (está dentro do vídeo; senão o Jellyfin mostraria a mesma legenda duas vezes)."""
+    video, legenda = Path(video), Path(legenda)
+    final, formato = destino_no_original(video)
+    copia = temporario_no_original(video)
+    copiar = video.suffix.lower() == ".mkv" or (formato == "mp4" and video.suffix.lower() in MESMO_MP4)
+    antes = (inspecionar_ or (lambda a: inspecionar(ffmpeg, a)))(video)
+    comando = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(video), "-i", str(legenda),
+               "-map", "0:v?", "-map", "0:a?", "-map", "1:0"]
+    if copiar:
+        comando += ["-map", "0:s?"] + (["-map", "0:t?"] if formato == "matroska" else [])
+    comando += ["-c", "copy"] + (["-c:s", "mov_text"] if formato == "mp4" else [])
+    comando += ["-metadata:s:s:0", "language=por", "-metadata:s:s:0", f"title={TITULO_LEGENDA}",
+                "-disposition:s:0", "default", "-progress", "pipe:1", "-nostats", "-f", formato, str(copia)]
+    try:
+        _rodar_ffmpeg(comando, antes.duracao, parar, erro_padrao="o ffmpeg não conseguiu pôr a legenda no vídeo")
+        trocar_original(ffmpeg, video, copia, final, 0, (antes.legenda if copiar else 0) + 1, inspecionar_)
+    finally:
+        copia.unlink(missing_ok=True)
+    if apagar_srt:
+        legenda.unlink(missing_ok=True)
+    return final
 
 
 # ----------------------------------------------------------------- o que dublar na biblioteca
@@ -422,20 +563,26 @@ def nome_da_serie(video: Path, raiz_series: str | Path) -> str:
     return partes[0] if len(partes) > 1 else Path(video).stem
 
 
-def episodios_para_dublar(raiz_series: str | Path, idioma: str = "pt-BR", sondar=faixas_de_audio) -> list[ParaDublar]:
-    """Os episódios com legenda em português e sem áudio em português, com o destino na pasta irmã e a série."""
+def episodios_para_dublar(raiz_series: str | Path, idioma: str = "pt-BR", sondar=faixas_de_audio,
+                          no_original: bool = False) -> list[ParaDublar]:
+    """Os episódios com legenda em português e sem áudio em português, com o destino na pasta irmã e a série.
+    no_original: a dublagem vira uma faixa do próprio episódio (não precisa da pasta irmã)."""
     if not raiz_series or not Path(raiz_series).is_dir():
         return []
-    itens = videos_para_dublar(raiz_series, idioma=idioma, sondar=sondar,
-                               destino_de=lambda v: destino_episodio(v, raiz_series))
+    itens = videos_para_dublar(raiz_series, idioma=idioma, sondar=sondar, no_original=no_original,
+                               destino_de=None if no_original else (lambda v: destino_episodio(v, raiz_series)))
     for item in itens:
         item.serie = nome_da_serie(item.video, raiz_series)
     return itens
 
 
-def videos_para_dublar(*pastas, idioma: str = "pt-BR", sondar=faixas_de_audio, destino_de=None) -> list[ParaDublar]:
+def videos_para_dublar(*pastas, idioma: str = "pt-BR", sondar=faixas_de_audio, destino_de=None,
+                       no_original: bool = False) -> list[ParaDublar]:
     """Filmes com legenda no idioma pedido, sem versão dublada e sem áudio em português. destino_de(vídeo): onde
-    fica a versão dublada (séries: a pasta irmã); sem ele, ao lado ('Nome - Dublado IA.mkv')."""
+    fica a versão dublada (séries: a pasta irmã); sem ele, ao lado ('Nome - Dublado IA.mkv').
+    no_original: a dublagem vira uma faixa do próprio vídeo (destino None); "já dublado" = já tem áudio em português."""
+    if no_original:
+        destino_de = (lambda v: None)
     destino_de = destino_de or caminho_dublado
     portugues = _PORTUGUES | {idioma.lower(), idioma.lower().split("-")[0]}
     achados, vistos = [], set()
@@ -445,7 +592,7 @@ def videos_para_dublar(*pastas, idioma: str = "pt-BR", sondar=faixas_de_audio, d
         for video in sorted(Path(pasta).rglob("*")):
             if ".organizador" in video.parts or not video.is_file() or not eh_video_da_biblioteca(video):
                 continue
-            if video.stem.endswith(MARCA_DUBLADO) or destino_de(video).exists():
+            if video.stem.endswith(MARCA_DUBLADO) or (not no_original and destino_de(video).exists()):
                 continue
             if (chave := str(video.resolve()).lower()) in vistos:
                 continue
@@ -543,8 +690,13 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
                  pasta_trabalho: str | Path | None = None, parar=None, ao_progresso=None,
                  sondar=faixas_de_audio, adaptar=None, avisar=None, vozes: dict | None = None,
                  pasta_cache: str | Path | None = None, trecho: tuple[float, float] | None = None,
-                 destino: str | Path | None = None) -> ResultadoDublagem:
-    """Lê a legenda com a voz, monta a trilha e grava 'Nome - Dublado IA.mkv'. O original não é tocado.
+                 destino: str | Path | None = None, separar=None, no_original: bool = False,
+                 legenda_no_video: bool = False) -> ResultadoDublagem:
+    """Lê a legenda com a voz, monta a trilha e grava 'Nome - Dublado IA.mkv' (o original não é tocado) ou, com
+    no_original, acrescenta a faixa 'Português (dublagem IA)' no PRÓPRIO arquivo (a cópia é conferida antes de trocar).
+    separar(vídeo, destino.flac, trecho, duração, parar, ao_progresso): tira as vozes originais (separar_vozes) e a
+    dublagem entra sobre a música e os efeitos; sem ele, fica o "voice-over" (o original só abaixa).
+    legenda_no_video: a legenda em português também entra como faixa (e o .srt ao lado sai, se for no original).
     adaptar([(id, texto, máx. letras, fala anterior)]) -> {id: texto mais curto}: as falas que não cabem no tempo
     são reescritas (ver adaptacao.py) e lidas de novo. Se falhar, segue sem adaptar. avisar(texto): para o log.
     vozes: {número da fala: voz} (uma voz por personagem; ver personagens.py).
@@ -553,9 +705,12 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
     trecho (início, fim) + destino: só as falas desse pedaço, num vídeo curto (a AMOSTRA). As falas ficam no mesmo
     progresso guardado: o filme inteiro, depois, não paga de novo por elas."""
     video, legenda = Path(video), Path(legenda)
-    destino = Path(destino) if destino else caminho_dublado(video)
+    no_original = no_original and not trecho                        # a amostra é sempre um vídeo à parte
+    final, formato = destino_no_original(video) if no_original else (None, "matroska")
+    destino = (temporario_no_original(video) if no_original else
+               Path(destino) if destino else caminho_dublado(video))
     destino.parent.mkdir(parents=True, exist_ok=True)               # episódio: a pasta irmã da série
-    if destino.exists() and not trecho:
+    if destino.exists() and not trecho and not no_original:
         return ResultadoDublagem(video, "ja_existe", "a versão dublada já existe", destino)
     ffmpeg = ffmpeg or localizar_ffmpeg()
     if not ffmpeg:
@@ -573,6 +728,8 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
     duracao, idiomas = sondar(video)
     if not idiomas:
         return ResultadoDublagem(video, "erro", "o vídeo não tem áudio")
+    if no_original and set(idiomas) & _PORTUGUES:
+        return ResultadoDublagem(video, "ja_existe", "o vídeo já tem áudio em português", video)
     duracao = duracao or horarios(falas[-1][0].tempo)[1] + 2
     vozes = vozes or {}
     indices = list(range(len(falas)))
@@ -592,22 +749,42 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
         pedidos = [(falas[k][1], pasta / _nome_wav(k, falas[k][1], vozes.get(k, "")), vozes.get(k, ""))
                    for k in indices]
         retomadas = sum(1 for _, w, _ in pedidos if _pronto(w))
+        # com a separação das vozes, as etapas dividem a barra de outro jeito (separar demora)
+        fatias = ((0.4, 0.45, 0.5, 0.8) if separar else (0.5, 0.6, 0.7, 0.7))   # falas, adaptar, trilha, separar
         try:
-            _sintetizar(motor, pedidos, parar, lambda f: andamento(0.5 * f))
+            _sintetizar(motor, pedidos, parar, lambda f: andamento(fatias[0] * f))
             clipes = [(a - inicio, b - inicio, w) for k, (_, w, _) in zip(indices, pedidos)
                       for a, b in [horarios(falas[k][0].tempo)]]
             adaptadas = 0
             if adaptar is not None:
                 clipes, adaptadas = _adaptar(clipes, [t for _, t in falas], duracao, motor, adaptar, parar, avisar,
                                              vozes, pasta, indices)
-            andamento(0.6)
+            andamento(fatias[1])
             contas = montar_trilha(clipes, duracao, pasta / "trilha.wav", acelerar_com_ffmpeg(ffmpeg),
                                    reamostrar_com_ffmpeg(ffmpeg))
-            andamento(0.7)
+            andamento(fatias[2])
+            fundo = None
+            if separar:
+                nome = f"fundo-{int(trecho[0])}-{int(trecho[1])}.flac" if trecho else "fundo.flac"
+                fundo = separar(video, pasta / nome, trecho, duracao, parar,
+                                lambda f: andamento(fatias[2] + (fatias[3] - fatias[2]) * f))
+            andamento(fatias[3])
+            antes = inspecionar(ffmpeg, video) if no_original else None
+            nova = legenda if legenda_no_video and not trecho else None
             mixar(ffmpeg, video, pasta / "trilha.wav", destino, duracao, len(idiomas), parar,
-                  lambda f: andamento(0.7 + 0.3 * f), trecho)
+                  lambda f: andamento(fatias[3] + (1 - fatias[3]) * f), trecho, fundo, nova, formato)
+            if no_original:
+                copiou = video.suffix.lower() == ".mkv" or (formato == "mp4" and video.suffix.lower() in MESMO_MP4)
+                destino = trocar_original(ffmpeg, video, destino, final, 1,
+                                          (antes.legenda if copiou else 0) + (1 if nova else 0),
+                                          lambda arquivo: antes if arquivo == video else inspecionar(ffmpeg, arquivo))
+                if nova:
+                    legenda.unlink(missing_ok=True)      # está dentro do vídeo (senão apareceria duas vezes)
         except (ErroDublagem, OSError, wave.Error, subprocess.SubprocessError) as erro:
-            detalhe = str(erro) if isinstance(erro, ErroDublagem) else f"{type(erro).__name__}: {erro}"
+            if no_original:
+                temporario_no_original(video).unlink(missing_ok=True)
+            detalhe = str(erro) if isinstance(erro, ErroDublagem) or type(erro).__name__ == "ErroSeparacao" \
+                else f"{type(erro).__name__}: {erro}"
             if pasta_cache:
                 prontas = sum(1 for _, w, _ in pedidos if _pronto(w))
                 detalhe += (f" — {prontas} de {len(pedidos)} falas já prontas e guardadas: dublar de novo continua "

@@ -153,8 +153,10 @@ def _idioma_no_nome(legenda: Path, video: Path) -> str:
         else ""
 
 
-def legendas_para_traduzir(*pastas, idioma: str = "pt-BR") -> list[Pendente]:
-    """Os vídeos das bibliotecas que têm legenda .srt em OUTRO idioma e nenhuma no idioma pedido."""
+def legendas_para_traduzir(*pastas, idioma: str = "pt-BR", sondar_embutidas=None) -> list[Pendente]:
+    """Os vídeos das bibliotecas que têm legenda .srt em OUTRO idioma e nenhuma no idioma pedido.
+    sondar_embutidas(vídeo) -> (duração, idiomas das legendas DENTRO do vídeo): se já houver uma em português lá
+    dentro (vídeos avulsos: a legenda vira faixa), não traduz de novo."""
     alvo = {idioma.lower()} | (_PORTUGUES if idioma.lower().startswith("pt") else set())
     pendentes, vistos = [], set()
     for pasta in pastas:
@@ -174,6 +176,8 @@ def legendas_para_traduzir(*pastas, idioma: str = "pt-BR") -> list[Pendente]:
             candidatas = [a for a, cod in idiomas.items() if a.suffix.lower() == ".srt" and "forced" not in cod]
             if not candidatas:
                 continue
+            if sondar_embutidas and set(sondar_embutidas(video)[1]) & alvo:
+                continue                                           # já tem em português dentro do vídeo
 
             def ordem(legenda: Path) -> tuple:
                 cod = idiomas[legenda].split(".")[0]

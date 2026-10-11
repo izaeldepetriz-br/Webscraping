@@ -320,9 +320,11 @@ def vozes_da_serie(serie: str) -> dict:
     return personagens.carregar_elenco(arquivo_elenco(serie))["vozes"] if serie else {}
 
 
-def itens_para_dublar(pastas: dict, idioma: str = "pt-BR", sondar=None) -> list:
-    """Os filmes (versão ao lado) e os episódios das séries (na pasta irmã 'Séries (Dublado IA)') para dublar."""
+def itens_para_dublar(pastas: dict, idioma: str = "pt-BR", sondar=None, no_original: bool = False) -> list:
+    """Os filmes e os episódios das séries para dublar. no_original: a dublagem vira faixa do próprio arquivo;
+    senão, versão ao lado (filmes) ou na pasta irmã 'Séries (Dublado IA)' (episódios)."""
     extra = {"sondar": sondar} if sondar else {}
+    extra["no_original"] = no_original
     filmes = pastas.get("Filmes") or ""
     itens = videos_para_dublar(filmes, idioma=idioma, **extra) if filmes and Path(filmes).is_dir() else []
     return itens + episodios_para_dublar(pastas.get("Séries") or "", idioma=idioma, **extra)
@@ -689,14 +691,16 @@ def sincronizar_legendas(log: logging.Logger, limite_videos: int = 5) -> Resulta
 
 
 def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
-    """Os filmes e episódios com legenda em português e sem áudio em português ganham a versão dublada (filmes:
-    'Nome - Dublado IA.mkv' ao lado; episódios: na pasta irmã 'Séries (Dublado IA)')."""
+    """Os filmes e episódios com legenda em português e sem áudio em português ganham a dublagem: uma faixa nova no
+    próprio arquivo (padrão) ou a versão à parte (filmes: 'Nome - Dublado IA.mkv' ao lado; episódios: na pasta irmã
+    'Séries (Dublado IA)')."""
     o, pastas = opcoes_salvas()
     if o.robo_so_piper:                               # opção "Nos robôs agendados, usar só o Piper (sem custo)"
         o.motor_voz, o.voz_por_personagem, o.figurantes_piper = "Piper (grátis, no PC)", False, False
     if not any(pastas.get(t) and Path(pastas[t]).is_dir() for t in ("Filmes", "Séries")):
         raise FaltaConfiguracao("Escolha a biblioteca de Filmes e/ou de Séries na aba Jellyfin.")
-    itens = itens_para_dublar(pastas, o.idioma.split(",")[0].strip() or "pt-BR")
+    itens = itens_para_dublar(pastas, o.idioma.split(",")[0].strip() or "pt-BR",
+                              no_original=o.dublagem_no_original)
     if not itens:
         return Resultado("--dublar", OK, "Nenhum filme ou episódio para dublar.")
     escolhidos = itens[:limite_videos] if limite_videos > 0 else itens
@@ -708,8 +712,9 @@ def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
            else f"Piper {o.voz_dublagem}")
     log.info("Dublar: %d filme(s), %d nesta execução (voz %s)", len(itens), len(escolhidos), voz)
     resultados = []
+    separar = separador_de_vozes(o, log)
     for item in escolhidos:
-        r = dublar_item(o, item, motor, log)
+        r = dublar_item(o, item, motor, log, separar=separar)
         resultados.append(r)
         (log.error if r.status == "erro" else log.info)("[%s] %s%s (%d falas, %d adaptadas, %d aceleradas)",
                                                          r.status, r.video.name,
@@ -744,25 +749,62 @@ def vozes_automaticas(o: OpcoesJellyfin, item, log: logging.Logger) -> dict | No
         return None
 
 
-def dublar_item(o: OpcoesJellyfin, item, motor, log: logging.Logger, parar=None, ao_progresso=None):
+def pasta_separar_vozes() -> Path:
+    """O modelo que separa as vozes do fundo (baixado na 1ª vez, ~67 MB)."""
+    return config.ARQUIVO.parent / "separar_vozes"
+
+
+def separador_de_vozes(o: OpcoesJellyfin, log: logging.Logger | None = None, ao_baixar=None):
+    """O 'separar' do dublar_video, se ligado em Configurações > Dublagem ("Tirar as vozes originais").
+    None: fica o voice-over (falta o onnxruntime ou o modelo não baixou: avisa no log e segue)."""
+    if not getattr(o, "separar_vozes", False):
+        return None
+    from jellyfin_tools import separar_vozes
+    ffmpeg = localizar_ffmpeg()
+    if not separar_vozes.disponivel() or not ffmpeg:
+        if log:
+            log.warning("Tirar as vozes originais: falta o onnxruntime ou o ffmpeg; a dublagem fica por cima do áudio")
+        return None
+    try:
+        modelo = separar_vozes.preparar_modelo(pasta_separar_vozes(), ao_progresso=ao_baixar)
+    except Exception as erro:                       # sem internet na 1ª vez, download corrompido...
+        if log:
+            log.warning("Tirar as vozes originais: não deu para baixar o modelo (%s); a dublagem fica por cima do "
+                        "áudio desta vez", erro)
+        return None
+    carregado = {}
+
+    def separar(video, destino, trecho, duracao, parar, ao_progresso):
+        if "modelo" not in carregado:               # carrega uma vez só, para todos os vídeos da vez
+            carregado["modelo"] = separar_vozes.Separador(modelo)
+        return separar_vozes.separar_fundo(ffmpeg, video, destino, modelo, trecho, duracao, parar, ao_progresso,
+                                           carregado["modelo"])
+    return separar
+
+
+def dublar_item(o: OpcoesJellyfin, item, motor, log: logging.Logger, parar=None, ao_progresso=None, separar=None,
+                legenda_no_video: bool = False):
     return dublar_video(item.video, item.legenda, motor, adaptar=adaptador(o, item.video.stem),
                         avisar=lambda texto: log.warning("Dublagem: %s", texto), vozes=vozes_automaticas(o, item, log),
-                        pasta_cache=pasta_dublagem(), destino=item.destino, parar=parar, ao_progresso=ao_progresso)
+                        pasta_cache=pasta_dublagem(), destino=item.destino, parar=parar, ao_progresso=ao_progresso,
+                        separar=separar, no_original=o.dublagem_no_original, legenda_no_video=legenda_no_video)
 
 
 # ============================================================================ vídeos avulsos
 @dataclasses.dataclass
 class PlanoAvulsos:
     """O que a caixa de entrada (e/ou os arquivos escolhidos) tem para fazer."""
-    traduzir: list                 # legendas em outro idioma -> português (Claude)
-    pelo_audio: list               # vídeos sem nenhuma legenda -> Whisper (+ Claude)
-    dublar: list                   # já com legenda em português, sem versão dublada
+    traduzir: list                 # legendas em outro idioma -> português (Claude ou local)
+    pelo_audio: list               # vídeos sem nenhuma legenda -> Whisper (+ tradução)
+    dublar: list                   # já com legenda em português, sem áudio em português
     videos: int = 0                # quantos vídeos olhados
     lista: list = field(default_factory=list)      # todos os vídeos olhados (Path), para a aba Avulsos
+    embutir: list = field(default_factory=list)    # (vídeo, .srt): a legenda em português vira faixa do vídeo
+    legenda_dentro: set = field(default_factory=set)   # vídeos (chave) que já têm legenda em português dentro
 
     @property
     def vazio(self) -> bool:
-        return not (self.traduzir or self.pelo_audio or self.dublar)
+        return not (self.traduzir or self.pelo_audio or self.dublar or self.embutir)
 
 
 def _chave(caminho) -> str:
@@ -789,15 +831,24 @@ def _so_estes(itens: list, pasta: str, arquivos) -> list:
     return saida
 
 
+def srt_portugues(video: Path, idioma: str = "pt-BR") -> Path | None:
+    """A legenda em português AO LADO do vídeo ('Nome.pt-BR.srt'...), se houver."""
+    return next((video.with_name(f"{video.stem}.{c}.srt") for c in dict.fromkeys((idioma, "pt-BR", "pt", "por"))
+                 if video.with_name(f"{video.stem}.{c}.srt").is_file()), None)
+
+
 def planejar_avulsos(o: OpcoesJellyfin, pasta: str = "", arquivos=(), sondar=None) -> PlanoAvulsos:
-    """A pasta de vídeos avulsos inteira e/ou os arquivos escolhidos (em qualquer pasta)."""
-    from jellyfin_tools.dublagem import MARCA_DUBLADO
+    """A pasta de vídeos avulsos inteira e/ou os arquivos escolhidos (em qualquer pasta).
+    O que olha DENTRO de cada vídeo (idiomas do áudio e das legendas) vem do próprio ffmpeg; sondar(vídeo) ->
+    (duração, idiomas do áudio) troca só a parte do áudio (testes)."""
+    from jellyfin_tools.dublagem import MARCA_DUBLADO, Faixas, inspecionar
     from jellyfin_tools.nomes import eh_video
+    legendar = getattr(o, "avulsos_legendar", True)
+    no_original = getattr(o, "dublagem_no_original", False)
     pasta = pasta if pasta and Path(pasta).is_dir() else ""
     onde = sorted({str(Path(a).parent) for a in arquivos} | ({pasta} if pasta else set()))
     onde = [p for p in onde if p and Path(p).is_dir()]
     idioma = o.idioma.split(",")[0].strip() or "pt-BR"
-    extra = {"sondar": sondar} if sondar else {}
     lista, vistos = [], set()
     candidatos = [v for v in Path(pasta).rglob("*") if v.is_file()] if pasta else []
     for v in candidatos + [Path(a) for a in arquivos if Path(a).is_file()]:
@@ -805,44 +856,83 @@ def planejar_avulsos(o: OpcoesJellyfin, pasta: str = "", arquivos=(), sondar=Non
             vistos.add(_chave(v))
             lista.append(v)
     lista.sort(key=lambda v: (str(v.parent).lower(), v.name.lower()))
-    if not onde:
-        return PlanoAvulsos([], [], [], 0, lista)
-    return PlanoAvulsos(_so_estes(legendas_para_traduzir(*onde, idioma=idioma), pasta, arquivos),
-                        _so_estes(videos_sem_legenda(*onde, idioma=idioma), pasta, arquivos),
-                        _so_estes(videos_para_dublar(*onde, idioma=idioma, **extra), pasta, arquivos)
-                        if o.avulsos_dublar else [], len(lista), lista)
+    if not onde or not (legendar or o.avulsos_dublar):
+        return PlanoAvulsos([], [], [], len(lista), lista)
+    ffmpeg, olhados = localizar_ffmpeg(), {}
+
+    def faixas(video) -> Faixas:
+        k = _chave(video)
+        if k not in olhados:
+            olhados[k] = inspecionar(ffmpeg, Path(video)) if ffmpeg else Faixas(None)
+        return olhados[k]
+
+    def sondar_legendas(video):
+        return faixas(video).duracao, set(faixas(video).idiomas_legenda)
+    sondar_audio = sondar or (lambda v: (faixas(v).duracao, faixas(v).idiomas_audio))
+    dublar = (_so_estes(videos_para_dublar(*onde, idioma=idioma, sondar=sondar_audio, no_original=no_original),
+                        pasta, arquivos) if o.avulsos_dublar else [])
+    dentro = {_chave(v) for v in lista if faixas(v).tem_legenda_portugues()}
+    embutir = []
+    if legendar:
+        vai_dublar = {_chave(i.video) for i in dublar} if no_original else set()    # a dublagem já leva a legenda
+        embutir = [(v, srt) for v in lista if _chave(v) not in dentro and _chave(v) not in vai_dublar
+                   and (srt := srt_portugues(v, idioma))]
+    return PlanoAvulsos(_so_estes(legendas_para_traduzir(*onde, idioma=idioma, sondar_embutidas=sondar_legendas),
+                                  pasta, arquivos),
+                        _so_estes(videos_sem_legenda(*onde, idioma=idioma, sondar_arquivo=sondar_legendas),
+                                  pasta, arquivos),
+                        dublar, len(lista), lista, embutir, dentro)
 
 
-def situacao_avulsos(plano: PlanoAvulsos, dublar: bool = True) -> list[tuple[Path, str, str, bool]]:
+def situacao_avulsos(plano: PlanoAvulsos, dublar: bool = True, legendar: bool = False
+                     ) -> list[tuple[Path, str, str, bool]]:
     """Uma linha por vídeo para a aba Avulsos: (vídeo, legenda em português, o que falta, pronto?)."""
     traduzir = {_chave(i.video) for i in plano.traduzir}
     pelo_audio = {_chave(i.video) for i in plano.pelo_audio}
     para_dublar = {_chave(i.video) for i in plano.dublar}
-    depois = " → dublar" if dublar else ""
+    embutir = {_chave(v) for v, _ in plano.embutir}
     linhas = []
     for v in plano.lista:
         k = _chave(v)
+        partes = []
         if k in traduzir:
-            linhas.append((v, "em outro idioma", "Traduzir a legenda" + depois, False))
+            partes.append("traduzir a legenda")
         elif k in pelo_audio:
-            linhas.append((v, "nenhuma", "Criar a legenda pelo áudio" + depois, False))
-        elif k in para_dublar:
-            linhas.append((v, "✓ tem", "Dublar", False))
+            partes.append("criar a legenda pelo áudio")
+        if dublar and (k in para_dublar or k in traduzir or k in pelo_audio):
+            partes.append("dublar")
+        if legendar and (k in embutir or k in traduzir or k in pelo_audio or k in para_dublar):
+            partes.append("pôr a legenda no vídeo")
+        if k in plano.legenda_dentro:
+            legenda = "✓ dentro do vídeo"
+        elif k in traduzir:
+            legenda = "em outro idioma"
+        elif k in pelo_audio:
+            legenda = "nenhuma"
         else:
-            linhas.append((v, "✓ tem", "Nada: já está pronto" if dublar else "Nada: já tem a legenda", True))
+            legenda = "✓ ao lado (.srt)"
+        if partes:
+            acao = " → ".join(partes)
+            linhas.append((v, legenda, acao[0].upper() + acao[1:], False))
+        else:
+            linhas.append((v, legenda, "Nada: já está pronto", True))
     return linhas
 
 
 def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", arquivos=(), parar=None,
-                      avisar=None, sondar=None, motor=None) -> Resultado:
+                      avisar=None, sondar=None, motor=None, separar=None) -> Resultado:
     """Caixa de entrada: (1) traduz a legenda que já existe; (2) cria pelo áudio a dos que não têm nenhuma; (3) se
-    marcado, dubla os que ficaram com legenda em português. Tudo ao lado do original, que não é alterado."""
+    marcado, dubla os que ficaram com legenda em português; (4) se marcado "Legendar", a legenda em português entra
+    como faixa do vídeo. A dublagem e a legenda ficam no próprio arquivo (ou, se escolhido em Configurações >
+    Dublagem, a dublagem fica à parte: 'Nome - Dublado IA.mkv')."""
+    from jellyfin_tools.dublagem import embutir_legenda
     avisar = avisar or (lambda texto: None)
     parado = parar or (lambda: False)
+    legendar = getattr(o, "avulsos_legendar", True)
     idioma = o.idioma.split(",")[0].strip() or "pt-BR"
     plano = planejar_avulsos(o, pasta, arquivos, sondar)
     tradutor = tradutor_para(o, idioma)
-    contas, erros = {"traduzidas": 0, "pelo_audio": 0, "dublados": 0}, []
+    contas, erros = {"traduzidas": 0, "pelo_audio": 0, "dublados": 0, "legendas_no_video": 0}, []
     if plano.traduzir and tradutor is None:
         erros.append(f"{len(plano.traduzir)} legenda(s) em outro idioma: falta a chave da Anthropic para traduzir")
     for k, p in enumerate(plano.traduzir if tradutor else []):
@@ -878,20 +968,39 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
         except (ErroDublagem, FaltaConfiguracao) as erro:
             erros.append(f"dublagem: não deu para preparar a voz: {erro}")
             dublar_agora = []
+        if dublar_agora and separar is None:
+            avisar("Preparando a separação das vozes (na 1ª vez baixa o modelo, ~67 MB)...")
+            separar = separador_de_vozes(o, log)
         for k, item in enumerate(dublar_agora):
             if parado():
                 break
             avisar(f"Dublando {k + 1} de {len(dublar_agora)}: {item.video.stem}")
-            r = dublar_item(o, item, motor, log, parar)
+            r = dublar_item(o, item, motor, log, parar, separar=separar or None, legenda_no_video=legendar)
             log.info("[%s] avulso %s%s", r.status, r.video.name, f" ({r.detalhe})" if r.detalhe else "")
             if r.status == "erro":
                 erros.append(f"{item.video.name}: {r.detalhe}")
             elif r.status == "dublado":
                 contas["dublados"] += 1
+                if legendar and o.dublagem_no_original:
+                    contas["legendas_no_video"] += 1
+    embutir_agora = planejar_avulsos(o, pasta, arquivos, sondar).embutir if legendar and not parado() else []
+    ffmpeg = localizar_ffmpeg() if embutir_agora else None
+    for k, (video, srt) in enumerate(embutir_agora):
+        if parado() or not ffmpeg:
+            break
+        avisar(f"Pondo a legenda no vídeo {k + 1} de {len(embutir_agora)}: {video.stem}")
+        try:
+            final = embutir_legenda(ffmpeg, video, srt, parar=parar)
+            log.info("[legenda no vídeo] avulso %s", final.name)
+            contas["legendas_no_video"] += 1
+        except (ErroDublagem, OSError) as erro:
+            log.error("[erro] legenda no vídeo %s (%s)", video.name, erro)
+            erros.append(f"{video.name}: {erro}")
     resumo = (f"Vídeos avulsos: {contas['traduzidas']} legenda(s) traduzida(s), {contas['pelo_audio']} criada(s) pelo "
-              f"áudio, {contas['dublados']} dublado(s)" + (f", {len(erros)} problema(s)." if erros else "."))
-    if plano.vazio and not dublar_agora:
-        resumo = "Vídeos avulsos: nada a fazer (já têm legenda em português e versão dublada, ou não há vídeos)."
+              f"áudio, {contas['dublados']} dublado(s), {contas['legendas_no_video']} com a legenda dentro do vídeo"
+              + (f", {len(erros)} problema(s)." if erros else "."))
+    if plano.vazio and not dublar_agora and not embutir_agora:
+        resumo = "Vídeos avulsos: nada a fazer (já têm legenda em português e dublagem, ou não há vídeos)."
     return Resultado("--avulsos", PROBLEMA if erros else OK, resumo, erros, contas)
 
 

@@ -187,7 +187,7 @@ def test_legendar_audio_no_maximo_n_videos_por_vez(casa, tmp_path, monkeypatch):
 
 def test_dublar_pelo_robo(casa, tmp_path, monkeypatch):
     from jellyfin_tools import dublagem
-    from test_dublagem import FFMPEG, SRT, VozFalsa, video_de_teste
+    from test_dublagem import FFMPEG, SRT, VozFalsa, faixas, video_de_teste
     if not FFMPEG:
         pytest.skip("sem ffmpeg")
     filmes = tmp_path / "Filmes"
@@ -198,7 +198,7 @@ def test_dublar_pelo_robo(casa, tmp_path, monkeypatch):
     monkeypatch.setattr(automacao, "preparar_voz", lambda voz, pasta, **k: Path("v.onnx"))
     monkeypatch.setattr(automacao, "MotorPiper", lambda exe, modelo: VozFalsa())
     monkeypatch.setattr(automacao, "videos_para_dublar",
-                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, **{**k, "sondar": lambda v: (6.0, ["eng"])}))
     casa()
     assert automacao.main(["--dublar"]) == automacao.FALTA_CONFIGURACAO
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
@@ -209,7 +209,10 @@ def test_dublar_pelo_robo(casa, tmp_path, monkeypatch):
     casa(destino_filmes=str(filmes))
     assert automacao.main(["--dublar"]) == automacao.OK
     assert resultado(tmp_path)["comandos"][0]["resumo"] == "1 de 1 vídeo(s) dublado(s), 0 erro(s)."
-    assert (filmes / "A (2001)" / "A (2001) - Dublado IA.mkv").is_file()
+    # padrão: a dublagem é uma faixa do próprio arquivo (sem 'Nome - Dublado IA.mkv' ao lado)
+    assert not (filmes / "A (2001)" / "A (2001) - Dublado IA.mkv").exists()
+    audios = [l for l in faixas(filmes / "A (2001)" / "A (2001).mkv") if "Audio" in l]
+    assert len(audios) == 2 and "(por)" in audios[0]
 
 
 def test_robo_soma_no_resumo_do_dia(casa, tmp_path, api_falsa):
@@ -243,7 +246,7 @@ def test_traducao_economica_pelo_robo(casa, tmp_path, monkeypatch):
 def test_dublar_pelo_robo_com_voz_por_personagem(casa, tmp_path, monkeypatch):
     """Sem janela: o robô ouve, distribui as vozes sozinho (sem a tabela) e guarda o progresso."""
     from jellyfin_tools import dublagem, personagens, voz_gemini
-    from test_dublagem import FFMPEG, SRT_APERTADA, gravar_tom, video_de_teste
+    from test_dublagem import FFMPEG, SRT_APERTADA, faixas, gravar_tom, video_de_teste
     if not FFMPEG:
         pytest.skip("sem ffmpeg")
     filmes = tmp_path / "Filmes"
@@ -251,7 +254,7 @@ def test_dublar_pelo_robo_com_voz_por_personagem(casa, tmp_path, monkeypatch):
     video_de_teste(filmes / "A (2001)" / "A (2001).mkv")
     (filmes / "A (2001)" / "A (2001).pt-BR.srt").write_text(SRT_APERTADA, encoding="utf-8")
     monkeypatch.setattr(automacao, "videos_para_dublar",
-                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, **{**k, "sondar": lambda v: (6.0, ["eng"])}))
     monkeypatch.setattr(automacao, "ouvir_personagens", lambda o, video, falas, **k: [
         personagens.Personagem("Pessoa 1", "m", falas=[0, 2]), personagens.Personagem("Ana", "f", falas=[1])])
     vozes = {}
@@ -267,7 +270,7 @@ def test_dublar_pelo_robo_com_voz_por_personagem(casa, tmp_path, monkeypatch):
     assert automacao.main(["--dublar"]) == automacao.OK
     # quem fala menos de 3 falas fica com a voz principal (Kore)
     assert set(vozes.values()) == {"Kore"} and len(vozes) == 3
-    assert (filmes / "A (2001)" / "A (2001) - Dublado IA.mkv").is_file()
+    assert len([l for l in faixas(filmes / "A (2001)" / "A (2001).mkv") if "Audio" in l]) == 2
     assert not any((tmp_path / "config" / "dublagem").iterdir())         # terminou: o progresso foi apagado
 
 
@@ -281,7 +284,7 @@ def test_robo_dublagem_mista_figurantes_no_piper(casa, tmp_path, monkeypatch):
     video_de_teste(filmes / "A (2001)" / "A (2001).mkv")
     (filmes / "A (2001)" / "A (2001).pt-BR.srt").write_text(SRT_APERTADA, encoding="utf-8")
     monkeypatch.setattr(automacao, "videos_para_dublar",
-                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, **{**k, "sondar": lambda v: (6.0, ["eng"])}))
     monkeypatch.setattr(personagens, "FIGURANTE", 2)                     # a fala do "Guarda" (1 fala) é figurante
     monkeypatch.setattr(automacao, "ouvir_personagens", lambda o, video, falas, **k: [
         personagens.Personagem("Conde", "m", falas=[0, 2]), personagens.Personagem("Guarda", "m", falas=[1])])
@@ -309,7 +312,7 @@ def test_robo_dublagem_mista_figurantes_no_piper(casa, tmp_path, monkeypatch):
 def test_robo_so_com_o_piper(casa, tmp_path, monkeypatch):
     """Opção "Nos robôs agendados, usar só o Piper": mesmo com o Gemini na tela, o --dublar não gasta nada."""
     from jellyfin_tools import dublagem, voz_gemini
-    from test_dublagem import FFMPEG, SRT, VozFalsa, video_de_teste
+    from test_dublagem import FFMPEG, SRT, VozFalsa, faixas, video_de_teste
     if not FFMPEG:
         pytest.skip("sem ffmpeg")
     filmes = tmp_path / "Filmes"
@@ -317,7 +320,7 @@ def test_robo_so_com_o_piper(casa, tmp_path, monkeypatch):
     video_de_teste(filmes / "A (2001)" / "A (2001).mkv")
     (filmes / "A (2001)" / "A (2001).pt-BR.srt").write_text(SRT, encoding="utf-8")
     monkeypatch.setattr(automacao, "videos_para_dublar",
-                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, **{**k, "sondar": lambda v: (6.0, ["eng"])}))
     monkeypatch.setattr(voz_gemini, "MotorGemini", lambda *a, **k: pytest.fail("o robô não deveria usar o Gemini"))
     piper = VozFalsa()
     monkeypatch.setattr(automacao, "motor_piper", lambda o, voz="", **k: piper)
@@ -328,7 +331,7 @@ def test_robo_so_com_o_piper(casa, tmp_path, monkeypatch):
 
 def test_robo_avulsos_precisa_da_pasta_e_dubla_a_caixa_de_entrada(casa, tmp_path, monkeypatch):
     from jellyfin_tools import dublagem
-    from tests.test_dublagem import FFMPEG, SRT, VozFalsa, video_de_teste
+    from tests.test_dublagem import FFMPEG, SRT, VozFalsa, faixas, video_de_teste
     casa()
     assert automacao.main(["--avulsos"]) == automacao.FALTA_CONFIGURACAO
     if not FFMPEG:
@@ -341,11 +344,13 @@ def test_robo_avulsos_precisa_da_pasta_e_dubla_a_caixa_de_entrada(casa, tmp_path
     voz = VozFalsa()
     monkeypatch.setattr(automacao, "preparar_motor", lambda o, **k: voz)
     monkeypatch.setattr(automacao, "videos_para_dublar",
-                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, **{**k, "sondar": lambda v: (6.0, ["eng"])}))
     monkeypatch.setattr(automacao, "videos_sem_legenda", lambda *p, **k: [])
     casa(pasta_avulsos=str(caixa), encurtar_falas=False)
     assert automacao.main(["--avulsos"]) == automacao.OK
-    assert dublagem.caminho_dublado(video).is_file() and voz.textos
+    linhas = faixas(video)                          # dublagem E legenda dentro do próprio vídeo; o .srt saiu
+    assert len([l for l in linhas if "Audio" in l]) == 2 and [l for l in linhas if "Subtitle" in l] and voz.textos
+    assert not (caixa / "Aula.pt-BR.srt").exists() and not dublagem.caminho_dublado(video).exists()
     resumo = json.loads((tmp_path / "config" / "rpa" / "ultimo.json").read_text(encoding="utf-8"))
     assert "1 dublado" in resumo["comandos"][0]["resumo"]
     o, _ = automacao.opcoes_salvas()
@@ -365,7 +370,8 @@ def test_avulsos_caixa_de_entrada_mais_videos_de_outras_pastas(tmp_path):
     (caixa / "C.pt-BR.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nOi.\n", encoding="utf-8")
     for nome in ("D.mkv", "E.mkv"):
         (outra / nome).write_bytes(b"")
-    o = SimpleNamespace(idioma="pt-BR", avulsos_dublar=True)       # só o que o plano usa
+    o = SimpleNamespace(idioma="pt-BR", avulsos_dublar=True, avulsos_legendar=False,
+                        dublagem_no_original=True)                        # só o que o plano usa
     plano = automacao.planejar_avulsos(o, str(caixa), (str(outra / "D.mkv"), str(caixa / "A.mkv")),
                                        sondar=lambda v: (60.0, ["eng"]))
     assert [v.name for v in plano.lista] == ["A.mkv", "B.mkv", "C.mkv", "D.mkv"]     # E não foi escolhido
@@ -373,14 +379,26 @@ def test_avulsos_caixa_de_entrada_mais_videos_de_outras_pastas(tmp_path):
     linhas = {v.name: (legenda, acao, pronto) for v, legenda, acao, pronto in automacao.situacao_avulsos(plano)}
     assert linhas == {"A.mkv": ("em outro idioma", "Traduzir a legenda → dublar", False),
                       "B.mkv": ("nenhuma", "Criar a legenda pelo áudio → dublar", False),
-                      "C.mkv": ("✓ tem", "Dublar", False),
+                      "C.mkv": ("✓ ao lado (.srt)", "Dublar", False),
                       "D.mkv": ("nenhuma", "Criar a legenda pelo áudio → dublar", False)}
+    # "Legendar" marcado: a legenda também vai para dentro do vídeo
+    o.avulsos_legendar = True
+    plano = automacao.planejar_avulsos(o, str(caixa), (str(outra / "D.mkv"),), sondar=lambda v: (60.0, ["eng"]))
+    linhas = {v.name: acao for v, _, acao, _ in automacao.situacao_avulsos(plano, legendar=True)}
+    assert linhas["A.mkv"] == "Traduzir a legenda → dublar → pôr a legenda no vídeo"
+    assert linhas["C.mkv"] == "Dublar → pôr a legenda no vídeo" and plano.embutir == []   # vai junto com a dublagem
+    o.avulsos_dublar = False
+    plano = automacao.planejar_avulsos(o, str(caixa), sondar=lambda v: (60.0, ["eng"]))
+    assert [(v.name, s.name) for v, s in plano.embutir] == [("C.mkv", "C.pt-BR.srt")]       # só a legenda
+    assert {v.name: acao for v, _, acao, _ in automacao.situacao_avulsos(plano, dublar=False, legendar=True)
+            }["C.mkv"] == "Pôr a legenda no vídeo"
+    o.avulsos_dublar, o.avulsos_legendar = True, False
     # já dublado: pronto; sem dublar: só a legenda
     (caixa / "C - Dublado IA.mkv").write_bytes(b"x")
     o.avulsos_dublar = False
     plano = automacao.planejar_avulsos(o, "", (str(caixa / "C.mkv"),))
     assert [(v.name, acao, pronto) for v, _, acao, pronto in automacao.situacao_avulsos(plano, dublar=False)] == [
-        ("C.mkv", "Nada: já tem a legenda", True)]
+        ("C.mkv", "Nada: já está pronto", True)]
     assert automacao.planejar_avulsos(o, str(tmp_path / "não existe")).lista == []
 
 

@@ -280,6 +280,17 @@ def _sem_cotacao_da_internet(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _sem_baixar_o_separador_de_vozes(monkeypatch):
+    """O modelo que separa as vozes (~67 MB) nunca é baixado nos testes: sem ele, a dublagem fica no voice-over.
+    Quem testa a separação passa um separador falso (ou o modelo de verdade, no autoteste do .exe)."""
+    from jellyfin_tools import separar_vozes
+
+    def offline(*a, **k):
+        raise separar_vozes.ErroSeparacao("sem internet nos testes")
+    monkeypatch.setattr(separar_vozes, "preparar_modelo", offline)
+
+
+@pytest.fixture(autouse=True)
 def _gastos_desligados():
     """O registro de gastos é global (o app e os robôs ligam): cada teste começa e termina com ele desligado."""
     from jellyfin_tools import gastos
