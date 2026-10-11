@@ -84,8 +84,15 @@ jobs:
           $p.WaitForExit()
           "o programa fechou com o código $($p.ExitCode)"
           Get-Content (Join-Path $env:TEMP 'videoscraper-teste-atualizacao.txt') -ErrorAction SilentlyContinue
-          for ($i = 0; $i -lt 90 -and -not (Test-Path $alvo); $i++) { Start-Sleep 1 }
-          Get-Content (Join-Path $env:TEMP 'videoscraper-atualizacao.log') -ErrorAction SilentlyContinue
+          # o script espera o programa fechar, descompacta o .zip (grande) e copia: espera ele dizer OK ou ERRO no log
+          $logAtualizacao = Join-Path $env:TEMP 'videoscraper-atualizacao.log'
+          for ($i = 0; $i -lt 300; $i++) {
+            $texto = Get-Content $logAtualizacao -Raw -ErrorAction SilentlyContinue
+            if ($texto -match '(?m)^(OK|ERRO)') { break }
+            Start-Sleep 1
+          }
+          "o script levou cerca de $i s"
+          Get-Content $logAtualizacao -ErrorAction SilentlyContinue
           Get-Content (Join-Path $env:TEMP 'videoscraper-atualizar-saida.txt') -ErrorAction SilentlyContinue
           if (-not (Test-Path $alvo)) {
             Get-Content (Join-Path $env:TEMP 'videoscraper-atualizar.ps1') -ErrorAction SilentlyContinue
