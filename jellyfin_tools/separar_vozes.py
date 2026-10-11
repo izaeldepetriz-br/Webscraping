@@ -103,7 +103,7 @@ def criar_sessao(modelo: str | Path, usar_gpu: bool = True, avisar=None, cronome
         gpu = ort.InferenceSession(str(modelo), opcoes(True),
                                    providers=["DmlExecutionProvider", "CPUExecutionProvider"])
         if "DmlExecutionProvider" not in gpu.get_providers():
-            return cpu, "processador"
+            return cpu, "processador (o DirectML não ativou: sem placa de vídeo com DirectX 12?)"
         bloco = {cpu.get_inputs()[0].name: np.zeros((1, 4, DIM_F, DIM_T), dtype=np.float32)}
 
         def tempo(sessao) -> float:
@@ -117,9 +117,10 @@ def criar_sessao(modelo: str | Path, usar_gpu: bool = True, avisar=None, cronome
             return gpu, f"placa de vídeo ({corrida})"
         return cpu, f"processador ({corrida}: a placa de vídeo não ganhou)"
     except Exception as erro:                  # driver antigo, sem DirectX 12...
+        motivo = " ".join(str(erro).split())[:160]
         if avisar:
-            avisar(f"a placa de vídeo não deu certo ({erro}); usando o processador")
-        return cpu, "processador"
+            avisar(f"a placa de vídeo não deu certo ({motivo}); usando o processador")
+        return cpu, f"processador (a placa de vídeo não carregou: {motivo})"
 
 
 def _janela():
