@@ -177,3 +177,17 @@ def test_atualizacao_reabre_o_mesmo_exe_que_estava_aberto(tmp_path, monkeypatch)
         texto = atualizacao.instalar_ao_fechar(tmp_path / "x.zip", pasta=tmp_path, pid=1).read_text(encoding="utf-8-sig")
         assert f"Start-Process -FilePath '{tmp_path / aberto}'" in texto        # reabre o MESMO que estava aberto
         assert "'videoscraper.exe'" in texto                                   # o .zip continua conferido por ele
+
+
+def test_script_mostra_o_progresso_e_descompacta_rapido_com_seguranca():
+    """A atualização mostra "Atualizando o Maestro... (45%)" e descompacta pelo .NET (bem mais rápido que o
+    Expand-Archive, que fica de reserva); nenhum arquivo do .zip pode sair da pasta temporária."""
+    from pathlib import Path
+    texto = atualizacao.script_de_instalacao(Path("a.zip"), Path(r"C:\p"), 7, r"C:\p\Maestro.exe")
+    assert "System.Windows.Forms" in texto and "Atualizando o Maestro" in texto      # a janelinha
+    assert "} catch { $janela = $null }" in texto                    # sem janelinha, a atualização segue igual
+    assert "[System.IO.Compression.ZipFile]::OpenRead" in texto
+    assert "$alvo.StartsWith($raiz" in texto and "caminho fora da pasta" in texto      # .zip adulterado: para
+    assert texto.index("Descompactar $zip $tmp") < texto.index("Expand-Archive -Path")   # o Expand-Archive é reserva
+    assert '"OK" | Out-File $log -Append' in texto                   # o autoteste do .exe espera esta linha
+    assert texto.index("Start-Process -FilePath") < texto.index("$janela.Close()")

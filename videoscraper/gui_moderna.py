@@ -150,7 +150,7 @@ class OpcoesJellyfin:
     whisper_gpu: bool = False        # usar a placa de vídeo NVIDIA na transcrição
     voz_dublagem: str = "faber"      # dublagem por IA: a voz sintética do Piper
     motor_voz: str = "Piper (grátis, no PC)"   # ou "Gemini (premium, Google AI Studio)"
-    voz_gemini: str = "Charon"       # voz pronta do Gemini (nunca clonagem de voz)
+    voz_gemini: str = "Charon"       # voz do Gemini: pronta ("Kore") ou clonada com consentimento ("clone:Izael")
     chave_gemini: str = ""           # Google AI Studio > Get API key (vazio = variável GEMINI_API_KEY)
     encurtar_falas: bool = True      # dublagem: o Claude reescreve mais curtas as falas que não cabem no tempo
     voz_por_personagem: bool = False  # Gemini: ouve o filme, separa quem fala e dá uma voz para cada personagem
@@ -158,6 +158,7 @@ class OpcoesJellyfin:
     limite_figurante: int = 20       # dublagem mista: figurante = quem tem menos falas que isso
     perguntar_filmes: bool = True    # Gemini com vários filmes: perguntar quais vão com o Gemini (o resto, Piper)
     robo_so_piper: bool = False      # robôs agendados (--dublar): só o Piper, sem custo
+    guardar_gravacoes: bool = False  # voz clonada: guardar as gravações no PC (para clonar de novo com um clique)
     resumo_diario: bool = False      # mandar no Discord/Telegram, uma vez por dia, o que o Maestro fez
     hora_resumo: int = 21
 
@@ -2511,8 +2512,9 @@ class JanelaModerna(ctk.CTk):
         self._cartao_detalhe_jf = self._montar_detalhe_jf(corpo)
         self._cartao_console_jf = self._criar_console(corpo, linha=2, altura=70).master
         # A lista fica com a maior parte da altura (antes dividia com o console e mostrava ~3 linhas)
+        self._corpo_jf = corpo
         corpo.grid_rowconfigure(0, weight=5, minsize=300)
-        corpo.grid_rowconfigure(2, weight=1, minsize=140)          # o registro da ação: ~4 linhas à vista
+        corpo.grid_rowconfigure(2, weight=1, minsize=self.ALTURA_CONSOLE_JF)   # o registro da ação: ~4 linhas
 
     # ------------------------------------------------------------------ ⚙ Configurações (3ª aba)
     ABA_CONFIG = "⚙ Configurações"
@@ -2631,9 +2633,13 @@ class JanelaModerna(ctk.CTk):
         self._rotulo(lateral, "Vozes", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
         self._rotulo(lateral, "Voz principal do Gemini:").pack(anchor="w", pady=(2, 2), **p)
         self.var_jf_voz_gemini = tk.StringVar(value=self.VOZES_GEMINI[0])
-        self.menu_voz_gemini = self._menu_opcoes(lateral, self.var_jf_voz_gemini, self.vozes_gemini_do_menu())
+        linha = ctk.CTkFrame(lateral, fg_color="transparent")
+        linha.pack(fill="x", **p)
+        self.menu_voz_gemini = self._menu_opcoes(linha, self.var_jf_voz_gemini, self.vozes_gemini_do_menu())
         self.menu_voz_gemini.configure(width=320)
-        self.menu_voz_gemini.pack(anchor="w", **p)
+        self.menu_voz_gemini.pack(side="left")
+        self.bt_ouvir_voz = self._botao(linha, "▶  Ouvir uma frase de teste", self.ao_ouvir_voz, "fantasma")
+        self.bt_ouvir_voz.pack(side="left", padx=(8, 0))
         self._rotulo(lateral, "Voz do Piper (no modo Piper, nos figurantes e nos filmes que vão com o Piper):").pack(
             anchor="w", pady=(8, 2), **p)
         self.var_jf_voz_dublagem = tk.StringVar(value="faber")
@@ -2661,6 +2667,12 @@ class JanelaModerna(ctk.CTk):
         self.bt_remover_voz_clonada = self._botao(linha, "Remover voz clonada...", self.ao_remover_voz_clonada,
                                                   "fantasma")
         self.bt_remover_voz_clonada.pack(side="left", padx=(8, 0))
+        self.bt_reclonar_voz = self._botao(linha, "↻  Clonar de novo...", self.ao_reclonar_voz, "fantasma")
+        self.bt_reclonar_voz.pack(side="left", padx=(8, 0))
+        self.var_jf_guardar_gravacoes = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Guardar as gravações neste PC (quando a chave vencer, \"Clonar de novo\" refaz a voz "
+                                "sem gravar outra vez). Desmarcada, as gravações são apagadas depois de clonar.",
+                       self.var_jf_guardar_gravacoes)
         self.atualizar_vozes_clonadas(self._vozes_clonadas)
 
         self._rotulo(lateral, "Modo misto", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
@@ -2699,6 +2711,8 @@ class JanelaModerna(ctk.CTk):
             text="\n".join(voz_clonada.descrever(v) for v in self._vozes_clonadas) or "Nenhuma voz clonada ainda.",
             text_color=Tema.TEXTO if self._vozes_clonadas else Tema.TEXTO_FRACO)
         self.bt_remover_voz_clonada.configure(state="normal" if self._vozes_clonadas else "disabled")
+        self.bt_reclonar_voz.configure(state="normal" if any(v.tem_gravacoes() for v in self._vozes_clonadas)
+                                       else "disabled")
         opcoes = self.vozes_gemini_do_menu()
         self.menu_voz_gemini.configure(values=list(opcoes))
         atual = self.var_jf_voz_gemini.get()
@@ -2710,6 +2724,12 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_remover_voz_clonada(self) -> None:
+        pass
+
+    def ao_reclonar_voz(self) -> None:
+        pass
+
+    def ao_ouvir_voz(self) -> None:
         pass
 
     def pedir_clonagem(self, pasta: Path, gravador=None, motivo_sem_microfone: str = "") -> dict | None:
@@ -3019,15 +3039,19 @@ class JanelaModerna(ctk.CTk):
         self.lb_detalhe_extras.grid(row=4, column=0, columnspan=3, sticky="w", padx=18, pady=(2, 8))
         return cartao
 
+    ALTURA_CONSOLE_JF = 140
+
     def alternar_lista_jf(self) -> None:
         """'Ampliar lista': esconde o painel Antes → Depois e o console; a tabela ocupa tudo.
-        O andamento continua no rodapé (porcentagem e barra)."""
+        O andamento continua no rodapé (porcentagem e barra). A altura mínima da linha do console vai junto: em
+        tela baixa (notebook), ela continuava reservando o espaço e a lista não crescia."""
         self._lista_ampliada = not self._lista_ampliada
         for cartao in (self._cartao_detalhe_jf, self._cartao_console_jf):
             if self._lista_ampliada:
                 cartao.grid_remove()
             else:
                 cartao.grid()
+        self._corpo_jf.grid_rowconfigure(2, minsize=0 if self._lista_ampliada else self.ALTURA_CONSOLE_JF)
         self.bt_ampliar_jf.configure(text="⤡  Reduzir lista" if self._lista_ampliada else "⤢  Ampliar lista")
 
     def _campo_leitura(self, master, var) -> ctk.CTkEntry:
@@ -3128,7 +3152,8 @@ class JanelaModerna(ctk.CTk):
             voz_por_personagem=self.var_jf_voz_por_personagem.get(),
             figurantes_piper=self.var_jf_figurantes_piper.get(),
             limite_figurante=int(self.campo_limite_figurante.get()), perguntar_filmes=self.var_jf_perguntar_filmes.get(),
-            robo_so_piper=self.var_jf_robo_so_piper.get(), resumo_diario=self.var_jf_resumo_diario.get(),
+            robo_so_piper=self.var_jf_robo_so_piper.get(), guardar_gravacoes=self.var_jf_guardar_gravacoes.get(),
+            resumo_diario=self.var_jf_resumo_diario.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
     def idiomas_jf(self) -> str:
@@ -3243,7 +3268,8 @@ class JanelaModerna(ctk.CTk):
                   "encurtar_falas": self.var_jf_encurtar_falas,
                   "voz_por_personagem": self.var_jf_voz_por_personagem,
                   "figurantes_piper": self.var_jf_figurantes_piper,
-                  "perguntar_filmes": self.var_jf_perguntar_filmes, "robo_so_piper": self.var_jf_robo_so_piper}
+                  "perguntar_filmes": self.var_jf_perguntar_filmes, "robo_so_piper": self.var_jf_robo_so_piper,
+                  "guardar_gravacoes": self.var_jf_guardar_gravacoes}
         for chave, var in textos.items():
             if dados.get(chave):
                 var.set(dados[chave])

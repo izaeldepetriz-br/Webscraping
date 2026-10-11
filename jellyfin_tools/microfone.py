@@ -1,4 +1,5 @@
-"""Gravar do microfone (para clonar a SUA voz): aperta Gravar, fala, aperta Parar.
+"""Gravar do microfone (para clonar a SUA voz): aperta Gravar, fala, aperta Parar. E tocar um .wav (ouvir a frase de
+teste da voz).
 
 Usa o sounddevice (PortAudio; no Windows a biblioteca vem junto). Sem ele, ou sem microfone, a janela oferece
 "Escolher arquivo" (uma gravação feita no celular, por exemplo).
@@ -85,3 +86,24 @@ class Gravador:
         self.nivel = 0.0
         with self._trava:
             return b"".join(self._pedacos)
+
+
+def tocar(wav, biblioteca=None, plataforma: str | None = None) -> None:
+    """Toca o .wav sem travar a janela. No Windows, pelo próprio Windows (winsound); nos outros, pelo sounddevice.
+    Sem nenhum dos dois: OSError (a janela mostra onde está o arquivo, para abrir no player)."""
+    import sys
+    plataforma = plataforma or sys.platform
+    if plataforma == "win32" and biblioteca is None:
+        import winsound
+        winsound.PlaySound(str(wav), winsound.SND_FILENAME | winsound.SND_ASYNC)
+        return
+    sd = biblioteca or _biblioteca()
+    if sd is None:
+        raise OSError("não há como tocar áudio neste PC")
+    import wave
+    from array import array
+    with wave.open(str(wav), "rb") as w:
+        amostras = array("h")
+        amostras.frombytes(w.readframes(w.getnframes()))
+        taxa = w.getframerate()
+    sd.play(amostras, taxa)                          # volta logo; o som continua tocando

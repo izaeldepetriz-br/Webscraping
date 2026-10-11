@@ -714,6 +714,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.definir_progresso_rodape(fracao, texto)
         elif tipo == "vozes_clonadas":
             self.atualizar_vozes_clonadas(dado)
+            self.definir_saude(self.itens_saude())
+        elif tipo == "tocar":
+            self._tocar(dado)
         elif tipo == "gemini_estado":
             self._saude_gemini = dado
             self.definir_estado_gemini(*dado)
@@ -2729,7 +2732,11 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 self.fila.put(("jf_analise", (0.5, "Enviando as gravações ao Google...")))
                 nova = voz_clonada.criar(voz_gemini._cliente(automacao.chave_gemini(o)), pedido["nome"],
                                          pedido["autorizada_por"], referencia, consentimento)
-            except ErroDublagem as erro:
+                if o.guardar_gravacoes:                 # opção: guardar para "Clonar de novo" sem gravar outra vez
+                    nova.gravacoes = str(voz_clonada.guardar_gravacoes(
+                        voz_clonada.pasta_das_gravacoes(self._pasta_gravacoes_guardadas(), nova.nome),
+                        referencia, consentimento))
+            except (ErroDublagem, OSError) as erro:
                 self._log.warning("Clonar voz: %s", erro)
                 self.fila.put(("msg", ("Clonar uma voz", f"Não deu para clonar: {erro}.", "erro")))
                 return
@@ -2743,11 +2750,91 @@ class AppModerna(TVAoVivo, JanelaModerna):
             voz_clonada.salvar(vozes, automacao.arquivo_vozes_clonadas())
             self._log.info("Voz clonada criada: %s (autorizada por %s)", nova.nome, nova.autorizada_por)
             self.fila.put(("vozes_clonadas", vozes))
+            guardadas = ("as gravações ficaram guardadas (para \"Clonar de novo\")" if nova.gravacoes
+                         else "as gravações foram apagadas")
             self.fila.put(("msg", ("Clonar uma voz", f"Pronto: a voz \"{nova.nome}\" foi criada. Ela já aparece em "
-                                   "\"Voz principal do Gemini\" e na tabela \"Vozes dos personagens\".\n\nA chave da "
-                                   "voz fica só neste PC; as gravações foram apagadas.", "sucesso")))
+                                   "\"Voz principal do Gemini\" e na tabela \"Vozes dos personagens\"; use \"▶ Ouvir "
+                                   f"uma frase de teste\" para ouvir.\n\nA chave da voz fica só neste PC; {guardadas}.",
+                                   "sucesso")))
 
         self._rodar("Clonando a voz no Gemini...", tarefa)
+
+    def _pasta_gravacoes_guardadas(self) -> Path:
+        return automacao.arquivo_vozes_clonadas().parent / "vozes_clonadas"
+
+    def ao_reclonar_voz(self) -> None:
+        """"Clonar de novo": refaz a chave (vencida, por exemplo) com as gravações guardadas, sem gravar outra vez."""
+        o = self.obter_opcoes_jellyfin()
+        if not automacao.chave_gemini(o):
+            self.mostrar_mensagem("Clonar de novo", "Cole a chave do Google AI Studio em Configurações > Chaves de API.",
+                                  "aviso")
+            return
+        com_gravacoes = [v for v in automacao.vozes_clonadas() if v.tem_gravacoes()]
+        if not com_gravacoes:
+            self.mostrar_mensagem("Clonar de novo", "Nenhuma voz tem as gravações guardadas. Marque \"Guardar as "
+                                  "gravações neste PC\" e clone gravando de novo.", "aviso")
+            return
+        escolha = (0 if len(com_gravacoes) == 1 else
+                   self.escolher_da_lista("Clonar de novo", "Qual voz refazer com as gravações guardadas? (1 pedido ao "
+                                          "Gemini)", [voz_clonada.descrever(v) for v in com_gravacoes], "Clonar de novo"))
+        if escolha is None:
+            return
+        antiga = com_gravacoes[escolha]
+
+        def tarefa():
+            try:
+                referencia, consentimento = voz_clonada.ler_gravacoes(antiga)
+                nova = voz_clonada.criar(voz_gemini._cliente(automacao.chave_gemini(o)), antiga.nome,
+                                         antiga.autorizada_por, referencia, consentimento)
+            except (ErroDublagem, OSError) as erro:
+                self._log.warning("Clonar de novo: %s", erro)
+                self.fila.put(("msg", ("Clonar de novo", f"Não deu para clonar de novo: {erro}.", "erro")))
+                return
+            nova.gravacoes = antiga.gravacoes
+            vozes = [nova if v.nome == antiga.nome else v for v in automacao.vozes_clonadas()]
+            voz_clonada.salvar(vozes, automacao.arquivo_vozes_clonadas())
+            self._log.info("Voz clonada refeita: %s", nova.nome)
+            self.fila.put(("vozes_clonadas", vozes))
+            self.fila.put(("msg", ("Clonar de novo", f"Pronto: a voz \"{nova.nome}\" tem uma chave nova.", "sucesso")))
+
+        self._rodar(f"Clonando de novo a voz \"{antiga.nome}\"...", tarefa)
+
+    def ao_ouvir_voz(self) -> None:
+        """"▶ Ouvir uma frase de teste": a voz principal escolhida (pronta ou clonada) lê uma frase curta."""
+        o = self.obter_opcoes_jellyfin()
+        if not automacao.chave_gemini(o):
+            self.mostrar_mensagem("Ouvir a voz", "Para ouvir as vozes do Gemini, cole a chave do Google AI Studio em "
+                                  "Configurações > Chaves de API (as vozes prontas também dá para ouvir em "
+                                  "aistudio.google.com/generate-speech).", "aviso")
+            return
+        try:
+            clonadas = automacao.vozes_clonadas()
+            automacao.conferir_voz_clonada(o.voz_gemini, clonadas)
+        except automacao.FaltaConfiguracao as erro:
+            self.mostrar_mensagem("Ouvir a voz", str(erro), "aviso")
+            return
+        destino = config.ARQUIVO.parent / "frase_de_teste.wav"
+
+        def tarefa():
+            try:
+                voz_gemini.frase_de_teste(automacao.chave_gemini(o), o.voz_gemini, destino,
+                                          voz_clonada.chaves(clonadas))
+            except ErroDublagem as erro:
+                self._log.warning("Frase de teste: %s", erro)
+                self.fila.put(("msg", ("Ouvir a voz", f"Não deu para gerar a frase: {erro}.", "erro")))
+                return
+            self._log.info("Frase de teste gerada com a voz %s", o.voz_gemini)
+            self.fila.put(("tocar", destino))
+
+        self._rodar(f"Gerando a frase de teste com a voz {voz_gemini.texto_da_voz(o.voz_gemini)}...", tarefa)
+
+    def _tocar(self, wav: Path) -> None:
+        try:
+            microfone.tocar(wav)
+        except Exception as erro:                         # sem como tocar: diz onde está o arquivo
+            self._log.warning("Tocar a frase de teste: %s", erro)
+            self.mostrar_mensagem("Ouvir a voz", f"A frase ficou pronta, mas não consegui tocar aqui ({erro}). Abra o "
+                                  f"arquivo no seu player:\n{wav}", "aviso")
 
     def ao_remover_voz_clonada(self) -> None:
         vozes = automacao.vozes_clonadas()
@@ -2763,6 +2850,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         if not self.perguntar("Remover voz clonada", f"Apagar a voz \"{removida.nome}\" deste PC?"):
             return
         voz_clonada.salvar(vozes, automacao.arquivo_vozes_clonadas())
+        voz_clonada.apagar_gravacoes(removida)
         self._log.info("Voz clonada removida: %s", removida.nome)
         self.atualizar_vozes_clonadas(vozes)
         self._salvar_config()
@@ -3463,6 +3551,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 itens.append(("Gemini (voz) ativa" if gemini[0] else "Gemini (voz): chave recusada", gemini[0]))
             else:
                 itens.append(("Gemini (voz): chave não testada", None))
+        for voz in self._vozes_clonadas:                     # chave da voz clonada vencendo (ou vencida)
+            if aviso := voz_clonada.aviso_de_validade(voz):
+                itens.append((aviso, False))
         pasta = config.ARQUIVO.parent
         whisper = modelo_baixado(self.var_jf_modelo_whisper.get(), self.pasta_modelos_whisper)
         piper = voz_pronta(self.var_jf_voz_dublagem.get(), pasta / "piper", pasta / "vozes")

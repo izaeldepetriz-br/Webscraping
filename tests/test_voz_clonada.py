@@ -177,3 +177,50 @@ def test_automacao_confere_a_voz_clonada(tmp_path, monkeypatch):
     automacao.conferir_voz_clonada("Kore", vozes)                      # voz pronta: nada a conferir
     with pytest.raises(automacao.FaltaConfiguracao, match="não está neste PC"):
         automacao.conferir_voz_clonada("clone:Maria", vozes)
+
+
+def test_aviso_de_validade_para_o_painel_de_saude():
+    agora = datetime(2026, 10, 11, 12, tzinfo=timezone.utc)
+    def voz(dias):
+        return voz_clonada.VozClonada("Izael", "Izael", "k", expira_em=(agora + timedelta(days=dias)).isoformat())
+    assert voz_clonada.aviso_de_validade(voz(30), agora) == ""                       # longe: nada a dizer
+    assert voz_clonada.aviso_de_validade(voz(5.5), agora) == "Voz clonada Izael: vence em 5 dia(s)"
+    assert voz_clonada.aviso_de_validade(voz(0.3), agora) == "Voz clonada Izael: vence hoje"
+    assert voz_clonada.aviso_de_validade(voz(-1), agora) == "Voz clonada Izael: venceu (clone de novo)"
+    assert voz_clonada.aviso_de_validade(voz_clonada.VozClonada("A", "A", "k"), agora) == ""   # sem data
+
+
+def test_gravacoes_guardadas_para_clonar_de_novo(tmp_path):
+    pasta = voz_clonada.pasta_das_gravacoes(tmp_path, "Vó Ana?*")
+    assert pasta.name == "Vó Ana__"                               # sinais que o Windows recusa viram _
+    v = voz_clonada.VozClonada("Vó Ana", "Ana", "k")
+    assert not v.tem_gravacoes()
+    with pytest.raises(ErroDublagem, match="não estão guardadas"):
+        voz_clonada.ler_gravacoes(v)
+    v.gravacoes = str(voz_clonada.guardar_gravacoes(pasta, wav(12), wav(6)))
+    assert v.tem_gravacoes() and "gravações guardadas" in voz_clonada.descrever(v)
+    referencia, consentimento = voz_clonada.ler_gravacoes(v)
+    assert voz_clonada.duracao(referencia) == pytest.approx(12) and voz_clonada.duracao(consentimento) == pytest.approx(6)
+    voz_clonada.apagar_gravacoes(v)
+    assert not pasta.exists() and not v.tem_gravacoes()
+
+
+def test_frase_de_teste_com_a_voz_clonada(tmp_path):
+    gemini = GeminiFalso()
+    destino = voz_gemini.frase_de_teste("x", "clone:Izael", tmp_path / "teste.wav", {"clone:Izael": "voicekey_1"},
+                                        cliente=gemini, esperar=lambda s: None)
+    assert destino.is_file() and len(gemini.pedidos) == 1
+    assert gemini.pedidos[0]["generation_config"]["speech_config"] == [{"voice": "voicekey_1"}]
+    assert voz_gemini.FRASE_DE_TESTE in gemini.pedidos[0]["input"][0]["text"]
+
+
+def test_tocar_o_wav(tmp_path, monkeypatch):
+    arquivo = tmp_path / "frase.wav"
+    arquivo.write_bytes(wav(1))
+    tocados = []
+    sd = SimpleNamespace(play=lambda dados, taxa: tocados.append((len(dados), taxa)))
+    microfone.tocar(arquivo, biblioteca=sd, plataforma="linux")
+    assert tocados == [(24000, 24000)]
+    monkeypatch.setattr(microfone, "_biblioteca", lambda: None)       # sem sounddevice: a janela diz onde está
+    with pytest.raises(OSError):
+        microfone.tocar(arquivo, plataforma="linux")

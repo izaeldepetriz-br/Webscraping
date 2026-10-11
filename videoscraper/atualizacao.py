@@ -153,34 +153,115 @@ $zip = {aspas(zip_)}
 $pasta = {aspas(pasta)}
 $log = Join-Path $env:TEMP 'videoscraper-atualizacao.log'
 "Atualizando $pasta com $zip" | Out-File $log
-Wait-Process -Id {int(pid)} -ErrorAction SilentlyContinue      # espera o programa fechar
+# Janelinha "Atualizando o Maestro..." com a porcentagem (antes nada aparecia e parecia travado). Se o Windows não
+# deixar mostrar, a atualização segue igual, sem ela.
+$janela = $null
+try {{
+    Add-Type -AssemblyName System.Windows.Forms
+    $janela = New-Object System.Windows.Forms.Form
+    $janela.Text = 'Maestro'
+    $janela.ClientSize = New-Object System.Drawing.Size(420, 96)
+    $janela.StartPosition = 'CenterScreen'
+    $janela.FormBorderStyle = 'FixedDialog'
+    $janela.ControlBox = $false
+    $janela.TopMost = $true
+    $rotulo = New-Object System.Windows.Forms.Label
+    $rotulo.SetBounds(16, 14, 388, 36)
+    $rotulo.Text = 'Atualizando o Maestro: esperando o programa fechar...'
+    $barra = New-Object System.Windows.Forms.ProgressBar
+    $barra.SetBounds(16, 58, 388, 18)
+    $janela.Controls.Add($rotulo)
+    $janela.Controls.Add($barra)
+    $janela.Show()
+    [System.Windows.Forms.Application]::DoEvents()
+}} catch {{ $janela = $null }}
+function Avisar($texto, $porcento) {{
+    if (-not $janela) {{ return }}
+    try {{
+        $rotulo.Text = $texto
+        $barra.Value = [Math]::Max(0, [Math]::Min(100, [int]$porcento))
+        [System.Windows.Forms.Application]::DoEvents()
+    }} catch {{ }}
+}}
+function Esperar($segundos) {{                                   # dorme sem deixar a janelinha "Não respondendo"
+    for ($k = 0; $k -lt $segundos * 10; $k++) {{
+        Start-Sleep -Milliseconds 100
+        if ($janela) {{ try {{ [System.Windows.Forms.Application]::DoEvents() }} catch {{ }} }}
+    }}
+}}
+# Descompacta arquivo por arquivo pelo .NET: bem mais rápido que o Expand-Archive e dá para mostrar a porcentagem.
+# Confere cada caminho: nada pode sair da pasta temporária (um .zip adulterado com "..\\" não escreve fora dela).
+function Descompactar($origem, $destino) {{
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $arquivo = [System.IO.Compression.ZipFile]::OpenRead($origem)
+    try {{
+        $raiz = [System.IO.Path]::GetFullPath($destino).TrimEnd('\\') + '\\'
+        $total = [Math]::Max(1, $arquivo.Entries.Count)
+        $feitos = 0
+        foreach ($item in $arquivo.Entries) {{
+            $alvo = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($destino, $item.FullName))
+            if (-not $alvo.StartsWith($raiz, [StringComparison]::OrdinalIgnoreCase)) {{ throw "caminho fora da pasta no .zip: $($item.FullName)" }}
+            if ($item.FullName.EndsWith('/') -or $item.FullName.EndsWith('\\')) {{
+                [System.IO.Directory]::CreateDirectory($alvo) | Out-Null
+            }} else {{
+                [System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($alvo)) | Out-Null
+                [System.IO.Compression.ZipFileExtensions]::ExtractToFile($item, $alvo, $true)
+            }}
+            $feitos++
+            if ($feitos % 20 -eq 0) {{
+                $p = 100 * $feitos / $total
+                Avisar "Atualizando o Maestro: descompactando a versão nova ($([int]$p)%)..." (5 + $p * 0.85)
+            }}
+        }}
+    }} finally {{
+        $arquivo.Dispose()
+    }}
+}}
+while (Get-Process -Id {int(pid)} -ErrorAction SilentlyContinue) {{                 # espera o programa fechar
+    try {{ Wait-Process -Id {int(pid)} -Timeout 1 -ErrorAction SilentlyContinue }} catch {{ }}
+    Esperar 0.1
+}}
 # Outra janela do programa aberta (ex.: a da bandeja, do "Iniciar com o Windows") segura o .exe: o Windows não
 # deixa trocá-lo, e só a pasta _internal mudaria. Espera até 30 s e depois fecha as que sobraram.
 $prefixo = $pasta.TrimEnd('\\') + '\\'
 function Abertos {{ @(Get-Process -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -and $_.Path.StartsWith($prefixo, [StringComparison]::OrdinalIgnoreCase) }}) }}
-for ($i = 0; $i -lt 30 -and (Abertos).Count -gt 0; $i++) {{ Start-Sleep -Seconds 1 }}
+for ($i = 0; $i -lt 30 -and (Abertos).Count -gt 0; $i++) {{ Esperar 1 }}
 foreach ($p in Abertos) {{
     "Fechando $($p.Path) (processo $($p.Id))" | Out-File $log -Append
     Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 }}
-Start-Sleep -Seconds 1
+Esperar 1
 $tmp = Join-Path $env:TEMP ('videoscraper-novo-' + [guid]::NewGuid())
+$deu_certo = $false
 try {{
-    Expand-Archive -Path $zip -DestinationPath $tmp -Force
+    Avisar 'Atualizando o Maestro: descompactando a versão nova...' 5
+    try {{
+        Descompactar $zip $tmp
+    }} catch {{
+        "descompactar pelo .NET falhou ($_); usando o Expand-Archive" | Out-File $log -Append
+        Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        Expand-Archive -Path $zip -DestinationPath $tmp -Force
+    }}
     $novo = $tmp
     if (-not (Test-Path (Join-Path $tmp 'videoscraper.exe'))) {{
         $novo = (Get-ChildItem $tmp -Directory | Where-Object {{ Test-Path (Join-Path $_.FullName 'videoscraper.exe') }} | Select-Object -First 1).FullName
     }}
     if (-not $novo) {{ throw 'o .zip não tem o videoscraper.exe' }}
+    Avisar 'Atualizando o Maestro: copiando os arquivos...' 92
     robocopy $novo $pasta /E /R:5 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) {{ throw "robocopy falhou ($LASTEXITCODE)" }}
     "OK" | Out-File $log -Append
+    $deu_certo = $true
 }} catch {{
     "ERRO: $_" | Out-File $log -Append
+    Avisar "Não deu para atualizar: $_" 100
+    Esperar 6
 }} finally {{
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }}
+if ($deu_certo) {{ Avisar 'Pronto! Abrindo o Maestro...' 100 }}
 {reabrir}
+if ($janela) {{ Esperar 1; try {{ $janela.Close() }} catch {{ }} }}
 """
 
 

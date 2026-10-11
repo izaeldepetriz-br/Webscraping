@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import subprocess
 import wave
 from dataclasses import asdict, dataclass
@@ -50,21 +51,35 @@ class VozClonada:
     criada_em: str = ""      # "2026-10-11 14:30"
     expira_em: str = ""      # se o Google disser quando a chave vence (ISO); vazio = não informado
     modelo: str = ""
+    gravacoes: str = ""      # pasta com as gravações guardadas (opção "Guardar as gravações"); vazio = apagadas
 
     @property
     def valor(self) -> str:
         """O valor usado na dublagem: "clone:Izael"."""
         return PREFIXO + self.nome
 
-    def vencida(self, agora: datetime | None = None) -> bool:
+    def _fim(self) -> datetime | None:
         if not self.expira_em:
-            return False
+            return None
         try:
-            fim = datetime.fromisoformat(self.expira_em.replace("Z", "+00:00"))
+            return datetime.fromisoformat(self.expira_em.replace("Z", "+00:00"))
         except ValueError:
-            return False
-        agora = agora or datetime.now(fim.tzinfo)
-        return agora >= fim
+            return None
+
+    def vencida(self, agora: datetime | None = None) -> bool:
+        fim = self._fim()
+        return fim is not None and (agora or datetime.now(fim.tzinfo)) >= fim
+
+    def dias_para_vencer(self, agora: datetime | None = None) -> int | None:
+        """Quantos dias faltam (0 = vence hoje); None = o Google não disse quando vence."""
+        fim = self._fim()
+        if fim is None:
+            return None
+        return max(0, (fim - (agora or datetime.now(fim.tzinfo))).days)
+
+    def tem_gravacoes(self) -> bool:
+        return bool(self.gravacoes) and all((Path(self.gravacoes) / f"{n}.wav").is_file()
+                                            for n in ("referencia", "consentimento"))
 
 
 def e_clonada(voz: str) -> bool:
@@ -120,6 +135,45 @@ def salvar(vozes: list[VozClonada], arquivo: Path) -> None:
     temporario.write_text(json.dumps({"vozes": [asdict(v) for v in vozes]}, ensure_ascii=False, indent=2),
                           encoding="utf-8")
     temporario.replace(arquivo)
+
+
+AVISAR_DIAS = 7              # o painel de saúde avisa quando falta isso (ou menos) para a chave vencer
+
+
+def aviso_de_validade(v: VozClonada, agora: datetime | None = None) -> str:
+    """"" se está tudo certo; senão, o aviso para o painel de saúde."""
+    if v.vencida(agora):
+        return f"Voz clonada {v.nome}: venceu (clone de novo)"
+    dias = v.dias_para_vencer(agora)
+    if dias is not None and dias <= AVISAR_DIAS:
+        return f"Voz clonada {v.nome}: vence {'hoje' if dias == 0 else f'em {dias} dia(s)'}"
+    return ""
+
+
+def pasta_das_gravacoes(base: Path, nome: str) -> Path:
+    """Onde ficam as gravações guardadas de uma voz (nome sem sinais que o Windows recusa em pastas)."""
+    return Path(base) / (re.sub(r"[^\w\- ]", "_", nome).strip() or "voz")
+
+
+def guardar_gravacoes(pasta: Path, referencia: bytes, consentimento: bytes) -> Path:
+    pasta = Path(pasta)
+    pasta.mkdir(parents=True, exist_ok=True)
+    (pasta / "referencia.wav").write_bytes(referencia)
+    (pasta / "consentimento.wav").write_bytes(consentimento)
+    return pasta
+
+
+def ler_gravacoes(v: VozClonada) -> tuple[bytes, bytes]:
+    if not v.tem_gravacoes():
+        raise ErroDublagem(f"as gravações da voz \"{v.nome}\" não estão guardadas neste PC: clone gravando de novo")
+    pasta = Path(v.gravacoes)
+    return (pasta / "referencia.wav").read_bytes(), (pasta / "consentimento.wav").read_bytes()
+
+
+def apagar_gravacoes(v: VozClonada) -> None:
+    import shutil
+    if v.gravacoes and Path(v.gravacoes).is_dir():
+        shutil.rmtree(v.gravacoes, ignore_errors=True)
 
 
 def chaves(vozes: list[VozClonada]) -> dict[str, str]:
@@ -247,4 +301,6 @@ def descrever(v: VozClonada) -> str:
         partes.append("VENCIDA: clone de novo")
     elif v.expira_em:
         partes.append(f"vale até {v.expira_em[:10]}")
+    if v.tem_gravacoes():
+        partes.append("gravações guardadas")
     return " · ".join(partes)

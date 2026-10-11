@@ -256,6 +256,17 @@ primeira falha (antes esperava o tempo limite em cada filme).
   - A voz aparece como **"Clonada: Nome (autorizada por ...)"** na "Voz principal do Gemini" e na tabela **"Vozes
     dos personagens"** (como principal, vai para quem mais fala). Precisa da chave do Gemini; cada clonagem é um
     pedido à API. **"Remover voz clonada..."** apaga a chave do PC.
+  - **Validade**: o painel de saúde avisa quando a chave de uma voz clonada vence em até 7 dias ou já venceu.
+  - **"Guardar as gravações neste PC"** (desmarcada): com ela, as duas gravações ficam em
+    `.videoscraper\vozes_clonadas\<nome>` e **"↻ Clonar de novo..."** refaz a chave sem gravar outra vez.
+    "Remover voz clonada" apaga também as gravações.
+- **"▶ Ouvir uma frase de teste"** (Configurações > Dublagem, ao lado da voz principal): a voz escolhida — pronta
+  ou clonada — lê uma frase curta (1 pedido pequeno ao Gemini), antes de gastar com um filme inteiro.
+- **"Ampliar lista" em telas baixas**: em notebooks, a lista do Jellyfin agora cresce de verdade ao ampliar (o
+  espaço do console escondido continuava reservado).
+- **Atualização mais rápida e com aviso**: ao instalar uma versão nova, aparece a janelinha **"Atualizando o
+  Maestro... (45%)"**; o .zip é descompactado arquivo por arquivo (bem mais rápido que antes) e nenhum arquivo
+  pode sair da pasta do programa.
 
 ### Novidades da v2.12.0
 

@@ -260,6 +260,20 @@ def perguntar_sobre_audio(cliente, pergunta: str, mp3: bytes, modelo: str = MODE
                                              esperar))
 
 
+FRASE_DE_TESTE = ("Olá! Esta é a voz que vai dublar os seus filmes no Maestro. Que tal? Se não gostar, é só "
+                  "escolher outra.")
+
+
+def frase_de_teste(chave: str, voz: str, destino: Path, vozes_clonadas: dict | None = None, cliente=None,
+                   esperar=time.sleep) -> Path:
+    """Gera a FRASE_DE_TESTE com a voz escolhida (pronta ou clonada) num .wav: um pedido pequeno ao Gemini."""
+    motor = MotorGemini(chave, voz, cliente=cliente, esperar=esperar, vozes_clonadas=vozes_clonadas)
+    destino = Path(destino)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    motor.sintetizar([(FRASE_DE_TESTE, destino)])
+    return destino
+
+
 # ----------------------------------------------------------------- o motor
 class MotorGemini:
     """Gera as falas com as vozes do Gemini, em blocos. Mesma interface do MotorPiper; cada pedido pode

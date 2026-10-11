@@ -832,9 +832,11 @@ def test_ampliar_lista_esconde_painel_e_console(app):
     app.update()
     assert not app._cartao_console_jf.winfo_ismapped() and not app._cartao_detalhe_jf.winfo_ismapped()
     assert app.tabela_jf.winfo_height() > altura and app.bt_ampliar_jf.cget("text").endswith("Reduzir lista")
+    assert app._corpo_jf.grid_rowconfigure(2)["minsize"] == 0      # em tela baixa, o espaço do console vai p/ lista
     app.bt_ampliar_jf.invoke()
     app.update()
     assert app._cartao_console_jf.winfo_ismapped() and app.bt_ampliar_jf.cget("text").endswith("Ampliar lista")
+    assert app._corpo_jf.grid_rowconfigure(2)["minsize"] == app.ALTURA_CONSOLE_JF
 
 
 def test_sobras_de_antes_aparecem_e_sao_apagadas_pela_janela(app, tmp_path):
@@ -3983,6 +3985,7 @@ def test_clonar_voz_pela_janela(app, tmp_path, monkeypatch):
     nos menus, vira "clone:Nome" nas opções e pode ser removida."""
     import math
     from array import array
+    from datetime import datetime, timedelta, timezone
     from types import SimpleNamespace
 
     from jellyfin_tools import voz_clonada, voz_gemini
@@ -4048,9 +4051,39 @@ def test_clonar_voz_pela_janela(app, tmp_path, monkeypatch):
     app.var_jf_voz_gemini.set(menu)
     assert app.obter_opcoes_jellyfin().voz_gemini == "clone:Izael"
     assert gui_moderna.valor_da_voz(menu) == "clone:Izael"
-    # remover: a voz some dos menus e a escolhida volta para uma voz pronta
+    assert app.bt_reclonar_voz.cget("state") == "disabled"          # gravações apagadas: não dá para refazer
+    # ouvir a frase de teste com a voz clonada (o Gemini de mentira "fala"; o tocar é trocado)
+    from jellyfin_tools import microfone
+    from tests.test_voz_gemini import GeminiFalso
+    falso, tocados = GeminiFalso(), []
+    monkeypatch.setattr(voz_gemini, "_cliente", lambda chave: falso)
+    monkeypatch.setattr(microfone, "tocar", lambda arquivo: tocados.append(Path(arquivo)))
+    app.bt_ouvir_voz.invoke()
+    esperar(app)
+    assert tocados and tocados[0].is_file()
+    assert falso.pedidos[0]["generation_config"]["speech_config"] == [{"voice": "voicekey_abc123"}]
+    # a chave vencendo aparece no painel de saúde
+    perto = voz_clonada.VozClonada("Izael", "Izael Depetriz", "voicekey_abc123",
+                                   expira_em=(datetime.now(timezone.utc) + timedelta(days=3, hours=1)).isoformat())
+    app.atualizar_vozes_clonadas([perto])
+    assert ("Voz clonada Izael: vence em 3 dia(s)", False) in app.itens_saude()
+    # clonar de novo com as gravações guardadas (opção marcada): sem gravar outra vez
+    app.atualizar_vozes_clonadas(salvas)
+    app.var_jf_guardar_gravacoes.set(True)
+    vozes = VozesFalsas()
+    monkeypatch.setattr(voz_gemini, "_cliente", lambda chave: SimpleNamespace(voices=vozes))
+    app.bt_clonar_voz.invoke()                                      # a mesma janela de antes, preenchida de novo
+    esperar(app)
+    salvas = voz_clonada.carregar(automacao.arquivo_vozes_clonadas())
+    assert salvas[0].tem_gravacoes() and app.bt_reclonar_voz.cget("state") == "normal"
+    vozes.pedidos.clear()
+    app.bt_reclonar_voz.invoke()
+    esperar(app)
+    assert len(vozes.pedidos) == 1 and "chave nova" in app.caixas[-1][2]
+    # remover: a voz some dos menus (e as gravações do PC) e a escolhida volta para uma voz pronta
+    pasta = Path(salvas[0].gravacoes)
     app.escolher_da_lista = lambda *a, **k: 0
     app.bt_remover_voz_clonada.invoke()
-    assert voz_clonada.carregar(automacao.arquivo_vozes_clonadas()) == []
+    assert voz_clonada.carregar(automacao.arquivo_vozes_clonadas()) == [] and not pasta.exists()
     assert menu not in app.menu_voz_gemini.cget("values")
     assert app.var_jf_voz_gemini.get() == app.VOZES_GEMINI[0]
