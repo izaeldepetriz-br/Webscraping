@@ -49,7 +49,8 @@ from jellyfin_tools import traducao_lote
 from jellyfin_tools.transcricao import (Transcritor, estimar as estimar_audio, legendar_pelo_audio, modelo_baixado,
                                         videos_sem_legenda)
 from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sincronizar
-from jellyfin_tools.dublagem import ErroDublagem, dublar_video, falas_da_legenda, videos_para_dublar, voz_pronta
+from jellyfin_tools.dublagem import (ErroDublagem, dublar_video, falas_da_legenda, localizar_ffmpeg, videos_para_dublar,
+                                     voz_pronta)
 from jellyfin_tools.paralelo import prioridade_baixa
 from jellyfin_tools.lixeira import apagar_lotes, lotes_antigos, tamanho_legivel
 from jellyfin_tools.tv_ao_vivo import carregar_canais, conferir_canais, mensagem_fora_do_ar
@@ -61,7 +62,7 @@ from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, inicia
 from jellyfin_tools.relatorio import gerar_relatorio, resumo, salvar_csv
 from jellyfin_tools.resumo_diario import ResumoDiario, mensagem as mensagem_resumo
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca, indice_da_biblioteca, testar_conexao
-from jellyfin_tools import personagens, vigia, voz_gemini
+from jellyfin_tools import microfone, personagens, vigia, voz_clonada, voz_gemini
 from jellyfin_tools.vigia import filtro_prontos
 
 from . import config
@@ -188,6 +189,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._espelhos_salvos = {}
         self._vigia_conferindo = False
         self._movimentos_previa: list = []      # o que a última pré-visualização mostrou
+        self.atualizar_vozes_clonadas(automacao.vozes_clonadas())     # antes das opções: a voz salva pode ser uma
         self._carregar_config()
         self._stdout, self._stderr = sys.stdout, sys.stderr
         self.protocol("WM_DELETE_WINDOW", self.fechar)
@@ -710,6 +712,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             fracao, texto = dado
             self.definir_progresso_total(fracao, texto)
             self.definir_progresso_rodape(fracao, texto)
+        elif tipo == "vozes_clonadas":
+            self.atualizar_vozes_clonadas(dado)
         elif tipo == "gemini_estado":
             self._saude_gemini = dado
             self.definir_estado_gemini(*dado)
@@ -2694,6 +2698,74 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                    "da voz\", escolha \"Gemini (premium)\".", "sucesso")))
 
         self._rodar("Testando a chave do Gemini...", tarefa)
+
+    # ---- Vozes clonadas (réplica do Gemini): só a voz de quem autorizou e gravou a frase de consentimento
+    def _gravador(self):
+        """(gravador do microfone, motivo de não ter). Separado para os testes trocarem."""
+        motivo = microfone.disponivel()
+        return (None, motivo) if motivo else (microfone.Gravador(), "")
+
+    def ao_clonar_voz(self) -> None:
+        o = self.obter_opcoes_jellyfin()
+        if not automacao.chave_gemini(o):
+            self.mostrar_mensagem("Clonar uma voz", "A clonagem usa o Gemini: cole a chave do Google AI Studio em "
+                                  "Configurações > Chaves de API (botão \"Criar a chave no AI Studio\").", "aviso")
+            return
+        pasta = automacao.arquivo_vozes_clonadas().parent / "gravacoes"
+        pasta.mkdir(parents=True, exist_ok=True)
+        gravador, motivo = self._gravador()
+        pedido = self.pedir_clonagem(pasta, gravador, motivo)
+        if not pedido:
+            return
+
+        def tarefa():
+            try:
+                ffmpeg = localizar_ffmpeg()
+                if not ffmpeg:
+                    raise ErroDublagem("falta o ffmpeg (pip install imageio-ffmpeg)")
+                referencia = voz_clonada.preparar_audio(pedido["referencia"], ffmpeg)
+                consentimento = voz_clonada.preparar_audio(pedido["consentimento"], ffmpeg)
+                voz_clonada.conferir_duracoes(referencia, consentimento)
+                self.fila.put(("jf_analise", (0.5, "Enviando as gravações ao Google...")))
+                nova = voz_clonada.criar(voz_gemini._cliente(automacao.chave_gemini(o)), pedido["nome"],
+                                         pedido["autorizada_por"], referencia, consentimento)
+            except ErroDublagem as erro:
+                self._log.warning("Clonar voz: %s", erro)
+                self.fila.put(("msg", ("Clonar uma voz", f"Não deu para clonar: {erro}.", "erro")))
+                return
+            finally:                                    # as gravações não ficam no PC (só a chave da voz)
+                for chave in ("referencia", "consentimento"):
+                    arquivo = Path(pedido[chave])
+                    if arquivo.parent == pasta:
+                        with contextlib.suppress(OSError):
+                            arquivo.unlink()
+            vozes = [v for v in automacao.vozes_clonadas() if v.nome.lower() != nova.nome.lower()] + [nova]
+            voz_clonada.salvar(vozes, automacao.arquivo_vozes_clonadas())
+            self._log.info("Voz clonada criada: %s (autorizada por %s)", nova.nome, nova.autorizada_por)
+            self.fila.put(("vozes_clonadas", vozes))
+            self.fila.put(("msg", ("Clonar uma voz", f"Pronto: a voz \"{nova.nome}\" foi criada. Ela já aparece em "
+                                   "\"Voz principal do Gemini\" e na tabela \"Vozes dos personagens\".\n\nA chave da "
+                                   "voz fica só neste PC; as gravações foram apagadas.", "sucesso")))
+
+        self._rodar("Clonando a voz no Gemini...", tarefa)
+
+    def ao_remover_voz_clonada(self) -> None:
+        vozes = automacao.vozes_clonadas()
+        if not vozes:
+            self.atualizar_vozes_clonadas([])
+            return
+        escolha = self.escolher_da_lista("Remover voz clonada", "Qual voz clonada apagar deste PC? (a chave é "
+                                         "apagada; para usar de novo, é preciso clonar outra vez)",
+                                         [voz_clonada.descrever(v) for v in vozes], "Remover")
+        if escolha is None:
+            return
+        removida = vozes.pop(escolha)
+        if not self.perguntar("Remover voz clonada", f"Apagar a voz \"{removida.nome}\" deste PC?"):
+            return
+        voz_clonada.salvar(vozes, automacao.arquivo_vozes_clonadas())
+        self._log.info("Voz clonada removida: %s", removida.nome)
+        self.atualizar_vozes_clonadas(vozes)
+        self._salvar_config()
 
     def ao_testar_tmdb(self) -> None:
         o = self.obter_opcoes_jellyfin()

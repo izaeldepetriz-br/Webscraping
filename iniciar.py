@@ -82,6 +82,11 @@ def _verificar() -> int:
         faltando.append("detector de voz do Whisper (silero_vad_v6.onnx)")
     if sys.platform == "win32" and not bandeja.disponivel():
         faltando.append("pystray (ícone perto do relógio)")
+    if sys.platform == "win32":                                # gravar a voz (clonar): o PortAudio veio junto?
+        try:
+            import sounddevice  # noqa: F401
+        except (ImportError, OSError) as erro:
+            faltando.append(f"sounddevice (microfone): {erro}")
     print(f"ok: versão {versao_atual()}, {len(catalogo.filmes)} títulos no catálogo, ffmpeg em {ffmpeg}, "
           f"instalador do navegador {'OK' if not faltando else 'FALTANDO: ' + str(faltando)}")
     return 1 if faltando else 0

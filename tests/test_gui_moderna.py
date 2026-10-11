@@ -3765,7 +3765,7 @@ def test_voz_premium_do_gemini_pela_janela(app, tmp_path, monkeypatch):
     app._destinos.update({"Filmes": str(filmes), "Séries": ""})
     app.var_jf_destino.set(str(filmes))
     criados, voz = [], VozFalsa()
-    monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, nome: criados.append((chave, nome)) or voz)
+    monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, nome, **k: criados.append((chave, nome)) or voz)
     monkeypatch.setattr(app_moderna, "videos_para_dublar",
                         lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
     falas_longas = []
@@ -3835,7 +3835,7 @@ def test_voz_por_personagem_pela_janela(app, tmp_path, monkeypatch):
                 self.vozes[texto] = voz[0] if voz else "principal"
                 gravar_tom(Path(wav), 0.05 * len(texto))
     voz = Voz()
-    monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, nome: voz)
+    monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, nome, **k: voz)
     tabelas, perguntas = [], []
     app.escolher = lambda t, m, opcoes, **k: (perguntas.append(m), opcoes[0])[1]
     # a falas 0-2 são do Conde e 3-5 da Ellen, mas a legenda só tem 3 falas: a Ellen não chega a falar
@@ -3895,7 +3895,7 @@ def test_dublagem_mista_por_filme_e_figurantes(app, tmp_path, monkeypatch):
     monkeypatch.setattr(app_moderna, "videos_para_dublar",
                         lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
     gemini, piper = VozFalsa(), VozFalsa()
-    monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, nome: gemini)
+    monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, nome, **k: gemini)
     monkeypatch.setattr(automacao, "motor_piper", lambda o, voz="", **k: piper)
     perguntas = []
     app.pedir_marcados = lambda titulo, msg, itens, marcados, botao="": perguntas.append((itens, marcados)) or [1]
@@ -3975,3 +3975,82 @@ def test_coleta_de_lixo_so_na_linha_da_janela(app):
     antes = getattr(app, "_coletas", 0)
     app._coletar_lixo()
     assert app._coletas == antes + 1 and not gc.isenabled()
+
+
+def test_clonar_voz_pela_janela(app, tmp_path, monkeypatch):
+    """Configurações > Dublagem > "Clonar uma voz": grava a referência (microfone de mentira), escolhe o arquivo do
+    consentimento, confirma a autorização; o Google (de mentira) devolve a chave, que fica só no PC. A voz aparece
+    nos menus, vira "clone:Nome" nas opções e pode ser removida."""
+    import math
+    from array import array
+    from types import SimpleNamespace
+
+    from jellyfin_tools import voz_clonada, voz_gemini
+    from tests.test_voz_clonada import FFMPEG, VozesFalsas, wav
+    from videoscraper import automacao, gui_moderna
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    app.mostrar_aba(app.ABA_CONFIG)
+    app._botoes_config["Dublagem"].invoke()
+    assert "Nenhuma voz clonada" in app.lb_vozes_clonadas.cget("text")
+    assert app.bt_remover_voz_clonada.cget("state") == "disabled"
+    # sem a chave do Gemini: avisa e nem abre a janela
+    app.var_jf_chave_gemini.set("")
+    app.bt_clonar_voz.invoke()
+    assert "chave do Google AI Studio" in app.caixas[-1][2]
+    app.var_jf_chave_gemini.set("AIza-teste")
+
+    class Microfone:                                                 # 12 s de "voz"
+        segundos, nivel = 0.0, 0.5
+
+        def iniciar(self):
+            pass
+
+        def parar(self):
+            return array("h", (int(9000 * math.sin(i / 10)) for i in range(24000 * 12))).tobytes()
+    monkeypatch.setattr(app, "_gravador", lambda: (Microfone(), ""))
+    consentimento = tmp_path / "consentimento.m4a.wav"
+    consentimento.write_bytes(wav(6))
+    monkeypatch.setattr(gui_moderna.filedialog, "askopenfilename", lambda **k: str(consentimento))
+    janelas = []
+
+    def preencher(pasta, gravador, motivo):                          # a pessoa usando a janela de verdade
+        d = gui_moderna.DialogoClonarVoz(app, pasta, gravador, motivo, [])
+        janelas.append(d)
+        d.confirmar()                                                # nada preenchido: avisa e não fecha
+        assert "nome" in d.lb_aviso.cget("text") and d.resultado is None
+        d.var_nome.set("Izael")
+        d.var_dono.set("Izael Depetriz")
+        d.alternar_gravacao("referencia")
+        assert d.bt_gravar["referencia"].cget("text").startswith("⏹")
+        d.alternar_gravacao("referencia")                            # Parar
+        assert "gravado: 12 s" in d.status["referencia"].cget("text")
+        d.escolher_arquivo("consentimento")
+        d.confirmar()
+        assert "confirmação" in d.lb_aviso.cget("text")              # falta marcar a autorização
+        d.var_autorizo.set(True)
+        d.confirmar()
+        return d.resultado
+    monkeypatch.setattr(app, "pedir_clonagem", preencher)
+    vozes = VozesFalsas()
+    monkeypatch.setattr(voz_gemini, "_cliente", lambda chave: SimpleNamespace(voices=vozes))
+    app.bt_clonar_voz.invoke()
+    esperar(app)
+    assert app.caixas[-1][0] == "sucesso" and "Izael" in app.caixas[-1][2]
+    assert vozes.pedidos[0]["store"] is False
+    salvas = voz_clonada.carregar(automacao.arquivo_vozes_clonadas())
+    assert [(v.nome, v.autorizada_por, v.chave) for v in salvas] == [("Izael", "Izael Depetriz", "voicekey_abc123")]
+    assert not (automacao.arquivo_vozes_clonadas().parent / "gravacoes" / "referencia.wav").exists()   # apagada
+    assert consentimento.exists()                                   # o arquivo escolhido pela pessoa fica
+    menu = "Clonada: Izael (autorizada por Izael Depetriz)"
+    assert menu in app.menu_voz_gemini.cget("values") and "Izael" in app.lb_vozes_clonadas.cget("text")
+    app.var_jf_voz_gemini.set(menu)
+    assert app.obter_opcoes_jellyfin().voz_gemini == "clone:Izael"
+    assert gui_moderna.valor_da_voz(menu) == "clone:Izael"
+    # remover: a voz some dos menus e a escolhida volta para uma voz pronta
+    app.escolher_da_lista = lambda *a, **k: 0
+    app.bt_remover_voz_clonada.invoke()
+    assert voz_clonada.carregar(automacao.arquivo_vozes_clonadas()) == []
+    assert menu not in app.menu_voz_gemini.cget("values")
+    assert app.var_jf_voz_gemini.get() == app.VOZES_GEMINI[0]

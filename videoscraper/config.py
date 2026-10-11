@@ -33,7 +33,9 @@ def salvar(dados: dict) -> None:
 # O que vai junto: as opções, as regras do "Corrigir nome", a lista de canais (com histórico e lixeira) e a memória
 # de downloads. Pastas grandes (modelos do Whisper, Piper, logs) não vão: o programa baixa/refaz sozinho.
 ARQUIVOS_DA_CONFIGURACAO = ("config.json", "regras_nomes.json", "canais.json", "canais_historico.json",
-                            "canais_removidos.json", "baixados.json", "epg_mapa.json")
+                            "canais_removidos.json", "baixados.json", "epg_mapa.json", "vozes_clonadas.json")
+# Também são segredos: as chaves das vozes clonadas só vão para o .zip com "incluir as chaves".
+SO_COM_CHAVES = ("vozes_clonadas.json",)
 
 
 def exportar(destino: str | Path, segredos=(), incluir_chaves: bool = False) -> list[str]:
@@ -42,7 +44,7 @@ def exportar(destino: str | Path, segredos=(), incluir_chaves: bool = False) -> 
     with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as z:
         for nome in ARQUIVOS_DA_CONFIGURACAO:
             arquivo = pasta / nome
-            if not arquivo.is_file():
+            if not arquivo.is_file() or (nome in SO_COM_CHAVES and not incluir_chaves):
                 continue
             if nome == "config.json" and not incluir_chaves:
                 dados = carregar()

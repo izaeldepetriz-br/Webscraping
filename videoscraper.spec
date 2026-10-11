@@ -12,7 +12,8 @@ binaries, hiddenimports = [], ["videoscraper.app_moderna", "videoscraper.gui", "
 hiddenimports += ["pystray._win32", "PIL.Image", "PIL.ImageDraw"]               # ícone perto do relógio
 for pacote in ("imageio_ffmpeg", "playwright", "pystray",                   # ffmpeg, instalador do navegador, ícone
                "faster_whisper", "ctranslate2", "onnxruntime", "av", "tokenizers",    # Whisper (legenda pelo áudio)
-               "google.genai"):                                                    # Gemini (voz premium)
+               "google.genai",                                                     # Gemini (voz premium)
+               "sounddevice", "_sounddevice_data"):                                # microfone (clonar a voz)
     d, b, h = collect_all(pacote)
     datas, binaries, hiddenimports = datas + d, binaries + b, hiddenimports + h
 

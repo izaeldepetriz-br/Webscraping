@@ -146,9 +146,11 @@ def identificar(video: str | Path, falas: list, cliente, ffmpeg: str, arquivo: s
 def distribuir_vozes(personagens: list[Personagem], voz_principal: str = VOZ_PADRAO,
                      figurante: str | None = None, limite: int = FIGURANTE) -> dict[str, str]:
     """{rótulo: voz}. Quem mais fala fica com a voz principal (se o gênero combinar); os outros, vozes do mesmo
-    gênero ainda não usadas (repetem só quando acabam). Quem fala pouco fica com a voz principal.
+    gênero ainda não usadas (repetem só quando acabam). Quem fala pouco fica com a voz principal. Uma voz clonada
+    ("clone:Nome") como principal vai para quem mais fala, qualquer que seja o gênero (dá para trocar na tabela).
     figurante ("piper:faber"): dublagem MISTA, quem tem menos de `limite` falas vai para essa voz (Piper, grátis)."""
-    principal = voz_principal if voz_principal in VOZES else VOZ_PADRAO
+    clonada = voz_principal.startswith("clone:")       # a SUA voz clonada como principal: vai para quem mais fala
+    principal = voz_principal if voz_principal in VOZES or clonada else VOZ_PADRAO
     usadas: Counter = Counter()
     mapa = {}
     for p in personagens:                              # já vêm de quem fala mais para quem fala menos
@@ -159,7 +161,7 @@ def distribuir_vozes(personagens: list[Personagem], voz_principal: str = VOZ_PAD
             mapa[p.rotulo] = principal
             continue
         grupo = {"m": VOZES_MASCULINAS, "f": VOZES_FEMININAS}.get(p.genero, VOZES_MASCULINAS + VOZES_FEMININAS)
-        if not usadas and principal in grupo:
+        if not usadas and (principal in grupo or clonada):
             voz = principal
         else:
             voz = min(grupo, key=lambda v: (usadas[v], grupo.index(v)))

@@ -260,7 +260,7 @@ def test_dublar_pelo_robo_com_voz_por_personagem(casa, tmp_path, monkeypatch):
             for texto, wav, *voz in pedidos:
                 vozes[texto] = voz[0] if voz else None
                 gravar_tom(Path(wav), 0.05 * len(texto))
-    monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, voz: Voz())
+    monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, voz, **k: Voz())
     casa(destino_filmes=str(filmes), motor_voz="Gemini (premium, Google AI Studio)", chave_gemini="AIza",
          voz_gemini="Kore", voz_por_personagem=True, encurtar_falas=False)
     assert automacao.main(["--dublar"]) == automacao.OK
@@ -294,7 +294,7 @@ def test_robo_dublagem_mista_figurantes_no_piper(casa, tmp_path, monkeypatch):
             for texto, wav, *_ in pedidos:
                 quem[texto] = self.nome
                 gravar_tom(Path(wav), 0.05 * len(texto))
-    monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, voz: Voz("gemini"))
+    monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, voz, **k: Voz("gemini"))
     monkeypatch.setattr(automacao, "motor_piper", lambda o, voz="", **k: Voz(f"piper {voz}"))
     monkeypatch.setattr(personagens, "distribuir_vozes",
                         lambda lista, principal, figurante=None, limite=2: {"Conde": "Charon", "Guarda": figurante})

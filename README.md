@@ -240,6 +240,23 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.13.0
+
+- **Clonar uma voz (réplica do Gemini)**, sem placa de vídeo: em ⚙ Configurações > Dublagem, **"🎙 Clonar uma
+  voz..."** abre uma janela com dois passos — (1) a **gravação de referência**: você lê um texto em português, com
+  calma (de 10 a 30 s); (2) a **frase de consentimento**, em inglês, exatamente como aparece na tela ("I am the
+  owner of this voice and I consent to Google using this voice to create a synthetic voice model."). Grave pelo
+  **microfone** ali mesmo (botão Gravar/Parar, com o tempo e o nível do som) ou **escolha um arquivo** (wav, mp3,
+  m4a do celular, ogg do WhatsApp...). O Maestro converte para WAV 24 kHz e tira o silêncio das pontas.
+  - **Só a sua voz ou a de quem autorizou**: a janela pede o nome do dono da voz e a confirmação; o próprio Google
+    confere se a frase foi dita e se as duas gravações são da mesma pessoa (e recusa voz de IA). Nunca a voz de
+    atores, famosos ou de quem não sabe. Uso pessoal.
+  - **A chave da voz fica só no seu PC** (`.videoscraper\vozes_clonadas.json`; o Google não guarda a voz) e as
+    gravações são apagadas depois. Exportar as configurações só leva as vozes com "incluir as chaves".
+  - A voz aparece como **"Clonada: Nome (autorizada por ...)"** na "Voz principal do Gemini" e na tabela **"Vozes
+    dos personagens"** (como principal, vai para quem mais fala). Precisa da chave do Gemini; cada clonagem é um
+    pedido à API. **"Remover voz clonada..."** apaga a chave do PC.
+
 ### Novidades da v2.12.0
 
 - **Nova tela ⚙ Configurações** (3ª aba, ao lado de Vídeos e Jellyfin): todas as opções num lugar só, com um
@@ -281,7 +298,7 @@ primeira falha (antes esperava o tempo limite em cada filme).
   cortada. Só essas falas vão para a API (custo pequeno); a legenda e o vídeo não mudam. Opção "Falas longas: o
   Claude reescreve..." (marcada; precisa da chave da Anthropic).
 - **Voz premium do Gemini (Google AI Studio)**: em "Motor da voz", escolha **Gemini** no lugar do Piper: voz bem
-  mais natural, com entonação. Seis vozes prontas (masculinas e femininas); o Maestro nunca clona a voz de ninguém.
+  mais natural, com entonação. Vozes prontas (masculinas e femininas); a partir da v2.13.0, também a sua voz clonada (com consentimento).
   Pago por uso: a confirmação mostra uma estimativa. Botões **"Criar a chave no AI Studio"** e **"Testar chave do
   Gemini"** (o teste não gera áudio). O painel de saúde mostra "Gemini (voz) ativa" quando ele está escolhido.
 - **Gemini mais econômico e sem perder trabalho**: as falas vão em **blocos de até 30 por pedido** (um filme de
@@ -945,7 +962,9 @@ jellyfin_tools/
   transcricao.py        cria a legenda ouvindo o áudio (Whisper, no PC)
   dublagem.py           lê a legenda com voz sintética (Piper) e junta ao vídeo (ffmpeg)
   adaptacao.py          reescreve (Claude) as falas da dublagem que não cabem no tempo da cena
-  voz_gemini.py         voz premium da dublagem: Gemini (Google AI Studio), só vozes prontas; blocos e cortes nas pausas
+  voz_gemini.py         voz premium da dublagem: Gemini (Google AI Studio); blocos e cortes nas pausas
+  voz_clonada.py        clonar a voz de quem autorizou (réplica do Gemini, com a frase de consentimento)
+  microfone.py          gravar do microfone (sounddevice) para a clonagem
   personagens.py        voz por personagem: o Gemini ouve o filme e diz quem fala cada fala
   sincronia.py          acerta legenda adiantada/atrasada comparando com a voz do áudio
   resumo_diario.py      o resumo do dia no Discord/Telegram

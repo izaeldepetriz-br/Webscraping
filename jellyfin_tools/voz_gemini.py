@@ -3,7 +3,8 @@
     Piper  -> grátis, roda no PC, voz mais "robótica"
     Gemini -> pago por uso (chave do Google AI Studio), voz bem mais natural e com entonação
 
-Só VOZES PRONTAS (genéricas) do Gemini: o Maestro nunca usa a "réplica de voz" (clonar a voz de alguém).
+Vozes PRONTAS (genéricas) do Gemini e, se você criar, vozes CLONADAS ("clone:Nome", ver voz_clonada.py): só a voz
+de quem autorizou e gravou a frase de consentimento, nunca a de atores.
 O motor tem a mesma cara do MotorPiper (sintetizar(pedidos)): cada fala vira um .wav (24 kHz, mono, 16 bits).
 
 BLOCOS (economiza pedidos): em vez de 1 pedido por fala (um filme tem ~1.200), o motor manda até BLOCO falas
@@ -58,7 +59,9 @@ PAUSA = " <long pause>"       # marca de pausa do Gemini TTS entre uma fala e a 
 
 
 def texto_da_voz(voz: str) -> str:
-    """'Kore (feminina, firme)' para os menus."""
+    """'Kore (feminina, firme)' para os menus; 'clone:Izael' -> 'Izael (voz clonada)'."""
+    if voz.startswith("clone:"):
+        return f"{voz[len('clone:'):]} (voz clonada)"
     return f"{voz} ({VOZES.get(voz, '')})" if voz in VOZES else voz
 
 
@@ -259,13 +262,16 @@ def perguntar_sobre_audio(cliente, pergunta: str, mp3: bytes, modelo: str = MODE
 
 # ----------------------------------------------------------------- o motor
 class MotorGemini:
-    """Gera as falas com vozes prontas do Gemini, em blocos. Mesma interface do MotorPiper; cada pedido pode
-    trazer a voz da fala: (texto, wav) usa a voz do motor, (texto, wav, voz) usa a voz dada."""
+    """Gera as falas com as vozes do Gemini, em blocos. Mesma interface do MotorPiper; cada pedido pode
+    trazer a voz da fala: (texto, wav) usa a voz do motor, (texto, wav, voz) usa a voz dada.
+    vozes_clonadas: {"clone:Izael": "voicekey_..."} (ver voz_clonada.py); na hora do pedido, o nome vira a chave."""
 
     def __init__(self, chave: str, voz: str = VOZ_PADRAO, modelo: str = MODELO_PADRAO, estilo: str = ESTILO,
-                 cliente=None, simultaneos: int = SIMULTANEOS, esperar=time.sleep, bloco: int = BLOCO):
-        if voz not in VOZES:
-            raise ErroDublagem(f"voz do Gemini desconhecida: {voz}")
+                 cliente=None, simultaneos: int = SIMULTANEOS, esperar=time.sleep, bloco: int = BLOCO,
+                 vozes_clonadas: dict | None = None):
+        self.clonadas = dict(vozes_clonadas or {})
+        if not self.conhece(voz):
+            raise ErroDublagem(self._desconhecida([voz]))
         self.voz, self.modelo, self.estilo = voz, modelo or MODELO_PADRAO, estilo
         self.cliente = cliente or _cliente(chave)
         self.simultaneos, self._esperar, self.bloco = max(1, simultaneos), esperar, max(1, bloco)
@@ -274,8 +280,8 @@ class MotorGemini:
     def _pedir(self, itens: list) -> tuple[array, int]:
         """Um pedido com as falas do bloco (diálogo, se houver 2 vozes). Devolve o áudio inteiro."""
         vozes = list(dict.fromkeys(v for _, _, v in itens))
-        if any(v not in VOZES for v in vozes):
-            raise ErroDublagem(f"voz do Gemini desconhecida: {', '.join(v for v in vozes if v not in VOZES)}")
+        if not all(self.conhece(v) for v in vozes):
+            raise ErroDublagem(self._desconhecida([v for v in vozes if not self.conhece(v)]))
         dialogo = len(vozes) > 1
         falantes = {v: f"Pessoa {i + 1}" for i, v in enumerate(vozes)}
         entrada = []
@@ -285,7 +291,8 @@ class MotorGemini:
                 anotacao["speaker"] = falantes[voz]
             entrada.append({"type": "text", "text": texto + (PAUSA if k < len(itens) - 1 else ""),
                             "annotations": [anotacao]})
-        config = ([{"speaker": falantes[v], "voice": v} for v in vozes] if dialogo else [{"voice": vozes[0]}])
+        config = ([{"speaker": falantes[v], "voice": self.clonadas.get(v, v)} for v in vozes] if dialogo
+                  else [{"voice": self.clonadas.get(vozes[0], vozes[0])}])
 
         def chamar():
             return self.cliente.interactions.create(model=self.modelo, input=entrada, response_format={"type": "audio"},
@@ -296,6 +303,17 @@ class MotorGemini:
         if audio is None or not getattr(audio, "data", None):
             raise ErroDublagem("o Gemini não devolveu áudio")
         return _ler_audio(audio.data)
+
+    def conhece(self, voz: str) -> bool:
+        return voz in VOZES or voz in self.clonadas
+
+    @staticmethod
+    def _desconhecida(vozes: list[str]) -> str:
+        clonadas = [v[len("clone:"):] for v in vozes if v.startswith("clone:")]
+        if clonadas:
+            return (f"a voz clonada \"{', '.join(clonadas)}\" não está neste PC (foi removida?); clone de novo em "
+                    "Configurações > Dublagem ou escolha outra voz")
+        return f"voz do Gemini desconhecida: {', '.join(vozes)}"
 
     def _falar_bloco(self, itens: list, parar=None) -> None:
         if parar and parar():

@@ -64,7 +64,7 @@ from jellyfin_tools.legendas import ErroLegenda
 from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, ClienteTV, carregar_canais, carregar_historico,
                                        conferir_canais, mensagem_fora_do_ar, publicar, registrar_no_historico,
                                        salvar_historico)
-from jellyfin_tools import personagens, vigia, voz_gemini
+from jellyfin_tools import personagens, vigia, voz_clonada, voz_gemini
 from jellyfin_tools.adaptacao import Adaptador
 from jellyfin_tools.vigia import filtro_prontos
 
@@ -185,6 +185,28 @@ def chave_gemini(o: OpcoesJellyfin) -> str:
     return o.chave_gemini or os.environ.get("GEMINI_API_KEY", "")
 
 
+def arquivo_vozes_clonadas() -> Path:
+    """As chaves das vozes clonadas (réplica do Gemini): só neste PC, junto das configurações."""
+    return config.ARQUIVO.parent / "vozes_clonadas.json"
+
+
+def vozes_clonadas() -> list:
+    return voz_clonada.carregar(arquivo_vozes_clonadas())
+
+
+def conferir_voz_clonada(voz: str, vozes: list) -> None:
+    """A voz principal é uma clonada? Ela precisa existir neste PC e não ter vencido."""
+    if not voz_clonada.e_clonada(voz):
+        return
+    achada = next((v for v in vozes if v.valor == voz), None)
+    if achada is None:
+        raise FaltaConfiguracao(f"A voz clonada \"{voz_clonada.nome_da_voz(voz)}\" não está neste PC. Clone de novo "
+                                "em Configurações > Dublagem (ou escolha uma voz pronta).")
+    if achada.vencida():
+        raise FaltaConfiguracao(f"A chave da voz clonada \"{achada.nome}\" venceu. Clone de novo em Configurações > "
+                                "Dublagem (grave a referência e o consentimento outra vez).")
+
+
 def motor_piper(o: OpcoesJellyfin, voz: str = "", progresso_piper=None, progresso_voz=None) -> MotorPiper:
     """O Piper (grátis, no PC) com a voz dada (ou a da tela). Baixa o programa e a voz só na 1ª vez."""
     pasta = config.ARQUIVO.parent
@@ -204,7 +226,10 @@ def preparar_motor(o: OpcoesJellyfin, progresso_piper=None, progresso_voz=None):
         if not chave_gemini(o):
             raise FaltaConfiguracao("Para a voz premium do Gemini, crie a chave em aistudio.google.com (Get API key) "
                                     "e cole no campo \"Chave do Google AI Studio\" (ou use o Piper, grátis).")
-        gemini = voz_gemini.MotorGemini(chave_gemini(o), o.voz_gemini)
+        clonadas = vozes_clonadas()
+        conferir_voz_clonada(o.voz_gemini, clonadas)
+        gemini = voz_gemini.MotorGemini(chave_gemini(o), o.voz_gemini,
+                                        vozes_clonadas=voz_clonada.chaves([v for v in clonadas if not v.vencida()]))
         return MotorMisto(gemini, lambda voz: motor_piper(o, voz)) if o.figurantes_piper else gemini
     return motor_piper(o, progresso_piper=progresso_piper, progresso_voz=progresso_voz)
 

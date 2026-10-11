@@ -19,9 +19,12 @@ import tkinter as tk
 from dataclasses import dataclass
 from typing import NamedTuple
 from datetime import datetime
+from pathlib import Path
 from tkinter import filedialog, ttk
 
 import customtkinter as ctk
+
+from jellyfin_tools import voz_clonada
 
 from . import icone
 
@@ -910,7 +913,11 @@ class DialogoAgendar(ctk.CTkToplevel):
 
 
 def valor_da_voz(texto: str) -> str:
-    """Do menu para o valor: "Kore (feminina, firme)" -> "Kore"; "Piper faber (grátis, no PC)" -> "piper:faber"."""
+    """Do menu para o valor: "Kore (feminina, firme)" -> "Kore"; "Piper faber (grátis, no PC)" -> "piper:faber";
+    "Clonada: Izael (autorizada por Izael)" -> "clone:Izael"."""
+    clonada = voz_clonada.valor_do_menu(texto)
+    if clonada:
+        return clonada
     partes = texto.split()
     if not partes:
         return ""
@@ -1016,6 +1023,180 @@ class DialogoVozes(ctk.CTkToplevel):
 
     def _ok(self) -> None:
         self.resultado = {rotulo: valor_da_voz(var.get()) for rotulo, var in self.vars.items()}
+        self.destroy()
+
+
+class DialogoClonarVoz(ctk.CTkToplevel):
+    """"Clonar uma voz" (réplica do Gemini): o nome, o dono da voz, a gravação de referência, a frase de
+    consentimento (gravadas aqui pelo microfone ou escolhidas de um arquivo) e a confirmação de que há autorização.
+    `resultado`: {"nome", "autorizada_por", "referencia": Path, "consentimento": Path} ou None (Cancelar)."""
+
+    AUDIOS = "Áudio (*.wav *.mp3 *.m4a *.ogg *.opus *.aac *.flac *.webm)"
+
+    def __init__(self, master, pasta: Path, gravador=None, motivo_sem_microfone: str = "", existentes=()):
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.resultado = None
+        self.pasta, self.gravador, self.existentes = Path(pasta), gravador, [n.lower() for n in existentes]
+        self.arquivos: dict[str, Path | None] = {"referencia": None, "consentimento": None}
+        self._gravando: str | None = None
+        self._relogio = None
+        self.title("Clonar uma voz")
+        self.resizable(False, False)
+        self.transient(master)
+        f_pequena = ctk.CTkFont(Tema.FAMILIA, 11)
+        corpo = ctk.CTkFrame(self, fg_color="transparent")
+        corpo.pack(fill="both", expand=True, padx=26, pady=(20, 6))
+        ctk.CTkLabel(corpo, text="Clonar uma voz (réplica do Gemini)", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
+                     text_color=Tema.TEXTO, anchor="w").pack(fill="x")
+        ctk.CTkLabel(corpo, text="Só a SUA voz, ou a de alguém que autorizou e grava a frase de consentimento. O "
+                     "Google confere se a frase foi dita e se as duas gravações são da mesma pessoa. Grave as duas no "
+                     "mesmo lugar e microfone, sem música nem barulho.", font=master.f_rotulo,
+                     text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left", wraplength=640).pack(fill="x",
+                                                                                                   pady=(2, 10))
+        nomes = ctk.CTkFrame(corpo, fg_color="transparent")
+        nomes.pack(fill="x")
+        nomes.grid_columnconfigure((0, 1), weight=1)
+        self.var_nome, self.var_dono = tk.StringVar(), tk.StringVar()
+        for coluna, (rotulo, var, dica) in enumerate((("Nome da voz (aparece nos menus)", self.var_nome, "ex.: Izael"),
+                                                      ("Dono da voz (quem autorizou)", self.var_dono,
+                                                       "ex.: Izael Depetriz"))):
+            ctk.CTkLabel(nomes, text=rotulo, font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w").grid(
+                row=0, column=coluna, sticky="w", padx=(0 if coluna == 0 else 8, 0))
+            master._entrada(nomes, var, dica).grid(row=1, column=coluna, sticky="ew", padx=(0 if coluna == 0 else 8, 0))
+
+        self.status: dict[str, ctk.CTkLabel] = {}
+        self.bt_gravar: dict[str, ctk.CTkButton] = {}
+        for chave, titulo, texto, extra in (
+                ("referencia", "1. Gravação de referência (de 10 a 30 s)", "Leia em voz alta, com calma e do seu "
+                 "jeito de falar:", voz_clonada.TEXTO_REFERENCIA),
+                ("consentimento", "2. Frase de consentimento (em inglês, exatamente assim)",
+                 f"Tradução: \"{voz_clonada.FRASE_TRADUCAO}\"", f"\"{voz_clonada.FRASE_CONSENTIMENTO}\"")):
+            ctk.CTkLabel(corpo, text=titulo, font=master.f_secao, text_color=Tema.TEXTO, anchor="w").pack(
+                fill="x", pady=(14, 2))
+            caixa = ctk.CTkFrame(corpo, fg_color=Tema.CAMPO, corner_radius=10)
+            caixa.pack(fill="x")
+            if chave == "referencia":
+                ctk.CTkLabel(caixa, text=texto, font=f_pequena, text_color=Tema.TEXTO_SUAVE, anchor="w").pack(
+                    fill="x", padx=12, pady=(8, 0))
+            ctk.CTkLabel(caixa, text=extra, font=ctk.CTkFont(Tema.FAMILIA, 13, "bold" if chave != "referencia"
+                                                             else "normal"), text_color=Tema.TEXTO, anchor="w",
+                         justify="left", wraplength=610).pack(fill="x", padx=12, pady=8)
+            if chave == "consentimento":
+                ctk.CTkLabel(caixa, text=texto, font=f_pequena, text_color=Tema.TEXTO_SUAVE, anchor="w",
+                             justify="left", wraplength=610).pack(fill="x", padx=12, pady=(0, 8))
+            linha = ctk.CTkFrame(corpo, fg_color="transparent")
+            linha.pack(fill="x", pady=(6, 0))
+            self.bt_gravar[chave] = master._botao(linha, "🎙  Gravar", lambda c=chave: self.alternar_gravacao(c),
+                                                  "secundario")
+            self.bt_gravar[chave].pack(side="left")
+            if motivo_sem_microfone or gravador is None:
+                self.bt_gravar[chave].configure(state="disabled")
+            master._botao(linha, "📂  Escolher arquivo...", lambda c=chave: self.escolher_arquivo(c),
+                          "fantasma").pack(side="left", padx=(8, 0))
+            self.status[chave] = ctk.CTkLabel(linha, text=motivo_sem_microfone or "ainda não gravado",
+                                              font=master.f_rotulo, text_color=Tema.TEXTO_FRACO, anchor="w")
+            self.status[chave].pack(side="left", padx=(12, 0))
+
+        self.var_autorizo = tk.BooleanVar(value=False)
+        master._checkbox(corpo, "Confirmo que a voz é minha, ou que o dono dela autorizou e gravou o consentimento. "
+                                "Uso pessoal; nunca a voz de atores ou de quem não sabe.",
+                         self.var_autorizo).pack_configure(padx=0, pady=(14, 0))
+        self.lb_aviso = ctk.CTkLabel(corpo, text="", font=master.f_rotulo, text_color=Tema.PERIGO, anchor="w",
+                                     justify="left", wraplength=640)
+        self.lb_aviso.pack(fill="x", pady=(6, 0))
+        botoes = ctk.CTkFrame(self, fg_color="transparent")
+        botoes.pack(fill="x", padx=26, pady=(10, 20))
+        master._botao(botoes, "Cancelar", self.cancelar, "secundario").pack(side="left")
+        self.bt_clonar = master._botao(botoes, "Clonar a voz", self.confirmar, "primario")
+        self.bt_clonar.pack(side="right")
+        self.bind("<Escape>", lambda e: self.cancelar())
+        self.protocol("WM_DELETE_WINDOW", self.cancelar)
+        self.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_reqwidth()) // 2
+        y = master.winfo_rooty() + max(0, (master.winfo_height() - self.winfo_reqheight()) // 4)
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+    # ---- gravar (um de cada vez) ou escolher um arquivo
+    def alternar_gravacao(self, chave: str) -> None:
+        if self._gravando == chave:
+            self._parar(chave)
+            return
+        if self._gravando:                              # estava gravando o outro: termina aquele primeiro
+            self._parar(self._gravando)
+        try:
+            self.gravador.iniciar()
+        except Exception as erro:
+            self.status[chave].configure(text=f"não deu para gravar: {erro}", text_color=Tema.PERIGO)
+            return
+        self._gravando = chave
+        self.bt_gravar[chave].configure(text="⏹  Parar")
+        self._mostrar_tempo()
+
+    def _mostrar_tempo(self) -> None:
+        chave = self._gravando
+        if not chave:
+            return
+        barras = int(getattr(self.gravador, "nivel", 0) * 5 + 0.5)
+        self.status[chave].configure(text=f"gravando... {self.gravador.segundos:.0f} s  {'▮' * barras}{'▯' * (5 - barras)}",
+                                     text_color=Tema.PERIGO)
+        self._relogio = self.after(250, self._mostrar_tempo)
+
+    def _parar(self, chave: str) -> None:
+        if self._relogio:
+            self.after_cancel(self._relogio)
+            self._relogio = None
+        self._gravando = None
+        self.bt_gravar[chave].configure(text="🎙  Gravar de novo")
+        amostras = self.gravador.parar()
+        segundos = len(amostras) / 2 / voz_clonada.TAXA
+        if segundos < 1:
+            self.status[chave].configure(text="não ouvi nada (confira o microfone)", text_color=Tema.PERIGO)
+            return
+        destino = self.pasta / f"{chave}.wav"
+        voz_clonada.gravar_wav(amostras, destino)
+        self.arquivos[chave] = destino
+        self.status[chave].configure(text=f"✓ gravado: {segundos:.0f} s", text_color=Tema.SUCESSO)
+
+    def escolher_arquivo(self, chave: str) -> None:
+        if self._gravando:
+            self._parar(self._gravando)
+        caminho = filedialog.askopenfilename(parent=self, title="Escolha a gravação",
+                                             filetypes=[(self.AUDIOS.split(" (")[0],
+                                                         self.AUDIOS.split("(")[1].rstrip(")")),
+                                                        ("Todos os arquivos", "*.*")])
+        if caminho:
+            self.arquivos[chave] = Path(caminho)
+            self.status[chave].configure(text=f"✓ arquivo: {Path(caminho).name}", text_color=Tema.SUCESSO)
+
+    # ---- terminar
+    def confirmar(self) -> None:
+        if self._gravando:
+            self._parar(self._gravando)
+        try:
+            nome = voz_clonada.validar_nome(self.var_nome.get())
+        except Exception as erro:
+            self.lb_aviso.configure(text=str(erro).capitalize())
+            return
+        problema = ("Já existe uma voz clonada com esse nome." if nome.lower() in self.existentes
+                    else "Diga quem é o dono da voz." if not self.var_dono.get().strip()
+                    else "Falta a gravação de referência (passo 1)." if not self.arquivos["referencia"]
+                    else "Falta a frase de consentimento (passo 2)." if not self.arquivos["consentimento"]
+                    else "Marque a confirmação de que a voz é sua ou de quem autorizou."
+                    if not self.var_autorizo.get() else "")
+        if problema:
+            self.lb_aviso.configure(text=problema)
+            return
+        self.resultado = {"nome": nome, "autorizada_por": " ".join(self.var_dono.get().split()),
+                          "referencia": self.arquivos["referencia"], "consentimento": self.arquivos["consentimento"]}
+        self.destroy()
+
+    def cancelar(self) -> None:
+        if self._gravando:
+            self._parar(self._gravando)
         self.destroy()
 
 
@@ -2450,9 +2631,9 @@ class JanelaModerna(ctk.CTk):
         self._rotulo(lateral, "Vozes", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
         self._rotulo(lateral, "Voz principal do Gemini:").pack(anchor="w", pady=(2, 2), **p)
         self.var_jf_voz_gemini = tk.StringVar(value=self.VOZES_GEMINI[0])
-        menu = self._menu_opcoes(lateral, self.var_jf_voz_gemini, self.VOZES_GEMINI)
-        menu.configure(width=320)
-        menu.pack(anchor="w", **p)
+        self.menu_voz_gemini = self._menu_opcoes(lateral, self.var_jf_voz_gemini, self.vozes_gemini_do_menu())
+        self.menu_voz_gemini.configure(width=320)
+        self.menu_voz_gemini.pack(anchor="w", **p)
         self._rotulo(lateral, "Voz do Piper (no modo Piper, nos figurantes e nos filmes que vão com o Piper):").pack(
             anchor="w", pady=(8, 2), **p)
         self.var_jf_voz_dublagem = tk.StringVar(value="faber")
@@ -2463,6 +2644,24 @@ class JanelaModerna(ctk.CTk):
         self._checkbox(lateral, "Uma voz para cada personagem (o Gemini ouve o filme e separa quem fala; antes de "
                                 "dublar, a tabela \"Vozes dos personagens\" deixa trocar)",
                        self.var_jf_voz_por_personagem)
+
+        self._rotulo(lateral, "Vozes clonadas (réplica do Gemini)", suave=False, fonte=self.f_secao).pack(
+            anchor="w", pady=(16, 4), **p)
+        self._rotulo(lateral, "Clone a SUA voz (ou a de quem autorizou e gravou a frase de consentimento) para usar "
+                              "como voz principal ou de um personagem. Não precisa de placa de vídeo: o Google cria "
+                              "a voz e a chave fica só neste PC. Nunca a voz de atores ou de quem não sabe.").pack(
+            anchor="w", pady=(0, 6), **p)
+        self.lb_vozes_clonadas = ctk.CTkLabel(lateral, text="", font=self.f_rotulo, text_color=Tema.TEXTO,
+                                              anchor="w", justify="left")
+        self.lb_vozes_clonadas.pack(anchor="w", pady=(0, 6), **p)
+        linha = ctk.CTkFrame(lateral, fg_color="transparent")
+        linha.pack(fill="x", **p)
+        self.bt_clonar_voz = self._botao(linha, "🎙  Clonar uma voz...", self.ao_clonar_voz, "secundario")
+        self.bt_clonar_voz.pack(side="left")
+        self.bt_remover_voz_clonada = self._botao(linha, "Remover voz clonada...", self.ao_remover_voz_clonada,
+                                                  "fantasma")
+        self.bt_remover_voz_clonada.pack(side="left", padx=(8, 0))
+        self.atualizar_vozes_clonadas(self._vozes_clonadas)
 
         self._rotulo(lateral, "Modo misto", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
         self.campo_limite_figurante = self._numero(lateral, "É figurante quem tem menos de (falas no filme):", 20, 2,
@@ -2483,6 +2682,41 @@ class JanelaModerna(ctk.CTk):
                               "dublagem continua de onde parou.", fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(
             anchor="w", pady=(10, 4), **p)
         self._sincronizar_modo_voz()
+
+    # ---- Vozes clonadas: a lista vem do app (vozes_clonadas.json); aqui só o que aparece na tela
+    _vozes_clonadas: tuple = ()
+
+    def vozes_gemini_do_menu(self) -> tuple:
+        """As vozes prontas do Gemini e, depois, as clonadas ("Clonada: Izael (autorizada por Izael)")."""
+        return self.VOZES_GEMINI + tuple(voz_clonada.texto_do_menu(v) for v in self._vozes_clonadas
+                                         if not v.vencida())
+
+    def atualizar_vozes_clonadas(self, vozes) -> None:
+        self._vozes_clonadas = tuple(vozes)
+        if not hasattr(self, "lb_vozes_clonadas"):
+            return
+        self.lb_vozes_clonadas.configure(
+            text="\n".join(voz_clonada.descrever(v) for v in self._vozes_clonadas) or "Nenhuma voz clonada ainda.",
+            text_color=Tema.TEXTO if self._vozes_clonadas else Tema.TEXTO_FRACO)
+        self.bt_remover_voz_clonada.configure(state="normal" if self._vozes_clonadas else "disabled")
+        opcoes = self.vozes_gemini_do_menu()
+        self.menu_voz_gemini.configure(values=list(opcoes))
+        atual = self.var_jf_voz_gemini.get()
+        if atual not in opcoes:                          # a escolhida foi removida (ou o nome mudou): volta ao padrão
+            valor = valor_da_voz(atual)
+            self.var_jf_voz_gemini.set(next((v for v in opcoes if valor_da_voz(v) == valor), self.VOZES_GEMINI[0]))
+
+    def ao_clonar_voz(self) -> None:                    # o app faz (precisa da chave e da internet)
+        pass
+
+    def ao_remover_voz_clonada(self) -> None:
+        pass
+
+    def pedir_clonagem(self, pasta: Path, gravador=None, motivo_sem_microfone: str = "") -> dict | None:
+        """Janela "Clonar uma voz" (ver DialogoClonarVoz): {nome, autorizada_por, referencia, consentimento}."""
+        dialogo = DialogoClonarVoz(self, pasta, gravador, motivo_sem_microfone, [v.nome for v in self._vozes_clonadas])
+        self.wait_window(dialogo)
+        return dialogo.resultado
 
     def _ao_escolher_modo_voz(self) -> None:
         """O cartão escolhido (Piper / Gemini / Misto) vira o motor e a opção dos figurantes."""
@@ -2889,7 +3123,7 @@ class JanelaModerna(ctk.CTk):
             modelo_traducao=self.var_jf_modelo_traducao.get().strip() or "claude-sonnet-4-6",
             modelo_whisper=self.var_jf_modelo_whisper.get(), whisper_gpu=self.var_jf_whisper_gpu.get(),
             voz_dublagem=self.var_jf_voz_dublagem.get(), motor_voz=self.var_jf_motor_voz.get(),
-            voz_gemini=self.var_jf_voz_gemini.get().split()[0], chave_gemini=self.var_jf_chave_gemini.get().strip(),
+            voz_gemini=valor_da_voz(self.var_jf_voz_gemini.get()), chave_gemini=self.var_jf_chave_gemini.get().strip(),
             encurtar_falas=self.var_jf_encurtar_falas.get(),
             voz_por_personagem=self.var_jf_voz_por_personagem.get(),
             figurantes_piper=self.var_jf_figurantes_piper.get(),
@@ -3018,9 +3252,9 @@ class JanelaModerna(ctk.CTk):
                 var.set(bool(dados[chave]))
         if dados.get("idioma"):
             self.definir_idiomas_jf(dados["idioma"])
-        if dados.get("voz_gemini"):                      # salvo só o nome ("Kore"); o menu mostra com a descrição
-            self.var_jf_voz_gemini.set(next((v for v in self.VOZES_GEMINI if v.split()[0] == dados["voz_gemini"]),
-                                            self.VOZES_GEMINI[0]))
+        if dados.get("voz_gemini"):                      # salvo só o nome ("Kore", "clone:Izael"); o menu mostra
+            self.var_jf_voz_gemini.set(next((v for v in self.vozes_gemini_do_menu()  # com a descrição
+                                             if valor_da_voz(v) == dados["voz_gemini"]), self.VOZES_GEMINI[0]))
         if dados.get("limite_figurante"):
             self.campo_limite_figurante.set(int(dados["limite_figurante"]))
         if dados.get("vigiar_min"):
@@ -3568,7 +3802,7 @@ class JanelaModerna(ctk.CTk):
 
     def pedir_vozes(self, filme: str, linhas: list[str], rotulos: list[str], sugestao: dict) -> dict | None:
         """Janela "Vozes dos personagens" (ver DialogoVozes)."""
-        vozes = self.VOZES_GEMINI + tuple(f"Piper {v} (grátis, no PC)" for v in self.VOZES_DUBLAGEM)
+        vozes = self.vozes_gemini_do_menu() + tuple(f"Piper {v} (grátis, no PC)" for v in self.VOZES_DUBLAGEM)
         dialogo = DialogoVozes(self, filme, linhas, rotulos, sugestao, vozes)
         self.wait_window(dialogo)
         return dialogo.resultado
