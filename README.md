@@ -240,6 +240,22 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.15.0
+
+- **Tradução local e grátis**: em ⚙ Configurações > **Tradução**, escolha **"Local (grátis, no seu PC)"** no lugar
+  do Claude. Usa os modelos abertos do **Argos Translate** no mesmo motor do Whisper (CTranslate2): sem chave, sem
+  custo e sem mandar nada para a internet (só baixa o modelo na 1ª vez de cada idioma, ~100 MB). Do inglês e do
+  espanhol vai direto para o português; francês, alemão, italiano, japonês, coreano... passam pelo inglês. Vale
+  para "Traduzir legendas", "Criar legenda pelo áudio", vídeos avulsos e robôs. Mantém o itálico e os diálogos
+  ("- Oi." / "- Olá."). É mais literal que o Claude e pode sair com jeito de português de Portugal ("como estás?").
+- **Google Cloud TTS com os tipos de voz** (Configurações > Dublagem, cartão "Google Cloud TTS"): **Neural2**
+  (recomendada), **WaveNet**, **Standard** (a mais barata) e **Studio** (narração), em português do Brasil. Cobra por
+  caractere e tem **cota grátis por mês** em cada tipo; o Maestro conta os caracteres do mês e só soma no painel de
+  gastos o que passar da cota. "Validar" (Chaves de API) traz as vozes da sua conta; "▶ Ouvir uma frase de teste"
+  lê uma frase curta. Precisa da chave do Google Cloud (ative a "Cloud Text-to-Speech API" > Credenciais) e de uma
+  conta de faturamento ativa, mesmo para usar só a cota grátis. Preços e cotas do painel são estimativas: confira
+  em cloud.google.com/text-to-speech/pricing.
+
 ### Novidades da v2.14.0
 
 - **Amostra de 1 minuto antes de dublar**: ao clicar em "Dublar...", o botão **"Ouvir uma amostra (1 min)"** dubla
@@ -1006,6 +1022,8 @@ jellyfin_tools/
   microfone.py          gravar do microfone (sounddevice) para a clonagem
   gastos.py             quanto o Maestro gastou no mês nas APIs pagas (Claude, Gemini) e o teto
   cotacao.py            cotação do dólar (PTAX do Banco Central) para mostrar os gastos em reais
+  traducao_local.py     tradução grátis no PC (modelos Argos no CTranslate2 + SentencePiece)
+  voz_cloud.py          voz do Google Cloud TTS (Standard, WaveNet, Neural2, Studio) com a cota grátis do mês
   personagens.py        voz por personagem: o Gemini ouve o filme e diz quem fala cada fala
   sincronia.py          acerta legenda adiantada/atrasada comparando com a voz do áudio
   resumo_diario.py      o resumo do dia no Discord/Telegram

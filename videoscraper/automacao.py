@@ -64,7 +64,7 @@ from jellyfin_tools.legendas import ErroLegenda
 from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, ClienteTV, carregar_canais, carregar_historico,
                                        conferir_canais, mensagem_fora_do_ar, publicar, registrar_no_historico,
                                        salvar_historico)
-from jellyfin_tools import cotacao, gastos, personagens, vigia, voz_clonada, voz_gemini
+from jellyfin_tools import cotacao, gastos, personagens, vigia, voz_clonada, voz_cloud, voz_gemini
 from jellyfin_tools.adaptacao import Adaptador
 from jellyfin_tools.vigia import filtro_prontos
 
@@ -81,7 +81,7 @@ VARIAVEIS = {"chave_tmdb": "TMDB_API_KEY", "chave_opensubtitles": "OPENSUBTITLES
              "chave_subdl": "SUBDL_API_KEY", "jellyfin_url": "JELLYFIN_URL", "jellyfin_api_key": "JELLYFIN_API_KEY",
              "discord_webhook": "DISCORD_WEBHOOK_URL", "telegram_token": "TELEGRAM_BOT_TOKEN",
              "telegram_chat_id": "TELEGRAM_CHAT_ID", "chave_claude": "ANTHROPIC_API_KEY",
-             "chave_gemini": "GEMINI_API_KEY"}
+             "chave_gemini": "GEMINI_API_KEY", "chave_cloud_tts": "GOOGLE_TTS_API_KEY"}
 # Os campos sem valor padrão na OpcoesJellyfin: os mesmos valores com que a janela abre da 1ª vez
 PADROES = {"modo": "filmes", "origem": "", "destino": "", "tmdb": False, "chave_tmdb": "", "incluir_tmdbid": False,
            "exigir_catalogo": False, "limpar_lixo": True, "apagar_pasta_origem": False, "legendas": True,
@@ -216,6 +216,23 @@ def usa_gemini(o: OpcoesJellyfin) -> bool:
     return o.motor_voz.startswith("Gemini")
 
 
+def usa_cloud(o: OpcoesJellyfin) -> bool:
+    return o.motor_voz.startswith("Google Cloud")
+
+
+def chave_cloud(o: OpcoesJellyfin) -> str:
+    """A chave do Google Cloud (Text-to-Speech): a do campo ou, vazio, a variável GOOGLE_TTS_API_KEY."""
+    return o.chave_cloud_tts or os.environ.get("GOOGLE_TTS_API_KEY", "")
+
+
+def motor_cloud(o: OpcoesJellyfin):
+    if not chave_cloud(o):
+        raise FaltaConfiguracao("Para a voz do Google Cloud TTS, crie a chave em console.cloud.google.com (ative a "
+                                "\"Cloud Text-to-Speech API\" > Credenciais > Criar chave de API) e cole em "
+                                "Configurações > Chaves de API (ou use o Piper, grátis).")
+    return voz_cloud.MotorCloudTTS(chave_cloud(o), o.voz_cloud)
+
+
 def chave_gemini(o: OpcoesJellyfin) -> str:
     """A chave do Google AI Studio: a do campo ou, vazio, a variável GEMINI_API_KEY."""
     return o.chave_gemini or os.environ.get("GEMINI_API_KEY", "")
@@ -258,6 +275,8 @@ def figurante(o: OpcoesJellyfin) -> str | None:
 def preparar_motor(o: OpcoesJellyfin, progresso_piper=None, progresso_voz=None):
     """A voz da dublagem: Gemini (premium, com a chave do AI Studio) ou Piper (grátis; baixa na 1ª vez). Com os
     figurantes no Piper (mista), um MotorMisto: cada fala vai para o motor da voz dela."""
+    if usa_cloud(o):
+        return motor_cloud(o)
     if usa_gemini(o):
         if not chave_gemini(o):
             raise FaltaConfiguracao("Para a voz premium do Gemini, crie a chave em aistudio.google.com (Get API key) "
@@ -684,7 +703,8 @@ def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
         motor = preparar_motor(o)
     except ErroDublagem as erro:
         return Resultado("--dublar", PROBLEMA, f"Não deu para preparar a voz: {erro}")
-    voz = f"Gemini {o.voz_gemini}" if usa_gemini(o) else f"Piper {o.voz_dublagem}"
+    voz = (f"Gemini {o.voz_gemini}" if usa_gemini(o) else f"Google Cloud {o.voz_cloud}" if usa_cloud(o)
+           else f"Piper {o.voz_dublagem}")
     log.info("Dublar: %d filme(s), %d nesta execução (voz %s)", len(itens), len(escolhidos), voz)
     resultados = []
     for item in escolhidos:

@@ -130,7 +130,7 @@ def _verificar_traducao() -> int:
             tradutor = TradutorLocal(Path(pasta), "pt-BR", idioma_origem="en")
             frases = tradutor.traduzir_falas(["Hello, how are you?", "Thank you very much, my friend."])
         texto = " | ".join(frases)
-        ok = any(p in texto.lower() for p in ("olá", "ola", "como", "obrigad", "amigo"))
+        ok = any(p in texto.lower() for p in ("olá", "ola", "como", "obrigad", "amigo")) and "\u2581" not in texto
         relatorio.write_text(f"traduziu: {texto}", encoding="utf-8")
     except Exception:
         relatorio.write_text(traceback.format_exc()[-1500:], encoding="utf-8")

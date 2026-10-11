@@ -108,3 +108,8 @@ def test_sem_modelo_para_o_idioma_e_erro_de_traducao(tmp_path):
     tradutor = tl.TradutorLocal(tmp_path, "pt-BR", idioma_origem="ja", obter=Internet(), carregar=ModeloFalso)
     with pytest.raises(ErroTraducao, match="ja para pt"):
         tradutor.traduzir_falas(["こんにちは"])
+
+
+def test_juntar_os_pedacos_do_sentencepiece():
+    """No .exe, o decode() devolveu '▁Olá,▁como▁estás?': os pedaços são juntados como o Argos faz."""
+    assert tl.juntar_pecas(["\u2581Olá,", "\u2581como", "\u2581est", "ás?"]) == "Olá, como estás?"

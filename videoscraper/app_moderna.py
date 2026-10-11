@@ -63,7 +63,7 @@ from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, inicia
 from jellyfin_tools.relatorio import gerar_relatorio, resumo, salvar_csv
 from jellyfin_tools.resumo_diario import ResumoDiario, mensagem as mensagem_resumo
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca, indice_da_biblioteca, testar_conexao
-from jellyfin_tools import cotacao, gastos, microfone, personagens, vigia, voz_clonada, voz_gemini
+from jellyfin_tools import cotacao, gastos, microfone, personagens, vigia, voz_clonada, voz_cloud, voz_gemini
 from jellyfin_tools.vigia import filtro_prontos
 
 from . import config
@@ -123,7 +123,7 @@ SITUACAO_ESPELHO = {"criado": ("espelhado", "ok"), "ja_existe": ("já espelhado"
 
 # Chaves e tokens: só vão para o config.json se o usuário marcar "Lembrar as chaves".
 SEGREDOS = ("chave_tmdb", "chave_opensubtitles", "chave_subdl", "jellyfin_api_key", "discord_webhook",
-            "telegram_token", "chave_claude", "chave_gemini")
+            "telegram_token", "chave_claude", "chave_gemini", "chave_cloud_tts")
 
 
 class _LogParaFila(logging.Handler):
@@ -714,6 +714,13 @@ class AppModerna(TVAoVivo, JanelaModerna):
             fracao, texto = dado
             self.definir_progresso_total(fracao, texto)
             self.definir_progresso_rodape(fracao, texto)
+        elif tipo == "cloud_estado":
+            ok, texto, vozes = dado
+            self._saude_cloud = (ok, texto)
+            self.definir_estado_cloud(ok, texto)
+            if vozes:
+                self.atualizar_vozes_cloud(vozes)
+            self.definir_saude(self.itens_saude())
         elif tipo == "cotacao":                      # a cotação do dólar do dia chegou: os gastos em reais
             self._configurar_gastos()
             self.definir_saude(self.itens_saude())
@@ -2493,6 +2500,23 @@ class AppModerna(TVAoVivo, JanelaModerna):
                    f"~{pedidos} pedido(s) de voz (até {voz_gemini.BLOCO} falas em cada): na camada GRÁTIS o limite por "
                    "dia é baixo; se acabar, o que ficou pronto é guardado e a próxima dublagem continua de onde parou")
             download = ""
+        elif automacao.usa_cloud(o):
+            if not automacao.chave_cloud(o):
+                self.mostrar_mensagem("Dublar", "A voz do Google Cloud TTS precisa da chave: console.cloud.google.com "
+                                      "> ative a \"Cloud Text-to-Speech API\" > Credenciais > Criar chave de API, e "
+                                      "cole em Configurações > Chaves de API.\n\nSem chave, escolha o Piper (grátis).",
+                                      "aviso")
+                return
+            tipo = voz_cloud.tipo_da_voz(o.voz_cloud)
+            letras = sum(i.falas for i in itens) * voz_cloud.CARACTERES_POR_FALA
+            atual = gastos.atual()
+            usados = atual.caracteres().get(tipo, 0) if atual is not None else 0
+            custo = voz_cloud.custo_estimado(letras, tipo, usados)
+            cota = voz_cloud.TIPOS[tipo][3]
+            voz = (f"pela voz \"{o.voz_cloud}\" do Google Cloud TTS ({tipo}): ~{letras // 1000} mil caracteres; "
+                   f"neste mês já foram {usados // 1000} mil da cota grátis de {cota // 1000} mil"
+                   + (f" — o que passar custa ~{self._dinheiro(custo)}" if custo else " (cabe na cota: sem custo)"))
+            download = ""
         else:
             voz = f"pela voz \"{o.voz_dublagem}\" (Piper, no seu PC, grátis)"
             download = " Na 1ª vez baixa o Piper (~25 MB) e a voz (~60 MB)."
@@ -2721,18 +2745,18 @@ class AppModerna(TVAoVivo, JanelaModerna):
         None = todos com o motor da tela."""
         vozes = vozes or {}
         premium = {str(i.video) for i in itens} if premium is None else premium
-        gemini = automacao.usa_gemini(o)
+        gemini, cloud = automacao.usa_gemini(o), automacao.usa_cloud(o)
         def tarefa():
             progresso = {"progresso_piper": lambda f: self.fila.put(
                              ("jf_analise", (f * 0.5, f"Baixando o Piper: {int(f * 100)}%"))),
                          "progresso_voz": lambda f: self.fila.put(
                              ("jf_analise", (0.5 + f * 0.5, f"Baixando a voz \"{o.voz_dublagem}\": {int(f * 100)}%")))}
             try:
-                usa_piper = not gemini or any(str(i.video) not in premium for i in itens)
+                usa_piper = (not gemini and not cloud) or (gemini and any(str(i.video) not in premium for i in itens))
                 if usa_piper:
                     self.fila.put(("jf_analise", (0.0, "Preparando o Piper (só na 1ª vez baixa)...")))
                 piper = automacao.motor_piper(o, **progresso) if usa_piper else None
-                motor = automacao.preparar_motor(o) if gemini and premium else piper
+                motor = automacao.preparar_motor(o) if (gemini and premium) or cloud else piper
             except (ErroDublagem, automacao.FaltaConfiguracao) as erro:
                 self.fila.put(("msg", ("Dublar filmes", f"Não deu para preparar a voz: {erro}", "erro")))
                 return
@@ -2750,7 +2774,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 adaptar = automacao.adaptador(o, item.video.stem)
                 if adaptar is not None:
                     adaptadores.append(adaptar)
-                deste = motor if str(item.video) in premium else piper
+                deste = motor if cloud or str(item.video) in premium else piper
                 r = dublar_video(item.video, item.legenda, deste, parar=self.evento_parar.is_set,
                                  ao_progresso=andamento, adaptar=adaptar,
                                  avisar=lambda texto: self._log.warning("Dublagem: %s", texto),
@@ -3028,6 +3052,82 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._log.info("Voz clonada removida: %s", removida.nome)
         self.atualizar_vozes_clonadas(vozes)
         self._salvar_config()
+
+    def ao_testar_cloud_tts(self) -> None:
+        """Botão "Validar" do Google Cloud TTS: lista as vozes pt-BR da conta (não gera áudio, não gasta)."""
+        o = self.obter_opcoes_jellyfin()
+        if not automacao.chave_cloud(o):
+            self.mostrar_mensagem("Google Cloud TTS", "Cole a chave do Google Cloud (Text-to-Speech) no campo.", "aviso")
+            return
+
+        def tarefa():
+            try:
+                vozes = voz_cloud.listar_vozes(automacao.chave_cloud(o))
+            except ErroDublagem as erro:
+                self._log.warning("Google Cloud TTS: %s", erro)
+                self.fila.put(("cloud_estado", (False, f"Não funcionou: {erro}", [])))
+                self.fila.put(("msg", ("Google Cloud TTS", f"A chave não funcionou: {erro}.", "erro")))
+                return
+            tipos = sorted({voz_cloud.tipo_da_voz(v) for v in vozes})
+            self._log.info("Google Cloud TTS: chave ativa, %d voz(es) pt-BR", len(vozes))
+            self.fila.put(("cloud_estado", (True, f"Ativa · {len(vozes)} vozes pt-BR", vozes)))
+            self.fila.put(("msg", ("Google Cloud TTS", f"Tudo certo: a chave funciona e a conta tem {len(vozes)} vozes "
+                                   f"em português do Brasil ({', '.join(tipos)}). Este teste não gera áudio (não "
+                                   "gasta).\n\nPara usar: Configurações > Dublagem > \"Google Cloud TTS\".",
+                                   "sucesso")))
+
+        self._rodar("Testando a chave do Google Cloud...", tarefa)
+
+    def ao_ouvir_cloud(self) -> None:
+        """"▶ Ouvir uma frase de teste" do Cloud TTS (uns 100 caracteres: dentro da cota grátis)."""
+        o = self.obter_opcoes_jellyfin()
+        try:
+            motor = automacao.motor_cloud(o)
+        except automacao.FaltaConfiguracao as erro:
+            self.mostrar_mensagem("Ouvir a voz", str(erro), "aviso")
+            return
+        destino = config.ARQUIVO.parent / "frase_de_teste.wav"
+
+        def tarefa():
+            try:
+                motor.sintetizar([(voz_gemini.FRASE_DE_TESTE, destino)])
+            except ErroDublagem as erro:
+                self.fila.put(("msg", ("Ouvir a voz", f"Não deu para gerar a frase: {erro}.", "erro")))
+                return
+            self.fila.put(("tocar", destino))
+
+        self._rodar(f"Gerando a frase de teste com a voz {o.voz_cloud}...", tarefa)
+
+    def item_saude_cloud(self) -> list:
+        """Com o Cloud TTS escolhido: a chave e quanto da cota grátis do mês já foi usada."""
+        if not self.var_jf_motor_voz.get().startswith("Google Cloud"):
+            return []
+        o = self.obter_opcoes_jellyfin()
+        estado = getattr(self, "_saude_cloud", None)
+        if not automacao.chave_cloud(o):
+            itens = [("Cloud TTS: sem chave", False)]
+        elif estado:
+            itens = [("Cloud TTS ativa" if estado[0] else "Cloud TTS: chave recusada", estado[0])]
+        else:
+            itens = [("Cloud TTS: chave não testada", None)]
+        atual = gastos.atual()
+        tipo = voz_cloud.tipo_da_voz(o.voz_cloud)
+        if atual is not None:
+            usados, cota = atual.caracteres().get(tipo, 0), voz_cloud.TIPOS[tipo][3]
+            itens.append((f"Cota {tipo}: {min(100, usados * 100 // max(cota, 1))}% do mês", usados < 0.8 * cota))
+        return itens
+
+    def atualizar_cota_cloud(self) -> None:
+        if not hasattr(self, "lb_cota_cloud"):
+            return
+        atual = gastos.atual()
+        tipo = self.tipo_cloud_escolhido()
+        if atual is None:
+            self.lb_cota_cloud.configure(text="")
+            return
+        usados, cota = atual.caracteres().get(tipo, 0), voz_cloud.TIPOS[tipo][3]
+        self.lb_cota_cloud.configure(text=f"Cota grátis do mês ({tipo}): {usados:,} de {cota:,} caracteres "
+                                          f"(~{usados // voz_cloud.CARACTERES_POR_FALA // 1000} mil falas)".replace(",", "."))
 
     def ao_testar_tmdb(self) -> None:
         o = self.obter_opcoes_jellyfin()
@@ -3727,7 +3827,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 itens.append(("Gemini (voz): chave não testada", None))
         if item_gastos := self.item_saude_gastos():
             itens.append(item_gastos)
+        itens.extend(self.item_saude_cloud())
         self.atualizar_gastos()
+        self.atualizar_cota_cloud()
         for voz in self._vozes_clonadas:                     # chave da voz clonada vencendo (ou vencida)
             if aviso := voz_clonada.aviso_de_validade(voz):
                 itens.append((aviso, False))

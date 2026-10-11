@@ -179,8 +179,14 @@ class ModeloArgos:
         saida = []
         for r in resultados:
             pedacos = r.hypotheses[0][1:] if self.prefixo else r.hypotheses[0]
-            saida.append(self.pecas.decode(pedacos).strip())
+            saida.append(juntar_pecas(pedacos))
         return saida
+
+
+def juntar_pecas(pedacos: list[str]) -> str:
+    """Os pedaços do SentencePiece de volta em texto: '▁Olá,', '▁como' -> 'Olá, como' (o '▁' marca o espaço).
+    Do jeito do Argos: o decode() da biblioteca devolvia os '▁' grudados quando recebia texto."""
+    return "".join(pedacos).replace("\u2581", " ").strip()
 
 
 def _quebrar(texto: str) -> tuple[list[str], bool, bool]:

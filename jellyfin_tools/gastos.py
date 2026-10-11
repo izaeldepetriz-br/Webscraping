@@ -21,7 +21,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-SERVICOS = ("Claude", "Gemini")
+SERVICOS = ("Claude", "Gemini", "Google TTS")
 
 
 class TetoAtingido(Exception):
@@ -85,6 +85,31 @@ class Gastos:
             temporario.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
             temporario.replace(self.arquivo)
 
+    def caracteres(self, mes: str | None = None) -> dict[str, int]:
+        """Google Cloud TTS: {tipo: caracteres lidos no mês} (para a cota grátis de cada tipo)."""
+        do_mes = self._ler().get("caracteres", {}).get(mes or self.mes(), {})
+        return {str(k): int(v or 0) for k, v in do_mes.items()} if isinstance(do_mes, dict) else {}
+
+    def registrar_caracteres(self, tipo: str, quantos: int, tipos: dict) -> None:
+        """Soma os caracteres do tipo no mês; só a parte que passar da cota grátis vira gasto (Google TTS).
+        tipos: {tipo: (_, _, US$ por milhão, cota grátis)} (voz_cloud.TIPOS)."""
+        if quantos <= 0:
+            return
+        preco, cota = (tipos.get(tipo) or (None, None, 0.0, 0))[2:4]
+        with self._trava:
+            dados = self._ler()
+            do_mes = dados.setdefault("caracteres", {}).setdefault(self.mes(), {})
+            antes = int(do_mes.get(tipo, 0) or 0)
+            do_mes[tipo] = antes + quantos
+            pago = max(0, antes + quantos - cota) - max(0, antes - cota)
+            if pago:
+                gasto = dados.setdefault("meses", {}).setdefault(self.mes(), {})
+                gasto["Google TTS"] = round(float(gasto.get("Google TTS", 0) or 0) + pago * preco / 1_000_000, 6)
+            self.arquivo.parent.mkdir(parents=True, exist_ok=True)
+            temporario = self.arquivo.with_suffix(".tmp")
+            temporario.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+            temporario.replace(self.arquivo)
+
     def conferir(self) -> None:
         """Antes de um pedido pago: passou do teto do mês? TetoAtingido com o motivo."""
         if self.teto > 0 and self.na_moeda(gasto := self.total()) >= self.teto:
@@ -133,3 +158,11 @@ def registrar(servico: str, valor: float) -> None:
 def conferir() -> None:
     if _atual is not None:
         _atual.conferir()
+
+
+def registrar_caracteres(tipo: str, quantos: int, tipos: dict) -> None:
+    if _atual is not None:
+        try:
+            _atual.registrar_caracteres(tipo, quantos, tipos)
+        except OSError:
+            pass

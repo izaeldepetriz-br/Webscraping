@@ -4245,3 +4245,108 @@ def test_gastos_do_mes_na_tela(app):
     app.campo_cotacao_dolar.var.set("5,44")                          # digitado com vírgula
     assert app.campo_cotacao_dolar.get() == pytest.approx(5.44)
     assert ("Gastos do mês: R$ 21,73 de R$ 30,00", True) in app.itens_saude()       # 72% do teto: ainda ok
+
+
+def test_google_cloud_tts_pela_janela(app, tmp_path, monkeypatch):
+    """Cartão "Google Cloud TTS": tipo e voz, Validar (lista as vozes da conta), frase de teste, cota no painel e a
+    dublagem com o motor do Cloud (não com o Piper)."""
+    from jellyfin_tools import dublagem, gastos, microfone, voz_cloud
+    from tests.test_dublagem import FFMPEG, SRT, VozFalsa, video_de_teste
+    from tests.test_voz_cloud import GoogleFalso
+    from videoscraper import automacao
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    monkeypatch.delenv("GOOGLE_TTS_API_KEY", raising=False)
+    app.mostrar_aba(app.ABA_CONFIG)
+    app._botoes_config["Dublagem"].invoke()
+    app.var_jf_modo_voz.set("cloud")
+    app._ao_escolher_modo_voz()
+    assert app.var_jf_motor_voz.get() == app.MOTORES_VOZ[2] and not app.var_jf_figurantes_piper.get()
+    # tipo Studio: só as vozes B e C; a letra escolhida (B) continua
+    app.var_jf_tipo_cloud.set(app.texto_tipo_cloud("Studio"))
+    app._ao_trocar_tipo_cloud()
+    assert app.menu_voz_cloud.cget("values") == ["pt-BR-Studio-B (masculina)", "pt-BR-Studio-C (feminina)"]
+    assert app.var_jf_voz_cloud.get() == "pt-BR-Studio-B (masculina)"
+    app.var_jf_tipo_cloud.set(app.texto_tipo_cloud("Neural2"))
+    app._ao_trocar_tipo_cloud()
+    o = app.obter_opcoes_jellyfin()
+    assert (o.tipo_cloud, o.voz_cloud) == ("Neural2", "pt-BR-Neural2-B")
+    assert ("Cloud TTS: sem chave", False) in app.itens_saude()
+    # Validar: a lista da conta (com mais vozes) entra no menu
+    app.var_jf_chave_cloud.set("AIza-cloud")
+    monkeypatch.setattr(voz_cloud, "listar_vozes", lambda chave: ["pt-BR-Neural2-A", "pt-BR-Neural2-B",
+                                                                  "pt-BR-Neural2-C", "pt-BR-Wavenet-E"])
+    app.bt_testar_cloud.invoke()
+    esperar(app)
+    assert "Ativa · 4 vozes" in app.lb_estado_cloud.cget("text") and ("Cloud TTS ativa", True) in app.itens_saude()
+    app.var_jf_tipo_cloud.set(app.texto_tipo_cloud("WaveNet"))
+    app._ao_trocar_tipo_cloud()
+    assert app.menu_voz_cloud.cget("values") == ["pt-BR-Wavenet-E (masculina)"]
+    app.var_jf_tipo_cloud.set(app.texto_tipo_cloud("Neural2"))
+    app._ao_trocar_tipo_cloud()
+    app.var_jf_voz_cloud.set("pt-BR-Neural2-B (masculina)")
+    # frase de teste: o Google (de mentira) lê, o som toca, a cota conta
+    app._salvar_config()
+    google, tocados = GoogleFalso(), []
+    monkeypatch.setattr(voz_cloud, "_post", google)
+    monkeypatch.setattr(microfone, "tocar", lambda arquivo: tocados.append(arquivo))
+    app.bt_ouvir_cloud.invoke()
+    esperar(app)
+    assert tocados and google.pedidos[0][2]["voice"]["name"] == "pt-BR-Neural2-B"
+    assert gastos.atual().caracteres()["Neural2"] == len(automacao.voz_gemini.FRASE_DE_TESTE)
+    assert "Cota grátis do mês (Neural2)" in app.lb_cota_cloud.cget("text")
+    # dublar: vai pelo motor do Cloud, não pelo Piper
+    filmes = tmp_path / "Filmes"
+    (filmes / "Nosferatu (1922)").mkdir(parents=True)
+    video = video_de_teste(filmes / "Nosferatu (1922)" / "Nosferatu (1922).mkv")
+    (filmes / "Nosferatu (1922)" / "Nosferatu (1922).pt-BR.srt").write_text(SRT, encoding="utf-8")
+    app.mostrar_aba("Jellyfin")
+    app._destinos.update({"Filmes": str(filmes), "Séries": ""})
+    app.var_jf_destino.set(str(filmes))
+    monkeypatch.setattr(app_moderna, "videos_para_dublar",
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+    monkeypatch.setattr(automacao, "motor_piper", lambda *a, **k: pytest.fail("com o Cloud, o Piper não entra"))
+    monkeypatch.setattr(automacao, "adaptador", lambda o, titulo="": None)
+    cloud = VozFalsa()
+    monkeypatch.setattr(automacao, "motor_cloud", lambda o: cloud)
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append(m), opcoes[0])[1]
+    app.bt_dublar.invoke()
+    esperar(app)
+    esperar(app)
+    assert "Google Cloud TTS (Neural2)" in perguntas[0] and "cabe na cota" in perguntas[0]
+    assert cloud.textos and dublagem.caminho_dublado(video).is_file()
+
+
+def test_traducao_local_pela_janela(app, tmp_path, monkeypatch):
+    """Configurações > Tradução > Local: sem chave da Anthropic, traduz no PC (modelo de mentira), sem custo."""
+    from jellyfin_tools import traducao_local
+    from tests.test_traducao_local import Internet, ModeloFalso
+    from videoscraper import automacao
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    filmes = tmp_path / "Filmes"
+    (filmes / "Filme (2003)").mkdir(parents=True)
+    (filmes / "Filme (2003)" / "Filme (2003).mkv").write_bytes(b"")
+    (filmes / "Filme (2003)" / "Filme (2003).en.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nHello.\n\n", encoding="utf-8")
+    app.mostrar_aba("Jellyfin")
+    app._destinos.update({"Filmes": str(filmes), "Séries": ""})
+    app.var_jf_destino.set(str(filmes))
+    app.var_jf_chave_claude.set("")
+    app.bt_traduzir_legendas.invoke()                               # Claude sem chave: avisa
+    assert "Tradução" in app.caixas[-1][2] and "Local" in app.caixas[-1][2]
+    app.var_jf_motor_traducao.set(app.MOTORES_TRADUCAO[1])
+    assert app.obter_opcoes_jellyfin().motor_traducao == "Local"
+    original = traducao_local.TradutorLocal
+    monkeypatch.setattr(traducao_local, "TradutorLocal",
+                        lambda pasta, idioma, **k: original(pasta, idioma, obter=Internet(), carregar=ModeloFalso))
+    perguntas = []
+    app.escolher = lambda t, m, opcoes, **k: (perguntas.append((t, m, opcoes)), opcoes[0])[1]
+    app.bt_traduzir_legendas.invoke()
+    esperar(app)
+    esperar(app)
+    titulo, mensagem, opcoes = perguntas[0]
+    assert "grátis" in titulo and "NO SEU PC" in mensagem and len(opcoes) == 1        # sem modo econômico
+    feita = filmes / "Filme (2003)" / "Filme (2003).pt-BR.srt"
+    assert feita.is_file() and "[pt] Hello." in feita.read_text(encoding="utf-8")
+    assert automacao.pasta_traducao_local().name == "traducao_local"

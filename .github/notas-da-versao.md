@@ -29,6 +29,8 @@ Suas configurações ficam em `C:\Users\<você>\.videoscraper\` e continuam vale
 - **Clonar a sua voz (réplica do Gemini, sem placa de vídeo):** em ⚙ Configurações > Dublagem, grave (microfone ou arquivo) um texto e a frase de consentimento; o Google confere que é a mesma pessoa. Só a sua voz ou de quem autorizou; a chave fica só no seu PC. A voz clonada aparece como voz principal e na tabela dos personagens; o painel de saúde avisa quando a chave vai vencer; opção de guardar as gravações para "Clonar de novo" com um clique.
 - **Ouvir uma frase de teste** com a voz escolhida (pronta ou clonada) antes de dublar.
 - **Atualização mais rápida**, com a janelinha "Atualizando o Maestro... (%)"; e "Ampliar lista" funcionando em telas baixas (notebooks).
+- **v2.15 — tradução local grátis:** Configurações > Tradução > "Local": traduz as legendas no seu PC, sem chave e sem custo (modelos Argos; baixa ~100 MB na 1ª vez de cada idioma).
+- **v2.15 — Google Cloud TTS:** novo motor de voz com os tipos Neural2, WaveNet, Standard e Studio, cota grátis do mês contada no painel de gastos, Validar e frase de teste.
 - **v2.14 — amostra antes de dublar:** "Ouvir uma amostra (1 min)" dubla só o minuto com mais falas; as falas são reaproveitadas no filme inteiro.
 - **v2.14 — gastos do mês, em reais:** Configurações > Gastos mostra o gasto estimado com Claude e Gemini em R$ (cotação PTAX do Banco Central + IOF do cartão) e aceita um teto em reais (as tarefas pagas param ao chegar nele).
 - **v2.14 — vídeos avulsos:** uma caixa de entrada (ou arquivos de qualquer pasta) que ganha legenda em português e dublagem; robô `--avulsos`.

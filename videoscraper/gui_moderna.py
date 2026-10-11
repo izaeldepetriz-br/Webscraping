@@ -24,7 +24,7 @@ from tkinter import filedialog, ttk
 
 import customtkinter as ctk
 
-from jellyfin_tools import voz_clonada
+from jellyfin_tools import voz_clonada, voz_cloud
 
 from . import icone
 
@@ -160,6 +160,9 @@ class OpcoesJellyfin:
     perguntar_filmes: bool = True    # Gemini com vários filmes: perguntar quais vão com o Gemini (o resto, Piper)
     robo_so_piper: bool = False      # robôs agendados (--dublar): só o Piper, sem custo
     guardar_gravacoes: bool = False  # voz clonada: guardar as gravações no PC (para clonar de novo com um clique)
+    tipo_cloud: str = "Neural2"      # Google Cloud TTS: Standard, WaveNet, Neural2 ou Studio
+    voz_cloud: str = "pt-BR-Neural2-B"
+    chave_cloud_tts: str = ""        # console.cloud.google.com > Credenciais (vazio = variável GOOGLE_TTS_API_KEY)
     teto_gastos: float = 0.0         # por mês nas APIs pagas (Claude + Gemini), na moeda abaixo; 0 = sem teto
     moeda_gastos: str = "R$"         # "R$" (com a cotação do dólar + IOF) ou "US$" (como as APIs cobram)
     cotacao_dolar: float = 0.0       # reais por dólar fixos; 0 = automática (PTAX do Banco Central)
@@ -2184,7 +2187,7 @@ class JanelaModerna(ctk.CTk):
     ORDEM_TELA_JF = ("n", "status", "atual", "novo", "fonte", "legenda", "progresso")
     MODELOS_WHISPER = ("tiny", "base", "small", "medium", "large-v3", "turbo")
     VOZES_DUBLAGEM = ("faber", "edresson")
-    MOTORES_VOZ = ("Piper (grátis, no PC)", "Gemini (premium, Google AI Studio)")
+    MOTORES_VOZ = ("Piper (grátis, no PC)", "Gemini (premium, Google AI Studio)", "Google Cloud TTS (cota grátis)")
     # as mesmas de jellyfin_tools.voz_gemini.VOZES (um teste confere), com a descrição para o menu
     VOZES_GEMINI = ("Charon (masculina, informativa)", "Orus (masculina, firme)", "Puck (masculina, animada)",
                     "Fenrir (masculina, empolgada)", "Iapetus (masculina, clara)", "Algieba (masculina, suave)",
@@ -2684,7 +2687,8 @@ class JanelaModerna(ctk.CTk):
         self.lb_resumo_config.configure(text="   ·   ".join(partes))
 
     # ---- Dublagem: o motor (Piper, Gemini ou Misto) e o que cada um usa
-    NOMES_MODO_VOZ = {"piper": "Piper", "gemini": "Gemini", "misto": "Misto (Gemini + Piper)"}
+    NOMES_MODO_VOZ = {"piper": "Piper", "cloud": "Google Cloud TTS", "gemini": "Gemini",
+                      "misto": "Misto (Gemini + Piper)"}
 
     def _montar_config_dublagem(self, lateral) -> None:
         p = dict(padx=18)
@@ -2696,7 +2700,9 @@ class JanelaModerna(ctk.CTk):
         modos.pack(fill="x", **p)
         self._cartoes_modo_voz: dict[str, ctk.CTkFrame] = {}
         for valor, titulo, texto in (
-                ("piper", "Piper", "Grátis, roda no seu PC. Voz mais robótica; uma voz para o filme todo."),
+                ("piper", "Piper", "Grátis, no seu PC. Voz mais robótica; uma voz para o filme todo."),
+                ("cloud", "Google Cloud TTS", "Neural2, WaveNet, Standard ou Studio. Cota grátis por mês; "
+                                              "acima dela, por caractere."),
                 ("gemini", "Gemini (premium)", "Voz natural, com emoção. Pago por uso (Google AI Studio)."),
                 ("misto", "Misto: Gemini + Piper", "Principais com o Gemini, figurantes com o Piper. "
                                                    "Economiza pedidos.")):
@@ -2708,7 +2714,7 @@ class JanelaModerna(ctk.CTk):
                                fg_color=Tema.PRIMARIA, hover_color=Tema.PRIMARIA_HOVER).pack(anchor="w", padx=14,
                                                                                               pady=(12, 4))
             ctk.CTkLabel(cartao, text=texto, font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_SUAVE,
-                         anchor="w", justify="left", wraplength=220).pack(anchor="w", padx=14, pady=(0, 12))
+                         anchor="w", justify="left", wraplength=170).pack(anchor="w", padx=14, pady=(0, 12))
             self._cartoes_modo_voz[valor] = cartao
         self.var_jf_motor_voz.trace_add("write", lambda *_: self._sincronizar_modo_voz())
         self.var_jf_figurantes_piper.trace_add("write", lambda *_: self._sincronizar_modo_voz())
@@ -2733,6 +2739,32 @@ class JanelaModerna(ctk.CTk):
         self._checkbox(lateral, "Uma voz para cada personagem (o Gemini ouve o filme e separa quem fala; antes de "
                                 "dublar, a tabela \"Vozes dos personagens\" deixa trocar)",
                        self.var_jf_voz_por_personagem)
+
+        # --- Google Cloud TTS: o tipo de voz (preço e cota grátis de cada um) e a voz
+        self._rotulo(lateral, "Google Cloud TTS", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
+        self._rotulo(lateral, "Tipo de voz (preço por milhão de caracteres e cota grátis do mês; estimativas, confira "
+                              "em cloud.google.com/text-to-speech/pricing):").pack(anchor="w", pady=(0, 2), **p)
+        self.var_jf_tipo_cloud = tk.StringVar(value=self.texto_tipo_cloud(voz_cloud.TIPO_PADRAO))
+        self.menu_tipo_cloud = self._menu_opcoes(lateral, self.var_jf_tipo_cloud,
+                                                 [self.texto_tipo_cloud(t) for t in voz_cloud.TIPOS])
+        self.menu_tipo_cloud.configure(width=560, command=lambda _v: self._ao_trocar_tipo_cloud())
+        self.menu_tipo_cloud.pack(anchor="w", **p)
+        self._rotulo(lateral, "Voz:").pack(anchor="w", pady=(8, 2), **p)
+        linha = ctk.CTkFrame(lateral, fg_color="transparent")
+        linha.pack(fill="x", **p)
+        self._vozes_cloud_da_conta: list[str] = []
+        self.var_jf_voz_cloud = tk.StringVar(value=voz_cloud.texto_da_voz(voz_cloud.nome_da_voz("Neural2", "B")))
+        self.menu_voz_cloud = self._menu_opcoes(linha, self.var_jf_voz_cloud, self.vozes_cloud_do_menu())
+        self.menu_voz_cloud.configure(width=320)
+        self.menu_voz_cloud.pack(side="left")
+        self.bt_ouvir_cloud = self._botao(linha, "▶  Ouvir uma frase de teste", self.ao_ouvir_cloud, "fantasma")
+        self.bt_ouvir_cloud.pack(side="left", padx=(8, 0))
+        self.lb_cota_cloud = ctk.CTkLabel(lateral, text="", font=ctk.CTkFont(Tema.FAMILIA, 11),
+                                          text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left")
+        self.lb_cota_cloud.pack(anchor="w", pady=(6, 0), **p)
+        self._rotulo(lateral, "A chave fica em Chaves de API (\"Validar\" também traz a lista de vozes da sua conta). O "
+                              "Google pede uma conta de faturamento ativa, mesmo para usar só a cota grátis.",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(4, 0), **p)
 
         self._rotulo(lateral, "Vozes clonadas (réplica do Gemini)", suave=False, fonte=self.f_secao).pack(
             anchor="w", pady=(16, 4), **p)
@@ -2833,16 +2865,59 @@ class JanelaModerna(ctk.CTk):
         self.wait_window(dialogo)
         return dialogo.resultado
 
+    # ---- Google Cloud TTS: tipos e vozes nos menus
+    @staticmethod
+    def texto_tipo_cloud(tipo: str) -> str:
+        _no_nome, descricao, preco, cota = voz_cloud.TIPOS[tipo]
+        milhoes = cota // 1_000_000
+        cota_texto = (f"{milhoes} {'milhão' if milhoes == 1 else 'milhões'}" if milhoes else f"{cota // 1000} mil")
+        return f"{tipo}: {descricao} · US$ {preco:g}/milhão · grátis {cota_texto} de caracteres/mês"
+
+    def tipo_cloud_escolhido(self) -> str:
+        return self.var_jf_tipo_cloud.get().split(":")[0]
+
+    def vozes_cloud_do_menu(self, tipo: str | None = None) -> list[str]:
+        """As vozes do tipo: as da conta (depois do Validar) ou as que existem em pt-BR."""
+        tipo = tipo or (self.tipo_cloud_escolhido() if hasattr(self, "var_jf_tipo_cloud") else voz_cloud.TIPO_PADRAO)
+        da_conta = [v for v in self._vozes_cloud_da_conta if voz_cloud.tipo_da_voz(v) == tipo]
+        return [voz_cloud.texto_da_voz(v) for v in (da_conta or voz_cloud.vozes_do_tipo(tipo))]
+
+    def _ao_trocar_tipo_cloud(self) -> None:
+        opcoes = self.vozes_cloud_do_menu()
+        self.menu_voz_cloud.configure(values=opcoes)
+        if self.var_jf_voz_cloud.get() not in opcoes:              # mantém a letra (B = masculina), se existir
+            letra = self.var_jf_voz_cloud.get().split()[0].rsplit("-", 1)[-1]
+            self.var_jf_voz_cloud.set(next((o for o in opcoes if o.split()[0].endswith(f"-{letra}")), opcoes[0]))
+
+    def atualizar_vozes_cloud(self, vozes: list[str]) -> None:
+        """Depois do "Validar": as vozes de verdade da conta (pode haver mais que A, B e C)."""
+        self._vozes_cloud_da_conta = list(vozes)
+        self._ao_trocar_tipo_cloud()
+
+    def ao_ouvir_cloud(self) -> None:
+        pass
+
+    def ao_testar_cloud_tts(self) -> None:
+        pass
+
+    def definir_estado_cloud(self, ok: bool | None, texto: str) -> None:
+        cor = {True: Tema.SUCESSO, False: Tema.PERIGO}.get(ok, Tema.TEXTO_FRACO)
+        simbolo = {True: self.SIMBOLO_SITUACAO["ok"] + "  ", False: self.SIMBOLO_SITUACAO["erro"] + "  "}.get(ok, "")
+        self.lb_estado_cloud.configure(text=simbolo + texto if texto else "", text_color=cor)
+
     def _ao_escolher_modo_voz(self) -> None:
-        """O cartão escolhido (Piper / Gemini / Misto) vira o motor e a opção dos figurantes."""
+        """O cartão escolhido (Piper / Cloud / Gemini / Misto) vira o motor e a opção dos figurantes."""
         modo = self.var_jf_modo_voz.get()
-        self.var_jf_motor_voz.set(self.MOTORES_VOZ[0] if modo == "piper" else self.MOTORES_VOZ[1])
+        self.var_jf_motor_voz.set({"piper": self.MOTORES_VOZ[0], "cloud": self.MOTORES_VOZ[2]}.get(
+            modo, self.MOTORES_VOZ[1]))
         self.var_jf_figurantes_piper.set(modo == "misto")
 
     def _sincronizar_modo_voz(self) -> None:
         """O contrário: o motor e os figurantes (do config.json, ou mudados por código) marcam o cartão certo."""
-        gemini = self.var_jf_motor_voz.get().startswith("Gemini")
-        modo = ("misto" if self.var_jf_figurantes_piper.get() else "gemini") if gemini else "piper"
+        motor = self.var_jf_motor_voz.get()
+        gemini = motor.startswith("Gemini")
+        modo = (("misto" if self.var_jf_figurantes_piper.get() else "gemini") if gemini
+                else "cloud" if motor.startswith("Google Cloud") else "piper")
         if self.var_jf_modo_voz.get() != modo:
             self.var_jf_modo_voz.set(modo)
         for valor, cartao in getattr(self, "_cartoes_modo_voz", {}).items():
@@ -2858,6 +2933,7 @@ class JanelaModerna(ctk.CTk):
         grade.grid_columnconfigure(1, weight=1)
         self.var_jf_chave_claude = tk.StringVar()
         self.var_jf_chave_gemini = tk.StringVar()
+        self.var_jf_chave_cloud = tk.StringVar()
 
         def estado():
             return ctk.CTkLabel(grade, text="", font=self.f_rotulo, text_color=Tema.TEXTO_FRACO, anchor="w",
@@ -2872,6 +2948,8 @@ class JanelaModerna(ctk.CTk):
                    "console.anthropic.com > API Keys", self.ao_testar_claude, "claude"),
                   ("Google AI Studio (Gemini)", "voz premium e por personagem · pago", self.var_jf_chave_gemini,
                    "aistudio.google.com > Get API key", self.ao_testar_gemini, "gemini"),
+                  ("Google Cloud (Text-to-Speech)", "voz da dublagem · cota grátis por mês", self.var_jf_chave_cloud,
+                   "console.cloud.google.com > Credenciais", self.ao_testar_cloud_tts, "cloud"),
                   ("Jellyfin", "scan da biblioteca, TV ao vivo", self.var_jf_chave_jellyfin,
                    "Painel > Avançado > Chaves de API", self.ao_testar_jellyfin, "jellyfin"))
         for n, (nome, descricao, var, dica, comando, chave) in enumerate(linhas):
@@ -2900,6 +2978,7 @@ class JanelaModerna(ctk.CTk):
         self._estado_chave_subdl.configure(text="(validada junto com o OpenSubtitles)")
         self.bt_testar_claude, self.lb_estado_claude = self._botao_chave_claude, self._estado_chave_claude
         self.bt_testar_gemini, self.lb_estado_gemini = self._botao_chave_gemini, self._estado_chave_gemini
+        self.bt_testar_cloud, self.lb_estado_cloud = self._botao_chave_cloud, self._estado_chave_cloud
         self.bt_testar_jellyfin = self._botao_chave_jellyfin
         self.bt_criar_chave_gemini = self._botao(lateral, "Criar a chave do Gemini no AI Studio (abre o site)",
                                                  self.ao_criar_chave_gemini, "fantasma")
@@ -3267,7 +3346,9 @@ class JanelaModerna(ctk.CTk):
             robo_so_piper=self.var_jf_robo_so_piper.get(), guardar_gravacoes=self.var_jf_guardar_gravacoes.get(),
             teto_gastos=float(self.campo_teto_gastos.get()), pasta_avulsos=self.var_jf_pasta_avulsos.get().strip(),
             moeda_gastos=self.var_jf_moeda_gastos.get().split()[0],
-            motor_traducao=self.var_jf_motor_traducao.get().split()[0], cotacao_dolar=float(self.campo_cotacao_dolar.get()),
+            motor_traducao=self.var_jf_motor_traducao.get().split()[0],
+            tipo_cloud=self.tipo_cloud_escolhido(), voz_cloud=self.var_jf_voz_cloud.get().split()[0],
+            chave_cloud_tts=self.var_jf_chave_cloud.get().strip(), cotacao_dolar=float(self.campo_cotacao_dolar.get()),
             iof_cartao=float(self.campo_iof.get()),
             avulsos_dublar=self.var_jf_avulsos_dublar.get(),
             resumo_diario=self.var_jf_resumo_diario.get(),
@@ -3370,7 +3451,7 @@ class JanelaModerna(ctk.CTk):
                   "jellyfin_url": self.var_jf_url,
                   "jellyfin_api_key": self.var_jf_chave_jellyfin, "discord_webhook": self.var_jf_discord,
                   "telegram_token": self.var_jf_telegram_token, "telegram_chat_id": self.var_jf_telegram_chat,
-                  "pasta_avulsos": self.var_jf_pasta_avulsos}
+                  "pasta_avulsos": self.var_jf_pasta_avulsos, "chave_cloud_tts": self.var_jf_chave_cloud}
         marcas = {"tmdb": self.var_jf_tmdb, "incluir_tmdbid": self.var_jf_tmdbid,
                   "exigir_catalogo": self.var_jf_exigir, "legendas": self.var_jf_legendas,
                   "limpar_lixo": self.var_jf_lixo, "imagens_tmdb": self.var_jf_imagens,
@@ -3404,6 +3485,11 @@ class JanelaModerna(ctk.CTk):
             self.campo_limite_figurante.set(int(dados["limite_figurante"]))
         if dados.get("teto_gastos"):
             self.campo_teto_gastos.set(float(dados["teto_gastos"]))
+        if dados.get("tipo_cloud") in voz_cloud.TIPOS:
+            self.var_jf_tipo_cloud.set(self.texto_tipo_cloud(dados["tipo_cloud"]))
+            self._ao_trocar_tipo_cloud()
+        if dados.get("voz_cloud"):
+            self.var_jf_voz_cloud.set(voz_cloud.texto_da_voz(dados["voz_cloud"]))
         if dados.get("motor_traducao"):
             self.var_jf_motor_traducao.set(next((m for m in self.MOTORES_TRADUCAO
                                                  if m.split()[0] == dados["motor_traducao"]), self.MOTORES_TRADUCAO[0]))
