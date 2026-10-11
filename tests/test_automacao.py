@@ -382,3 +382,11 @@ def test_avulsos_caixa_de_entrada_mais_videos_de_outras_pastas(tmp_path):
     assert [(v.name, acao, pronto) for v, _, acao, pronto in automacao.situacao_avulsos(plano, dublar=False)] == [
         ("C.mkv", "Nada: já tem a legenda", True)]
     assert automacao.planejar_avulsos(o, str(tmp_path / "não existe")).lista == []
+
+
+def test_arquivo_do_elenco_da_serie(tmp_path, monkeypatch):
+    """Antes faltava 'import re': dublar episódio de série com voz por personagem dava NameError aqui."""
+    monkeypatch.setattr(automacao, "pasta_dublagem", lambda: tmp_path)
+    assert automacao.arquivo_elenco("Sweet Home (2020)") == tmp_path / "series" / "Sweet Home (2020).json"
+    assert automacao.arquivo_elenco("A/B: C?") == tmp_path / "series" / "A_B_ C_.json"
+    assert automacao.arquivo_elenco("") == tmp_path / "series" / "serie.json"
