@@ -808,6 +808,13 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._vozes_pendente = dado                    # a tabela "Pessoa -> Voz" depois do "fim"
         elif tipo == "avulsos_pendente":
             self._avulsos_pendente = dado                  # pergunta (o que vai fazer e o custo) depois do "fim"
+        elif tipo == "avulsos_lista":
+            plano, dublar = dado
+            linhas = automacao.situacao_avulsos(plano, dublar)
+            self.mostrar_avulsos(linhas)
+            if self._texto_fim is None:                    # o rodapé fala dos avulsos (e não da aba Vídeos)
+                falta = sum(1 for *_, pronto in linhas if not pronto)
+                self._texto_fim = f"Pronto. {len(linhas)} vídeo(s) avulso(s): {falta} com algo a fazer."
         elif tipo == "dublar_pendente":
             self._dublar_pendente = dado                   # pergunta (espaço em disco) depois do "fim"
         elif tipo == "legendar_audio_pendente":
@@ -2557,44 +2564,50 @@ class AppModerna(TVAoVivo, JanelaModerna):
         else:
             self._dublar(itens, o, premium=premium)
 
-    # ---- Vídeos avulsos: a caixa de entrada (Configurações > Vídeos avulsos) ou arquivos de qualquer pasta
-    AVULSOS_PASTA, AVULSOS_ARQUIVOS, AVULSOS_CONFIGURAR = ("Processar a pasta", "Escolher arquivos...",
-                                                           "Configurar a pasta")
+    # ---- aba Avulsos: a caixa de entrada (Configurações > Vídeos avulsos) e/ou vídeos de qualquer pasta
+    def _alvos_avulsos(self, o) -> tuple[str, tuple]:
+        pasta = o.pasta_avulsos if o.pasta_avulsos and Path(o.pasta_avulsos).is_dir() else ""
+        return pasta, tuple(self.avulsos_adicionados)
 
-    def ao_avulsos(self) -> None:
+    def ao_olhar_avulsos(self, processar: bool = False) -> None:
+        """Olhar: a lista com o que falta em cada vídeo. Processar: olha e pergunta antes de começar."""
         o = self.obter_opcoes_jellyfin()
         self._salvar_config()
-        pasta = o.pasta_avulsos if o.pasta_avulsos and Path(o.pasta_avulsos).is_dir() else ""
-        if pasta:
-            texto = (f"Caixa de entrada: {pasta}\n\nOs vídeos dela ganham a legenda em português (traduzindo a que "
-                     "já tiver, ou pelo áudio) e" + (" a versão dublada" if o.avulsos_dublar else ", sem dublar")
-                     + ". Ou escolha arquivos de outra pasta.")
-            opcoes = (self.AVULSOS_PASTA, self.AVULSOS_ARQUIVOS)
-        else:
-            texto = ("Ainda não há uma pasta de vídeos avulsos (a caixa de entrada, que também dá para agendar). "
-                     "Escolha os arquivos agora, ou configure a pasta.")
-            opcoes = (self.AVULSOS_ARQUIVOS, self.AVULSOS_CONFIGURAR)
-        escolha = self.escolher("Vídeos avulsos", texto, opcoes)
-        if escolha is None:
+        pasta, arquivos = self._alvos_avulsos(o)
+        if not pasta and not arquivos:
+            self.mostrar_avulsos([])
+            if o.pasta_avulsos:
+                self.mostrar_mensagem("Vídeos avulsos", f"A pasta não existe: {o.pasta_avulsos}", "aviso")
+            elif processar:
+                self.mostrar_mensagem("Vídeos avulsos", "Escolha a caixa de entrada (a pasta) ou clique em "
+                                      "Adicionar vídeos.", "aviso")
             return
-        if escolha == self.AVULSOS_CONFIGURAR:
-            self.mostrar_aba(self.ABA_CONFIG)
-            self.mostrar_config("Vídeos avulsos")
-            return
-        arquivos = ()
-        if escolha == self.AVULSOS_ARQUIVOS:
-            arquivos = self._pedir_arquivos_video()
-            if not arquivos:
-                return
-            pasta = ""
 
         def tarefa():
             plano = automacao.planejar_avulsos(o, pasta, arquivos)
             self._log.info("Vídeos avulsos: %d vídeo(s); %d para traduzir, %d sem legenda, %d prontos para dublar",
                            plano.videos, len(plano.traduzir), len(plano.pelo_audio), len(plano.dublar))
-            self.fila.put(("avulsos_pendente", (plano, o, pasta, arquivos)))
+            self.fila.put(("avulsos_lista", (plano, o.avulsos_dublar)))
+            if processar:
+                self.fila.put(("avulsos_pendente", (plano, o, pasta, arquivos)))
 
         self._rodar("Olhando os vídeos avulsos...", tarefa)
+
+    def ao_processar_avulsos(self) -> None:
+        self.ao_olhar_avulsos(processar=True)
+
+    def ao_adicionar_avulsos(self) -> None:
+        """Vídeos de qualquer pasta, além da caixa de entrada."""
+        escolhidos = self._pedir_arquivos_video()
+        if not escolhidos:
+            return
+        ja = {str(Path(a)).lower() for a in self.avulsos_adicionados}
+        self.avulsos_adicionados += [a for a in escolhidos if str(Path(a)).lower() not in ja]
+        self.ao_olhar_avulsos()
+
+    def _abrir_pasta_do_sistema(self, pasta: str) -> None:
+        if pasta and Path(pasta).is_dir():
+            self._abrir_no_sistema(pasta)
 
     def _confirmar_avulsos(self, plano, o, pasta: str, arquivos) -> None:
         if plano.vazio:
@@ -2631,6 +2644,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.resumo_diario.registrar("dublados", r.contagens.get("dublados", 0))
             detalhes = ("\n\nProblemas:\n" + "\n".join(f"• {d}" for d in r.detalhes[:6])) if r.detalhes else ""
             self.fila.put(("status_fim", r.resumo))
+            self.fila.put(("avulsos_lista", (automacao.planejar_avulsos(o, pasta, arquivos), o.avulsos_dublar)))
             self.fila.put(("msg", ("Vídeos avulsos", r.resumo + detalhes,
                                    "erro" if r.detalhes and not any(r.contagens.values()) else "sucesso")))
 

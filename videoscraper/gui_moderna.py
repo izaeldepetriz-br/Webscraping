@@ -1791,8 +1791,9 @@ class JanelaModerna(ctk.CTk):
         # Cada aba é um quadro na MESMA célula da grade; trocar de aba = mostrar um e esconder o outro.
         self.aba_videos = ctk.CTkFrame(self, fg_color="transparent")
         self.aba_jellyfin = ctk.CTkFrame(self, fg_color="transparent")
+        self.aba_avulsos = ctk.CTkFrame(self, fg_color="transparent")
         self.aba_config = ctk.CTkFrame(self, fg_color="transparent")
-        for aba in (self.aba_videos, self.aba_jellyfin, self.aba_config):
+        for aba in (self.aba_videos, self.aba_jellyfin, self.aba_avulsos, self.aba_config):
             aba.grid(row=1, column=0, sticky="nsew")
             aba.grid_columnconfigure(0, weight=1)
         self.aba_videos.grid_rowconfigure(2, weight=1)
@@ -1803,6 +1804,7 @@ class JanelaModerna(ctk.CTk):
         self._montar_acoes(self.aba_videos)
         self._montar_corpo(self.aba_videos)
         self._montar_aba_jellyfin(self.aba_jellyfin)
+        self._montar_aba_avulsos(self.aba_avulsos)      # depois da Jellyfin: usa a pasta e o "dublar" de lá
         self._montar_rodape()
         self._organizar_liberado = False
         self.definir_ocupado(False)
@@ -1848,10 +1850,13 @@ class JanelaModerna(ctk.CTk):
     SUBTITULOS = {
         "Vídeos": "1) Cole o endereço da página    2) Clique em Buscar vídeos    3) Selecione e clique em Baixar",
         "Jellyfin": "1) Escolha as pastas    2) Clique em Pré-visualizar    3) Confira e clique em Organizar",
+        "Avulsos": "1) Escolha a caixa de entrada ou adicione vídeos    2) Clique em Olhar    3) Confira e clique em "
+                   "Processar",
         "⚙ Configurações": "Tudo o que muda o jeito do programa trabalhar fica aqui. Vale na hora e fica salvo.",
     }
     TITULOS = {"Vídeos": "Extrair e baixar vídeos públicos",
                "Jellyfin": "Organizar a biblioteca do Jellyfin",
+               "Avulsos": "Legendar e dublar vídeos avulsos",
                "⚙ Configurações": "Configurações"}
 
     def _montar_cabecalho(self) -> None:
@@ -1875,7 +1880,7 @@ class JanelaModerna(ctk.CTk):
         self.lb_saude = ctk.CTkLabel(textos, text="", font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO_SUAVE,
                                      anchor="w", justify="left", wraplength=760)    # muita coisa: quebra a linha
         self.seletor_aba = ctk.CTkSegmentedButton(
-            topo, values=["Vídeos", "Jellyfin", "⚙ Configurações"], command=self.mostrar_aba, height=38,
+            topo, values=["Vídeos", "Jellyfin", "Avulsos", "⚙ Configurações"], command=self.mostrar_aba, height=38,
             corner_radius=Tema.RAIO_CONTROLE, font=self.f_botao, fg_color=Tema.CARTAO,
             selected_color=Tema.PRIMARIA, selected_hover_color=Tema.PRIMARIA_HOVER,
             unselected_color=Tema.CARTAO, unselected_hover_color=Tema.SECUNDARIA_HOVER, text_color=Tema.TEXTO)
@@ -1889,8 +1894,9 @@ class JanelaModerna(ctk.CTk):
         self.bt_atualizacoes.pack(side="right", padx=(0, 12), pady=(4, 0))
 
     def mostrar_aba(self, nome: str) -> None:
-        """'Vídeos', 'Jellyfin' ou '⚙ Configurações'."""
-        abas = {"Vídeos": self.aba_videos, "Jellyfin": self.aba_jellyfin, self.ABA_CONFIG: self.aba_config}
+        """'Vídeos', 'Jellyfin', 'Avulsos' ou '⚙ Configurações'."""
+        abas = {"Vídeos": self.aba_videos, "Jellyfin": self.aba_jellyfin, "Avulsos": self.aba_avulsos,
+                self.ABA_CONFIG: self.aba_config}
         saindo_da_config = self.seletor_aba.get() == self.ABA_CONFIG and nome != self.ABA_CONFIG
         for outro, aba in abas.items():
             if outro != nome:
@@ -2281,9 +2287,7 @@ class JanelaModerna(ctk.CTk):
         self.bt_legendar_audio = self._botao(voz, "Criar legenda pelo áudio...", self.ao_legendar_audio)
         self.bt_sincronizar = self._botao(voz, "Sincronizar legendas...", self.ao_sincronizar_legendas)
         self.bt_dublar = self._botao(voz, "Dublar...", self.ao_dublar)
-        self.bt_avulsos = self._botao(voz, "📥 Vídeos avulsos...", self.ao_avulsos)
-        for b in (self.bt_traduzir_legendas, self.bt_legendar_audio, self.bt_sincronizar, self.bt_dublar,
-                  self.bt_avulsos):
+        for b in (self.bt_traduzir_legendas, self.bt_legendar_audio, self.bt_sincronizar, self.bt_dublar):
             b.configure(height=34)
             b.pack(side="left", padx=(0, 8))
 
@@ -2475,8 +2479,8 @@ class JanelaModerna(ctk.CTk):
         self._rotulo(lateral, "Uma caixa de entrada para vídeos fora das bibliotecas: o que você colocar nesta pasta "
                               "ganha a legenda em português (pelo áudio ou traduzindo a que já tiver) e, se marcado, "
                               "a versão dublada. Os arquivos novos ficam ao lado do original, que nunca é alterado. "
-                              "Na barra \"Legendas e voz\", o botão \"Vídeos avulsos...\" também aceita arquivos de "
-                              "outras pastas; o robô --avulsos faz tudo sozinho no horário agendado.").pack(
+                              "O trabalho em si fica na aba Avulsos (que também aceita vídeos de outras pastas); "
+                              "o robô --avulsos faz tudo sozinho no horário agendado.").pack(
             anchor="w", pady=(0, 8), **p)
         self._rotulo(lateral, "Pasta de vídeos avulsos:").pack(anchor="w", **p)
         linha = ctk.CTkFrame(lateral, fg_color="transparent")
@@ -2622,11 +2626,101 @@ class JanelaModerna(ctk.CTk):
         self._cartao_console_jf = self._criar_console(corpo, linha=2, altura=70).master
         # A lista fica com a maior parte da altura (antes dividia com o console e mostrava ~3 linhas)
         self._corpo_jf = corpo
-        corpo.grid_rowconfigure(0, weight=5, minsize=self.MINIMO_LISTA_JF)
-        corpo.grid_rowconfigure(2, weight=1, minsize=self.ALTURA_CONSOLE_JF)   # o registro da ação: ~4 linhas
+        corpo.grid_rowconfigure(0, weight=5, minsize=round(self.MINIMO_LISTA_JF * self._pontos()))
+        corpo.grid_rowconfigure(2, weight=1, minsize=round(self.ALTURA_CONSOLE_JF * self._pontos()))  # ~4 linhas
         aba.bind("<Configure>", self._ajustar_altura_jf, add="+")
 
-    # ------------------------------------------------------------------ ⚙ Configurações (3ª aba)
+    # ------------------------------------------------------------------ aba Avulsos
+    COLUNAS_AV = (("n", "#", 44, False), ("video", "Vídeo", 300, True), ("legenda", "Legenda em português", 200, False),
+                  ("acao", "O que falta", 280, True), ("pasta", "Pasta", 300, True))
+
+    def _montar_aba_avulsos(self, aba) -> None:
+        """Vídeos fora das bibliotecas: a caixa de entrada (Configurações > Vídeos avulsos) e/ou arquivos de qualquer
+        pasta. Olhar mostra o que falta em cada um; Processar legenda (traduz ou pelo áudio) e dubla."""
+        aba.grid_rowconfigure(2, weight=1)
+        cartao = self._cartao(aba)
+        cartao.grid(row=0, column=0, sticky="ew", padx=28, pady=(14, 0))
+        cartao.grid_columnconfigure(1, weight=1)
+        self._rotulo(cartao, "Caixa de entrada:", suave=False, fonte=self.f_secao).grid(
+            row=0, column=0, padx=(20, 12), pady=(16, 6))
+        self.campo_pasta_av = self._entrada(cartao, self.var_jf_pasta_avulsos, r"ex.: D:\Para Dublar", altura=40)
+        self.campo_pasta_av.grid(row=0, column=1, sticky="ew", pady=(16, 6))
+        self._botao(cartao, "Escolher...", self._escolher_pasta_avulsos, largura=110).grid(
+            row=0, column=2, padx=(10, 20), pady=(16, 6))
+        baixo = ctk.CTkFrame(cartao, fg_color="transparent")
+        baixo.grid(row=1, column=0, columnspan=3, sticky="ew", padx=(2, 20), pady=(0, 10))
+        self.cb_av_dublar = self._checkbox(baixo, "Dublar também (com o motor e as vozes de Configurações > Dublagem)",
+                                           self.var_jf_avulsos_dublar)
+        self.cb_av_dublar.pack_configure(side="left")
+        self._botao(baixo, "⚙ Opções", self.mostrar_opcoes_avulsos, "fantasma", largura=100).pack(side="right")
+
+        barra = ctk.CTkFrame(aba, fg_color="transparent")
+        barra.grid(row=1, column=0, sticky="ew", padx=28, pady=12)
+        self.bt_av_olhar = self._botao(barra, "Olhar", self.ao_olhar_avulsos, "primario", largura=150)
+        self.bt_av_adicionar = self._botao(barra, "Adicionar vídeos...", self.ao_adicionar_avulsos, largura=170)
+        self.bt_av_processar = self._botao(barra, "Processar", self.ao_processar_avulsos, largura=140)
+        self.bt_av_limpar = self._botao(barra, "Tirar os adicionados", self.limpar_avulsos_adicionados, largura=170)
+        self.bt_parar_av = self._botao(barra, "Parar", self.ao_parar, "perigo", largura=100)
+        for b in (self.bt_av_olhar, self.bt_av_adicionar, self.bt_av_processar, self.bt_av_limpar):
+            b.pack(side="left", padx=(0, 10))
+        self.bt_parar_av.pack(side="right")
+
+        corpo = self._corpo(aba, linha=2)
+        self.tabela_av, faixa = self._criar_tabela(
+            corpo, "Vídeos", self.COLUNAS_AV,
+            "Nenhum vídeo ainda. Escolha a caixa de entrada e clique em Olhar, ou clique em Adicionar vídeos.")
+        self.lb_contador_av, self.lb_vazio_av = self._extras_tabela[str(self.tabela_av)]
+        self.tabela_av.bind("<Double-1>", lambda e: self.ao_abrir_pasta_avulso())
+        self.lb_resumo_av = ctk.CTkLabel(faixa, text="", font=self.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w")
+        self.lb_resumo_av.pack(side="left")
+        self._botao(faixa, "Abrir a pasta do vídeo", self.ao_abrir_pasta_avulso, "fantasma").pack(side="right")
+        self._criar_console(corpo, linha=1, altura=120)
+        corpo.grid_rowconfigure(1, weight=2, minsize=round(150 * self._pontos()))    # o console: ~4 linhas
+        self.avulsos_adicionados: list[str] = []      # vídeos de outras pastas (além da caixa de entrada)
+
+    def _escolher_pasta_avulsos(self) -> None:
+        self._escolher_pasta_em(self.var_jf_pasta_avulsos)
+        if self.var_jf_pasta_avulsos.get().strip():
+            self.ao_olhar_avulsos()
+
+    def mostrar_opcoes_avulsos(self) -> None:
+        self.mostrar_aba(self.ABA_CONFIG)
+        self.mostrar_config("Vídeos avulsos")
+
+    def limpar_avulsos_adicionados(self) -> None:
+        """Tira da lista os vídeos de outras pastas (a caixa de entrada continua)."""
+        self.avulsos_adicionados.clear()
+        self.ao_olhar_avulsos()
+
+    def mostrar_avulsos(self, linhas) -> None:
+        """linhas: [(vídeo Path, legenda, o que falta, pronto?)] (automacao.situacao_avulsos)."""
+        self.tabela_av.delete(*self.tabela_av.get_children())
+        for i, (video, legenda, acao, pronto) in enumerate(linhas):
+            tags = ("ok",) if pronto else ("par" if i % 2 == 0 else "impar",)
+            self.tabela_av.insert("", "end", iid=str(i), tags=tags,
+                                  values=(i + 1, video.name, legenda, ("✓ " if pronto else "") + acao, str(video.parent)))
+        falta = sum(1 for *_, pronto in linhas if not pronto)
+        self.lb_contador_av.configure(text=str(len(linhas)))
+        self.lb_resumo_av.configure(text=(f"{falta} com algo a fazer · {len(linhas) - falta} pronto(s)" if linhas
+                                          else ""))
+        if linhas:
+            self.lb_vazio_av.place_forget()
+        else:
+            self.lb_vazio_av.place(relx=0.5, rely=0.55, anchor="center")
+
+    def linhas_avulsos(self) -> list[tuple]:
+        """O que a tabela mostra: [(vídeo, legenda, o que falta, pasta)] (para os testes e o 'abrir pasta')."""
+        return [tuple(self.tabela_av.item(i, "values"))[1:] for i in self.tabela_av.get_children()]
+
+    def ao_abrir_pasta_avulso(self) -> None:
+        escolhidos = self.tabela_av.selection() or self.tabela_av.get_children()[:1]
+        if escolhidos:
+            self._abrir_pasta_do_sistema(self.tabela_av.item(escolhidos[0], "values")[4])
+
+    def _abrir_pasta_do_sistema(self, pasta: str) -> None:      # o app abre no Explorer
+        pass
+
+    # ------------------------------------------------------------------ ⚙ Configurações (4ª aba)
     ABA_CONFIG = "⚙ Configurações"
     GRUPOS_CONFIG = (("VÍDEOS", ("Opções de busca",)),      # a aba Vídeos: no topo, fácil de achar
                      ("BIBLIOTECA", ("Nomes e TMDB", "Organização e limpeza", "Vigia (automático)", "Espelhos (.strm)")),
@@ -2887,7 +2981,13 @@ class JanelaModerna(ctk.CTk):
     def ao_clonar_voz(self) -> None:                    # o app faz (precisa da chave e da internet)
         pass
 
-    def ao_avulsos(self) -> None:
+    def ao_olhar_avulsos(self) -> None:                 # o app faz (lê as pastas numa tarefa)
+        pass
+
+    def ao_adicionar_avulsos(self) -> None:
+        pass
+
+    def ao_processar_avulsos(self) -> None:
         pass
 
     def _pedir_arquivos_video(self) -> tuple:
@@ -3268,7 +3368,8 @@ class JanelaModerna(ctk.CTk):
 
     def partes_visiveis_jf(self, altura: int | None = None) -> tuple[bool, bool]:
         """(painel Antes → Depois, console) que cabem nesta altura da aba (e com a lista não ampliada)."""
-        altura = self.aba_jellyfin.winfo_height() if altura is None else altura
+        if altura is None:                 # winfo_height é em pixels; os limites, em pontos (zoom do Windows: 125%...)
+            altura = self.aba_jellyfin.winfo_height() / self._pontos()
         if self._lista_ampliada:
             return False, False
         return altura >= self.ABA_COM_DETALHE, altura >= self.ABA_COM_CONSOLE
@@ -3282,7 +3383,15 @@ class JanelaModerna(ctk.CTk):
             elif not mostrar and cartao.winfo_manager():
                 cartao.grid_remove()
         # a altura mínima da linha do console vai junto: sem isso, o espaço continuava reservado e a lista não crescia
-        self._corpo_jf.grid_rowconfigure(2, minsize=self.ALTURA_CONSOLE_JF if console else 0)
+        self._corpo_jf.grid_rowconfigure(2, minsize=round(self.ALTURA_CONSOLE_JF * self._pontos()) if console else 0)
+
+    def _pontos(self) -> float:
+        """Pixels por ponto: 1,25 com o zoom do Windows em 125%. O CTk aumenta os botões e as letras, mas a grade
+        do Tk (minsize) e o winfo_height continuam em pixels: as contas de altura precisam converter."""
+        try:
+            return ctk.ScalingTracker.get_widget_scaling(self) or 1.0
+        except (AttributeError, tk.TclError):
+            return 1.0
 
     def alternar_lista_jf(self) -> None:
         """'Ampliar lista': esconde o painel Antes → Depois e o console; a tabela ocupa tudo.
@@ -4041,10 +4150,11 @@ class JanelaModerna(ctk.CTk):
                   self.bt_previa, self.bt_legendas, self.bt_desfazer, self.bt_testar_jellyfin,
                   self.bt_testar_avisos, self.bt_testar_tmdb, self.bt_espelhar, self.bt_testar_legendas,
                   self.bt_conferir_espelhos, self.bt_relatorio, self.bt_gerenciar_espelhos, self.bt_traduzir_legendas,
-                  self.bt_legendar_audio, self.bt_dublar, self.bt_sincronizar, self.bt_testar_claude):
+                  self.bt_legendar_audio, self.bt_dublar, self.bt_sincronizar, self.bt_testar_claude,
+                  self.bt_av_olhar, self.bt_av_adicionar, self.bt_av_processar, self.bt_av_limpar):
             b.configure(state=estado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
-        for parar in (self.bt_parar, self.bt_parar_jf):
+        for parar in (self.bt_parar, self.bt_parar_jf, self.bt_parar_av):
             parar.configure(state="normal" if ocupado else "disabled",
                             border_color=Tema.PERIGO if ocupado else Tema.CAMPO_BORDA)
         self.indicador.configure(fg_color=Tema.AVISO if ocupado else Tema.SUCESSO)

@@ -4184,7 +4184,9 @@ def test_dublar_episodios_na_pasta_irma(app, tmp_path, monkeypatch):
     assert "Séries (Dublado IA)" in mensagens[0]
 
 
-def test_videos_avulsos_pela_caixa_de_entrada(app, tmp_path, monkeypatch):
+def test_aba_avulsos_olhar_adicionar_e_processar(app, tmp_path, monkeypatch):
+    """Aba própria (como Vídeos e Jellyfin): a caixa de entrada + vídeos de outras pastas; Olhar mostra o que falta
+    em cada um; Processar pergunta e dubla; depois a lista mostra tudo pronto."""
     from jellyfin_tools import dublagem
     from tests.test_dublagem import FFMPEG, SRT, video_de_teste
     if not FFMPEG:
@@ -4192,31 +4194,50 @@ def test_videos_avulsos_pela_caixa_de_entrada(app, tmp_path, monkeypatch):
     voz = _dublagem_falsa(monkeypatch)
     from videoscraper import automacao
     monkeypatch.setattr(automacao, "videos_para_dublar", app_moderna.videos_para_dublar)
+    assert app.seletor_aba.cget("values") == ["Vídeos", "Jellyfin", "Avulsos", app.ABA_CONFIG]
+    assert not hasattr(app, "bt_avulsos")                          # saiu da barra da aba Jellyfin
     caixa = tmp_path / "Para Dublar"
     caixa.mkdir()
     video = video_de_teste(caixa / "Palestra.mkv")
     (caixa / "Palestra.pt-BR.srt").write_text(SRT, encoding="utf-8")
-    app.mostrar_aba("Jellyfin")
-    # sem pasta: oferece escolher arquivos ou configurar a pasta
+    outra = tmp_path / "Outra"
+    outra.mkdir()
+    sem_legenda = video_de_teste(outra / "Aula.mkv")
+    app.mostrar_aba("Avulsos")
+    assert app.aba_avulsos.winfo_manager() and app.lb_titulo.cget("text") == "Legendar e dublar vídeos avulsos"
+    # sem pasta e sem vídeos: Processar pede para escolher
     app.var_jf_pasta_avulsos.set("")
-    vistas = []
-    app.escolher = lambda t, m, opcoes, **k: (vistas.append(opcoes), None)[1]
-    app.bt_avulsos.invoke()
-    assert vistas[-1] == (app.AVULSOS_ARQUIVOS, app.AVULSOS_CONFIGURAR)
-    # com a pasta: processa tudo (aqui, só falta dublar)
+    app.bt_av_processar.invoke()
+    assert "Escolha a caixa de entrada" in app.caixas[-1][2] and app.linhas_avulsos() == []
+    # a caixa de entrada + um vídeo de outra pasta
     app.var_jf_pasta_avulsos.set(str(caixa))
-    app.escolher = lambda t, m, opcoes, **k: opcoes[0]
-    app.bt_avulsos.invoke()
+    app._pedir_arquivos_video = lambda: (str(sem_legenda),)
+    app.bt_av_adicionar.invoke()
+    esperar(app)
+    assert app.linhas_avulsos() == [
+        ("Palestra.mkv", "✓ tem", "Dublar", str(caixa)),
+        ("Aula.mkv", "nenhuma", "Criar a legenda pelo áudio → dublar", str(outra)),
+    ] or sorted(app.linhas_avulsos()) == sorted([
+        ("Palestra.mkv", "✓ tem", "Dublar", str(caixa)),
+        ("Aula.mkv", "nenhuma", "Criar a legenda pelo áudio → dublar", str(outra))])
+    assert app.lb_resumo_av.cget("text") == "2 com algo a fazer · 0 pronto(s)"
+    # "Tirar os adicionados": fica só a caixa de entrada; Processar dubla e a lista mostra pronto
+    app.bt_av_limpar.invoke()
+    esperar(app)
+    assert [linha[0] for linha in app.linhas_avulsos()] == ["Palestra.mkv"]
+    app.bt_av_processar.invoke()
     esperar(app)
     esperar(app)
     assert dublagem.caminho_dublado(video).is_file() and voz.textos
     assert app.caixas[-1][0] == "sucesso" and "1 dublado" in app.caixas[-1][2]
-    # arquivos de outra pasta (escolhidos na hora): já dublado, nada a fazer
-    app._pedir_arquivos_video = lambda: (str(video),)
-    app.escolher = lambda t, m, opcoes, **k: app.AVULSOS_ARQUIVOS if app.AVULSOS_ARQUIVOS in opcoes else opcoes[0]
-    app.bt_avulsos.invoke()
+    assert app.linhas_avulsos() == [("Palestra.mkv", "✓ tem", "✓ Nada: já está pronto", str(caixa))]
+    # de novo: nada a fazer
+    app.bt_av_processar.invoke()
     esperar(app)
     assert "Nada a fazer" in app.caixas[-1][2]
+    # ⚙ Opções leva às Configurações > Vídeos avulsos
+    app.mostrar_opcoes_avulsos()
+    assert app.aba_atual() == app.ABA_CONFIG and app.config_atual() == "Vídeos avulsos"
 
 
 def test_gastos_do_mes_na_tela(app):
@@ -4391,3 +4412,13 @@ def test_menu_das_configuracoes_rola_e_atalho_das_opcoes_de_busca(app):
     app.bt_opcoes_videos.invoke()                                   # e volta para cima
     app.update()
     assert canvas.yview()[0] == 0
+
+
+def test_aba_jellyfin_com_o_zoom_do_windows(app, monkeypatch):
+    """Com 125%, a aba tem 744 px = 595 pontos: o painel Antes → Depois não cabe e sai (antes a conta usava os
+    pixels como se fossem pontos, o painel ficava e a lista sumia, só com o cabeçalho)."""
+    monkeypatch.setattr(app.aba_jellyfin, "winfo_height", lambda: 744)
+    monkeypatch.setattr(app, "_pontos", lambda: 1.0)
+    assert app.partes_visiveis_jf() == (True, False)
+    monkeypatch.setattr(app, "_pontos", lambda: 1.25)
+    assert app.partes_visiveis_jf() == (False, False)

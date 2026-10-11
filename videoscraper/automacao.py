@@ -752,39 +752,84 @@ def dublar_item(o: OpcoesJellyfin, item, motor, log: logging.Logger, parar=None,
 # ============================================================================ vídeos avulsos
 @dataclasses.dataclass
 class PlanoAvulsos:
-    """O que a caixa de entrada (ou os arquivos escolhidos) tem para fazer."""
+    """O que a caixa de entrada (e/ou os arquivos escolhidos) tem para fazer."""
     traduzir: list                 # legendas em outro idioma -> português (Claude)
     pelo_audio: list               # vídeos sem nenhuma legenda -> Whisper (+ Claude)
     dublar: list                   # já com legenda em português, sem versão dublada
     videos: int = 0                # quantos vídeos olhados
+    lista: list = field(default_factory=list)      # todos os vídeos olhados (Path), para a aba Avulsos
 
     @property
     def vazio(self) -> bool:
         return not (self.traduzir or self.pelo_audio or self.dublar)
 
 
-def _so_estes(itens: list, arquivos) -> list:
-    if not arquivos:
-        return itens
-    escolhidos = {str(Path(a).resolve()).lower() for a in arquivos}
-    return [i for i in itens if str(Path(i.video).resolve()).lower() in escolhidos]
+def _chave(caminho) -> str:
+    return str(Path(caminho).resolve()).lower()
+
+
+def _dentro(caminho, pasta: str) -> bool:
+    try:
+        Path(caminho).resolve().relative_to(Path(pasta).resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def _so_estes(itens: list, pasta: str, arquivos) -> list:
+    """Os itens da pasta inteira MAIS os arquivos escolhidos (cada vídeo uma vez só)."""
+    escolhidos = {_chave(a) for a in arquivos}
+    vistos, saida = set(), []
+    for i in itens:
+        k = _chave(i.video)
+        if k not in vistos and ((pasta and _dentro(i.video, pasta)) or k in escolhidos):
+            vistos.add(k)
+            saida.append(i)
+    return saida
 
 
 def planejar_avulsos(o: OpcoesJellyfin, pasta: str = "", arquivos=(), sondar=None) -> PlanoAvulsos:
-    """A pasta de vídeos avulsos inteira, ou só os arquivos escolhidos (em qualquer pasta)."""
+    """A pasta de vídeos avulsos inteira e/ou os arquivos escolhidos (em qualquer pasta)."""
     from jellyfin_tools.dublagem import MARCA_DUBLADO
     from jellyfin_tools.nomes import eh_video
-    onde = sorted({str(Path(a).parent) for a in arquivos}) if arquivos else [pasta]
+    pasta = pasta if pasta and Path(pasta).is_dir() else ""
+    onde = sorted({str(Path(a).parent) for a in arquivos} | ({pasta} if pasta else set()))
     onde = [p for p in onde if p and Path(p).is_dir()]
     idioma = o.idioma.split(",")[0].strip() or "pt-BR"
     extra = {"sondar": sondar} if sondar else {}
-    videos = (len(arquivos) if arquivos else
-              sum(1 for p in onde for v in Path(p).rglob("*")
-                  if v.is_file() and eh_video(v) and not v.stem.endswith(MARCA_DUBLADO)))
-    return PlanoAvulsos(_so_estes(legendas_para_traduzir(*onde, idioma=idioma), arquivos),
-                        _so_estes(videos_sem_legenda(*onde, idioma=idioma), arquivos),
-                        _so_estes(videos_para_dublar(*onde, idioma=idioma, **extra), arquivos) if o.avulsos_dublar
-                        else [], videos)
+    lista, vistos = [], set()
+    candidatos = [v for v in Path(pasta).rglob("*") if v.is_file()] if pasta else []
+    for v in candidatos + [Path(a) for a in arquivos if Path(a).is_file()]:
+        if eh_video(v) and not v.stem.endswith(MARCA_DUBLADO) and _chave(v) not in vistos:
+            vistos.add(_chave(v))
+            lista.append(v)
+    lista.sort(key=lambda v: (str(v.parent).lower(), v.name.lower()))
+    if not onde:
+        return PlanoAvulsos([], [], [], 0, lista)
+    return PlanoAvulsos(_so_estes(legendas_para_traduzir(*onde, idioma=idioma), pasta, arquivos),
+                        _so_estes(videos_sem_legenda(*onde, idioma=idioma), pasta, arquivos),
+                        _so_estes(videos_para_dublar(*onde, idioma=idioma, **extra), pasta, arquivos)
+                        if o.avulsos_dublar else [], len(lista), lista)
+
+
+def situacao_avulsos(plano: PlanoAvulsos, dublar: bool = True) -> list[tuple[Path, str, str, bool]]:
+    """Uma linha por vídeo para a aba Avulsos: (vídeo, legenda em português, o que falta, pronto?)."""
+    traduzir = {_chave(i.video) for i in plano.traduzir}
+    pelo_audio = {_chave(i.video) for i in plano.pelo_audio}
+    para_dublar = {_chave(i.video) for i in plano.dublar}
+    depois = " → dublar" if dublar else ""
+    linhas = []
+    for v in plano.lista:
+        k = _chave(v)
+        if k in traduzir:
+            linhas.append((v, "em outro idioma", "Traduzir a legenda" + depois, False))
+        elif k in pelo_audio:
+            linhas.append((v, "nenhuma", "Criar a legenda pelo áudio" + depois, False))
+        elif k in para_dublar:
+            linhas.append((v, "✓ tem", "Dublar", False))
+        else:
+            linhas.append((v, "✓ tem", "Nada: já está pronto" if dublar else "Nada: já tem a legenda", True))
+    return linhas
 
 
 def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", arquivos=(), parar=None,

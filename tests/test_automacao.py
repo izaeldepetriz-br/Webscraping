@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -351,3 +352,33 @@ def test_robo_avulsos_precisa_da_pasta_e_dubla_a_caixa_de_entrada(casa, tmp_path
     o.avulsos_dublar = False                                        # só legenda: não dubla
     plano = automacao.planejar_avulsos(o, str(caixa))
     assert plano.dublar == [] and plano.videos == 2              # a versão dublada não conta como vídeo novo
+
+
+def test_avulsos_caixa_de_entrada_mais_videos_de_outras_pastas(tmp_path):
+    """A aba Avulsos junta a caixa de entrada com vídeos de outras pastas (sem repetir) e diz o que falta em cada um."""
+    caixa, outra = tmp_path / "Caixa", tmp_path / "Outra"
+    for pasta in (caixa, outra):
+        pasta.mkdir()
+    for nome in ("A.mkv", "B.mkv", "C.mkv", "Z - Dublado IA.mkv"):     # a versão dublada não é um vídeo novo
+        (caixa / nome).write_bytes(b"")
+    (caixa / "A.en.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nHi.\n", encoding="utf-8")
+    (caixa / "C.pt-BR.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nOi.\n", encoding="utf-8")
+    for nome in ("D.mkv", "E.mkv"):
+        (outra / nome).write_bytes(b"")
+    o = SimpleNamespace(idioma="pt-BR", avulsos_dublar=True)       # só o que o plano usa
+    plano = automacao.planejar_avulsos(o, str(caixa), (str(outra / "D.mkv"), str(caixa / "A.mkv")),
+                                       sondar=lambda v: (60.0, ["eng"]))
+    assert [v.name for v in plano.lista] == ["A.mkv", "B.mkv", "C.mkv", "D.mkv"]     # E não foi escolhido
+    assert plano.videos == 4
+    linhas = {v.name: (legenda, acao, pronto) for v, legenda, acao, pronto in automacao.situacao_avulsos(plano)}
+    assert linhas == {"A.mkv": ("em outro idioma", "Traduzir a legenda → dublar", False),
+                      "B.mkv": ("nenhuma", "Criar a legenda pelo áudio → dublar", False),
+                      "C.mkv": ("✓ tem", "Dublar", False),
+                      "D.mkv": ("nenhuma", "Criar a legenda pelo áudio → dublar", False)}
+    # já dublado: pronto; sem dublar: só a legenda
+    (caixa / "C - Dublado IA.mkv").write_bytes(b"x")
+    o.avulsos_dublar = False
+    plano = automacao.planejar_avulsos(o, "", (str(caixa / "C.mkv"),))
+    assert [(v.name, acao, pronto) for v, _, acao, pronto in automacao.situacao_avulsos(plano, dublar=False)] == [
+        ("C.mkv", "Nada: já tem a legenda", True)]
+    assert automacao.planejar_avulsos(o, str(tmp_path / "não existe")).lista == []
