@@ -308,6 +308,31 @@ def itens_para_dublar(pastas: dict, idioma: str = "pt-BR", sondar=None) -> list:
     return itens + episodios_para_dublar(pastas.get("Séries") or "", idioma=idioma, **extra)
 
 
+def usa_traducao_local(o: OpcoesJellyfin) -> bool:
+    return (o.motor_traducao or "Claude").startswith("Local")
+
+
+def pasta_traducao_local() -> Path:
+    """Os modelos da tradução local (Argos), baixados na 1ª vez."""
+    return config.ARQUIVO.parent / "traducao_local"
+
+
+def pode_traduzir(o: OpcoesJellyfin) -> bool:
+    """Local: sempre (grátis). Claude: só com a chave."""
+    return usa_traducao_local(o) or bool(o.chave_claude or os.environ.get("ANTHROPIC_API_KEY"))
+
+
+def tradutor_para(o: OpcoesJellyfin, idioma: str, ao_baixar=None):
+    """Quem traduz as legendas, conforme Configurações > Tradução: o Claude (com a chave) ou o local (grátis, no PC).
+    None: Claude escolhido, mas sem chave."""
+    if usa_traducao_local(o):
+        from jellyfin_tools.traducao_local import TradutorLocal
+        return TradutorLocal(pasta_traducao_local(), idioma, ao_baixar=ao_baixar)
+    if not (o.chave_claude or os.environ.get("ANTHROPIC_API_KEY")):
+        return None
+    return Tradutor(chave=o.chave_claude, modelo=o.modelo_traducao, idioma=idioma)
+
+
 def adaptador(o: OpcoesJellyfin, titulo: str = ""):
     """Quem reescreve as falas longas (o Claude), ou None: opção desligada ou sem a chave da Anthropic."""
     if not o.encurtar_falas or not (o.chave_claude or os.environ.get("ANTHROPIC_API_KEY")):
@@ -492,10 +517,13 @@ def traduzir_legendas(log: logging.Logger, limite: float = 1.0, economico: bool 
     onde = bibliotecas(pastas)
     if not onde:
         raise FaltaConfiguracao("Escolha a biblioteca de Filmes e/ou de Séries na aba Jellyfin.")
-    if not (o.chave_claude or os.environ.get("ANTHROPIC_API_KEY")):
-        raise FaltaConfiguracao("Falta a chave da API da Anthropic (aba Jellyfin > Legendas, com \"Lembrar as "
-                                "chaves\" marcado, ou a variável de ambiente ANTHROPIC_API_KEY).")
+    if not pode_traduzir(o):
+        raise FaltaConfiguracao("Falta a chave da API da Anthropic (Configurações > Chaves de API, com \"Lembrar as "
+                                "chaves\" marcado, ou a variável de ambiente ANTHROPIC_API_KEY), ou escolha a "
+                                "tradução Local (grátis) em Configurações > Tradução.")
     idioma = o.idioma.split(",")[0].strip() or "pt-BR"
+    if usa_traducao_local(o):                        # grátis, no PC: sem limite de dólares e sem lote
+        return _traduzir_local(log, o, onde, idioma)
     do_lote = coletar_lotes(log, o)
     aguardando = len(traducao_lote.pendentes_no_disco(config.ARQUIVO.parent / "lotes"))
     pendentes = legendas_para_traduzir(*onde, idioma=idioma)
@@ -548,6 +576,28 @@ def traduzir_legendas(log: logging.Logger, limite: float = 1.0, economico: bool 
                      [f"{r.origem.name}: {r.detalhe}" for r in erros], {"traduzidas": len(traduzidas) + do_lote})
 
 
+def _traduzir_local(log: logging.Logger, o: OpcoesJellyfin, onde: list, idioma: str) -> Resultado:
+    pendentes = legendas_para_traduzir(*onde, idioma=idioma)
+    if not pendentes:
+        return Resultado("--traduzir-legendas", OK, f"Nada a traduzir: os vídeos já têm legenda em {idioma}.")
+    tradutor = tradutor_para(o, idioma)
+    log.info("Traduzir legendas (local, grátis): %d pendente(s)", len(pendentes))
+    resultados = []
+    for p in pendentes:
+        r = traduzir_arquivo(p.origem, p.destino, tradutor, titulo=p.video.stem)
+        resultados.append(r)
+        (log.error if r.status == "erro" else log.info)("[%s] %s -> %s%s", r.status, r.origem.name, r.destino.name,
+                                                         f" ({r.detalhe})" if r.detalhe else "")
+        if r.status == "erro" and "modelo" in r.detalhe:
+            break                                       # sem o modelo, nenhuma vai dar certo
+    traduzidas = [r for r in resultados if r.status == "traduzida"]
+    erros = [r for r in resultados if r.status == "erro"]
+    return Resultado("--traduzir-legendas", PROBLEMA if erros else OK,
+                     f"{len(traduzidas)} de {len(pendentes)} legenda(s) traduzida(s) no PC (grátis), "
+                     f"{len(erros)} erro(s).", [f"{r.origem.name}: {r.detalhe}" for r in erros],
+                     {"traduzidas": len(traduzidas)})
+
+
 def legendar_audio(log: logging.Logger, limite_videos: int = 5, limite: float = 1.0) -> Resultado:
     """Os vídeos sem NENHUMA legenda: o Whisper ouve no PC e o Claude traduz (se houver chave e o áudio não for
     português). No máximo `limite_videos` por execução (0 = todos); o resto fica para a próxima."""
@@ -560,11 +610,10 @@ def legendar_audio(log: logging.Logger, limite_videos: int = 5, limite: float = 
     if not itens:
         return Resultado("--legendar-audio", OK, "Nenhum vídeo sem legenda.")
     escolhidos = itens[:limite_videos] if limite_videos > 0 else itens
-    tradutor = None
-    if o.chave_claude or os.environ.get("ANTHROPIC_API_KEY"):
-        tradutor = Tradutor(chave=o.chave_claude, modelo=o.modelo_traducao, idioma=idioma)
+    tradutor = tradutor_para(o, idioma)
     log.info("Legendar pelo áudio: %d sem legenda, %d nesta execução (Whisper %s, %s)", len(itens), len(escolhidos),
-             o.modelo_whisper, "com tradução" if tradutor else "sem tradução: falta a chave da Anthropic")
+             o.modelo_whisper, f"com tradução ({tradutor.modelo})" if tradutor else
+             "sem tradução: falta a chave da Anthropic")
     transcritor = Transcritor(modelo=o.modelo_whisper, usar_gpu=o.whisper_gpu,
                               pasta_modelos=str(config.ARQUIVO.parent / "modelos_whisper"))
     resultados = []
@@ -726,8 +775,7 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
     parado = parar or (lambda: False)
     idioma = o.idioma.split(",")[0].strip() or "pt-BR"
     plano = planejar_avulsos(o, pasta, arquivos, sondar)
-    tradutor = (Tradutor(chave=o.chave_claude, modelo=o.modelo_traducao, idioma=idioma)
-                if o.chave_claude or os.environ.get("ANTHROPIC_API_KEY") else None)
+    tradutor = tradutor_para(o, idioma)
     contas, erros = {"traduzidas": 0, "pelo_audio": 0, "dublados": 0}, []
     if plano.traduzir and tradutor is None:
         erros.append(f"{len(plano.traduzir)} legenda(s) em outro idioma: falta a chave da Anthropic para traduzir")

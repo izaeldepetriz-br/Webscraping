@@ -1981,9 +1981,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
         if not pastas:
             self.mostrar_mensagem("Traduzir legendas", "Escolha a biblioteca de Filmes e/ou de Séries.", "aviso")
             return
-        if not (o.chave_claude or os.environ.get("ANTHROPIC_API_KEY")):
+        if not automacao.pode_traduzir(o):
             self.mostrar_mensagem("Traduzir legendas", "Preencha a chave da API da Anthropic (crie uma em "
-                                  "console.anthropic.com > API Keys; o uso é pago por quantidade de texto).", "aviso")
+                                  "console.anthropic.com > API Keys; o uso é pago por quantidade de texto), ou escolha "
+                                  "a tradução Local (grátis, no seu PC) em Configurações > Tradução.", "aviso")
             return
         idioma = o.idioma.split(",")[0].strip() or "pt-BR"
         self._salvar_config()
@@ -2000,10 +2001,22 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.mostrar_mensagem("Traduzir legendas", f"Nada a traduzir: os vídeos já têm legenda em {idioma} "
                                   "(ou não têm legenda .srt em outro idioma).", "info")
             return
-        entrada, saida, custo = estimar_custo(sum(p.caracteres for p in pendentes), sum(p.falas for p in pendentes),
-                                              o.modelo_traducao)
         exemplos = "\n".join(f"• {p.origem.name}" for p in pendentes[:5]) + (
             f"\n... e mais {len(pendentes) - 5}" if len(pendentes) > 5 else "")
+        if automacao.usa_traducao_local(o):              # grátis, no PC: sem custo e sem modo econômico
+            escolha = self.escolher(
+                "Traduzir legendas (local, grátis)",
+                f"{len(pendentes)} vídeo(s) têm legenda só em outro idioma e nenhuma em {idioma}:\n{exemplos}\n\n"
+                "A tradução roda NO SEU PC, sem custo e sem mandar nada para a internet. Na 1ª vez de cada idioma, "
+                "baixa o modelo (~100 MB). Do inglês e do espanhol vai direto; dos outros, passa pelo inglês. É mais "
+                "literal que o Claude.\n\n"
+                f"Cada um vira 'Nome.{idioma}.srt' com os MESMOS horários. A legenda original continua lá e nada é "
+                "sobrescrito.", (f"Traduzir os {len(pendentes)} agora",))
+            if escolha is not None:
+                self._traduzir(pendentes, idioma, o)
+            return
+        entrada, saida, custo = estimar_custo(sum(p.caracteres for p in pendentes), sum(p.falas for p in pendentes),
+                                              o.modelo_traducao)
         valor = f"cerca de {self._dinheiro(custo)}" if custo is not None else "preço deste modelo desconhecido"
         escolha = self.escolher(
             "Traduzir legendas com IA",
@@ -2094,7 +2107,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
     def _traduzir(self, pendentes: list, idioma: str, o) -> None:
         def tarefa():
             try:
-                tradutor = Tradutor(chave=o.chave_claude, modelo=o.modelo_traducao, idioma=idioma)
+                tradutor = automacao.tradutor_para(o, idioma, ao_baixar=lambda f: self.fila.put(
+                    ("jf_analise", (f, f"Baixando o modelo de tradução: {int(f * 100)}%"))))
             except ImportError:
                 self.fila.put(("msg", ("Traduzir legendas", "Falta a biblioteca 'anthropic' (pip install anthropic).",
                                        "erro")))
@@ -2166,11 +2180,14 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                   "lado (as de outro idioma: use \"Traduzir legendas com IA\").", "info")
             return
         horas, letras, falas = estimar_audio(itens)
-        traduzir = bool(o.chave_claude or os.environ.get("ANTHROPIC_API_KEY"))
-        custo = estimar_custo(letras, falas, o.modelo_traducao)[2] if traduzir else None
+        traduzir = automacao.pode_traduzir(o)
+        local = automacao.usa_traducao_local(o)
+        custo = estimar_custo(letras, falas, o.modelo_traducao)[2] if traduzir and not local else None
         exemplos = "\n".join(f"• {i.video.name}" for i in itens[:5]) + (
             f"\n... e mais {len(itens) - 5}" if len(itens) > 5 else "")
-        traducao = (f"Tradução com o Claude ({o.modelo_traducao}), só do que não for {idioma}: no máximo cerca de "
+        traducao = (f"Tradução local (grátis, no seu PC), só do que não for {idioma}: na 1ª vez de cada idioma, baixa o "
+                    "modelo (~100 MB)." if local else
+                    f"Tradução com o Claude ({o.modelo_traducao}), só do que não for {idioma}: no máximo cerca de "
                     f"{self._dinheiro(custo)}." if custo is not None else
                     f"Tradução com o Claude ({o.modelo_traducao}): preço deste modelo desconhecido." if traduzir else
                     "Sem a chave da Anthropic: fica só a legenda no idioma do áudio (sem tradução).")
@@ -2198,7 +2215,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
             tradutor = None
             if traduzir:
                 try:
-                    tradutor = Tradutor(chave=o.chave_claude, modelo=o.modelo_traducao, idioma=idioma)
+                    tradutor = automacao.tradutor_para(o, idioma)
                 except ImportError:
                     self._log.warning("Falta a biblioteca 'anthropic': as legendas ficam sem tradução")
             resultados, total, inicio, avisados = [], len(itens), time.monotonic(), set()
@@ -2560,14 +2577,15 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.mostrar_mensagem("Vídeos avulsos", f"Nada a fazer em {plano.videos} vídeo(s): já têm legenda em "
                                   "português" + (" e versão dublada" if o.avulsos_dublar else "") + ".", "info")
             return
-        tem_claude = bool(o.chave_claude or os.environ.get("ANTHROPIC_API_KEY"))
+        traduz = automacao.pode_traduzir(o)
+        quem = "a tradução local (grátis, no PC)" if automacao.usa_traducao_local(o) else "o Claude"
         linhas = []
         if plano.traduzir:
-            linhas.append(f"• {len(plano.traduzir)} legenda(s) em outro idioma: o Claude traduz para o português"
-                          + ("" if tem_claude else " (FALTA a chave da Anthropic: ficam sem traduzir)"))
+            linhas.append(f"• {len(plano.traduzir)} legenda(s) em outro idioma: {quem} traduz para o português"
+                          + ("" if traduz else " (FALTA a chave da Anthropic: ficam sem traduzir)"))
         if plano.pelo_audio:
             linhas.append(f"• {len(plano.pelo_audio)} vídeo(s) sem nenhuma legenda: o Whisper ouve no seu PC (grátis)"
-                          + (" e o Claude traduz se o áudio não for português" if tem_claude else ""))
+                          + (f" e {quem} traduz se o áudio não for português" if traduz else ""))
         if o.avulsos_dublar:
             motor = ("Gemini (pago por uso)" if automacao.usa_gemini(o) else f"Piper, voz \"{o.voz_dublagem}\" (grátis)")
             prontos = f"{len(plano.dublar)} já pronto(s) para dublar" if plano.dublar else "nenhum pronto ainda"

@@ -357,6 +357,9 @@ def traduzir_arquivo(origem: str | Path, destino: str | Path, tradutor: Tradutor
         return ResultadoTraducao(origem, destino, "erro", f"não deu para ler a legenda: {erro}")
     if not falas:
         return ResultadoTraducao(origem, destino, "erro", "a legenda não tem nenhuma fala")
+    if hasattr(tradutor, "idioma_origem"):           # tradução local: o modelo depende do idioma ('Filme.en.srt')
+        from .traducao_local import idioma_do_arquivo
+        tradutor.idioma_origem = idioma_do_arquivo(origem) or "en"
     try:
         textos = tradutor.traduzir_falas([f.texto for f in falas], titulo or origem.stem, parar, ao_progresso)
         textos = [ajustar_linhas(t) for t in textos]                 # revisão: no máximo 42 letras por linha

@@ -13,7 +13,8 @@ hiddenimports += ["pystray._win32", "PIL.Image", "PIL.ImageDraw"]               
 for pacote in ("imageio_ffmpeg", "playwright", "pystray",                   # ffmpeg, instalador do navegador, ícone
                "faster_whisper", "ctranslate2", "onnxruntime", "av", "tokenizers",    # Whisper (legenda pelo áudio)
                "google.genai",                                                     # Gemini (voz premium)
-               "sounddevice", "_sounddevice_data"):                                # microfone (clonar a voz)
+               "sounddevice", "_sounddevice_data",                                 # microfone (clonar a voz)
+               "sentencepiece"):                                                   # tradução local (Argos)
     d, b, h = collect_all(pacote)
     datas, binaries, hiddenimports = datas + d, binaries + b, hiddenimports + h
 

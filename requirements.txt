@@ -9,5 +9,6 @@ pillow>=10
 anthropic>=1.0       # traduzir legendas com o Claude (API da Anthropic)
 google-genai>=2.24   # voz premium da dublagem: Gemini (Google AI Studio); 2.24+ tem a API de interações e de vozes
 sounddevice>=0.4     # gravar a sua voz pelo microfone (para clonar); no Windows já traz o PortAudio
+sentencepiece>=0.2   # tradução local grátis (modelos Argos no CTranslate2, o mesmo motor do Whisper)
 faster-whisper>=1.1  # criar a legenda ouvindo o áudio (Whisper, roda no PC)
 av>=11,<19           # o PyAV 19 tirou uma opção que o faster-whisper 1.2 ainda usa (metadata_errors)

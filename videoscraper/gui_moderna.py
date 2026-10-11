@@ -146,6 +146,7 @@ class OpcoesJellyfin:
     fechar_na_bandeja: bool = False  # o X esconde a janela perto do relógio (a vigia continua)
     chave_claude: str = ""           # API da Anthropic: traduzir legendas (vazio = variável ANTHROPIC_API_KEY)
     modelo_traducao: str = "claude-sonnet-4-6"
+    motor_traducao: str = "Claude"   # "Claude" (pago, melhor) ou "Local" (grátis, no PC: modelos Argos)
     modelo_whisper: str = "small"    # legenda pelo áudio: tamanho do modelo do Whisper (maior = acerta mais, demora mais)
     whisper_gpu: bool = False        # usar a placa de vídeo NVIDIA na transcrição
     voz_dublagem: str = "faber"      # dublagem por IA: a voz sintética do Piper
@@ -2404,10 +2405,22 @@ class JanelaModerna(ctk.CTk):
                        self.var_jf_sobrescrever)
 
         # ===================================================== Tradução (Claude)
-        lateral = self._secao_config("Tradução (Claude)")
+        lateral = self._secao_config("Tradução")
         self._rotulo(lateral, "A legenda que só existe em outro idioma vira 'Nome.pt-BR.srt', com os mesmos horários. "
-                              "A chave da Anthropic fica em Chaves de API.").pack(anchor="w", pady=(0, 4), **p)
-        self._rotulo(lateral, "Modelo:").pack(anchor="w", pady=(6, 2), **p)
+                              "Vale para \"Traduzir legendas\", \"Criar legenda pelo áudio\" e os vídeos avulsos.").pack(
+            anchor="w", pady=(0, 6), **p)
+        self._rotulo(lateral, "Quem traduz:").pack(anchor="w", pady=(2, 2), **p)
+        self.var_jf_motor_traducao = tk.StringVar(value=self.MOTORES_TRADUCAO[0])
+        menu = self._menu_opcoes(lateral, self.var_jf_motor_traducao, self.MOTORES_TRADUCAO)
+        menu.configure(width=420)
+        menu.pack(anchor="w", **p)
+        self._rotulo(lateral, "Claude: tradução natural, entende o contexto das falas anteriores e as gírias; pago por "
+                              "uso (a chave da Anthropic fica em Chaves de API; há o modo econômico, pela metade). "
+                              "Local: roda no seu PC, sem chave e sem internet (baixa o modelo na 1ª vez, ~100 MB por "
+                              "idioma); boa para entender o filme, mas mais literal. Do inglês e do espanhol vai direto; "
+                              "dos outros idiomas, passa pelo inglês.", fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(
+            anchor="w", pady=(6, 4), **p)
+        self._rotulo(lateral, "Modelo do Claude:").pack(anchor="w", pady=(6, 2), **p)
         self.var_jf_modelo_traducao = tk.StringVar(value="claude-sonnet-4-6")
         self._entrada(lateral, self.var_jf_modelo_traducao, "claude-sonnet-4-6", width=320).pack(anchor="w", **p)
 
@@ -2586,13 +2599,13 @@ class JanelaModerna(ctk.CTk):
     # ------------------------------------------------------------------ ⚙ Configurações (3ª aba)
     ABA_CONFIG = "⚙ Configurações"
     GRUPOS_CONFIG = (("BIBLIOTECA", ("Nomes e TMDB", "Organização e limpeza", "Vigia (automático)", "Espelhos (.strm)")),
-                     ("LEGENDAS E VOZ", ("Legendas", "Tradução (Claude)", "Legenda pelo áudio", "Dublagem",
+                     ("LEGENDAS E VOZ", ("Legendas", "Tradução", "Legenda pelo áudio", "Dublagem",
                                          "Vídeos avulsos")),
                      ("SERVIDOR E AVISOS", ("Jellyfin", "Avisos e resumo do dia")),
                      ("SISTEMA", ("Chaves de API", "Gastos (APIs pagas)", "Agendamentos", "Vídeos (busca)",
                                   "Geral, backup e versão")))
     ICONES_CONFIG = {"Nomes e TMDB": "🏷", "Organização e limpeza": "🧹", "Vigia (automático)": "👁",
-                     "Espelhos (.strm)": "🔗", "Legendas": "💬", "Tradução (Claude)": "🌐", "Legenda pelo áudio": "🎧",
+                     "Espelhos (.strm)": "🔗", "Legendas": "💬", "Tradução": "🌐", "Legenda pelo áudio": "🎧",
                      "Dublagem": "🎙", "Jellyfin": "🖥", "Avisos e resumo do dia": "🔔", "Chaves de API": "🔑",
                      "Agendamentos": "⏰", "Vídeos (busca)": "⬇", "Geral, backup e versão": "⚙",
                      "Vídeos avulsos": "📥", "Gastos (APIs pagas)": "💲"}
@@ -2765,6 +2778,7 @@ class JanelaModerna(ctk.CTk):
             anchor="w", pady=(10, 4), **p)
         self._sincronizar_modo_voz()
 
+    MOTORES_TRADUCAO = ("Claude (pago, tradução mais natural)", "Local (grátis, no seu PC, mais literal)")
     MOEDAS_GASTOS = ("R$ (real, com a cotação do dólar + IOF)", "US$ (dólar, como as APIs cobram)")
 
     # ---- Vozes clonadas: a lista vem do app (vozes_clonadas.json); aqui só o que aparece na tela
@@ -3252,7 +3266,8 @@ class JanelaModerna(ctk.CTk):
             limite_figurante=int(self.campo_limite_figurante.get()), perguntar_filmes=self.var_jf_perguntar_filmes.get(),
             robo_so_piper=self.var_jf_robo_so_piper.get(), guardar_gravacoes=self.var_jf_guardar_gravacoes.get(),
             teto_gastos=float(self.campo_teto_gastos.get()), pasta_avulsos=self.var_jf_pasta_avulsos.get().strip(),
-            moeda_gastos=self.var_jf_moeda_gastos.get().split()[0], cotacao_dolar=float(self.campo_cotacao_dolar.get()),
+            moeda_gastos=self.var_jf_moeda_gastos.get().split()[0],
+            motor_traducao=self.var_jf_motor_traducao.get().split()[0], cotacao_dolar=float(self.campo_cotacao_dolar.get()),
             iof_cartao=float(self.campo_iof.get()),
             avulsos_dublar=self.var_jf_avulsos_dublar.get(),
             resumo_diario=self.var_jf_resumo_diario.get(),
@@ -3389,6 +3404,9 @@ class JanelaModerna(ctk.CTk):
             self.campo_limite_figurante.set(int(dados["limite_figurante"]))
         if dados.get("teto_gastos"):
             self.campo_teto_gastos.set(float(dados["teto_gastos"]))
+        if dados.get("motor_traducao"):
+            self.var_jf_motor_traducao.set(next((m for m in self.MOTORES_TRADUCAO
+                                                 if m.split()[0] == dados["motor_traducao"]), self.MOTORES_TRADUCAO[0]))
         if dados.get("moeda_gastos"):
             self.var_jf_moeda_gastos.set(next((m for m in self.MOEDAS_GASTOS if m.split()[0] == dados["moeda_gastos"]),
                                               self.MOEDAS_GASTOS[0]))

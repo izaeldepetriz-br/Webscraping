@@ -117,6 +117,27 @@ def _verificar_audio() -> int:
     return 0 if ok else 1
 
 
+def _verificar_traducao() -> int:
+    """Autoteste da tradução local (usado ao gerar o .exe, com internet): baixa o modelo inglês -> português (Argos)
+    e traduz uma frase. Prova o CTranslate2 + SentencePiece dentro do .exe."""
+    import tempfile
+    import traceback
+    from pathlib import Path
+    relatorio = Path(tempfile.gettempdir()) / "maestro-teste-traducao.txt"
+    try:
+        from jellyfin_tools.traducao_local import TradutorLocal
+        with tempfile.TemporaryDirectory() as pasta:
+            tradutor = TradutorLocal(Path(pasta), "pt-BR", idioma_origem="en")
+            frases = tradutor.traduzir_falas(["Hello, how are you?", "Thank you very much, my friend."])
+        texto = " | ".join(frases)
+        ok = any(p in texto.lower() for p in ("olá", "ola", "como", "obrigad", "amigo"))
+        relatorio.write_text(f"traduziu: {texto}", encoding="utf-8")
+    except Exception:
+        relatorio.write_text(traceback.format_exc()[-1500:], encoding="utf-8")
+        return 1
+    return 0 if ok else 1
+
+
 def _verificar_navegador() -> int:
     """Autoteste do modo navegador (usado ao gerar o .exe): baixa o Chromium, se faltar, e abre uma página."""
     import tempfile
@@ -136,6 +157,8 @@ if __name__ == "__main__":
         raise SystemExit(_verificar_audio())
     if "--verificar-navegador" in sys.argv:
         raise SystemExit(_verificar_navegador())
+    if "--verificar-traducao" in sys.argv:
+        raise SystemExit(_verificar_traducao())
     if "--testar-atualizacao" in sys.argv:          # GitHub: a troca dos arquivos funciona no Windows de verdade?
         from pathlib import Path
         from videoscraper import atualizacao

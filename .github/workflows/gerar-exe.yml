@@ -62,6 +62,15 @@ jobs:
           $linha = ("$r" -replace "`r", "" -replace "`n", "%0A")
           if ($p.ExitCode -ne 0) { Write-Output "::error title=Autoteste do áudio::$linha"; exit 1 }
           Write-Output "::notice title=Autoteste do áudio::$linha"
+      - name: Autoteste da tradução local no .exe (baixa o modelo inglês -> português e traduz)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\videoscraper\Maestro.exe -ArgumentList "--verificar-traducao" -Wait -PassThru
+          $r = Get-Content (Join-Path $env:TEMP 'maestro-teste-traducao.txt') -Raw -ErrorAction SilentlyContinue
+          $r
+          $linha = ("$r" -replace "`r", "" -replace "`n", "%0A")
+          if ($p.ExitCode -ne 0) { Write-Output "::error title=Autoteste da tradução local::$linha"; exit 1 }
+          Write-Output "::notice title=Autoteste da tradução local::$linha"
       - name: Autoteste do navegador no .exe (baixa o Chromium e abre uma página)
         shell: pwsh
         run: |
