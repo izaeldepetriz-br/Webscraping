@@ -501,3 +501,107 @@ def test_no_original_ja_dublado_e_o_audio_em_portugues(tmp_path):
     (series / "Show" / "Season 01" / "Show S01E01.pt-BR.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nOi.\n")
     ep = dublagem.episodios_para_dublar(series, sondar=lambda v: (60.0, ["eng"]), no_original=True)
     assert ep[0].destino is None and ep[0].serie == "Show"                       # sem a pasta irmã
+
+
+@pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
+def test_ambientacao_da_voz_com_o_perfil_das_vozes_originais(tmp_path):
+    """Com a separação, a voz dublada recebe o volume, o tom e o eco medidos nas vozes originais (fundo.voz.json)."""
+    pytest.importorskip("numpy")
+    from jellyfin_tools import separar_vozes
+    video = video_de_teste(tmp_path / "Filme (2003).mkv")
+    legenda = tmp_path / "Filme (2003).pt-BR.srt"
+    legenda.write_text(SRT, encoding="utf-8")
+    chamadas, avisos = [], []
+    separar = _separar_falso(chamadas)
+
+    def separar_com_perfil(video, destino, trecho, duracao, parar, ao_progresso):
+        fundo = separar(video, destino, trecho, duracao, parar, ao_progresso)
+        separar_vozes.caminho_perfil(fundo).write_text(json.dumps(
+            {"nivel": -14.0, "bandas": [0, 2, 3, 2, -4, -9, -14], "eco": 0.6, "quadros_com_fala": 100}))
+        return fundo
+    r = dublar_video(video, legenda, VozFalsa(), FFMPEG, sondar=lambda v: (6.0, ["eng"]), separar=separar_com_perfil,
+                     ambientar=True, avisar=avisos.append, pasta_cache=tmp_path / "cache")
+    assert r.status == "dublado", r.detalhe
+    assert r.ambiente and r.ambiente["eco"] == 0.6 and -12 <= r.ambiente["ganho_db"] <= 12
+    assert any("ambientação da voz" in a for a in avisos)
+    assert len([l for l in faixas(r.destino) if "Audio" in l]) == 2
+    # sem o perfil (ex.: separação antiga), segue sem ambientação
+    r2 = dublar_video(video, legenda, VozFalsa(), FFMPEG, sondar=lambda v: (6.0, ["eng"]), separar=separar,
+                      ambientar=True, destino=tmp_path / "outra.mkv")
+    assert r2.status == "dublado" and r2.ambiente is None
+
+
+def test_conta_da_ambientacao():
+    pytest.importorskip("numpy")
+    from jellyfin_tools import separar_vozes as sv
+    voz = {"nivel": -20.0, "bandas": [10, 8, 6, 0, -6, -10, -12], "eco": 0.4}
+    dublada = {"nivel": -10.0, "bandas": [10, 8, 6, 0, -6, -10, -12], "eco": 0.0}
+    a = sv.ambiente(voz, dublada)
+    assert a == {"ganho_db": -9.0, "eq": [], "eco": 0.4}                     # mesmo tom: só o volume (+1 dB de folga)
+    aguda = dict(dublada, bandas=[0, 0, 0, 0, 0, 0, 0])
+    a = sv.ambiente(voz, aguda)
+    assert dict(a["eq"])[250] > 0 and dict(a["eq"])[8000] < 0               # puxa para o tom das vozes originais
+    assert 125 not in dict(a["eq"])                                          # o grave depende da pessoa: fica
+    assert all(abs(g) <= sv.EQ_MAXIMO for _, g in a["eq"])
+    assert sv.ambiente(None, dublada) is None
+    assert sv.filtro_da_voz(None) == "volume=1.5" and "equalizer=f=250" in sv.filtro_da_voz(a)
+    assert sv.usa_sala(a) and not sv.usa_sala({"eco": 0.01})
+
+
+def test_medidor_de_eco_e_perfil(tmp_path):
+    """O eco: voz "seca" (cai rápido) x a mesma voz numa sala (cai devagar)."""
+    np = pytest.importorskip("numpy")
+    from jellyfin_tools import separar_vozes as sv
+    taxa = 24000
+    gerador = np.random.default_rng(1)
+    seca = np.zeros(taxa * 8, dtype=np.float32)
+    for k in range(10):                                             # 10 "falas" de 0,4 s com silêncio entre elas
+        ini = int((0.3 + 0.75 * k) * taxa)
+        seca[ini:ini + int(0.4 * taxa)] = gerador.standard_normal(int(0.4 * taxa)) * 0.3
+    t = np.arange(int(taxa * 1.0)) / taxa
+    sala = gerador.standard_normal(len(t)) * np.exp(-6.9 * t / 1.0)
+    molhada = np.convolve(seca, sala)[:len(seca)].astype(np.float32)
+    molhada *= np.abs(seca).max() / np.abs(molhada).max()
+    p_seca, p_molhada = sv.perfil_de_sinal(seca, taxa), sv.perfil_de_sinal(molhada, taxa)
+    assert p_seca["eco"] < 0.15 < p_molhada["eco"]
+    assert -16 < p_seca["nivel"] < -9                           # 0,3 de ruído = -10,5 dB nas partes com fala
+    assert len(p_seca["bandas"]) == len(sv.BANDAS)
+    sv.gerar_sala(tmp_path / "sala.wav", 0.5)
+    with wave.open(str(tmp_path / "sala.wav")) as w:
+        assert w.getnchannels() == 2 and 0.5 < w.getnframes() / w.getframerate() <= 1.2
+
+
+@pytest.mark.parametrize("custo_gpu, esperado", [(0.2, "placa de vídeo"), (3.0, "processador")])
+def test_corrida_placa_de_video_x_processador(monkeypatch, custo_gpu, esperado):
+    """Com o DirectML, um bloco de teste em cada um: fica o mais rápido (sem placa de vídeo de verdade, o DirectML
+    usa um driver de software do Windows, mais lento que o processador)."""
+    pytest.importorskip("numpy")
+    import sys
+    import types
+    from jellyfin_tools import separar_vozes as sv
+    relogio = [0.0]
+
+    class Sessao:
+        def __init__(self, modelo, opcoes=None, providers=()):
+            self.provedores = list(providers)
+            self.custo = custo_gpu if "DmlExecutionProvider" in providers else 1.0
+
+        def get_providers(self):
+            return self.provedores
+
+        def get_inputs(self):
+            return [types.SimpleNamespace(name="input")]
+
+        def run(self, saidas, entradas):
+            relogio[0] += self.custo
+            return [entradas["input"]]
+    falso = types.SimpleNamespace(
+        InferenceSession=Sessao, SessionOptions=lambda: types.SimpleNamespace(),
+        ExecutionMode=types.SimpleNamespace(ORT_SEQUENTIAL=1),
+        get_available_providers=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"])
+    monkeypatch.setitem(sys.modules, "onnxruntime", falso)
+    sessao, dispositivo = sv.criar_sessao("m.onnx", cronometro=lambda: relogio[0])
+    assert dispositivo.startswith(esperado) and "por bloco" in dispositivo
+    assert ("DmlExecutionProvider" in sessao.get_providers()) == (esperado == "placa de vídeo")
+    sessao, dispositivo = sv.criar_sessao("m.onnx", usar_gpu=False)                 # desmarcado: processador
+    assert dispositivo == "processador"

@@ -249,6 +249,13 @@ primeira falha (antes esperava o tempo limite em cada filme).
   seu PC) **tira as vozes originais** e mantém a música e os efeitos; a dublagem entra no lugar delas, como num estúdio.
   Baixa o modelo na 1ª vez (~67 MB). É lento: separa mais ou menos no ritmo do próprio vídeo, então um filme de 2 h leva de 1 a 3 horas a mais, conforme o processador (no autoteste do GitHub, 12 s de áudio em 17 s). Dica: use a amostra de 1 minuto e a fase de teste antes, e deixe os filmes longos dublando à noite (robô agendado).
   Desmarcado, fica o "voice-over" de antes (o áudio original só abaixa enquanto a voz fala).
+- **Ambientação da voz** (junto com a dublagem natural): enquanto separa, o Maestro mede as vozes originais (o tom,
+  o volume das falas e quanto a sala "ecoa") e aplica o mesmo à voz dublada: uma equalização leve (até 4 dB, sem mexer
+  nos graves, que dependem da pessoa), o volume das falas e um eco por convolução do tamanho da sala. A voz parece
+  estar na cena, e não colada por cima. É uma ambientação geral do vídeo (não cena por cena).
+- **Dublagem natural na placa de vídeo**: o .exe traz o onnxruntime com DirectML (NVIDIA, AMD ou Intel com DirectX
+  12). Na 1ª vez, uma corrida rápida compara a placa e o processador e fica o mais rápido (sem placa de vídeo de
+  verdade, o Windows emularia uma por software, mais lenta). Desmarque em Configurações > Dublagem se preferir.
 - **Dublagem e legenda DENTRO do próprio vídeo**: a faixa "Português (dublagem IA)" (padrão no Jellyfin) e a legenda
   "Português" entram no arquivo original; o áudio original continua lá como 2ª faixa. Antes de trocar o original, o
   Maestro confere a cópia (duração e todas as faixas); se algo não bater, o original fica como estava. O .mkv continua

@@ -781,7 +781,11 @@ def separador_de_vozes(o: OpcoesJellyfin, log: logging.Logger | None = None, ao_
 
     def separar(video, destino, trecho, duracao, parar, ao_progresso):
         if "modelo" not in carregado:               # carrega uma vez só, para todos os vídeos da vez
-            carregado["modelo"] = separar_vozes.Separador(modelo)
+            avisar = (lambda texto: log.warning("Tirar as vozes originais: %s", texto)) if log else None
+            carregado["modelo"] = separar_vozes.Separador(modelo, usar_gpu=getattr(o, "separar_gpu", True),
+                                                          avisar=avisar)
+            if log:
+                log.info("Tirar as vozes originais: usando o(a) %s", carregado["modelo"].dispositivo)
         return separar_vozes.separar_fundo(ffmpeg, video, destino, modelo, trecho, duracao, parar, ao_progresso,
                                            carregado["modelo"])
     return separar
@@ -868,7 +872,7 @@ def dublar_item(o: OpcoesJellyfin, item, motor, log: logging.Logger, parar=None,
                      avisar=lambda texto: log.warning("Dublagem: %s", texto), vozes=vozes_automaticas(o, item, log),
                      pasta_cache=pasta_dublagem(), destino=item.destino, parar=parar, ao_progresso=ao_progresso,
                      separar=separar, no_original=o.dublagem_no_original, legenda_no_video=legenda_no_video,
-                     previa=previa)
+                     previa=previa, ambientar=getattr(o, "ambientar_voz", True))
     if r.status == "previa":
         registrar_previa(item.video, r.destino, item.legenda if legenda_no_video else None)
     return r

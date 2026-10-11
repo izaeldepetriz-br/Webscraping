@@ -30,6 +30,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
+          # dublagem natural na placa de vídeo: o onnxruntime com DirectML (NVIDIA, AMD ou Intel com DirectX 12);
+          # ele também roda no processador (e o Whisper usa o mesmo pacote)
+          pip uninstall -y onnxruntime
+          pip install onnxruntime-directml
       - name: Gravar a versão no programa (aviso de versão nova)
         shell: pwsh
         run: |

@@ -159,8 +159,10 @@ def _verificar_separacao() -> int:
                             "aevalsrc=0.2*sin(2*PI*220*t)+0.2*sin(2*PI*277*t)+0.2*sin(2*PI*330*t):s=44100:d=12",
                             "-ac", "2", str(musica)], check=True, **separar_vozes.SEM_JANELA)
             modelo = separar_vozes.preparar_modelo(pasta / "modelo")
+            separador = separar_vozes.Separador(modelo)          # com a corrida placa de vídeo x processador
             inicio = time.monotonic()
-            fundo = separar_vozes.separar_fundo(ffmpeg, musica, pasta / "fundo.flac", modelo, duracao=12)
+            fundo = separar_vozes.separar_fundo(ffmpeg, musica, pasta / "fundo.flac", modelo, duracao=12,
+                                                separador=separador)
             segundos = time.monotonic() - inicio
 
             def ler(arquivo):
@@ -170,7 +172,8 @@ def _verificar_separacao() -> int:
             entrada, saida = ler(musica), ler(fundo)
         energia = float((saida ** 2).sum() / max((entrada ** 2).sum(), 1e-9))
         ok = len(saida) == len(entrada) and 0.3 < energia < 2.0 and np.isfinite(saida).all()
-        relatorio.write_text(f"separou 12 s em {segundos:.1f} s ({12 / segundos:.2f}x o tempo real); "
+        relatorio.write_text(f"separou 12 s em {segundos:.1f} s ({12 / segundos:.2f}x o tempo real) no(a) "
+                             f"{separador.dispositivo}; provedores: {', '.join(separar_vozes.provedores_disponiveis())}; "
                              f"música mantida: {energia * 100:.0f}% da energia; amostras {len(saida)}/{len(entrada)}",
                              encoding="utf-8")
     except Exception:

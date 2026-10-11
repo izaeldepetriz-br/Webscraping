@@ -342,9 +342,31 @@ FILTRO_SEM_VOZES = ("[2:a]aresample=48000,aformat=channel_layouts=stereo[fundo];
 TITULO_LEGENDA = "Português"
 
 
+def filtro_mixagem(fundo: bool, ambiente: dict | None = None, indice_sala: int | None = None) -> str:
+    """O filter_complex da dublagem. ambiente (separar_vozes.ambiente): a voz dublada ganha o tom e o volume das vozes
+    originais e, se a sala ecoa (indice_sala = a entrada com a "resposta da sala"), um eco por convolução.
+    Sem ambiente, é exatamente o FILTRO_SEM_VOZES / FILTRO_VOICE_OVER de antes."""
+    from .separar_vozes import filtro_da_voz, usa_sala
+    voz = "[1:a]aresample=48000,aformat=channel_layouts=stereo," + filtro_da_voz(ambiente)
+    if usa_sala(ambiente) and indice_sala is not None:
+        molhado = round(0.15 + 0.35 * ambiente["eco"], 2)          # quanto do eco entra (sala maior = mais)
+        voz += (f",asplit=2[seco][p];[{indice_sala}:a]aresample=48000,aformat=channel_layouts=stereo[sala];"
+                f"[p][sala]afir=dry=10:wet=10[molhado];"
+                f"[seco][molhado]amix=inputs=2:weights='1 {molhado}':normalize=0:duration=first")
+    voz += ",asplit=2[voz][chave]"
+    if fundo:
+        return ("[2:a]aresample=48000,aformat=channel_layouts=stereo[fundo];" + voz + ";"
+                "[fundo][chave]sidechaincompress=threshold=0.05:ratio=3:attack=20:release=300[abaixado];"
+                "[abaixado][voz]amix=inputs=2:duration=first:normalize=0[dub]")
+    return ("[0:a:0]aresample=48000,aformat=channel_layouts=stereo[orig];" + voz + ";"
+            "[orig][chave]sidechaincompress=threshold=0.02:ratio=8:attack=20:release=400[abaixada];"
+            "[abaixada][voz]amix=inputs=2:duration=first:normalize=0[dub]")
+
+
 def comando_mixar(ffmpeg: str, video: Path, trilha: Path, saida: Path, faixas: int, legendas: bool,
                   trecho: tuple[float, float] | None = None, fundo: Path | None = None,
-                  legenda_nova: Path | None = None, formato: str = "matroska") -> list[str]:
+                  legenda_nova: Path | None = None, formato: str = "matroska", ambiente: dict | None = None,
+                  sala: Path | None = None) -> list[str]:
     """O comando do ffmpeg: vídeo copiado, a dublagem como 1ª faixa (padrão) e as originais depois.
     trecho (início, fim): só esse pedaço (a AMOSTRA); aí o vídeo é recodificado, para começar no ponto exato e a voz
     não ficar adiantada (copiando, o corte cai no quadro-chave anterior, até alguns segundos antes).
@@ -355,10 +377,15 @@ def comando_mixar(ffmpeg: str, video: Path, trilha: Path, saida: Path, faixas: i
     comando = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", *corte, "-i", str(video), "-i", str(trilha)]
     if fundo:
         comando += ["-i", str(fundo)]
-    indice_legenda = 3 if fundo else 2
+    proxima = 3 if fundo else 2
+    indice_sala = None
+    if sala:
+        comando += ["-i", str(sala)]
+        indice_sala, proxima = proxima, proxima + 1
+    indice_legenda = proxima
     if legenda_nova and not trecho:
         comando += ["-i", str(legenda_nova)]
-    comando += ["-filter_complex", FILTRO_SEM_VOZES if fundo else FILTRO_VOICE_OVER,
+    comando += ["-filter_complex", filtro_mixagem(bool(fundo), ambiente, indice_sala),
                 "-map", "0:v:0?" if trecho else "0:v?", "-map", "[dub]", "-map", "0:a"]
     if legenda_nova and not trecho:
         comando += ["-map", f"{indice_legenda}:0"]           # a nova antes das outras: é a legenda nº 0 do arquivo
@@ -406,11 +433,12 @@ def _rodar_ffmpeg(comando: list[str], duracao: float | None, parar=None, ao_prog
 
 def mixar(ffmpeg: str, video: Path, trilha: Path, destino: Path, duracao: float, faixas: int = 1,
           parar=None, ao_progresso=None, trecho: tuple[float, float] | None = None, fundo: Path | None = None,
-          legenda_nova: Path | None = None, formato: str = "matroska") -> None:
+          legenda_nova: Path | None = None, formato: str = "matroska", ambiente: dict | None = None,
+          sala: Path | None = None) -> None:
     parcial = destino.with_name(destino.name + ".part")
     copiar = video.suffix.lower() == ".mkv" or (formato == "mp4" and video.suffix.lower() in MESMO_MP4)
     comando = comando_mixar(ffmpeg, video, trilha, parcial, max(faixas, 1), copiar, trecho, fundo, legenda_nova,
-                            formato)
+                            formato, ambiente, sala)
     try:
         _rodar_ffmpeg(comando, duracao, parar, ao_progresso)
         if not parcial.is_file():
@@ -694,6 +722,7 @@ class ResultadoDublagem:
     cortadas: int = 0
     adaptadas: int = 0             # falas que a IA reescreveu mais curtas para caber no tempo
     retomadas: int = 0             # falas que já estavam prontas de uma vez anterior (não pediu de novo)
+    ambiente: dict | None = None   # ambientação da voz usada: {ganho_db, eq, eco} (None: sem)
 
 
 def falas_da_legenda(legenda: str | Path) -> list:
@@ -736,7 +765,8 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
                  sondar=faixas_de_audio, adaptar=None, avisar=None, vozes: dict | None = None,
                  pasta_cache: str | Path | None = None, trecho: tuple[float, float] | None = None,
                  destino: str | Path | None = None, separar=None, no_original: bool = False,
-                 legenda_no_video: bool = False, previa: str | Path | None = None) -> ResultadoDublagem:
+                 legenda_no_video: bool = False, previa: str | Path | None = None,
+                 ambientar: bool = False) -> ResultadoDublagem:
     """Lê a legenda com a voz, monta a trilha e grava 'Nome - Dublado IA.mkv' (o original não é tocado) ou, com
     no_original, acrescenta a faixa 'Português (dublagem IA)' no PRÓPRIO arquivo (a cópia é conferida antes de trocar).
     separar(vídeo, destino.flac, trecho, duração, parar, ao_progresso): tira as vozes originais (separar_vozes) e a
@@ -745,6 +775,7 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
     previa (com no_original): a FASE DE TESTE. Grava a versão dublada nesse arquivo (fora da biblioteca) e NÃO mexe
     no original; status "previa". Depois de ouvir, aprovar_previa() põe a faixa no original (rápido: não dubla de
     novo) ou a prévia é descartada.
+    ambientar (com separar): a voz dublada recebe o tom, o volume e o eco das vozes originais (separar_vozes).
     adaptar([(id, texto, máx. letras, fala anterior)]) -> {id: texto mais curto}: as falas que não cabem no tempo
     são reescritas (ver adaptacao.py) e lidas de novo. Se falhar, segue sem adaptar. avisar(texto): para o log.
     vozes: {número da fala: voz} (uma voz por personagem; ver personagens.py).
@@ -821,10 +852,20 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
                 fundo = separar(video, pasta / nome, trecho, duracao, parar,
                                 lambda f: andamento(fatias[2] + (fatias[3] - fatias[2]) * f))
             andamento(fatias[3])
+            ambiente, sala = None, None
+            if ambientar and fundo:
+                ambiente = _ambiente_da_voz(fundo, pasta / "trilha.wav")
+                if ambiente and avisar:
+                    avisar(f"ambientação da voz: volume {ambiente['ganho_db']:+.1f} dB, tom "
+                           + (", ".join(f"{f} Hz {g:+.1f}" for f, g in ambiente["eq"]) or "igual")
+                           + f", eco {ambiente['eco']:.2f}")
+                from .separar_vozes import gerar_sala, usa_sala
+                if usa_sala(ambiente):
+                    sala = gerar_sala(pasta / "sala.wav", ambiente["eco"])
             antes = inspecionar(ffmpeg, video) if no_original else None
             nova = legenda if legenda_no_video and not trecho else None
             mixar(ffmpeg, video, pasta / "trilha.wav", destino, duracao, len(idiomas), parar,
-                  lambda f: andamento(fatias[3] + (1 - fatias[3]) * f), trecho, fundo, nova, formato)
+                  lambda f: andamento(fatias[3] + (1 - fatias[3]) * f), trecho, fundo, nova, formato, ambiente, sala)
             if no_original:
                 copiou = video.suffix.lower() == ".mkv" or (formato == "mp4" and video.suffix.lower() in MESMO_MP4)
                 destino = trocar_original(ffmpeg, video, destino, final, 1,
@@ -848,7 +889,25 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
         shutil.rmtree(pasta_do_filme(pasta_cache, video), ignore_errors=True)      # pronto: o progresso não serve mais
     andamento(1.0)
     return ResultadoDublagem(video, "previa" if eh_previa else "dublado", "", destino, len(indices),
-                             contas["aceleradas"], contas["cortadas"], adaptadas, retomadas)
+                             contas["aceleradas"], contas["cortadas"], adaptadas, retomadas, ambiente)
+
+
+def _ambiente_da_voz(fundo: Path, trilha: Path) -> dict | None:
+    """Compara as vozes originais (medidas na separação: fundo.voz.json) com a trilha dublada."""
+    from .separar_vozes import ambiente, ler_perfil, perfil_de_sinal
+    perfil_voz = ler_perfil(fundo)
+    if not perfil_voz:
+        return None
+    try:
+        import numpy as np
+        with wave.open(str(trilha), "rb") as w:
+            taxa, canais = w.getframerate(), w.getnchannels()
+            amostras = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(np.float32) / 32768
+        if canais > 1:
+            amostras = amostras.reshape(-1, canais).mean(axis=1)
+        return ambiente(perfil_voz, perfil_de_sinal(amostras, taxa))
+    except (OSError, wave.Error, ImportError, ValueError):
+        return None
 
 
 def _adaptar(clipes, textos, duracao, motor, adaptar, parar, avisar, vozes, pasta, indices=None):

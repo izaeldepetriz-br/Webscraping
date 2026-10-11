@@ -173,6 +173,8 @@ class OpcoesJellyfin:
     dublagem_no_original: bool = True   # a dublagem vira uma faixa do próprio arquivo (False: 'Nome - Dublado IA.mkv')
     separar_vozes: bool = True       # tira as vozes originais (IA no PC) e a dublagem entra sobre a música e os efeitos
     dublagem_previa: bool = True     # fase de teste: uma prévia para ouvir e aprovar antes de gravar no original
+    ambientar_voz: bool = True       # a voz dublada ganha o tom, o volume e o eco das vozes originais (com a separação)
+    separar_gpu: bool = True         # dublagem natural na placa de vídeo (DirectML); se não der, no processador
     resumo_diario: bool = False      # mandar no Discord/Telegram, uma vez por dia, o que o Maestro fez
     hora_resumo: int = 21
 
@@ -2949,11 +2951,20 @@ class JanelaModerna(ctk.CTk):
                                                                                            **p)
         self.var_jf_separar_vozes = tk.BooleanVar(value=True)
         self._checkbox(lateral, "Dublagem natural: tirar as vozes originais (fica a música e os efeitos)",
-                       self.var_jf_separar_vozes)
-        self._rotulo(lateral, "IA no seu PC, grátis, porém LENTA: um filme de 2 h leva de 1 a 3 horas a mais (depende do "
-                              "processador). Desmarcado: "
+                       self.var_jf_separar_vozes, self._ao_trocar_separar_vozes)
+        self._rotulo(lateral, "IA no seu PC, grátis, porém LENTA: um filme de 2 h leva de 1 a 3 horas a mais no processador "
+                              "(com placa de vídeo, bem menos). Desmarcado: "
                               "\"voice-over\" (o áudio original só abaixa enquanto a voz fala).",
                      fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", padx=(46, 18), pady=(0, 6))
+        self.var_jf_ambientar_voz = tk.BooleanVar(value=True)
+        self.cb_ambientar_voz = self._checkbox(
+            lateral, "Ambientar a voz dublada: o mesmo tom, volume e eco das vozes originais (parece estar na cena)",
+            self.var_jf_ambientar_voz)
+        self.cb_ambientar_voz.pack_configure(padx=(42, 18))
+        self.var_jf_separar_gpu = tk.BooleanVar(value=True)
+        self.cb_separar_gpu = self._checkbox(
+            lateral, "Usar a placa de vídeo (bem mais rápido; se não der, usa o processador)", self.var_jf_separar_gpu)
+        self.cb_separar_gpu.pack_configure(padx=(42, 18), pady=(4, 8))
         self.var_jf_dublagem_no_original = tk.BooleanVar(value=True)
         self._checkbox(lateral, "Gravar a dublagem dentro do próprio vídeo (faixa \"Português (dublagem IA)\")",
                        self.var_jf_dublagem_no_original, self._ao_trocar_dublagem_no_original)
@@ -3087,6 +3098,12 @@ class JanelaModerna(ctk.CTk):
 
     def ao_clonar_voz(self) -> None:                    # o app faz (precisa da chave e da internet)
         pass
+
+    def _ao_trocar_separar_vozes(self) -> None:
+        """Ambientar e a placa de vídeo dependem da dublagem natural (é dela que vêm as vozes medidas)."""
+        estado = "normal" if self.var_jf_separar_vozes.get() else "disabled"
+        for caixa in (self.cb_ambientar_voz, self.cb_separar_gpu):
+            caixa.configure(state=estado)
 
     def _ao_trocar_dublagem_no_original(self) -> None:
         """A fase de teste só faz sentido com a dublagem dentro do vídeo (à parte, o arquivo já é a "prévia")."""
@@ -3628,6 +3645,7 @@ class JanelaModerna(ctk.CTk):
             avulsos_dublar=self.var_jf_avulsos_dublar.get(), avulsos_legendar=self.var_jf_avulsos_legendar.get(),
             dublagem_no_original=self.var_jf_dublagem_no_original.get(),
             dublagem_previa=self.var_jf_dublagem_previa.get(), separar_vozes=self.var_jf_separar_vozes.get(),
+            ambientar_voz=self.var_jf_ambientar_voz.get(), separar_gpu=self.var_jf_separar_gpu.get(),
             resumo_diario=self.var_jf_resumo_diario.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
@@ -3749,7 +3767,8 @@ class JanelaModerna(ctk.CTk):
                   "avulsos_dublar": self.var_jf_avulsos_dublar,
                   "avulsos_legendar": self.var_jf_avulsos_legendar,
                   "dublagem_no_original": self.var_jf_dublagem_no_original,
-                  "dublagem_previa": self.var_jf_dublagem_previa, "separar_vozes": self.var_jf_separar_vozes}
+                  "dublagem_previa": self.var_jf_dublagem_previa, "separar_vozes": self.var_jf_separar_vozes,
+                  "ambientar_voz": self.var_jf_ambientar_voz, "separar_gpu": self.var_jf_separar_gpu}
         for chave, var in textos.items():
             if dados.get(chave):
                 var.set(dados[chave])
@@ -3757,6 +3776,7 @@ class JanelaModerna(ctk.CTk):
             if chave in dados:
                 var.set(bool(dados[chave]))
         self._ao_trocar_dublagem_no_original()
+        self._ao_trocar_separar_vozes()
         if dados.get("idioma"):
             self.definir_idiomas_jf(dados["idioma"])
         if dados.get("voz_gemini"):                      # salvo só o nome ("Kore", "clone:Izael"); o menu mostra

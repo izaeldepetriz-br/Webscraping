@@ -4472,6 +4472,12 @@ def test_opcoes_da_dublagem_nova(app):
     """Configurações > Dublagem: natural, dentro do vídeo e fase de teste (que só vale com 'dentro do vídeo')."""
     o = app.obter_opcoes_jellyfin()
     assert o.separar_vozes and o.dublagem_no_original and o.dublagem_previa and o.avulsos_legendar
+    assert o.ambientar_voz and o.separar_gpu
+    app.var_jf_separar_vozes.set(False)                     # sem a dublagem natural: ambientar e a placa não valem
+    app._ao_trocar_separar_vozes()
+    assert app.cb_ambientar_voz.cget("state") == "disabled" and app.cb_separar_gpu.cget("state") == "disabled"
+    app.var_jf_separar_vozes.set(True)
+    app._ao_trocar_separar_vozes()
     app.var_jf_dublagem_no_original.set(False)
     app._ao_trocar_dublagem_no_original()
     assert app.cb_dublagem_previa.cget("state") == "disabled"

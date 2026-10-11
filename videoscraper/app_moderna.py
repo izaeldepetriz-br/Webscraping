@@ -2750,7 +2750,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                              adaptar=automacao.adaptador(o, item.video.stem),
                              avisar=lambda texto: self._log.warning("Amostra: %s", texto),
                              pasta_cache=automacao.pasta_dublagem(), trecho=trecho, destino=destino,
-                             separar=separar)
+                             separar=separar, ambientar=o.ambientar_voz)
             if r.status != "dublado":
                 self._log.error("Amostra de %s: %s", item.video.name, r.detalhe)
                 self.fila.put(("msg", ("Amostra da dublagem", f"Não deu para fazer a amostra: {r.detalhe}", "erro")))
@@ -2874,7 +2874,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                  avisar=lambda texto: self._log.warning("Dublagem: %s", texto),
                                  vozes=vozes.get(str(item.video)), pasta_cache=automacao.pasta_dublagem(),
                                  destino=item.destino, separar=separar, no_original=o.dublagem_no_original,
-                                 previa=previa)
+                                 previa=previa, ambientar=o.ambientar_voz)
                 if r.status == "previa":
                     automacao.registrar_previa(item.video, r.destino, None)
                 resultados.append(r)
