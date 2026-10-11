@@ -3839,7 +3839,7 @@ def test_voz_por_personagem_pela_janela(app, tmp_path, monkeypatch):
     monkeypatch.setattr(voz_gemini, "_cliente", lambda chave: object())
     ouvidos = []
 
-    def ouvir(o, video, falas, cliente=None, ao_progresso=None, parar=None):
+    def ouvir(o, video, falas, cliente=None, ao_progresso=None, parar=None, serie=""):
         ouvidos.append([t for _, t in falas])
         return [personagens.Personagem("Conde", "m", "voz grave", falas=[0, 1, 2]),
                 personagens.Personagem("Ellen", "f", "", falas=[3, 4, 5])]
