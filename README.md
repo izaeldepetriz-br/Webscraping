@@ -240,6 +240,17 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.16.0
+
+- **Configurações que cabem na tela**: o menu de categorias da ⚙ Configurações agora **rola** (em notebooks ou com o
+  zoom do Windows em 125%, os últimos itens ficavam escondidos) e rola sozinho até o item escolhido.
+- **Opções de busca no topo**: as opções da aba Vídeos (navegador, clicar no play, robots.txt, seletor CSS, níveis,
+  qualidade...) ficam em ⚙ Configurações > **VÍDEOS > Opções de busca**, o primeiro item do menu. Na aba Vídeos, o
+  botão **"⚙ Opções da busca"** (ao lado de "Parar") leva direto para lá.
+- **Janela do tamanho da tela com o zoom do Windows**: o tamanho inicial agora considera a escala (125%, 150%...).
+  Antes, numa tela de 1080 px com 125%, a janela ficava mais alta que a tela e a parte de baixo (console e rodapé)
+  era cortada.
+
 ### Novidades da v2.15.0
 
 - **Tradução local e grátis**: em ⚙ Configurações > **Tradução**, escolha **"Local (grátis, no seu PC)"** no lugar
