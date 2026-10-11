@@ -270,6 +270,16 @@ def _cache_tmdb_limpo():
 
 
 @pytest.fixture(autouse=True)
+def _sem_cotacao_da_internet(monkeypatch):
+    """A cotação do dólar (Banco Central) nunca é consultada nos testes: cada teste diz a sua, se precisar."""
+    from jellyfin_tools import cotacao
+
+    def offline(*a, **k):
+        raise cotacao.ErroCotacao("sem internet nos testes")
+    monkeypatch.setattr(cotacao, "buscar_ptax", offline)
+
+
+@pytest.fixture(autouse=True)
 def _gastos_desligados():
     """O registro de gastos é global (o app e os robôs ligam): cada teste começa e termina com ele desligado."""
     from jellyfin_tools import gastos

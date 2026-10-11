@@ -64,7 +64,7 @@ from jellyfin_tools.legendas import ErroLegenda
 from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, ClienteTV, carregar_canais, carregar_historico,
                                        conferir_canais, mensagem_fora_do_ar, publicar, registrar_no_historico,
                                        salvar_historico)
-from jellyfin_tools import gastos, personagens, vigia, voz_clonada, voz_gemini
+from jellyfin_tools import cotacao, gastos, personagens, vigia, voz_clonada, voz_gemini
 from jellyfin_tools.adaptacao import Adaptador
 from jellyfin_tools.vigia import filtro_prontos
 
@@ -116,8 +116,38 @@ def opcoes_salvas() -> tuple[OpcoesJellyfin, dict]:
         setattr(o, nome, tuple(getattr(o, nome) or ()))
     pastas = {"Filmes": dados.get("destino_filmes") or "", "Séries": dados.get("destino_series") or "",
               "Vídeos comuns": tudo.get("espelho", {}).get("pasta_videos_comuns") or ""}
-    gastos.configurar(arquivo_gastos(), o.teto_gastos)     # os robôs também anotam os gastos e respeitam o teto
+    configurar_gastos(o)                                  # os robôs também anotam os gastos e respeitam o teto
     return o, pastas
+
+
+def arquivo_cotacao() -> Path:
+    return config.ARQUIVO.parent / "cotacao_dolar.json"
+
+
+def conversao_reais(o: OpcoesJellyfin, consultar: bool = True) -> tuple[float | None, str]:
+    """(reais por dólar já com o IOF, de onde veio) para mostrar os gastos em reais; (None, motivo) se for em dólar
+    ou se ainda não há cotação (sem internet na 1ª vez e sem cotação manual). consultar=False: só a guardada."""
+    if o.moeda_gastos != "R$":
+        return None, ""
+    iof = max(0.0, float(o.iof_cartao or 0))
+    if o.cotacao_dolar and o.cotacao_dolar > 0:
+        valor, origem = float(o.cotacao_dolar), "cotação fixa"
+    else:
+        dados = (cotacao.atual(arquivo_cotacao()) if consultar else cotacao.carregar(arquivo_cotacao()))
+        if not dados:
+            return None, "sem cotação ainda (sem internet?): mostrando em dólar"
+        valor, origem = float(dados["valor"]), f"PTAX de {cotacao.data_br(dados.get('data', ''))}, Banco Central"
+    iof_texto = f"{iof:g}".replace(".", ",")
+    texto = f"US$ 1 = {cotacao.em_reais(valor)} ({origem}) + IOF {iof_texto}%"
+    return valor * (1 + iof / 100), texto
+
+
+def configurar_gastos(o: OpcoesJellyfin, consultar: bool = True):
+    """Liga o registro dos gastos com o teto e a moeda da tela. Sem cotação (em reais), o teto não é aplicado em
+    dólares por engano: fica sem teto até a cotação chegar."""
+    fator, texto = conversao_reais(o, consultar)
+    teto = o.teto_gastos if (fator or o.moeda_gastos != "R$") else 0.0
+    return gastos.configurar(arquivo_gastos(), teto, fator=fator, conversao=texto)
 
 
 def arquivo_gastos() -> Path:

@@ -4221,12 +4221,24 @@ def test_gastos_do_mes_na_tela(app):
     from jellyfin_tools import gastos
     app.mostrar_aba(app.ABA_CONFIG)
     app._botoes_config["Gastos (APIs pagas)"].invoke()
+    app.var_jf_moeda_gastos.set(app.MOEDAS_GASTOS[1])              # em dólar, como as APIs cobram
     app.campo_teto_gastos.set(5)
     app.mostrar_aba("Jellyfin")                                     # sair das Configurações salva (e liga o teto)
     atual = gastos.atual()
-    assert atual is not None and atual.teto == 5
+    assert atual is not None and atual.teto == 5 and atual.fator is None
     gastos.registrar("Claude", 1.0)
     gastos.registrar("Gemini", 3.2)
     assert ("Gastos do mês: US$ 4.20 de US$ 5.00", False) in app.itens_saude()      # passou de 80%: aviso
     assert app.lb_gastos_mes.cget("text") == "US$ 4.20 (Claude 1.00 · Gemini 3.20) de US$ 5.00"
     assert app.obter_opcoes_jellyfin().teto_gastos == 5
+    # em reais (o padrão): cotação fixa 5,00 + IOF 3,5% -> US$ 4,20 = R$ 21,73; teto de R$ 30
+    app.mostrar_aba(app.ABA_CONFIG)
+    app.var_jf_moeda_gastos.set(app.MOEDAS_GASTOS[0])
+    app.campo_cotacao_dolar.set(5.0)
+    app.campo_teto_gastos.set(30)
+    app.mostrar_aba("Jellyfin")
+    atual = gastos.atual()
+    assert atual.teto == 30 and atual.fator == pytest.approx(5.175)
+    assert app.lb_gastos_mes.cget("text") == "R$ 21,73 (Claude R$ 5,17 · Gemini R$ 16,56) de R$ 30,00"
+    assert app.lb_cotacao.cget("text") == "US$ 1 = R$ 5,00 (cotação fixa) + IOF 3,5%"
+    assert ("Gastos do mês: R$ 21,73 de R$ 30,00", True) in app.itens_saude()       # 72% do teto: ainda ok

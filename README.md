@@ -251,6 +251,10 @@ primeira falha (antes esperava o tempo limite em cada filme).
   Ao chegar no teto, as tarefas pagas param (o que ficou pronto é guardado e continua depois). O painel de saúde
   avisa a partir de 80% do teto. Vale também para os robôs agendados. É uma estimativa: o valor oficial está em
   console.anthropic.com e aistudio.google.com — e a API é cobrada **à parte** das assinaturas do Claude e do Gemini.
+  - **Em reais (padrão)**: os valores e o teto ficam em **R$** (formato brasileiro), convertidos pela **cotação
+    PTAX do Banco Central** (consultada uma vez por dia; sem internet, vale a última) mais o **IOF** da compra
+    internacional no cartão (3,5%, editável — confira na sua fatura). Dá para fixar uma cotação ou voltar para
+    US$. As estimativas antes de traduzir e dublar mostram os dois: "US$ 0.45 (≈ R$ 2,53)".
 - **Vídeos avulsos (caixa de entrada)**: ⚙ Configurações > **Vídeos avulsos** define uma pasta (ex.:
   `D:\Para Dublar`). O botão **"📥 Vídeos avulsos..."** (barra "Legendas e voz") processa a pasta ou **arquivos de
   qualquer pasta**: traduz a legenda que já existir, cria pelo áudio a dos que não têm nenhuma e, se marcado, dubla.
@@ -1001,6 +1005,7 @@ jellyfin_tools/
   voz_clonada.py        clonar a voz de quem autorizou (réplica do Gemini, com a frase de consentimento)
   microfone.py          gravar do microfone (sounddevice) para a clonagem
   gastos.py             quanto o Maestro gastou no mês nas APIs pagas (Claude, Gemini) e o teto
+  cotacao.py            cotação do dólar (PTAX do Banco Central) para mostrar os gastos em reais
   personagens.py        voz por personagem: o Gemini ouve o filme e diz quem fala cada fala
   sincronia.py          acerta legenda adiantada/atrasada comparando com a voz do áudio
   resumo_diario.py      o resumo do dia no Discord/Telegram

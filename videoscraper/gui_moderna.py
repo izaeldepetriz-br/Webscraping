@@ -159,7 +159,10 @@ class OpcoesJellyfin:
     perguntar_filmes: bool = True    # Gemini com vários filmes: perguntar quais vão com o Gemini (o resto, Piper)
     robo_so_piper: bool = False      # robôs agendados (--dublar): só o Piper, sem custo
     guardar_gravacoes: bool = False  # voz clonada: guardar as gravações no PC (para clonar de novo com um clique)
-    teto_gastos: float = 0.0         # US$ por mês nas APIs pagas (Claude + Gemini); 0 = sem teto
+    teto_gastos: float = 0.0         # por mês nas APIs pagas (Claude + Gemini), na moeda abaixo; 0 = sem teto
+    moeda_gastos: str = "R$"         # "R$" (com a cotação do dólar + IOF) ou "US$" (como as APIs cobram)
+    cotacao_dolar: float = 0.0       # reais por dólar fixos; 0 = automática (PTAX do Banco Central)
+    iof_cartao: float = 3.5          # % de IOF na compra internacional no cartão (confira na fatura)
     pasta_avulsos: str = ""          # "Vídeos avulsos": a caixa de entrada para legendar, traduzir e dublar
     avulsos_dublar: bool = True      # vídeos avulsos: dublar também (desmarcado = só a legenda em português)
     resumo_diario: bool = False      # mandar no Discord/Telegram, uma vez por dia, o que o Maestro fez
@@ -2475,9 +2478,23 @@ class JanelaModerna(ctk.CTk):
                      suave=False).pack(anchor="w", pady=(0, 4), **p)
         self.lb_gastos_mes = ctk.CTkLabel(lateral, text="US$ 0.00 (nada ainda)", font=self.f_secao,
                                           text_color=Tema.TEXTO, anchor="w")
-        self.lb_gastos_mes.pack(anchor="w", pady=(0, 10), **p)
-        self.campo_teto_gastos = self._numero(lateral, "Teto do mês em US$ (0 = sem teto): ao chegar nele, as tarefas "
-                                                       "pagas param e o que ficou pronto é guardado", 0, 0, 1000, 1)
+        self.lb_gastos_mes.pack(anchor="w", pady=(0, 2), **p)
+        self.lb_cotacao = ctk.CTkLabel(lateral, text="", font=ctk.CTkFont(Tema.FAMILIA, 11),
+                                       text_color=Tema.TEXTO_SUAVE, anchor="w")
+        self.lb_cotacao.pack(anchor="w", pady=(0, 10), **p)
+        self._rotulo(lateral, "Mostrar em:").pack(anchor="w", **p)
+        self.var_jf_moeda_gastos = tk.StringVar(value=self.MOEDAS_GASTOS[0])
+        menu = self._menu_opcoes(lateral, self.var_jf_moeda_gastos, self.MOEDAS_GASTOS)
+        menu.configure(width=320)
+        menu.pack(anchor="w", pady=(2, 8), **p)
+        self.campo_teto_gastos = self._numero(lateral, "Teto do mês, na moeda escolhida (0 = sem teto): ao chegar nele, "
+                                                       "as tarefas pagas param e o que ficou pronto é guardado",
+                                              0, 0, 100000, 10)
+        self.campo_cotacao_dolar = self._numero(lateral, "Cotação do dólar em R$ (0 = automática: PTAX do Banco "
+                                                         "Central, consultada uma vez por dia)", 0, 0, 50, 0.05,
+                                                decimal=True)
+        self.campo_iof = self._numero(lateral, "IOF da compra internacional no cartão, em % (confira na fatura)",
+                                      3.5, 0, 20, 0.1, decimal=True)
         self._rotulo(lateral, "Atenção: a API é cobrada À PARTE da sua assinatura. A assinatura do Claude (Pro/Max) e "
                               "a do Google (Gemini/AI Pro) cobrem o uso no site e no app, não a chave de API que o "
                               "Maestro usa. O valor oficial está em console.anthropic.com (Claude) e em "
@@ -2740,6 +2757,8 @@ class JanelaModerna(ctk.CTk):
                               "dublagem continua de onde parou.", fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(
             anchor="w", pady=(10, 4), **p)
         self._sincronizar_modo_voz()
+
+    MOEDAS_GASTOS = ("R$ (real, com a cotação do dólar + IOF)", "US$ (dólar, como as APIs cobram)")
 
     # ---- Vozes clonadas: a lista vem do app (vozes_clonadas.json); aqui só o que aparece na tela
     _vozes_clonadas: tuple = ()
@@ -3226,6 +3245,8 @@ class JanelaModerna(ctk.CTk):
             limite_figurante=int(self.campo_limite_figurante.get()), perguntar_filmes=self.var_jf_perguntar_filmes.get(),
             robo_so_piper=self.var_jf_robo_so_piper.get(), guardar_gravacoes=self.var_jf_guardar_gravacoes.get(),
             teto_gastos=float(self.campo_teto_gastos.get()), pasta_avulsos=self.var_jf_pasta_avulsos.get().strip(),
+            moeda_gastos=self.var_jf_moeda_gastos.get().split()[0], cotacao_dolar=float(self.campo_cotacao_dolar.get()),
+            iof_cartao=float(self.campo_iof.get()),
             avulsos_dublar=self.var_jf_avulsos_dublar.get(),
             resumo_diario=self.var_jf_resumo_diario.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
@@ -3361,6 +3382,13 @@ class JanelaModerna(ctk.CTk):
             self.campo_limite_figurante.set(int(dados["limite_figurante"]))
         if dados.get("teto_gastos"):
             self.campo_teto_gastos.set(float(dados["teto_gastos"]))
+        if dados.get("moeda_gastos"):
+            self.var_jf_moeda_gastos.set(next((m for m in self.MOEDAS_GASTOS if m.split()[0] == dados["moeda_gastos"]),
+                                              self.MOEDAS_GASTOS[0]))
+        if dados.get("cotacao_dolar") is not None:
+            self.campo_cotacao_dolar.set(float(dados["cotacao_dolar"]))
+        if dados.get("iof_cartao") is not None:
+            self.campo_iof.set(float(dados["iof_cartao"]))
         if dados.get("vigiar_min"):
             self.campo_vigia_min.set(float(dados["vigiar_min"]))
         if dados.get("pastas_vigiadas"):

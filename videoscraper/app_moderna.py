@@ -63,7 +63,7 @@ from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, inicia
 from jellyfin_tools.relatorio import gerar_relatorio, resumo, salvar_csv
 from jellyfin_tools.resumo_diario import ResumoDiario, mensagem as mensagem_resumo
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca, indice_da_biblioteca, testar_conexao
-from jellyfin_tools import gastos, microfone, personagens, vigia, voz_clonada, voz_gemini
+from jellyfin_tools import cotacao, gastos, microfone, personagens, vigia, voz_clonada, voz_gemini
 from jellyfin_tools.vigia import filtro_prontos
 
 from . import config
@@ -714,6 +714,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
             fracao, texto = dado
             self.definir_progresso_total(fracao, texto)
             self.definir_progresso_rodape(fracao, texto)
+        elif tipo == "cotacao":                      # a cotação do dólar do dia chegou: os gastos em reais
+            self._configurar_gastos()
+            self.definir_saude(self.itens_saude())
         elif tipo == "vozes_clonadas":
             self.atualizar_vozes_clonadas(dado)
             self.definir_saude(self.itens_saude())
@@ -2001,7 +2004,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                               o.modelo_traducao)
         exemplos = "\n".join(f"• {p.origem.name}" for p in pendentes[:5]) + (
             f"\n... e mais {len(pendentes) - 5}" if len(pendentes) > 5 else "")
-        valor = f"cerca de US$ {custo:.2f}" if custo is not None else "preço deste modelo desconhecido"
+        valor = f"cerca de {self._dinheiro(custo)}" if custo is not None else "preço deste modelo desconhecido"
         escolha = self.escolher(
             "Traduzir legendas com IA",
             f"{len(pendentes)} vídeo(s) têm legenda só em outro idioma e nenhuma em {idioma}:\n{exemplos}\n\n"
@@ -2009,7 +2012,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
             f"Cada um vira 'Nome.{idioma}.srt' com os MESMOS horários (a IA recebe só o texto das falas). A legenda "
             "original continua lá e nada é sobrescrito.\n\n"
             "\"Econômico\": metade do preço"
-            + (f" (~US$ {custo / 2:.2f})" if custo is not None else "") + ", mas as legendas ficam prontas em até 24 h "
+            + (f" (~{self._dinheiro(custo / 2)})" if custo is not None else "") + ", mas as legendas ficam prontas em até 24 h "
             "(quase sempre menos de 1 h). Pode fechar o Maestro: ao abrir de novo ele busca o resultado.",
             (f"Traduzir os {len(pendentes)} agora", "Econômico (metade do preço)"))
         if escolha is None:
@@ -2075,7 +2078,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                             "[lote %s] %s -> %s%s", r.status, r.origem.name, r.destino.name,
                             f" ({r.detalhe})" if r.detalhe else "")
                     self.resumo_diario.registrar("traduzidas", len(feitas))
-                    custo = f", ~US$ {tradutor.custo:.2f}" if tradutor.custo is not None else ""
+                    custo = f", ~{self._dinheiro(tradutor.custo)}" if tradutor.custo is not None else ""
                     self._log.info("Tradução em lote pronta: %d legenda(s)%s", len(feitas), custo)
                     if feitas and o.atualizar_jellyfin and o.jellyfin_url and o.jellyfin_api_key:
                         try:
@@ -2128,7 +2131,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                      + (f"\nNão feitas (parou antes): {total - len(resultados)}" if len(resultados) < total else "")
                      + f"\n\nModelo: {tradutor.modelo} · {tradutor.pedidos} pedido(s) · "
                      f"{tradutor.tokens_entrada + tradutor.tokens_saida} tokens"
-                     + (f" · custo real ~US$ {custo:.2f}" if custo is not None else ""))
+                     + (f" · custo real ~{self._dinheiro(custo)}" if custo is not None else ""))
             self.fila.put(("status_fim", f"Legendas traduzidas: {len(traduzidas)} de {total}."))
             self.fila.put(("msg", ("Traduzir legendas", texto, "erro" if erros and not traduzidas else "sucesso")))
 
@@ -2168,7 +2171,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         exemplos = "\n".join(f"• {i.video.name}" for i in itens[:5]) + (
             f"\n... e mais {len(itens) - 5}" if len(itens) > 5 else "")
         traducao = (f"Tradução com o Claude ({o.modelo_traducao}), só do que não for {idioma}: no máximo cerca de "
-                    f"US$ {custo:.2f}." if custo is not None else
+                    f"{self._dinheiro(custo)}." if custo is not None else
                     f"Tradução com o Claude ({o.modelo_traducao}): preço deste modelo desconhecido." if traduzir else
                     "Sem a chave da Anthropic: fica só a legenda no idioma do áudio (sem tradução).")
         escolha = self.escolher(
@@ -2238,7 +2241,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                      + f"Com erro: {len(erros)}" + (f" (ex.: {erros[0].video.name}: {erros[0].detalhe})" if erros else "")
                      + (f"\nNão feitos (parou antes): {total - len(resultados)}" if len(resultados) < total else "")
                      + f"\n\nTempo: {self._texto_duracao(time.monotonic() - inicio)}"
-                     + (f" · Claude: {tradutor.pedidos} pedido(s), custo ~US$ {tradutor.custo:.2f}"
+                     + (f" · Claude: {tradutor.pedidos} pedido(s), custo ~{self._dinheiro(tradutor.custo)}"
                         if tradutor is not None and tradutor.pedidos and tradutor.custo is not None else "")
                      + "".join(f"\n⚠ {a}" for a in avisados))
             self.fila.put(("status_fim", f"Legendas pelo áudio: {len(feitas)} de {total}."))
@@ -2468,8 +2471,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             ouvir = sum(max(1, -(-int(i.duracao or i.falas * 4) // personagens.TRECHO)) for i in itens)
             quem = (f"uma voz para cada personagem (o Gemini ouve o filme e separa quem fala: +{ouvir} pedido(s); "
                     "depois você confere as vozes)" if o.voz_por_personagem else f"a voz premium \"{o.voz_gemini}\"")
-            voz = (f"com {quem} do Gemini (Google AI Studio, pago por uso: estimativa entre US$ {minimo:.2f} e US$ "
-                   f"{maximo:.2f} para ~{int(fala // 60)} min de fala; confira o preço atual no AI Studio). São "
+            voz = (f"com {quem} do Gemini (Google AI Studio, pago por uso: estimativa entre {self._dinheiro(minimo)} e "
+                   f"{self._dinheiro(maximo)} para ~{int(fala // 60)} min de fala; confira o preço atual no AI Studio). São "
                    f"~{pedidos} pedido(s) de voz (até {voz_gemini.BLOCO} falas em cada): na camada GRÁTIS o limite por "
                    "dia é baixo; se acabar, o que ficou pronto é guardado e a próxima dublagem continua de onde parou")
             download = ""
@@ -2754,7 +2757,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
             texto = (f"Dublados: {len(feitos)} de {total}\nCom erro: {len(erros)}"
                      + (f" (ex.: {erros[0].video.name}: {erros[0].detalhe})" if erros else "")
                      + (f"\nFalas longas reescritas pelo Claude: {adaptadas}"
-                        + (f" (custo: US$ {sum(custos):.2f})" if custos else "") if adaptadas else "")
+                        + (f" (custo: {self._dinheiro(sum(custos))})" if custos else "") if adaptadas else "")
                      + (f"\nPedidos de voz ao Gemini: {pedidos}" if pedidos else "")
                      + (f"\nNão feitos (parou antes): {total - len(resultados)}" if len(resultados) < total else "")
                      + f"\n\nTempo: {self._texto_duracao(time.monotonic() - inicio)}"
@@ -4072,14 +4075,33 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._configurar_gastos(o)
 
     def _configurar_gastos(self, o=None) -> None:
-        """O registro dos gastos nas APIs pagas (gastos.json) com o teto do mês da tela."""
+        """O registro dos gastos nas APIs pagas (gastos.json) com o teto e a moeda da tela. Usa a cotação já
+        guardada (não trava a janela); a do dia é buscada em segundo plano (_buscar_cotacao)."""
         o = o or self.obter_opcoes_jellyfin()
-        gastos.configurar(automacao.arquivo_gastos(), o.teto_gastos)
+        automacao.configurar_gastos(o, consultar=False)
         self.atualizar_gastos()
+        if o.moeda_gastos == "R$" and not o.cotacao_dolar and not getattr(self, "_cotacao_pedida", False):
+            self._cotacao_pedida = True
+            threading.Thread(target=self._buscar_cotacao, daemon=True).start()
+
+    @staticmethod
+    def _dinheiro(dolares: float) -> str:
+        """Estimativas: 'US$ 0.45 (≈ R$ 2,53)' com os gastos em reais; só 'US$ 0.45' em dólar ou sem cotação."""
+        atual = gastos.atual()
+        texto = f"US$ {dolares:.2f}"
+        return f"{texto} (≈ {atual.valor(dolares)})" if atual is not None and atual.fator else texto
+
+    def _buscar_cotacao(self) -> None:
+        """A PTAX do dia (uma consulta por dia, guardada). Chegou: a janela refaz os valores em reais."""
+        dados = cotacao.atual(automacao.arquivo_cotacao())
+        if dados:
+            self.fila.put(("cotacao", dados))
 
     def atualizar_gastos(self) -> None:
         if (atual := gastos.atual()) is not None and hasattr(self, "lb_gastos_mes"):
             self.lb_gastos_mes.configure(text=atual.resumo())
+            self.lb_cotacao.configure(text=atual.conversao or ("Em dólar, como as APIs cobram." if not atual.fator
+                                                               else ""))
 
     def item_saude_gastos(self):
         """"Gastos do mês: US$ 1.20 de US$ 5.00" (aviso a partir de 80% do teto); nada se ainda não gastou."""
@@ -4089,8 +4111,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
         total = atual.total()
         if not total and not atual.teto:
             return None
-        texto = f"Gastos do mês: US$ {total:.2f}" + (f" de US$ {atual.teto:.2f}" if atual.teto else "")
-        return (texto, None) if not atual.teto else (texto, total < 0.8 * atual.teto)
+        texto = f"Gastos do mês: {atual.valor(total)}" + (f" de {atual._teto_texto()}" if atual.teto else "")
+        return (texto, None) if not atual.teto else (texto, not atual.perto_do_teto())
 
     @staticmethod
     def _abrir_no_sistema(pasta: str) -> None:
