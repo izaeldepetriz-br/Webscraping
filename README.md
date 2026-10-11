@@ -240,6 +240,26 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.17.0
+
+- **Aba "Avulsos"** (ao lado de Vídeos e Jellyfin): a caixa de entrada e/ou vídeos de qualquer pasta ("Adicionar
+  vídeos..."). **Olhar** mostra o que falta em cada um (traduzir a legenda, criar pelo áudio, dublar, pôr a legenda no
+  vídeo, ou pronto); **Processar** pergunta e faz. Caixas **Legendar** e **Dublar**: só legenda, só dublagem ou os dois.
+- **Dublagem natural** (Configurações > Dublagem > "Como fica a dublagem"): um modelo de IA (UVR MDX-Net, grátis, no
+  seu PC) **tira as vozes originais** e mantém a música e os efeitos; a dublagem entra no lugar delas, como num estúdio.
+  Baixa o modelo na 1ª vez (~67 MB). É mais lento: um filme de 2 h leva por volta de 40 min a mais num PC comum.
+  Desmarcado, fica o "voice-over" de antes (o áudio original só abaixa enquanto a voz fala).
+- **Dublagem e legenda DENTRO do próprio vídeo**: a faixa "Português (dublagem IA)" (padrão no Jellyfin) e a legenda
+  "Português" entram no arquivo original; o áudio original continua lá como 2ª faixa. Antes de trocar o original, o
+  Maestro confere a cópia (duração e todas as faixas); se algo não bater, o original fica como estava. O .mkv continua
+  .mkv e o .mp4 continua .mp4; .avi, .wmv, .ts... viram .mkv. Desmarcado: o arquivo à parte "Nome - Dublado IA.mkv".
+- **Fase de teste (prévia)**: com a dublagem dentro do vídeo, o Maestro primeiro faz uma **prévia** (fora da
+  biblioteca) e o original não muda. Em **🎧 Prévias** (abas Jellyfin e Avulsos): **Ouvir** (abre no seu player),
+  **Aprovar** (a faixa entra no original em poucos minutos, sem dublar de novo) ou **Descartar**.
+- A amostra de 1 minuto também usa a dublagem natural.
+- Correções: a lista da aba Jellyfin sumia com o zoom do Windows em 125%; dublar episódio de série com voz por
+  personagem dava erro ao salvar o elenco.
+
 ### Novidades da v2.16.0
 
 - **Configurações que cabem na tela**: o menu de categorias da ⚙ Configurações agora **rola** (em notebooks ou com o

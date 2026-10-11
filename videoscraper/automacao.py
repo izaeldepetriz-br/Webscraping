@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import dataclasses
+import hashlib
 import json
 import logging
 import os
@@ -327,7 +328,9 @@ def itens_para_dublar(pastas: dict, idioma: str = "pt-BR", sondar=None, no_origi
     extra["no_original"] = no_original
     filmes = pastas.get("Filmes") or ""
     itens = videos_para_dublar(filmes, idioma=idioma, **extra) if filmes and Path(filmes).is_dir() else []
-    return itens + episodios_para_dublar(pastas.get("Séries") or "", idioma=idioma, **extra)
+    itens += episodios_para_dublar(pastas.get("Séries") or "", idioma=idioma, **extra)
+    esperando = com_previa()                          # prévia pronta, esperando você ouvir: não dubla de novo
+    return [i for i in itens if _chave(i.video) not in esperando]
 
 
 def usa_traducao_local(o: OpcoesJellyfin) -> bool:
@@ -727,7 +730,9 @@ def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
             atualizar_biblioteca(o.jellyfin_url, o.jellyfin_api_key)
         except ErroJellyfin as erro:
             log.warning("Jellyfin: scan não pedido (%s)", erro)
+    previas = [r for r in resultados if r.status == "previa"]
     resumo = (f"{len(feitos)} de {len(resultados)} vídeo(s) dublado(s), {len(erros)} erro(s)"
+              + (f", {len(previas)} prévia(s) para ouvir e aprovar (aba Avulsos > Prévias)" if previas else "")
               + (f", {len(itens) - len(resultados)} para a próxima vez." if len(resultados) < len(itens) else "."))
     return Resultado("--dublar", PROBLEMA if erros else OK, resumo, [f"{r.video.name}: {r.detalhe}" for r in erros],
                      {"dublados": len(feitos)})
@@ -782,12 +787,91 @@ def separador_de_vozes(o: OpcoesJellyfin, log: logging.Logger | None = None, ao_
     return separar
 
 
+# ---------------------------------------------------------------------------- fase de teste (prévia antes do original)
+def pasta_previas() -> Path:
+    """As prévias da dublagem (fora das bibliotecas: o Jellyfin não as vê) e a lista das que esperam aprovação."""
+    return config.ARQUIVO.parent / "previas_dublagem"
+
+
+def usa_previa(o: OpcoesJellyfin) -> bool:
+    """Fase de teste: com a dublagem no original, primeiro uma prévia para ouvir (Configurações > Dublagem)."""
+    return bool(o.dublagem_no_original and getattr(o, "dublagem_previa", True))
+
+
+def caminho_previa(video: Path) -> Path:
+    marca = hashlib.sha1(str(Path(video).resolve()).lower().encode("utf-8")).hexdigest()[:10]
+    return pasta_previas() / marca / f"{Path(video).stem} - prévia da dublagem.mkv"
+
+
+def _arquivo_previas() -> Path:
+    return pasta_previas() / "previas.json"
+
+
+def previas_pendentes() -> list[dict]:
+    """[{video, previa, legenda, criada}] das prévias que ainda existem (e cujo vídeo ainda existe)."""
+    try:
+        dados = json.loads(_arquivo_previas().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [d for d in dados if Path(d.get("video", "")).is_file() and Path(d.get("previa", "")).is_file()]
+
+
+def _salvar_previas(lista: list[dict]) -> None:
+    _arquivo_previas().parent.mkdir(parents=True, exist_ok=True)
+    _arquivo_previas().write_text(json.dumps(lista, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def registrar_previa(video: Path, previa: Path, legenda: Path | None) -> None:
+    lista = [d for d in previas_pendentes() if _chave(d["video"]) != _chave(video)]
+    lista.append({"video": str(video), "previa": str(previa), "legenda": str(legenda) if legenda else "",
+                  "criada": datetime.now().isoformat(timespec="minutes")})
+    _salvar_previas(lista)
+
+
+def com_previa() -> set[str]:
+    """Os vídeos (chave) com prévia esperando aprovação: não entram de novo na fila de dublar."""
+    return {_chave(d["video"]) for d in previas_pendentes()}
+
+
+def aprovar_previa_de(video: str | Path, log: logging.Logger | None = None, parar=None) -> Path:
+    """Grava a dublagem da prévia no original (e a legenda, se a prévia foi feita com ela)."""
+    from jellyfin_tools.dublagem import aprovar_previa
+    item = next((d for d in previas_pendentes() if _chave(d["video"]) == _chave(video)), None)
+    if item is None:
+        raise ErroDublagem("não há prévia deste vídeo (dublar de novo)")
+    ffmpeg = localizar_ffmpeg()
+    if not ffmpeg:
+        raise ErroDublagem("falta o ffmpeg")
+    final = aprovar_previa(ffmpeg, item["video"], item["previa"], item.get("legenda") or None, parar)
+    _salvar_previas([d for d in previas_pendentes() if _chave(d["video"]) != _chave(video)])
+    if log:
+        log.info("[aprovada] dublagem gravada no original: %s", final)
+    return final
+
+
+def descartar_previa_de(video: str | Path, log: logging.Logger | None = None) -> None:
+    for d in previas_pendentes():
+        if _chave(d["video"]) == _chave(video):
+            Path(d["previa"]).unlink(missing_ok=True)
+            with contextlib.suppress(OSError):
+                Path(d["previa"]).parent.rmdir()
+            if log:
+                log.info("[descartada] prévia da dublagem de %s", Path(d["video"]).name)
+    _salvar_previas([d for d in previas_pendentes() if _chave(d["video"]) != _chave(video)])
+
+
 def dublar_item(o: OpcoesJellyfin, item, motor, log: logging.Logger, parar=None, ao_progresso=None, separar=None,
                 legenda_no_video: bool = False):
-    return dublar_video(item.video, item.legenda, motor, adaptar=adaptador(o, item.video.stem),
-                        avisar=lambda texto: log.warning("Dublagem: %s", texto), vozes=vozes_automaticas(o, item, log),
-                        pasta_cache=pasta_dublagem(), destino=item.destino, parar=parar, ao_progresso=ao_progresso,
-                        separar=separar, no_original=o.dublagem_no_original, legenda_no_video=legenda_no_video)
+    """Dubla um vídeo. Com a fase de teste, o resultado é uma PRÉVIA (status "previa"), registrada para aprovar."""
+    previa = caminho_previa(item.video) if usa_previa(o) else None
+    r = dublar_video(item.video, item.legenda, motor, adaptar=adaptador(o, item.video.stem),
+                     avisar=lambda texto: log.warning("Dublagem: %s", texto), vozes=vozes_automaticas(o, item, log),
+                     pasta_cache=pasta_dublagem(), destino=item.destino, parar=parar, ao_progresso=ao_progresso,
+                     separar=separar, no_original=o.dublagem_no_original, legenda_no_video=legenda_no_video,
+                     previa=previa)
+    if r.status == "previa":
+        registrar_previa(item.video, r.destino, item.legenda if legenda_no_video else None)
+    return r
 
 
 # ============================================================================ vídeos avulsos
@@ -801,6 +885,7 @@ class PlanoAvulsos:
     lista: list = field(default_factory=list)      # todos os vídeos olhados (Path), para a aba Avulsos
     embutir: list = field(default_factory=list)    # (vídeo, .srt): a legenda em português vira faixa do vídeo
     legenda_dentro: set = field(default_factory=set)   # vídeos (chave) que já têm legenda em português dentro
+    previas: set = field(default_factory=set)      # vídeos (chave) com a prévia da dublagem esperando aprovação
 
     @property
     def vazio(self) -> bool:
@@ -872,16 +957,18 @@ def planejar_avulsos(o: OpcoesJellyfin, pasta: str = "", arquivos=(), sondar=Non
     dublar = (_so_estes(videos_para_dublar(*onde, idioma=idioma, sondar=sondar_audio, no_original=no_original),
                         pasta, arquivos) if o.avulsos_dublar else [])
     dentro = {_chave(v) for v in lista if faixas(v).tem_legenda_portugues()}
+    esperando = com_previa() & {_chave(v) for v in lista}
+    dublar = [i for i in dublar if _chave(i.video) not in esperando]
     embutir = []
     if legendar:
-        vai_dublar = {_chave(i.video) for i in dublar} if no_original else set()    # a dublagem já leva a legenda
+        vai_dublar = {_chave(i.video) for i in dublar} | esperando if no_original else set()  # vai junto da dublagem
         embutir = [(v, srt) for v in lista if _chave(v) not in dentro and _chave(v) not in vai_dublar
                    and (srt := srt_portugues(v, idioma))]
     return PlanoAvulsos(_so_estes(legendas_para_traduzir(*onde, idioma=idioma, sondar_embutidas=sondar_legendas),
                                   pasta, arquivos),
                         _so_estes(videos_sem_legenda(*onde, idioma=idioma, sondar_arquivo=sondar_legendas),
                                   pasta, arquivos),
-                        dublar, len(lista), lista, embutir, dentro)
+                        dublar, len(lista), lista, embutir, dentro, esperando)
 
 
 def situacao_avulsos(plano: PlanoAvulsos, dublar: bool = True, legendar: bool = False
@@ -911,6 +998,9 @@ def situacao_avulsos(plano: PlanoAvulsos, dublar: bool = True, legendar: bool = 
             legenda = "nenhuma"
         else:
             legenda = "✓ ao lado (.srt)"
+        if k in plano.previas:
+            linhas.append((v, legenda, "Ouvir a prévia e aprovar", False))
+            continue
         if partes:
             acao = " → ".join(partes)
             linhas.append((v, legenda, acao[0].upper() + acao[1:], False))
@@ -932,7 +1022,7 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
     idioma = o.idioma.split(",")[0].strip() or "pt-BR"
     plano = planejar_avulsos(o, pasta, arquivos, sondar)
     tradutor = tradutor_para(o, idioma)
-    contas, erros = {"traduzidas": 0, "pelo_audio": 0, "dublados": 0, "legendas_no_video": 0}, []
+    contas, erros = {"traduzidas": 0, "pelo_audio": 0, "dublados": 0, "legendas_no_video": 0, "previas": 0}, []
     if plano.traduzir and tradutor is None:
         erros.append(f"{len(plano.traduzir)} legenda(s) em outro idioma: falta a chave da Anthropic para traduzir")
     for k, p in enumerate(plano.traduzir if tradutor else []):
@@ -979,6 +1069,8 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
             log.info("[%s] avulso %s%s", r.status, r.video.name, f" ({r.detalhe})" if r.detalhe else "")
             if r.status == "erro":
                 erros.append(f"{item.video.name}: {r.detalhe}")
+            elif r.status == "previa":
+                contas["previas"] += 1
             elif r.status == "dublado":
                 contas["dublados"] += 1
                 if legendar and o.dublagem_no_original:
@@ -998,6 +1090,7 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
             erros.append(f"{video.name}: {erro}")
     resumo = (f"Vídeos avulsos: {contas['traduzidas']} legenda(s) traduzida(s), {contas['pelo_audio']} criada(s) pelo "
               f"áudio, {contas['dublados']} dublado(s), {contas['legendas_no_video']} com a legenda dentro do vídeo"
+              + (f", {contas['previas']} prévia(s) para ouvir e aprovar" if contas["previas"] else "")
               + (f", {len(erros)} problema(s)." if erros else "."))
     if plano.vazio and not dublar_agora and not embutir_agora:
         resumo = "Vídeos avulsos: nada a fazer (já têm legenda em português e dublagem, ou não há vídeos)."

@@ -206,7 +206,23 @@ def test_dublar_pelo_robo(casa, tmp_path, monkeypatch):
     casa(destino_filmes=str(filmes), motor_voz="Gemini (premium, Google AI Studio)")    # voz premium sem chave
     assert automacao.main(["--dublar"]) == automacao.FALTA_CONFIGURACAO
     assert "aistudio.google.com" in resultado(tmp_path)["comandos"][0]["resumo"]
+    # fase de teste (padrão): uma prévia fora da biblioteca; o original fica igual até aprovar
     casa(destino_filmes=str(filmes))
+    video = filmes / "A (2001)" / "A (2001).mkv"
+    antes = video.read_bytes()
+    assert automacao.main(["--dublar"]) == automacao.OK
+    assert "1 prévia(s) para ouvir e aprovar" in resultado(tmp_path)["comandos"][0]["resumo"]
+    assert video.read_bytes() == antes and len(automacao.previas_pendentes()) == 1
+    previa = Path(automacao.previas_pendentes()[0]["previa"])
+    assert previa.is_file() and str(previa).startswith(str(automacao.pasta_previas()))
+    assert automacao.main(["--dublar"]) == automacao.OK                   # esperando aprovação: não dubla de novo
+    assert resultado(tmp_path)["comandos"][0]["resumo"] == "Nenhum filme ou episódio para dublar."
+    automacao.aprovar_previa_de(video)                                    # aprovada: entra no original
+    assert not previa.exists() and automacao.previas_pendentes() == []
+    assert len([l for l in faixas(video) if "Audio" in l]) == 2
+    # sem a fase de teste: direto no original
+    video_de_teste(video)
+    casa(destino_filmes=str(filmes), dublagem_previa=False)
     assert automacao.main(["--dublar"]) == automacao.OK
     assert resultado(tmp_path)["comandos"][0]["resumo"] == "1 de 1 vídeo(s) dublado(s), 0 erro(s)."
     # padrão: a dublagem é uma faixa do próprio arquivo (sem 'Nome - Dublado IA.mkv' ao lado)
@@ -266,7 +282,7 @@ def test_dublar_pelo_robo_com_voz_por_personagem(casa, tmp_path, monkeypatch):
                 gravar_tom(Path(wav), 0.05 * len(texto))
     monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, voz, **k: Voz())
     casa(destino_filmes=str(filmes), motor_voz="Gemini (premium, Google AI Studio)", chave_gemini="AIza",
-         voz_gemini="Kore", voz_por_personagem=True, encurtar_falas=False)
+         voz_gemini="Kore", voz_por_personagem=True, encurtar_falas=False, dublagem_previa=False)
     assert automacao.main(["--dublar"]) == automacao.OK
     # quem fala menos de 3 falas fica com a voz principal (Kore)
     assert set(vozes.values()) == {"Kore"} and len(vozes) == 3
@@ -346,7 +362,7 @@ def test_robo_avulsos_precisa_da_pasta_e_dubla_a_caixa_de_entrada(casa, tmp_path
     monkeypatch.setattr(automacao, "videos_para_dublar",
                         lambda *p, **k: dublagem.videos_para_dublar(*p, **{**k, "sondar": lambda v: (6.0, ["eng"])}))
     monkeypatch.setattr(automacao, "videos_sem_legenda", lambda *p, **k: [])
-    casa(pasta_avulsos=str(caixa), encurtar_falas=False)
+    casa(pasta_avulsos=str(caixa), encurtar_falas=False, dublagem_previa=False)
     assert automacao.main(["--avulsos"]) == automacao.OK
     linhas = faixas(video)                          # dublagem E legenda dentro do próprio vídeo; o .srt saiu
     assert len([l for l in linhas if "Audio" in l]) == 2 and [l for l in linhas if "Subtitle" in l] and voz.textos

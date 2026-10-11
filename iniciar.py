@@ -138,6 +138,47 @@ def _verificar_traducao() -> int:
     return 0 if ok else 1
 
 
+def _verificar_separacao() -> int:
+    """Autoteste da dublagem natural (usado ao gerar o .exe, com internet): baixa o modelo que separa as vozes do
+    fundo e separa 12 s de uma "música" (acordes). A música tem de continuar lá, do mesmo tamanho. Mede a velocidade."""
+    import tempfile
+    import time
+    import traceback
+    from pathlib import Path
+    relatorio = Path(tempfile.gettempdir()) / "maestro-teste-separacao.txt"
+    try:
+        import subprocess
+        import numpy as np
+        from jellyfin_tools import separar_vozes
+        from jellyfin_tools.dublagem import localizar_ffmpeg
+        ffmpeg = localizar_ffmpeg()
+        with tempfile.TemporaryDirectory() as pasta:
+            pasta = Path(pasta)
+            musica = pasta / "musica.wav"
+            subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i",
+                            "aevalsrc=0.2*sin(2*PI*220*t)+0.2*sin(2*PI*277*t)+0.2*sin(2*PI*330*t):s=44100:d=12",
+                            "-ac", "2", str(musica)], check=True, **separar_vozes.SEM_JANELA)
+            modelo = separar_vozes.preparar_modelo(pasta / "modelo")
+            inicio = time.monotonic()
+            fundo = separar_vozes.separar_fundo(ffmpeg, musica, pasta / "fundo.flac", modelo, duracao=12)
+            segundos = time.monotonic() - inicio
+
+            def ler(arquivo):
+                dados = subprocess.run([ffmpeg, "-v", "error", "-i", str(arquivo), "-f", "f32le", "-ac", "2",
+                                        "-ar", "44100", "-"], capture_output=True, **separar_vozes.SEM_JANELA).stdout
+                return np.frombuffer(dados, np.float32)
+            entrada, saida = ler(musica), ler(fundo)
+        energia = float((saida ** 2).sum() / max((entrada ** 2).sum(), 1e-9))
+        ok = len(saida) == len(entrada) and 0.3 < energia < 2.0 and np.isfinite(saida).all()
+        relatorio.write_text(f"separou 12 s em {segundos:.1f} s ({12 / segundos:.2f}x o tempo real); "
+                             f"música mantida: {energia * 100:.0f}% da energia; amostras {len(saida)}/{len(entrada)}",
+                             encoding="utf-8")
+    except Exception:
+        relatorio.write_text(traceback.format_exc()[-1500:], encoding="utf-8")
+        return 1
+    return 0 if ok else 1
+
+
 def _verificar_navegador() -> int:
     """Autoteste do modo navegador (usado ao gerar o .exe): baixa o Chromium, se faltar, e abre uma página."""
     import tempfile
@@ -159,6 +200,8 @@ if __name__ == "__main__":
         raise SystemExit(_verificar_navegador())
     if "--verificar-traducao" in sys.argv:
         raise SystemExit(_verificar_traducao())
+    if "--verificar-separacao" in sys.argv:
+        raise SystemExit(_verificar_separacao())
     if "--testar-atualizacao" in sys.argv:          # GitHub: a troca dos arquivos funciona no Windows de verdade?
         from pathlib import Path
         from videoscraper import atualizacao

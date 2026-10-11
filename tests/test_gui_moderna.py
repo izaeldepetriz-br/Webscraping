@@ -80,6 +80,7 @@ def app(monkeypatch, tmp_path):
     a._pedir_o_que_completar = lambda pasta, padrao, series: dict(padrao)   # "Completar": a escolha padrão
     a.escolher_da_lista = lambda *args, **k: None           # lista de opções: "Cancelar"
     a._pedir_pasta = lambda titulo, inicial="": ""          # janela de pastas: "Cancelar"
+    a.ao_previas = lambda: None                             # janela das prévias: "Fechar"
     a.campo_espera.set(0.5)
     a.var_pasta.set(str(tmp_path / "videos"))
     yield a
@@ -1290,6 +1291,7 @@ def test_criar_legenda_pelo_audio_pela_janela(app, tmp_path, monkeypatch):
 
 
 def test_dublar_filmes_pela_janela(app, tmp_path, monkeypatch):
+    app.var_jf_dublagem_no_original.set(False)                   # este teste: o arquivo à parte
     from jellyfin_tools import dublagem
     from tests.test_dublagem import FFMPEG, SRT, VozFalsa, faixas, video_de_teste
     if not FFMPEG:
@@ -1310,7 +1312,7 @@ def test_dublar_filmes_pela_janela(app, tmp_path, monkeypatch):
     app.var_jf_chave_claude.set("")                                    # sem a chave: falas longas só aceleram
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setattr(app_moderna, "videos_para_dublar",
-                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, **{**k, "sondar": lambda v: (6.0, ["eng"])}))
     perguntas = []
     app.escolher = lambda t, m, opcoes, **k: (perguntas.append(m), opcoes[0])[1]
     app.bt_dublar.invoke()
@@ -3759,6 +3761,7 @@ def test_simular_a_vigia_mostra_sem_mover_nada(app, tmp_path):
 
 
 def test_voz_premium_do_gemini_pela_janela(app, tmp_path, monkeypatch):
+    app.var_jf_dublagem_no_original.set(False)                   # este teste: o arquivo à parte
     from jellyfin_tools import dublagem, voz_gemini
     from tests.test_dublagem import FFMPEG, SRT, VozFalsa, video_de_teste
     from videoscraper import automacao
@@ -3790,7 +3793,7 @@ def test_voz_premium_do_gemini_pela_janela(app, tmp_path, monkeypatch):
     criados, voz = [], VozFalsa()
     monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, nome, **k: criados.append((chave, nome)) or voz)
     monkeypatch.setattr(app_moderna, "videos_para_dublar",
-                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, **{**k, "sondar": lambda v: (6.0, ["eng"])}))
     falas_longas = []
 
     class Adaptar:                                                   # o Claude, de mentira
@@ -3820,6 +3823,7 @@ def test_voz_premium_do_gemini_pela_janela(app, tmp_path, monkeypatch):
 
 def test_voz_por_personagem_pela_janela(app, tmp_path, monkeypatch):
     """Ouvir (Gemini) -> tabela "Pessoa -> Voz" -> dublar com uma voz por fala; o progresso fica guardado."""
+    app.var_jf_dublagem_no_original.set(False)                   # este teste: o arquivo à parte
     from jellyfin_tools import dublagem, personagens, voz_gemini
     from tests.test_dublagem import FFMPEG, SRT_APERTADA, gravar_tom, video_de_teste
     from videoscraper import automacao
@@ -3837,7 +3841,7 @@ def test_voz_por_personagem_pela_janela(app, tmp_path, monkeypatch):
     app.var_jf_voz_por_personagem.set(True)
     app.var_jf_encurtar_falas.set(False)
     monkeypatch.setattr(app_moderna, "videos_para_dublar",
-                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, **{**k, "sondar": lambda v: (6.0, ["eng"])}))
     monkeypatch.setattr(voz_gemini, "_cliente", lambda chave: object())
     ouvidos = []
 
@@ -3897,6 +3901,7 @@ def test_janela_vozes_dos_personagens(app):
 def test_dublagem_mista_por_filme_e_figurantes(app, tmp_path, monkeypatch):
     """Mista: só os filmes marcados vão com o Gemini (os outros com o Piper) e, na tabela de vozes, os figurantes
     aparecem com a voz do Piper."""
+    app.var_jf_dublagem_no_original.set(False)                   # este teste: o arquivo à parte
     from jellyfin_tools import dublagem, voz_gemini
     from tests.test_dublagem import FFMPEG, SRT, VozFalsa, video_de_teste
     from videoscraper import automacao
@@ -3916,7 +3921,7 @@ def test_dublagem_mista_por_filme_e_figurantes(app, tmp_path, monkeypatch):
     app.var_jf_chave_gemini.set("AIza-teste")
     app.var_jf_encurtar_falas.set(False)
     monkeypatch.setattr(app_moderna, "videos_para_dublar",
-                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, **{**k, "sondar": lambda v: (6.0, ["eng"])}))
     gemini, piper = VozFalsa(), VozFalsa()
     monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, nome, **k: gemini)
     monkeypatch.setattr(automacao, "motor_piper", lambda o, voz="", **k: piper)
@@ -4121,13 +4126,14 @@ def _dublagem_falsa(monkeypatch):
     monkeypatch.setattr(automacao, "adaptador", lambda o, titulo="": None)
     sondar = lambda v: (6.0, ["eng"])                               # noqa: E731
     monkeypatch.setattr(app_moderna, "videos_para_dublar",
-                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=sondar, **k))
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, **{**k, "sondar": sondar}))
     monkeypatch.setattr(app_moderna, "episodios_para_dublar",
                         lambda *p, **k: dublagem.episodios_para_dublar(*p, sondar=sondar, **k))
     return voz
 
 
 def test_amostra_de_1_minuto_antes_de_dublar(app, tmp_path, monkeypatch):
+    app.var_jf_dublagem_no_original.set(False)                   # este teste: o arquivo à parte
     from jellyfin_tools import dublagem
     from tests.test_dublagem import FFMPEG, SRT, video_de_teste
     from videoscraper import automacao
@@ -4161,6 +4167,7 @@ def test_amostra_de_1_minuto_antes_de_dublar(app, tmp_path, monkeypatch):
 
 
 def test_dublar_episodios_na_pasta_irma(app, tmp_path, monkeypatch):
+    app.var_jf_dublagem_no_original.set(False)                   # este teste: o arquivo à parte
     from jellyfin_tools import dublagem
     from tests.test_dublagem import FFMPEG, SRT, video_de_teste
     if not FFMPEG:
@@ -4214,23 +4221,36 @@ def test_aba_avulsos_olhar_adicionar_e_processar(app, tmp_path, monkeypatch):
     app._pedir_arquivos_video = lambda: (str(sem_legenda),)
     app.bt_av_adicionar.invoke()
     esperar(app)
-    assert app.linhas_avulsos() == [
-        ("Palestra.mkv", "✓ tem", "Dublar", str(caixa)),
-        ("Aula.mkv", "nenhuma", "Criar a legenda pelo áudio → dublar", str(outra)),
-    ] or sorted(app.linhas_avulsos()) == sorted([
-        ("Palestra.mkv", "✓ tem", "Dublar", str(caixa)),
-        ("Aula.mkv", "nenhuma", "Criar a legenda pelo áudio → dublar", str(outra))])
+    assert sorted(app.linhas_avulsos()) == sorted([
+        ("Palestra.mkv", "✓ ao lado (.srt)", "Dublar → pôr a legenda no vídeo", str(caixa)),
+        ("Aula.mkv", "nenhuma", "Criar a legenda pelo áudio → dublar → pôr a legenda no vídeo", str(outra))])
     assert app.lb_resumo_av.cget("text") == "2 com algo a fazer · 0 pronto(s)"
-    # "Tirar os adicionados": fica só a caixa de entrada; Processar dubla e a lista mostra pronto
+    assert app.var_jf_avulsos_legendar.get() and app.var_jf_dublagem_previa.get()          # os padrões
+    # "Tirar os adicionados": fica só a caixa de entrada
     app.bt_av_limpar.invoke()
     esperar(app)
     assert [linha[0] for linha in app.linhas_avulsos()] == ["Palestra.mkv"]
+    # Processar (fase de teste): uma PRÉVIA para ouvir; o original não muda e a janela das prévias abre
+    abertas = []
+    app.ao_previas = lambda: abertas.append(len(automacao.previas_pendentes()))
+    antes = video.read_bytes()
     app.bt_av_processar.invoke()
     esperar(app)
     esperar(app)
-    assert dublagem.caminho_dublado(video).is_file() and voz.textos
-    assert app.caixas[-1][0] == "sucesso" and "1 dublado" in app.caixas[-1][2]
-    assert app.linhas_avulsos() == [("Palestra.mkv", "✓ tem", "✓ Nada: já está pronto", str(caixa))]
+    assert voz.textos and video.read_bytes() == antes and not dublagem.caminho_dublado(video).exists()
+    assert app.caixas[-1][0] == "sucesso" and "1 prévia(s) para ouvir e aprovar" in app.caixas[-1][2]
+    assert abertas == [1] and app.bt_previas_av.cget("text") == "🎧 Prévias (1)"
+    assert app.linhas_avulsos() == [("Palestra.mkv", "✓ ao lado (.srt)", "Ouvir a prévia e aprovar", str(caixa))]
+    # aprovar: a dublagem e a legenda entram no original (sem dublar de novo); o .srt sai
+    app.mostrar_aba("Avulsos")
+    app._aprovar_previa(automacao.previas_pendentes()[0])
+    esperar(app)
+    from tests.test_dublagem import faixas
+    linhas = faixas(video)
+    assert len([l for l in linhas if "Audio" in l]) == 2 and len([l for l in linhas if "Subtitle" in l]) == 1
+    assert not (caixa / "Palestra.pt-BR.srt").exists() and automacao.previas_pendentes() == []
+    assert app.caixas[-1][0] == "sucesso" and "Português (dublagem IA)" in app.caixas[-1][2]
+    assert app.linhas_avulsos() == [("Palestra.mkv", "✓ dentro do vídeo", "✓ Nada: já está pronto", str(caixa))]
     # de novo: nada a fazer
     app.bt_av_processar.invoke()
     esperar(app)
@@ -4273,6 +4293,7 @@ def test_gastos_do_mes_na_tela(app):
 def test_google_cloud_tts_pela_janela(app, tmp_path, monkeypatch):
     """Cartão "Google Cloud TTS": tipo e voz, Validar (lista as vozes da conta), frase de teste, cota no painel e a
     dublagem com o motor do Cloud (não com o Piper)."""
+    app.var_jf_dublagem_no_original.set(False)                   # este teste: o arquivo à parte
     from jellyfin_tools import dublagem, gastos, microfone, voz_cloud
     from tests.test_dublagem import FFMPEG, SRT, VozFalsa, video_de_teste
     from tests.test_voz_cloud import GoogleFalso
@@ -4327,7 +4348,7 @@ def test_google_cloud_tts_pela_janela(app, tmp_path, monkeypatch):
     app._destinos.update({"Filmes": str(filmes), "Séries": ""})
     app.var_jf_destino.set(str(filmes))
     monkeypatch.setattr(app_moderna, "videos_para_dublar",
-                        lambda *p, **k: dublagem.videos_para_dublar(*p, sondar=lambda v: (6.0, ["eng"]), **k))
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, **{**k, "sondar": lambda v: (6.0, ["eng"])}))
     monkeypatch.setattr(automacao, "motor_piper", lambda *a, **k: pytest.fail("com o Cloud, o Piper não entra"))
     monkeypatch.setattr(automacao, "adaptador", lambda o, titulo="": None)
     cloud = VozFalsa()
@@ -4422,3 +4443,39 @@ def test_aba_jellyfin_com_o_zoom_do_windows(app, monkeypatch):
     assert app.partes_visiveis_jf() == (True, False)
     monkeypatch.setattr(app, "_pontos", lambda: 1.25)
     assert app.partes_visiveis_jf() == (False, False)
+
+
+def test_janela_das_previas(app, tmp_path):
+    """Ouvir abre a prévia; Descartar pergunta e apaga; Aprovar fecha a janela com a escolha."""
+    from videoscraper.gui_moderna import JanelaPrevias
+    itens = [{"video": str(tmp_path / "Filme (2000).mkv"), "previa": "p1.mkv", "criada": "2026-10-11T18:00"},
+             {"video": str(tmp_path / "Aula.mp4"), "previa": "p2.mkv", "criada": "2026-10-11T18:05"}]
+    ouvidos, descartados = [], []
+    janela = JanelaPrevias(app, lambda: list(itens), ouvidos.append,
+                           lambda item: (descartados.append(item), itens.remove(item)))
+    app.update()
+    assert janela.tabela.item("0", "values")[:2] == ("Filme (2000).mkv", "2026-10-11 18:00")
+    janela.bt_ouvir.invoke()
+    assert ouvidos == [itens[0]]
+    janela.bt_descartar.invoke()
+    assert [Path(d["video"]).name for d in descartados] == ["Filme (2000).mkv"]
+    assert len(janela.tabela.get_children()) == 1
+    janela.bt_aprovar.invoke()
+    assert janela.escolha == ("aprovar", itens[0]) and not janela.winfo_exists()
+    vazia = JanelaPrevias(app, lambda: [], ouvidos.append, descartados.append)
+    app.update()
+    assert vazia.bt_aprovar.cget("state") == "disabled"
+    vazia.destroy()
+
+
+def test_opcoes_da_dublagem_nova(app):
+    """Configurações > Dublagem: natural, dentro do vídeo e fase de teste (que só vale com 'dentro do vídeo')."""
+    o = app.obter_opcoes_jellyfin()
+    assert o.separar_vozes and o.dublagem_no_original and o.dublagem_previa and o.avulsos_legendar
+    app.var_jf_dublagem_no_original.set(False)
+    app._ao_trocar_dublagem_no_original()
+    assert app.cb_dublagem_previa.cget("state") == "disabled"
+    app._salvar_config()
+    from videoscraper import automacao
+    salvo, _ = automacao.opcoes_salvas()
+    assert salvo.dublagem_no_original is False and salvo.separar_vozes is True

@@ -172,6 +172,7 @@ class OpcoesJellyfin:
     avulsos_legendar: bool = True    # vídeos avulsos: a legenda em português entra como faixa DENTRO do vídeo
     dublagem_no_original: bool = True   # a dublagem vira uma faixa do próprio arquivo (False: 'Nome - Dublado IA.mkv')
     separar_vozes: bool = True       # tira as vozes originais (IA no PC) e a dublagem entra sobre a música e os efeitos
+    dublagem_previa: bool = True     # fase de teste: uma prévia para ouvir e aprovar antes de gravar no original
     resumo_diario: bool = False      # mandar no Discord/Telegram, uma vez por dia, o que o Maestro fez
     hora_resumo: int = 21
 
@@ -1727,6 +1728,78 @@ class JanelaCanais(ctk.CTkToplevel):
 
 
 # =============================================================================== janela
+class JanelaPrevias(ctk.CTkToplevel):
+    """Fase de teste da dublagem: as prévias prontas, para ouvir e então aprovar (grava no original) ou descartar.
+    itens(): [{video, previa, criada}]; ouvir/aprovar/descartar(item). Aprovar fecha a janela (o app grava numa
+    tarefa); `escolha` fica com ("aprovar", item) para quem abriu a janela saber."""
+
+    def __init__(self, master, itens, ouvir, descartar):
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.itens_de, self.ouvir, self.descartar = itens, ouvir, descartar
+        self.escolha = None
+        self.title("Prévias da dublagem")
+        self.geometry("860x420")
+        self.minsize(640, 320)
+        self.transient(master)
+        ctk.CTkLabel(self, text="Prévias da dublagem (fase de teste)", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
+                     text_color=Tema.TEXTO, anchor="w").pack(fill="x", padx=24, pady=(18, 2))
+        ctk.CTkLabel(self, text="O original ainda não foi alterado. Ouça a prévia (abre no seu player, com a dublagem e "
+                     "a legenda) e, se gostar, aprove: a faixa dublada entra no vídeo original em poucos minutos, sem "
+                     "dublar de novo. Não gostou? Descarte, ajuste as vozes em Configurações > Dublagem e duble de "
+                     "novo.", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE,
+                     anchor="w", justify="left", wraplength=800).pack(fill="x", padx=24, pady=(0, 10))
+        quadro = ctk.CTkFrame(self, fg_color=Tema.CARTAO)
+        quadro.pack(fill="both", expand=True, padx=24)
+        self.tabela = ttk.Treeview(quadro, columns=("video", "criada", "pasta"), show="headings",
+                                   selectmode="browse", style="Moderno.Treeview", height=6)
+        for chave, texto, largura, estica in (("video", "Vídeo", 320, True), ("criada", "Prévia feita em", 140, False),
+                                              ("pasta", "Pasta do vídeo", 320, True)):
+            self.tabela.heading(chave, text=texto, anchor="w")
+            self.tabela.column(chave, width=largura, stretch=estica, anchor="w")
+        self.tabela.pack(fill="both", expand=True)
+        self.tabela.bind("<Double-1>", lambda e: self._ouvir())
+        botoes = ctk.CTkFrame(self, fg_color="transparent")
+        botoes.pack(fill="x", padx=24, pady=14)
+        self.bt_ouvir = master._botao(botoes, "▶  Ouvir a prévia", self._ouvir, largura=160)
+        self.bt_aprovar = master._botao(botoes, "✓  Aprovar e gravar no original", self._aprovar, "primario")
+        self.bt_descartar = master._botao(botoes, "✕  Descartar", self._descartar, "perigo", largura=130)
+        for b in (self.bt_ouvir, self.bt_aprovar, self.bt_descartar):
+            b.pack(side="left", padx=(0, 10))
+        master._botao(botoes, "Fechar", self.destroy, "fantasma", largura=90).pack(side="right")
+        self.recarregar()
+
+    def recarregar(self) -> None:
+        self._itens = list(self.itens_de())
+        self.tabela.delete(*self.tabela.get_children())
+        for i, item in enumerate(self._itens):
+            video = Path(item["video"])
+            self.tabela.insert("", "end", iid=str(i), values=(video.name, item.get("criada", "").replace("T", " "),
+                                                              str(video.parent)))
+        if self._itens:
+            self.tabela.selection_set("0")
+        estado = "normal" if self._itens else "disabled"
+        for b in (self.bt_ouvir, self.bt_aprovar, self.bt_descartar):
+            b.configure(state=estado)
+
+    def escolhido(self) -> dict | None:
+        selecao = self.tabela.selection()
+        return self._itens[int(selecao[0])] if selecao else None
+
+    def _ouvir(self) -> None:
+        if (item := self.escolhido()):
+            self.ouvir(item)
+
+    def _aprovar(self) -> None:
+        if (item := self.escolhido()):
+            self.escolha = ("aprovar", item)
+            self.destroy()
+
+    def _descartar(self) -> None:
+        if (item := self.escolhido()):
+            self.descartar(item)
+            self.recarregar()
+
+
 def tamanho_inicial(largura_tela: int, altura_tela: int, escala: float = 1.0
                     ) -> tuple[int, int, int, int, tuple[int, int]]:
     """(largura, altura, x, y, (largura mínima, altura mínima)) da janela principal.
@@ -2290,7 +2363,9 @@ class JanelaModerna(ctk.CTk):
         self.bt_legendar_audio = self._botao(voz, "Criar legenda pelo áudio...", self.ao_legendar_audio)
         self.bt_sincronizar = self._botao(voz, "Sincronizar legendas...", self.ao_sincronizar_legendas)
         self.bt_dublar = self._botao(voz, "Dublar...", self.ao_dublar)
-        for b in (self.bt_traduzir_legendas, self.bt_legendar_audio, self.bt_sincronizar, self.bt_dublar):
+        self.bt_previas_jf = self._botao(voz, "🎧 Prévias", self.ao_previas)
+        for b in (self.bt_traduzir_legendas, self.bt_legendar_audio, self.bt_sincronizar, self.bt_dublar,
+                  self.bt_previas_jf):
             b.configure(height=34)
             b.pack(side="left", padx=(0, 8))
 
@@ -2493,8 +2568,11 @@ class JanelaModerna(ctk.CTk):
                                                                                        expand=True)
         self._botao(linha, "Escolher...", lambda: self._escolher_pasta_em(self.var_jf_pasta_avulsos),
                     "secundario").pack(side="left", padx=(8, 0))
+        self.var_jf_avulsos_legendar = tk.BooleanVar(value=True)
+        self._checkbox(lateral, "Legendar: a legenda em português entra como faixa DENTRO do vídeo (o .srt ao lado sai)",
+                       self.var_jf_avulsos_legendar)
         self.var_jf_avulsos_dublar = tk.BooleanVar(value=True)
-        self._checkbox(lateral, "Dublar também (com o motor e as vozes de Configurações > Dublagem)",
+        self._checkbox(lateral, "Dublar (com o motor e as vozes de Configurações > Dublagem)",
                        self.var_jf_avulsos_dublar)
 
         # ===================================================== Jellyfin (servidor)
@@ -2652,7 +2730,10 @@ class JanelaModerna(ctk.CTk):
             row=0, column=2, padx=(10, 20), pady=(16, 6))
         baixo = ctk.CTkFrame(cartao, fg_color="transparent")
         baixo.grid(row=1, column=0, columnspan=3, sticky="ew", padx=(2, 20), pady=(0, 10))
-        self.cb_av_dublar = self._checkbox(baixo, "Dublar também (com o motor e as vozes de Configurações > Dublagem)",
+        self.cb_av_legendar = self._checkbox(baixo, "Legendar (a legenda em português entra no vídeo)",
+                                             self.var_jf_avulsos_legendar)
+        self.cb_av_legendar.pack_configure(side="left")
+        self.cb_av_dublar = self._checkbox(baixo, "Dublar (com o motor e as vozes de Configurações > Dublagem)",
                                            self.var_jf_avulsos_dublar)
         self.cb_av_dublar.pack_configure(side="left")
         self._botao(baixo, "⚙ Opções", self.mostrar_opcoes_avulsos, "fantasma", largura=100).pack(side="right")
@@ -2664,9 +2745,11 @@ class JanelaModerna(ctk.CTk):
         self.bt_av_processar = self._botao(barra, "Processar", self.ao_processar_avulsos, largura=140)
         self.bt_av_limpar = self._botao(barra, "Tirar os adicionados", self.limpar_avulsos_adicionados, largura=170)
         self.bt_parar_av = self._botao(barra, "Parar", self.ao_parar, "perigo", largura=100)
+        self.bt_previas_av = self._botao(barra, "🎧 Prévias", self.ao_previas, largura=130)
         for b in (self.bt_av_olhar, self.bt_av_adicionar, self.bt_av_processar, self.bt_av_limpar):
             b.pack(side="left", padx=(0, 10))
         self.bt_parar_av.pack(side="right")
+        self.bt_previas_av.pack(side="right", padx=(0, 10))
 
         corpo = self._corpo(aba, linha=2)
         self.tabela_av, faixa = self._criar_tabela(
@@ -2862,6 +2945,26 @@ class JanelaModerna(ctk.CTk):
         self.var_jf_motor_voz.trace_add("write", lambda *_: self._sincronizar_modo_voz())
         self.var_jf_figurantes_piper.trace_add("write", lambda *_: self._sincronizar_modo_voz())
 
+        self._rotulo(lateral, "Como fica a dublagem", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4),
+                                                                                           **p)
+        self.var_jf_separar_vozes = tk.BooleanVar(value=True)
+        self._checkbox(lateral, "Dublagem natural: tirar as vozes originais (fica a música e os efeitos)",
+                       self.var_jf_separar_vozes)
+        self._rotulo(lateral, "IA no seu PC, grátis. Mais lento: um filme de 2 h leva uns 40 min a mais. Desmarcado: "
+                              "\"voice-over\" (o áudio original só abaixa enquanto a voz fala).",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", padx=(46, 18), pady=(0, 6))
+        self.var_jf_dublagem_no_original = tk.BooleanVar(value=True)
+        self._checkbox(lateral, "Gravar a dublagem dentro do próprio vídeo (faixa \"Português (dublagem IA)\")",
+                       self.var_jf_dublagem_no_original, self._ao_trocar_dublagem_no_original)
+        self._rotulo(lateral, "O áudio original continua lá, como 2ª faixa; a cópia é conferida antes de trocar o "
+                              "original. Desmarcado: um arquivo à parte, \"Nome - Dublado IA.mkv\".",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", padx=(46, 18), pady=(0, 6))
+        self.var_jf_dublagem_previa = tk.BooleanVar(value=True)
+        self.cb_dublagem_previa = self._checkbox(
+            lateral, "Fase de teste: primeiro uma prévia para eu ouvir e aprovar (botão \"🎧 Prévias\")",
+            self.var_jf_dublagem_previa)
+        self.cb_dublagem_previa.pack_configure(padx=(42, 18))
+
         self._rotulo(lateral, "Vozes", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
         self._rotulo(lateral, "Voz principal do Gemini:").pack(anchor="w", pady=(2, 2), **p)
         self.var_jf_voz_gemini = tk.StringVar(value=self.VOZES_GEMINI[0])
@@ -2983,6 +3086,19 @@ class JanelaModerna(ctk.CTk):
 
     def ao_clonar_voz(self) -> None:                    # o app faz (precisa da chave e da internet)
         pass
+
+    def _ao_trocar_dublagem_no_original(self) -> None:
+        """A fase de teste só faz sentido com a dublagem dentro do vídeo (à parte, o arquivo já é a "prévia")."""
+        self.cb_dublagem_previa.configure(state="normal" if self.var_jf_dublagem_no_original.get() else "disabled")
+
+    def ao_previas(self) -> None:                       # o app abre a janela das prévias
+        pass
+
+    def atualizar_botoes_previas(self, quantas: int) -> None:
+        """'🎧 Prévias (2)': destacado quando há prévia esperando você ouvir."""
+        texto = f"🎧 Prévias ({quantas})" if quantas else "🎧 Prévias"
+        for botao in (self.bt_previas_jf, self.bt_previas_av):
+            botao.configure(text=texto, text_color=Tema.AVISO if quantas else Tema.TEXTO)
 
     def ao_olhar_avulsos(self) -> None:                 # o app faz (lê as pastas numa tarefa)
         pass
@@ -3508,7 +3624,9 @@ class JanelaModerna(ctk.CTk):
             tipo_cloud=self.tipo_cloud_escolhido(), voz_cloud=self.var_jf_voz_cloud.get().split()[0],
             chave_cloud_tts=self.var_jf_chave_cloud.get().strip(), cotacao_dolar=float(self.campo_cotacao_dolar.get()),
             iof_cartao=float(self.campo_iof.get()),
-            avulsos_dublar=self.var_jf_avulsos_dublar.get(),
+            avulsos_dublar=self.var_jf_avulsos_dublar.get(), avulsos_legendar=self.var_jf_avulsos_legendar.get(),
+            dublagem_no_original=self.var_jf_dublagem_no_original.get(),
+            dublagem_previa=self.var_jf_dublagem_previa.get(), separar_vozes=self.var_jf_separar_vozes.get(),
             resumo_diario=self.var_jf_resumo_diario.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
@@ -3627,13 +3745,17 @@ class JanelaModerna(ctk.CTk):
                   "figurantes_piper": self.var_jf_figurantes_piper,
                   "perguntar_filmes": self.var_jf_perguntar_filmes, "robo_so_piper": self.var_jf_robo_so_piper,
                   "guardar_gravacoes": self.var_jf_guardar_gravacoes,
-                  "avulsos_dublar": self.var_jf_avulsos_dublar}
+                  "avulsos_dublar": self.var_jf_avulsos_dublar,
+                  "avulsos_legendar": self.var_jf_avulsos_legendar,
+                  "dublagem_no_original": self.var_jf_dublagem_no_original,
+                  "dublagem_previa": self.var_jf_dublagem_previa, "separar_vozes": self.var_jf_separar_vozes}
         for chave, var in textos.items():
             if dados.get(chave):
                 var.set(dados[chave])
         for chave, var in marcas.items():
             if chave in dados:
                 var.set(bool(dados[chave]))
+        self._ao_trocar_dublagem_no_original()
         if dados.get("idioma"):
             self.definir_idiomas_jf(dados["idioma"])
         if dados.get("voz_gemini"):                      # salvo só o nome ("Kore", "clone:Izael"); o menu mostra

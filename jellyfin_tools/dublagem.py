@@ -498,6 +498,51 @@ def trocar_original(ffmpeg: str, video: Path, copia: Path, final: Path, audios_a
     return final
 
 
+def aprovar_previa(ffmpeg: str, video: str | Path, previa: str | Path, legenda: str | Path | None = None,
+                   parar=None, inspecionar_=None) -> Path:
+    """Fase de teste aprovada: a faixa dublada da prévia (a 1ª) entra no ORIGINAL, com a legenda se pedida.
+    Só junta (não dubla nem separa as vozes de novo); a cópia é conferida antes de trocar. A prévia é apagada."""
+    video, previa = Path(video), Path(previa)
+    legenda = Path(legenda) if legenda and Path(legenda).is_file() else None
+    if not previa.is_file():
+        raise ErroDublagem("a prévia não existe mais (dublar de novo)")
+    final, formato = destino_no_original(video)
+    copia = temporario_no_original(video)
+    copiar = video.suffix.lower() == ".mkv" or (formato == "mp4" and video.suffix.lower() in MESMO_MP4)
+    olhar = inspecionar_ or (lambda a: inspecionar(ffmpeg, a))
+    antes = olhar(video)
+    comando = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(video), "-i", str(previa)]
+    if legenda:
+        comando += ["-i", str(legenda)]
+    comando += ["-map", "0:v?", "-map", "1:a:0", "-map", "0:a"]
+    if legenda:
+        comando += ["-map", "2:0"]
+    if copiar:
+        comando += ["-map", "0:s?"] + (["-map", "0:t?"] if formato == "matroska" else [])
+    comando += ["-c", "copy"] + (["-c:s", "mov_text"] if formato == "mp4" and (legenda or copiar) else [])
+    comando += ["-metadata:s:a:0", "language=por", "-metadata:s:a:0", "title=Português (dublagem IA)",
+                "-disposition:a:0", "default"]
+    for i in range(antes.audio):
+        comando += [f"-disposition:a:{i + 1}", "0"]
+    if legenda:
+        comando += ["-metadata:s:s:0", "language=por", "-metadata:s:s:0", f"title={TITULO_LEGENDA}",
+                    "-disposition:s:0", "0"]
+    comando += ["-progress", "pipe:1", "-nostats", "-f", formato, str(copia)]
+    try:
+        _rodar_ffmpeg(comando, antes.duracao, parar, erro_padrao="o ffmpeg não conseguiu pôr a dublagem no vídeo")
+        final = trocar_original(ffmpeg, video, copia, final, 1,
+                                (antes.legenda if copiar else 0) + (1 if legenda else 0),
+                                lambda a: antes if Path(a) == video else olhar(a))
+    finally:
+        copia.unlink(missing_ok=True)
+    if legenda:
+        legenda.unlink(missing_ok=True)            # está dentro do vídeo (senão apareceria duas vezes)
+    previa.unlink(missing_ok=True)
+    with contextlib.suppress(OSError):
+        previa.parent.rmdir()                      # a pasta da prévia, se ficou vazia
+    return final
+
+
 def embutir_legenda(ffmpeg: str, video: str | Path, legenda: str | Path, apagar_srt: bool = True, parar=None,
                     inspecionar_=None) -> Path:
     """Só a legenda (sem dublar): ela entra como faixa 'Português' dentro do próprio vídeo. Devolve o arquivo final.
@@ -691,12 +736,15 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
                  sondar=faixas_de_audio, adaptar=None, avisar=None, vozes: dict | None = None,
                  pasta_cache: str | Path | None = None, trecho: tuple[float, float] | None = None,
                  destino: str | Path | None = None, separar=None, no_original: bool = False,
-                 legenda_no_video: bool = False) -> ResultadoDublagem:
+                 legenda_no_video: bool = False, previa: str | Path | None = None) -> ResultadoDublagem:
     """Lê a legenda com a voz, monta a trilha e grava 'Nome - Dublado IA.mkv' (o original não é tocado) ou, com
     no_original, acrescenta a faixa 'Português (dublagem IA)' no PRÓPRIO arquivo (a cópia é conferida antes de trocar).
     separar(vídeo, destino.flac, trecho, duração, parar, ao_progresso): tira as vozes originais (separar_vozes) e a
     dublagem entra sobre a música e os efeitos; sem ele, fica o "voice-over" (o original só abaixa).
     legenda_no_video: a legenda em português também entra como faixa (e o .srt ao lado sai, se for no original).
+    previa (com no_original): a FASE DE TESTE. Grava a versão dublada nesse arquivo (fora da biblioteca) e NÃO mexe
+    no original; status "previa". Depois de ouvir, aprovar_previa() põe a faixa no original (rápido: não dubla de
+    novo) ou a prévia é descartada.
     adaptar([(id, texto, máx. letras, fala anterior)]) -> {id: texto mais curto}: as falas que não cabem no tempo
     são reescritas (ver adaptacao.py) e lidas de novo. Se falhar, segue sem adaptar. avisar(texto): para o log.
     vozes: {número da fala: voz} (uma voz por personagem; ver personagens.py).
@@ -706,6 +754,10 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
     progresso guardado: o filme inteiro, depois, não paga de novo por elas."""
     video, legenda = Path(video), Path(legenda)
     no_original = no_original and not trecho                        # a amostra é sempre um vídeo à parte
+    if no_original and previa:                                       # fase de teste: o original não é tocado
+        no_original, destino = False, Path(previa)
+        Path(previa).unlink(missing_ok=True)                         # uma prévia antiga deste vídeo é refeita
+    eh_previa = previa is not None and destino == Path(previa)
     final, formato = destino_no_original(video) if no_original else (None, "matroska")
     destino = (temporario_no_original(video) if no_original else
                Path(destino) if destino else caminho_dublado(video))
@@ -795,8 +847,8 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
     if pasta_cache and not trecho:
         shutil.rmtree(pasta_do_filme(pasta_cache, video), ignore_errors=True)      # pronto: o progresso não serve mais
     andamento(1.0)
-    return ResultadoDublagem(video, "dublado", "", destino, len(indices), contas["aceleradas"], contas["cortadas"],
-                             adaptadas, retomadas)
+    return ResultadoDublagem(video, "previa" if eh_previa else "dublado", "", destino, len(indices),
+                             contas["aceleradas"], contas["cortadas"], adaptadas, retomadas)
 
 
 def _adaptar(clipes, textos, duracao, motor, adaptar, parar, avisar, vozes, pasta, indices=None):
