@@ -2440,7 +2440,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
     def _confirmar_dublagem(self, itens: list, o) -> None:
         if not itens:
-            self.mostrar_mensagem("Dublar filmes", "Nenhum filme para dublar: é preciso ter a legenda em português "
+            self.mostrar_mensagem("Dublar", "Nada para dublar: é preciso ter a legenda em português "
                                   "(\"Criar legenda pelo áudio\" ou \"Traduzir legendas\" fazem uma) e não ter "
                                   "áudio em português nem versão dublada.", "info")
             return
@@ -2484,8 +2484,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
                         " — preencha a chave da Anthropic para o Claude reescrevê-las mais curtas e naturais."
                         if o.encurtar_falas else "."))
         escolha = self.escolher(
-            "Dublar filmes (voz sintética)",
-            f"{len(itens)} filme(s) com legenda em português e sem áudio em português:\n{exemplos}\n\n"
+            "Dublar (voz sintética)",
+            f"{len(itens)} {'vídeo(s)' if episodios else 'filme(s)'} com legenda em português e sem áudio em "
+            f"português:\n{exemplos}\n\n"
             f"Cada filme ganha 'Nome - Dublado IA.mkv': a legenda é lida {voz} e a voz original fica mais baixa por "
             "baixo, no estilo narração de documentário. A boca dos atores não acompanha. O Jellyfin mostra as duas "
             f"versões do filme.{onde_series}{encurtar}\n\n"
@@ -2566,8 +2567,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
                           + (" e o Claude traduz se o áudio não for português" if tem_claude else ""))
         if o.avulsos_dublar:
             motor = ("Gemini (pago por uso)" if automacao.usa_gemini(o) else f"Piper, voz \"{o.voz_dublagem}\" (grátis)")
-            linhas.append(f"• Depois, dubla os que ficarem com legenda em português ({len(plano.dublar)} já estão "
-                          f"prontos) com o {motor}: 'Nome - Dublado IA.mkv' ao lado do original")
+            prontos = f"{len(plano.dublar)} já pronto(s) para dublar" if plano.dublar else "nenhum pronto ainda"
+            linhas.append(f"• Depois, dubla os que ficarem com legenda em português ({prontos}) com o {motor}: "
+                          "'Nome - Dublado IA.mkv' ao lado do original")
         atual = gastos.atual()
         teto = (f"\n\nGastos do mês até agora: {atual.resumo()}." if atual is not None and atual.total() else "")
         escolha = self.escolher("Vídeos avulsos", f"{plano.videos} vídeo(s):\n" + "\n".join(linhas) + "\n\nO original "
@@ -2757,7 +2759,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                      + (f"\nNão feitos (parou antes): {total - len(resultados)}" if len(resultados) < total else "")
                      + f"\n\nTempo: {self._texto_duracao(time.monotonic() - inicio)}"
                      + ("\n\nNo Jellyfin, abra o filme e escolha a versão \"Dublado IA\"." if feitos else ""))
-            self.fila.put(("status_fim", f"Dublagem: {len(feitos)} de {total} filme(s)."))
+            self.fila.put(("status_fim", f"Dublagem: {len(feitos)} de {total} vídeo(s)."))
             self.fila.put(("msg", ("Dublar filmes", texto, "erro" if erros and not feitos else "sucesso")))
 
         self._rodar(f"Dublando {len(itens)} filme(s) com voz sintética...", tarefa)

@@ -1323,7 +1323,7 @@ def test_dublar_filmes_pela_janela(app, tmp_path, monkeypatch):
     app.bt_dublar.invoke()                                             # de novo: já tem a versão dublada
     esperar(app)
     esperar(app)
-    assert "Nenhum filme para dublar" in app.caixas[-1][2]
+    assert "Nada para dublar" in app.caixas[-1][2]
 
 
 def test_botao_testar_chaves_das_legendas(app, api_falsa, monkeypatch):
