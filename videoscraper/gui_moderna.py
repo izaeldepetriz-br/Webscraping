@@ -1724,6 +1724,23 @@ class JanelaCanais(ctk.CTkToplevel):
 
 
 # =============================================================================== janela
+def tamanho_inicial(largura_tela: int, altura_tela: int, escala: float = 1.0
+                    ) -> tuple[int, int, int, int, tuple[int, int]]:
+    """(largura, altura, x, y, (largura mínima, altura mínima)) da janela principal.
+
+    A tela vem em pixels de verdade, mas o CTk multiplica a largura e a altura pela escala do Windows
+    (125% = 1,25): por isso a conta é feita em "pontos" (pixels ÷ escala). Sem isso, numa tela de 1080 px
+    com 125%, a janela pedia 900 pontos = 1125 px e a parte de baixo ficava fora da tela.
+    A posição (x, y) não é multiplicada pelo CTk: fica em pixels, centralizada (40 px = barra de tarefas)."""
+    escala = escala or 1.0
+    pontos_l, pontos_a = largura_tela / escala, altura_tela / escala
+    largura = int(min(1320, pontos_l - 40))
+    altura = int(max(520, min(900, pontos_a - 110)))      # 110: barra de título + barra de tarefas, com folga
+    x = max(0, int((largura_tela - largura * escala) / 2))
+    y = max(0, int((altura_tela - 40 - altura * escala) / 2) - 15)
+    return largura, altura, x, y, (min(1100, largura), min(680, altura))
+
+
 class JanelaModerna(ctk.CTk):
     COLUNAS = (("n", "#", 48, False), ("status", "Situação", 110, False), ("titulo", "Título", 240, True),
                ("tipo", "Origem", 130, False), ("url", "Link", 300, True),
@@ -1741,9 +1758,10 @@ class JanelaModerna(ctk.CTk):
         from .atualizacao import versao_atual
         self.title(f"{icone.NOME_APP} {versao_atual()}")
         icone.aplicar(self)                            # o "M" com a batuta (barra de título e de tarefas)
-        altura = min(900, max(700, self.winfo_screenheight() - 90))
-        self.geometry(f"1320x{altura}")
-        self.minsize(1100, 680)
+        largura, altura, x, y, minima = tamanho_inicial(self.winfo_screenwidth(), self.winfo_screenheight(),
+                                                        self._get_window_scaling())
+        self.geometry(f"{largura}x{altura}+{x}+{y}")
+        self.minsize(*minima)
         self._pasta_padrao = pasta_padrao
         self._ocupado = False
         self._contadores: dict = {}                   # último texto de cada contador de tabela
@@ -1855,7 +1873,7 @@ class JanelaModerna(ctk.CTk):
         self.lb_subtitulo.pack(anchor="w", pady=(2, 0))
         # "painel de saúde" (aba Jellyfin): bibliotecas, Jellyfin, vigia, lugar fixo e versão numa linha só
         self.lb_saude = ctk.CTkLabel(textos, text="", font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO_SUAVE,
-                                     anchor="w", justify="left", wraplength=860)    # muita coisa: quebra a linha
+                                     anchor="w", justify="left", wraplength=760)    # muita coisa: quebra a linha
         self.seletor_aba = ctk.CTkSegmentedButton(
             topo, values=["Vídeos", "Jellyfin", "⚙ Configurações"], command=self.mostrar_aba, height=38,
             corner_radius=Tema.RAIO_CONTROLE, font=self.f_botao, fg_color=Tema.CARTAO,
@@ -1924,9 +1942,18 @@ class JanelaModerna(ctk.CTk):
         self.bt_baixar_todos = self._botao(barra, "Baixar todos", self.ao_baixar_todos, largura=130)
         self.bt_login = self._botao(barra, "Fazer login no site", self.ao_fazer_login, largura=160)
         self.bt_parar = self._botao(barra, "Parar", self.ao_parar, "perigo", largura=100)
+        # atalho para as opções da busca (navegador, qualidade, pasta...), que ficam em ⚙ Configurações
+        self.bt_opcoes_videos = self._botao(barra, "⚙  Opções da busca", self.mostrar_opcoes_videos, "fantasma",
+                                            largura=150)
         for b in (self.bt_buscar, self.bt_baixar_sel, self.bt_baixar_todos, self.bt_login):
             b.pack(side="left", padx=(0, 10))
         self.bt_parar.pack(side="right")
+        self.bt_opcoes_videos.pack(side="right", padx=(0, 10))
+
+    def mostrar_opcoes_videos(self) -> None:
+        """⚙ Configurações > Opções de busca."""
+        self.mostrar_aba(self.ABA_CONFIG)
+        self.mostrar_config("Opções de busca")
 
     # ------------------------------------------------------------------ corpo: opções + vídeos + log
     def _montar_corpo(self, aba) -> None:
@@ -1961,8 +1988,8 @@ class JanelaModerna(ctk.CTk):
 
     # 2. painel de opções (cartão lateral; rola se a tela for baixa)
     def _montar_opcoes(self, corpo) -> None:
-        """As opções da busca de vídeos ficam em ⚙ Configurações > Vídeos (busca)."""
-        lateral = self._secao_config("Vídeos (busca)")
+        """As opções da busca de vídeos ficam em ⚙ Configurações > Opções de busca."""
+        lateral = self._secao_config("Opções de busca")
         p = dict(padx=18)
 
         self._rotulo(lateral, "Opções", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(12, 4), **p)
@@ -2601,16 +2628,17 @@ class JanelaModerna(ctk.CTk):
 
     # ------------------------------------------------------------------ ⚙ Configurações (3ª aba)
     ABA_CONFIG = "⚙ Configurações"
-    GRUPOS_CONFIG = (("BIBLIOTECA", ("Nomes e TMDB", "Organização e limpeza", "Vigia (automático)", "Espelhos (.strm)")),
+    GRUPOS_CONFIG = (("VÍDEOS", ("Opções de busca",)),      # a aba Vídeos: no topo, fácil de achar
+                     ("BIBLIOTECA", ("Nomes e TMDB", "Organização e limpeza", "Vigia (automático)", "Espelhos (.strm)")),
                      ("LEGENDAS E VOZ", ("Legendas", "Tradução", "Legenda pelo áudio", "Dublagem",
                                          "Vídeos avulsos")),
                      ("SERVIDOR E AVISOS", ("Jellyfin", "Avisos e resumo do dia")),
-                     ("SISTEMA", ("Chaves de API", "Gastos (APIs pagas)", "Agendamentos", "Vídeos (busca)",
+                     ("SISTEMA", ("Chaves de API", "Gastos (APIs pagas)", "Agendamentos",
                                   "Geral, backup e versão")))
     ICONES_CONFIG = {"Nomes e TMDB": "🏷", "Organização e limpeza": "🧹", "Vigia (automático)": "👁",
                      "Espelhos (.strm)": "🔗", "Legendas": "💬", "Tradução": "🌐", "Legenda pelo áudio": "🎧",
                      "Dublagem": "🎙", "Jellyfin": "🖥", "Avisos e resumo do dia": "🔔", "Chaves de API": "🔑",
-                     "Agendamentos": "⏰", "Vídeos (busca)": "⬇", "Geral, backup e versão": "⚙",
+                     "Agendamentos": "⏰", "Opções de busca": "⬇", "Geral, backup e versão": "⚙",
                      "Vídeos avulsos": "📥", "Gastos (APIs pagas)": "💲"}
 
     def _montar_aba_config(self, aba) -> None:
@@ -2618,9 +2646,12 @@ class JanelaModerna(ctk.CTk):
         aba.grid_columnconfigure(0, weight=0)          # o menu tem largura fixa; o resto é do painel
         aba.grid_columnconfigure(1, weight=1)
         aba.grid_rowconfigure(0, weight=1)
-        menu = self._cartao(aba, width=250)
+        # o menu também rola: em notebook (ou com o zoom do Windows em 125%) os últimos itens ficavam escondidos
+        self.menu_config = menu = ctk.CTkScrollableFrame(aba, width=226, fg_color=Tema.CARTAO, corner_radius=Tema.RAIO,
+                                                         border_width=1, border_color=Tema.CARTAO_BORDA,
+                                                         scrollbar_button_color=Tema.CARTAO_BORDA,
+                                                         scrollbar_button_hover_color=Tema.CAMPO_BORDA)
         menu.grid(row=0, column=0, sticky="ns", padx=(28, 14), pady=(14, 14))
-        menu.pack_propagate(False)
         self._botoes_config: dict[str, ctk.CTkButton] = {}
         for grupo, nomes in self.GRUPOS_CONFIG:
             ctk.CTkLabel(menu, text=grupo, font=ctk.CTkFont(Tema.FAMILIA, 10, "bold"), text_color=Tema.TEXTO_FRACO,
@@ -2659,6 +2690,21 @@ class JanelaModerna(ctk.CTk):
         self._config_atual = nome
         try:
             self.painel_config._parent_canvas.yview_moveto(0)
+        except (AttributeError, tk.TclError):
+            pass
+        self._rolar_menu_config(self._botoes_config[nome])
+
+    def _rolar_menu_config(self, botao) -> None:
+        """Se o item escolhido estiver fora da parte visível do menu, rola o menu até ele."""
+        try:
+            canvas = self.menu_config._parent_canvas
+            self.update_idletasks()
+            total = max(self.menu_config.winfo_height(), 1)
+            visivel = canvas.winfo_height()
+            topo = canvas.yview()[0] * total
+            y, h = botao.winfo_y(), botao.winfo_height()
+            if y < topo or y + h > topo + visivel:
+                canvas.yview_moveto(max(0.0, (y - visivel / 2) / total))
         except (AttributeError, tk.TclError):
             pass
 

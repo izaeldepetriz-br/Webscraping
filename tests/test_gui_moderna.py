@@ -13,7 +13,7 @@ if os.name != "nt" and not os.environ.get("DISPLAY"):
     pytest.skip("sem tela (DISPLAY) para abrir janelas", allow_module_level=True)
 
 from videoscraper import app_moderna  # noqa: E402
-from videoscraper.gui_moderna import CampoNumerico, JanelaModerna  # noqa: E402
+from videoscraper.gui_moderna import CampoNumerico, JanelaModerna, tamanho_inicial  # noqa: E402
 from videoscraper.servico import MENSAGEM_ROBOTS  # noqa: E402
 
 
@@ -4352,3 +4352,42 @@ def test_traducao_local_pela_janela(app, tmp_path, monkeypatch):
     feita = filmes / "Filme (2003)" / "Filme (2003).pt-BR.srt"
     assert feita.is_file() and "[pt] Hello." in feita.read_text(encoding="utf-8")
     assert automacao.pasta_traducao_local().name == "traducao_local"
+
+
+@pytest.mark.parametrize("largura, altura, escala", [(1920, 1080, 1.0), (1920, 1080, 1.25), (1920, 1080, 1.5),
+                                                     (1366, 768, 1.0), (1280, 720, 1.25), (2560, 1440, 1.0)])
+def test_janela_cabe_na_tela_mesmo_com_o_zoom_do_windows(largura, altura, escala):
+    """O CTk multiplica a largura e a altura pela escala (125% = 1,25): a janela (e o rodapé) tem de caber na tela,
+    descontando a barra de tarefas. Antes, em 1080 px com 125%, ela pedia 1125 px e a parte de baixo sumia."""
+    l, a, x, y, (min_l, min_a) = tamanho_inicial(largura, altura, escala)
+    assert x + l * escala <= largura and y + a * escala + 30 <= altura - 40     # 30: barra de título
+    assert min_l <= l and min_a <= a
+    assert tamanho_inicial(1920, 1080, 1.0)[:2] == (1320, 900)                    # tela comum: como antes
+
+
+def test_menu_das_configuracoes_rola_e_atalho_das_opcoes_de_busca(app):
+    """As opções de busca ficam em Configurações > VÍDEOS > Opções de busca (1º item do menu), e o botão
+    '⚙ Opções da busca' da aba Vídeos leva direto lá. Em tela baixa, o menu rola até o item escolhido
+    (antes os últimos itens ficavam escondidos, sem barra de rolagem)."""
+    assert isinstance(app.menu_config, ctk.CTkScrollableFrame)
+    assert app.GRUPOS_CONFIG[0] == ("VÍDEOS", ("Opções de busca",))
+    app.minsize(600, 400)
+    app.geometry("1100x480")
+    app.update()
+    app.bt_opcoes_videos.invoke()
+    app.update()
+    assert app.aba_atual() == app.ABA_CONFIG and app.config_atual() == "Opções de busca"
+    assert app._secoes_config["Opções de busca"].winfo_ismapped()
+    canvas = app.menu_config._parent_canvas
+
+    def visivel(nome):
+        botao, total = app._botoes_config[nome], app.menu_config.winfo_height()
+        topo = canvas.yview()[0] * total
+        return topo <= botao.winfo_y() and botao.winfo_y() + botao.winfo_height() <= topo + canvas.winfo_height() + 1
+    assert canvas.yview()[0] == 0 and visivel("Opções de busca")
+    app._botoes_config["Geral, backup e versão"].invoke()          # o último item: o menu rola até ele
+    app.update()
+    assert canvas.yview()[0] > 0 and visivel("Geral, backup e versão")
+    app.bt_opcoes_videos.invoke()                                   # e volta para cima
+    app.update()
+    assert canvas.yview()[0] == 0
