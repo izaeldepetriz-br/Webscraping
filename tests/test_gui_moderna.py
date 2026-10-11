@@ -1227,6 +1227,7 @@ def test_traduzir_legendas_com_ia_pela_janela(app, tmp_path, monkeypatch):
         criados.append(k)
         return Tradutor(cliente=ClienteFalso(), **k)
     monkeypatch.setattr(app_moderna, "Tradutor", tradutor_falso)
+    monkeypatch.setattr(app_moderna.automacao, "Tradutor", tradutor_falso)  # quem cria o tradutor (tradutor_para)
     perguntas = []
     app.escolher = lambda t, m, opcoes, **k: (perguntas.append(m), opcoes[0])[1]
     app.ao_traduzir_legendas()
@@ -1265,6 +1266,7 @@ def test_criar_legenda_pelo_audio_pela_janela(app, tmp_path, monkeypatch):
     monkeypatch.setattr(app_moderna, "Transcritor",
                         lambda **k: (abertos.append(k), transcricao.Transcritor(motor=WhisperFalso(), **k))[1])
     monkeypatch.setattr(app_moderna, "Tradutor", lambda **k: Tradutor(cliente=ClienteFalso(), **k))
+    monkeypatch.setattr(app_moderna.automacao, "Tradutor", lambda **k: Tradutor(cliente=ClienteFalso(), **k))
     app.var_jf_chave_claude.set("sk-ant-teste")
     app.var_jf_modelo_whisper.set("medium")
     perguntas = []
