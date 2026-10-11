@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import contextlib
+import gc
 import json
 import logging
 import os
@@ -192,6 +193,19 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self.protocol("WM_DELETE_WINDOW", self.fechar)
         self.redirecionar_saida()
         self.after(100, self._processar_fila)
+        # Coleta de lixo SÓ aqui, na linha da janela: se o Python apagar uma fonte/imagem do Tk numa thread de
+        # tarefa, o Tk trava aquela thread segurando a trava de importação, e as outras tarefas param juntas
+        # (achado pelo diagnóstico de threads dos testes). Com a automática desligada, nada do Tk morre fora daqui.
+        gc.disable()
+        self._coleta_agendada = self.after(self.COLETA_A_CADA_MS, self._coletar_lixo)
+
+    COLETA_A_CADA_MS = 2000
+
+    def _coletar_lixo(self) -> None:
+        """A cada 2 s, na linha da janela: a coleta rápida (gerações novas); de vez em quando, a completa."""
+        self._coletas = getattr(self, "_coletas", 0) + 1
+        gc.collect(2 if self._coletas % 30 == 0 else 1)
+        self._coleta_agendada = self.after(self.COLETA_A_CADA_MS, self._coletar_lixo)
 
     def redirecionar_saida(self) -> None:
         sys.stdout = sys.stderr = _SaidaParaFila(self.fila)
@@ -3770,7 +3784,11 @@ class AppModerna(TVAoVivo, JanelaModerna):
         encerrar_log_da_acao(self._log_acao)
         self._log_acao = None
         sys.stdout, sys.stderr = self._stdout, self._stderr
+        if getattr(self, "_coleta_agendada", None):
+            self.after_cancel(self._coleta_agendada)
         self.destroy()
+        gc.collect()                                     # o que era da janela morre aqui, na linha certa,
+        gc.enable()                                      # e a coleta automática volta (ex.: depois, nos testes)
 
 
 def main(minimizado: bool | None = None) -> int:

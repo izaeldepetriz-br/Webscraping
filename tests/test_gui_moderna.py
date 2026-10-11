@@ -3965,3 +3965,13 @@ def test_tela_de_configuracoes(app):
     # as opções que eram do painel lateral continuam funcionando (agora em Configurações)
     assert app.bt_simular_vigia.master is app._secoes_config["Vigia (automático)"]
     assert app.bt_testar_gemini.master.master is app._secoes_config["Chaves de API"]
+
+
+def test_coleta_de_lixo_so_na_linha_da_janela(app):
+    """Com a janela aberta, a coleta automática fica desligada e roda pela própria janela (a cada 2 s): uma fonte
+    do Tk apagada numa thread de tarefa travava a thread segurando a trava de importação (e as outras tarefas)."""
+    import gc
+    assert not gc.isenabled() and app._coleta_agendada
+    antes = getattr(app, "_coletas", 0)
+    app._coletar_lixo()
+    assert app._coletas == antes + 1 and not gc.isenabled()
