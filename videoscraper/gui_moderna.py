@@ -3359,13 +3359,13 @@ class JanelaModerna(ctk.CTk):
     def var_minutos_teste(self) -> tk.StringVar:
         """Os minutos do teste: UM valor para o campo das Configurações e os campos ao lado dos botões Testar."""
         if not hasattr(self, "_var_minutos_teste"):
-            self._var_minutos_teste = tk.StringVar(value="2")
+            self._var_minutos_teste = tk.StringVar(self, value="2")
         return self._var_minutos_teste
 
     def var_inicio_teste(self) -> tk.StringVar:
         """De onde o teste começa ("12:30"; vazio = automático): o MESMO valor nas Configurações e nas abas."""
         if not hasattr(self, "_var_inicio_teste"):
-            self._var_inicio_teste = tk.StringVar(value="auto")
+            self._var_inicio_teste = tk.StringVar(self, value="auto")
         return self._var_inicio_teste
 
     def campo_minutos(self, barra) -> ctk.CTkFrame:
