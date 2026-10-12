@@ -127,6 +127,37 @@ SEGREDOS = ("chave_tmdb", "chave_opensubtitles", "chave_subdl", "jellyfin_api_ke
             "telegram_token", "chave_claude", "chave_gemini", "chave_cloud_tts")
 
 
+class _Parar:
+    """O "Parar" de UMA tarefa. Cada tarefa ganha o seu (uma nova não "desliga" o Parar de uma anterior que ainda
+    esteja terminando), e a linha de trabalho deixada para trás ("abandonadas") sempre vê "parar"."""
+
+    def __init__(self, abandonadas: set):
+        self._evento, self._abandonadas = threading.Event(), abandonadas
+
+    def set(self) -> None:
+        self._evento.set()
+
+    def clear(self) -> None:
+        self._evento.clear()
+
+    def is_set(self) -> bool:
+        return self._evento.is_set() or threading.get_ident() in self._abandonadas
+
+
+class _FilaDaTela(queue.Queue):
+    """A fila de mensagens para a janela; o que vem de uma tarefa abandonada no Parar é descartado (ela não mexe
+    mais na tela, nem no "fim" da tarefa seguinte)."""
+
+    def __init__(self, abandonadas: set):
+        super().__init__()
+        self.abandonadas = abandonadas
+
+    def put(self, item, block=True, timeout=None) -> None:
+        if threading.get_ident() in self.abandonadas:
+            return
+        super().put(item, block, timeout)
+
+
 class _LogParaFila(logging.Handler):
     """Manda as mensagens do log (que também vão para o arquivo) para o console da janela."""
 
@@ -152,8 +183,9 @@ STATUS_LEGENDA = {"baixada": ("baixada", "ok"), "ja_existe": ("já existia", Non
 class AppModerna(TVAoVivo, JanelaModerna):
     def __init__(self):
         super().__init__(pasta_padrao=PASTA_PADRAO)
-        self.fila: queue.Queue = queue.Queue()
-        self.evento_parar = threading.Event()
+        self._abandonadas: set[int] = set()          # tarefas que não obedeceram ao Parar a tempo
+        self.fila: queue.Queue = _FilaDaTela(self._abandonadas)
+        self.evento_parar = _Parar(self._abandonadas)
         self.links: list[LinkVideo] = []
         self.trabalhando = False
         self._fim_da_tarefa = 0.0               # time.monotonic() de quando a última tarefa acabou
@@ -293,9 +325,25 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
         self._rodar("Esperando você fazer login...", tarefa)
 
+    ESPERA_PARAR_MS = 3000                            # o Parar espera isso; depois, a tarefa fica para trás
+
     def ao_parar(self) -> None:
         self.evento_parar.set()
         self.definir_status("Parando... (termina o item atual)")
+        tarefa = getattr(self, "_tarefa_atual", None)
+        if tarefa is not None:
+            self.after(self.ESPERA_PARAR_MS, lambda: self._abandonar_se_preciso(tarefa))
+
+    def _abandonar_se_preciso(self, tarefa: threading.Thread) -> None:
+        """A tarefa não obedeceu ao Parar em 3 s (presa esperando um serviço da internet, por exemplo): a janela é
+        liberada já e ela fica para trás. Ela para sozinha na próxima conferência do Parar, sem mexer mais na tela."""
+        if not (self.trabalhando and tarefa is getattr(self, "_tarefa_atual", None) and tarefa.is_alive()):
+            return
+        self._abandonadas.add(tarefa.ident)
+        self._log.warning("Parar: a etapa atual não respondeu em %d s; ela foi deixada para trás e termina sozinha "
+                          "em segundo plano (o que ela fizer depois disso não é usado)", self.ESPERA_PARAR_MS // 1000)
+        self.fila.put(("fim", None))
+        self.after(150, lambda: self.definir_status("Parado."))
 
     def ao_abrir_link(self) -> None:
         link = self._link_selecionado()
@@ -495,7 +543,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         if self.trabalhando:
             return
         self.trabalhando = True
-        self.evento_parar.clear()
+        self.evento_parar = _Parar(self._abandonadas)   # um Parar novo para esta tarefa
         self.definir_status(status, ocupado=True)
         acao = status.rstrip(". ")
         self.iniciar_registro(acao)                  # cada ação com o seu registro no console
@@ -516,9 +564,11 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 traceback.print_exc()
                 self.fila.put(("msg", ("Erro", f"{type(erro).__name__}: {erro}", "erro")))
             finally:
-                self.fila.put(("fim", None))
+                self.fila.put(("fim", None))           # (se foi abandonada, a fila descarta)
+                self._abandonadas.discard(threading.get_ident())
 
-        threading.Thread(target=alvo, daemon=True).start()
+        self._tarefa_atual = threading.Thread(target=alvo, daemon=True)
+        self._tarefa_atual.start()
 
     OPCOES_ROBOTS = ("Ignorar nesta vez", "Ignorar sempre (até fechar o Maestro)", "Respeitar o robots.txt")
 

@@ -4652,3 +4652,32 @@ def test_minutos_do_teste_ao_lado_dos_botoes_e_jellyfin(app, tmp_path, monkeypat
     monkeypatch.setattr(app, "_pedir_arquivos_video", lambda pasta="", titulo="": pastas.append(pasta) or ())
     app.bt_roteiro_jf.invoke()
     assert pastas == [str(filmes)]
+
+
+def test_parar_libera_a_janela_mesmo_com_uma_etapa_presa(app, monkeypatch):
+    """Uma etapa presa (ex.: esperando um serviço da internet) que não confere o Parar: depois da espera, a janela é
+    liberada, e o que a etapa mandar depois não aparece na tela."""
+    import threading
+    monkeypatch.setattr(app, "ESPERA_PARAR_MS", 200)
+    soltar, viu_parar = threading.Event(), []
+
+    def presa():
+        soltar.wait(10)                                  # não confere o Parar enquanto espera
+        viu_parar.append(app.evento_parar.is_set())
+        app.fila.put(("msg", ("Atrasada", "não devia aparecer", "info")))
+    caixas = len(app.caixas)
+    app._rodar("Etapa presa...", presa)
+    assert app.trabalhando
+    app.ao_parar()
+    fim = time.time() + 5
+    while app.trabalhando and time.time() < fim:
+        app.update()
+        time.sleep(0.02)
+    assert not app.trabalhando                           # a janela voltou sem esperar a etapa
+    app._rodar("Outra tarefa...", lambda: time.sleep(0.3))   # a próxima tarefa não "desliga" o Parar da antiga
+    soltar.set()
+    esperar(app)
+    for _ in range(10):
+        app.update()
+        time.sleep(0.02)
+    assert viu_parar == [True] and len(app.caixas) == caixas   # a antiga viu "parar" e não mexeu na tela

@@ -248,6 +248,9 @@ primeira falha (antes esperava o tempo limite em cada filme).
 - **Cada etapa do teste aparece**: depois do Whisper, a barra e o log mostram "traduzindo N falas (Claude)",
   "preparando a voz (Gemini)" e a etapa da dublagem com o tempo que falta. A barra só anda para a frente. Se algo
   demorar, o log diz exatamente onde.
+- **Parar nunca mais fica "Parando..."**: se a etapa atual não obedecer ao Parar em 3 segundos (presa esperando um
+  serviço da internet, por exemplo), a janela é liberada na hora e a etapa fica para trás: ela termina sozinha em
+  segundo plano, sem mexer mais na tela, e a próxima tarefa não a "religa".
 
 ### Novidades da v2.18.2
 
