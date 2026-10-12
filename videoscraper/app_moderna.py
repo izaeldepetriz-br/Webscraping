@@ -2545,20 +2545,30 @@ class AppModerna(TVAoVivo, JanelaModerna):
                     "\n\nFalas longas demais: são aceleradas (até 35%)" + (
                         " — preencha a chave da Anthropic para o Claude reescrevê-las mais curtas e naturais."
                         if o.encurtar_falas else "."))
+        if o.dublagem_no_original:
+            onde = ("Primeiro uma PRÉVIA de cada um (fora da biblioteca): você ouve em \"🎧 Prévias\" e só o que "
+                    "aprovar ganha a faixa \"Português (dublagem IA)\" no próprio arquivo (o áudio original continua "
+                    "lá)." if automacao.usa_previa(o) else
+                    "Cada vídeo ganha a faixa \"Português (dublagem IA)\" no próprio arquivo (o áudio original "
+                    "continua lá); a cópia é conferida antes de trocar o original.")
+        else:
+            onde = ("Cada filme ganha 'Nome - Dublado IA.mkv' ao lado (o Jellyfin mostra as duas versões). O arquivo "
+                    "original não é tocado." + onde_series)
+        estilo = ("As vozes originais saem e a dublagem entra sobre a música e os efeitos"
+                  + (", com o tom e o eco da cena" if o.ambientar_voz else "") + " (mais lento)."
+                  if o.separar_vozes else "A voz original fica mais baixa por baixo (estilo documentário).")
         escolha = self.escolher(
             "Dublar (voz sintética)",
             f"{len(itens)} {'vídeo(s)' if episodios else 'filme(s)'} com legenda em português e sem áudio em "
             f"português:\n{exemplos}\n\n"
-            f"Cada filme ganha 'Nome - Dublado IA.mkv': a legenda é lida {voz} e a voz original fica mais baixa por "
-            "baixo, no estilo narração de documentário. A boca dos atores não acompanha. O Jellyfin mostra as duas "
-            f"versões do filme.{onde_series}{encurtar}\n\n"
-            f"Espaço em disco: cerca de {tamanho_legivel(espaco)} (o vídeo é copiado, sem perder qualidade).{download} "
-            "O arquivo original não é tocado.\n\nNa dúvida, ouça antes uma AMOSTRA de 1 minuto (o trecho com mais "
-            "falas): custa bem pouco, e o que ela gerar é reaproveitado quando você dublar o filme inteiro.",
-            (f"Dublar os {len(itens)}", self.BOTAO_AMOSTRA))
+            f"A legenda é lida {voz}. {estilo} A boca dos atores não acompanha.\n{onde}{encurtar}\n\n"
+            f"Espaço em disco: cerca de {tamanho_legivel(espaco)} (o vídeo é copiado, sem perder qualidade).{download}"
+            f"\n\nNa dúvida, faça antes um TESTE de {self.texto_minutos_teste()} (o trecho com mais falas): gasta "
+            "só o desse trecho, e o que ele gerar é reaproveitado quando você dublar o vídeo inteiro.",
+            (f"Dublar os {len(itens)}", self.botao_amostra()))
         if escolha is None:
             return
-        if escolha == self.BOTAO_AMOSTRA:
+        if escolha == self.botao_amostra():
             self._amostra(itens, o)
             return
         premium = {str(i.video) for i in itens}
@@ -2582,6 +2592,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self.atualizar_botoes_previas(len(automacao.previas_pendentes()))
         if janela.escolha and janela.escolha[0] == "aprovar":
             self._aprovar_previa(janela.escolha[1])
+        elif self.aba_atual() == "Avulsos" and self.linhas_avulsos():
+            self.ao_olhar_avulsos()                      # descartou: a lista volta a dizer o que falta
 
     def _ouvir_previa(self, item: dict) -> None:
         try:
@@ -2652,6 +2664,31 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 self.fila.put(("avulsos_pendente", (plano, o, pasta, arquivos)))
 
         self._rodar("Olhando os vídeos avulsos...", tarefa)
+
+    def ao_testar_avulso(self) -> None:
+        """Teste de alguns minutos do vídeo escolhido na lista: legenda e/ou dubla só esse trecho (gasta pouco)."""
+        o = self.obter_opcoes_jellyfin()
+        self._salvar_config()
+        video = self.video_avulso_escolhido()
+        if video is None:
+            self.mostrar_mensagem("Testar", "Clique em Olhar (ou Adicionar vídeos) e escolha um vídeo da lista.", "aviso")
+            return
+        if not (o.avulsos_legendar or o.avulsos_dublar):
+            self.mostrar_mensagem("Testar", "Marque Legendar e/ou Dublar.", "aviso")
+            return
+        minutos = self.texto_minutos_teste()
+
+        def tarefa():
+            andamento = lambda fracao, texto: self.fila.put(("jf_analise", (fracao, texto)))   # noqa: E731
+            r = automacao.testar_avulso(o, video, self._log, separar=automacao.separador_de_vozes(o, self._log),
+                                        parar=self.evento_parar.is_set, andamento=andamento)
+            if r.erro or not r.amostra:
+                self.fila.put(("msg", ("Testar", f"Não deu para fazer o teste de {video.name}: {r.erro}", "erro")))
+                return
+            minuto = f"{int(r.trecho[0]) // 60}:{int(r.trecho[0]) % 60:02d}"
+            self.fila.put(("abrir_amostra", (r.amostra, video.stem, minuto, r.falas)))
+
+        self._rodar(f"Testando {minutos} de {video.stem} (só esse trecho)...", tarefa)
 
     def ao_processar_avulsos(self) -> None:
         self.ao_olhar_avulsos(processar=True)
@@ -2726,13 +2763,15 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
         self._rodar("Processando os vídeos avulsos...", tarefa)
 
-    BOTAO_AMOSTRA = "Ouvir uma amostra (1 min)"
+    def botao_amostra(self) -> str:
+        return f"Testar {self.texto_minutos_teste()} (amostra)"
 
     def _amostra(self, itens: list, o) -> None:
         """Dubla só o minuto com mais falas de um filme, num vídeo curto fora da biblioteca, e abre no player.
         As falas ficam no progresso guardado do filme: a dublagem inteira, depois, não paga de novo por elas."""
+        minutos = automacao.minutos_de_teste(o)
         escolha = 0 if len(itens) == 1 else self.escolher_da_lista(
-            "Amostra de 1 minuto", "De qual filme?", [f"{i.video.stem} ({i.falas} falas)" for i in itens],
+            f"Teste de {self.texto_minutos_teste()}", "De qual filme?", [f"{i.video.stem} ({i.falas} falas)" for i in itens],
             "Fazer a amostra")
         if escolha is None:
             return
@@ -2741,7 +2780,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         def tarefa():
             try:
                 motor = automacao.preparar_motor(o)
-                trecho = trecho_de_amostra(falas_da_legenda(item.legenda))
+                trecho = trecho_de_amostra(falas_da_legenda(item.legenda), minutos * 60)
                 separar = automacao.separador_de_vozes(o, self._log)
             except (ErroDublagem, OSError, ErroLegenda, automacao.FaltaConfiguracao) as erro:
                 self.fila.put(("msg", ("Amostra da dublagem", f"Não deu para fazer a amostra: {erro}", "erro")))
@@ -2761,7 +2800,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._log.info("Amostra de %s (a partir de %s, %d falas): %s", item.video.name, minuto, r.falas, destino)
             self.fila.put(("abrir_amostra", (destino, item.video.stem, minuto, r.falas)))
 
-        self._rodar(f"Fazendo a amostra de 1 minuto de {item.video.stem}...", tarefa)
+        self._rodar(f"Fazendo o teste de {self.texto_minutos_teste()} de {item.video.stem}...", tarefa)
 
     def _mostrar_amostra(self, destino: Path, nome: str, minuto: str, falas: int) -> None:
         try:
@@ -2770,10 +2809,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
         except Exception as erro:                         # sem player associado: diz onde está
             self._log.warning("Abrir a amostra: %s", erro)
             abriu = "Abra no seu player de vídeo:"
-        self.mostrar_mensagem("Amostra da dublagem", f"A amostra de {nome} (1 minuto a partir de {minuto}, {falas} "
-                              f"falas) está pronta. {abriu}\n{destino}\n\nGostou? Clique em \"Dublar\" de novo e escolha "
-                              "\"Dublar\": as falas da amostra são reaproveitadas (não paga de novo por elas). Não "
-                              "gostou? Troque a voz em Configurações > Dublagem e faça outra amostra.", "sucesso")
+        self.mostrar_mensagem("Teste da dublagem", f"O teste de {nome} ({self.texto_minutos_teste()} a partir de "
+                              f"{minuto}, {falas} falas) está pronto. {abriu}\n{destino}\n\nGostou? Faça o vídeo inteiro: "
+                              "as falas do teste são reaproveitadas (não paga de novo por elas). Não gostou? Troque a "
+                              "voz em Configurações > Dublagem e teste de novo. O original não foi alterado.", "sucesso")
 
     def _ouvir_personagens(self, itens: list, o, premium: set | None = None) -> None:
         """Voz por personagem, 1ª parte (numa tarefa): o Gemini ouve cada filme e diz quem fala cada fala. Depois,

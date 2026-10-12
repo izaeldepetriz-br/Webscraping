@@ -175,6 +175,7 @@ class OpcoesJellyfin:
     dublagem_previa: bool = True     # fase de teste: uma prévia para ouvir e aprovar antes de gravar no original
     ambientar_voz: bool = True       # a voz dublada ganha o tom, o volume e o eco das vozes originais (com a separação)
     separar_gpu: bool = True         # dublagem natural na placa de vídeo (DirectML); se não der, no processador
+    minutos_teste: float = 2.0       # "Testar": legenda e dubla só esses minutos (gasta pouco) num vídeo curto
     resumo_diario: bool = False      # mandar no Discord/Telegram, uma vez por dia, o que o Maestro fez
     hora_resumo: int = 21
 
@@ -1987,6 +1988,8 @@ class JanelaModerna(ctk.CTk):
             self._salvar_config()                       # o que mudou nas configurações já fica guardado
         if nome == "Jellyfin":
             self.atualizar_resumo_config()
+        if nome == "Avulsos":
+            self.atualizar_botao_testar()                # os minutos de teste podem ter mudado nas Configurações
         if nome in ("Jellyfin", self.ABA_CONFIG) and self.lb_saude.cget("text"):
             self.lb_saude.pack(anchor="w", pady=(2, 0))
         else:
@@ -2750,9 +2753,10 @@ class JanelaModerna(ctk.CTk):
         self.bt_av_adicionar = self._botao(barra, "Adicionar vídeos...", self.ao_adicionar_avulsos, largura=170)
         self.bt_av_processar = self._botao(barra, "Processar", self.ao_processar_avulsos, largura=140)
         self.bt_av_limpar = self._botao(barra, "Tirar os adicionados", self.limpar_avulsos_adicionados, largura=170)
+        self.bt_av_testar = self._botao(barra, "🧪 Testar 2 min", self.ao_testar_avulso, largura=150)
         self.bt_parar_av = self._botao(barra, "Parar", self.ao_parar, "perigo", largura=100)
         self.bt_previas_av = self._botao(barra, "🎧 Prévias", self.ao_previas, largura=130)
-        for b in (self.bt_av_olhar, self.bt_av_adicionar, self.bt_av_processar, self.bt_av_limpar):
+        for b in (self.bt_av_olhar, self.bt_av_adicionar, self.bt_av_testar, self.bt_av_processar, self.bt_av_limpar):
             b.pack(side="left", padx=(0, 10))
         self.bt_parar_av.pack(side="right")
         self.bt_previas_av.pack(side="right", padx=(0, 10))
@@ -2977,6 +2981,9 @@ class JanelaModerna(ctk.CTk):
         self._rotulo(lateral, "O áudio original continua lá, como 2ª faixa; a cópia é conferida antes de trocar o "
                               "original. Desmarcado: um arquivo à parte, \"Nome - Dublado IA.mkv\".",
                      fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", padx=(46, 18), pady=(0, 6))
+        self.campo_minutos_teste = self._numero(
+            lateral, "Teste (botões \"Testar\"): quantos minutos legendar e dublar, num vídeo curto à parte (gasta só "
+                     "o desse trecho):", 2, 1, 30, 1)
         self.var_jf_dublagem_previa = tk.BooleanVar(value=True)
         self.cb_dublagem_previa = self._checkbox(
             lateral, "Fase de teste: primeiro uma prévia para eu ouvir e aprovar (botão \"🎧 Prévias\")",
@@ -3117,6 +3124,26 @@ class JanelaModerna(ctk.CTk):
 
     def ao_previas(self) -> None:                       # o app abre a janela das prévias
         pass
+
+    def ao_testar_avulso(self) -> None:                 # o app faz (numa tarefa)
+        pass
+
+    def texto_minutos_teste(self) -> str:
+        minutos = float(self.campo_minutos_teste.get())
+        return f"{minutos:g}".replace(".", ",") + " min"
+
+    def atualizar_botao_testar(self) -> None:
+        self.bt_av_testar.configure(text=f"🧪 Testar {self.texto_minutos_teste()}")
+
+    def video_avulso_escolhido(self) -> Path | None:
+        """O vídeo selecionado na lista da aba Avulsos (ou o 1º com algo a fazer, ou o 1º)."""
+        itens = self.tabela_av.get_children()
+        if not itens:
+            return None
+        escolhido = (self.tabela_av.selection() or [next((i for i in itens if "✓" not in str(
+            self.tabela_av.item(i, "values")[3])), itens[0])])[0]
+        valores = self.tabela_av.item(escolhido, "values")
+        return Path(valores[4]) / valores[1]
 
     def atualizar_botoes_previas(self, quantas: int) -> None:
         """'🎧 Prévias (2)': destacado quando há prévia esperando você ouvir."""
@@ -3655,6 +3682,7 @@ class JanelaModerna(ctk.CTk):
             dublagem_no_original=self.var_jf_dublagem_no_original.get(),
             dublagem_previa=self.var_jf_dublagem_previa.get(), separar_vozes=self.var_jf_separar_vozes.get(),
             ambientar_voz=self.var_jf_ambientar_voz.get(), separar_gpu=self.var_jf_separar_gpu.get(),
+            minutos_teste=float(self.campo_minutos_teste.get()),
             resumo_diario=self.var_jf_resumo_diario.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
@@ -3791,6 +3819,9 @@ class JanelaModerna(ctk.CTk):
         if dados.get("voz_gemini"):                      # salvo só o nome ("Kore", "clone:Izael"); o menu mostra
             self.var_jf_voz_gemini.set(next((v for v in self.vozes_gemini_do_menu()  # com a descrição
                                              if valor_da_voz(v) == dados["voz_gemini"]), self.VOZES_GEMINI[0]))
+        if dados.get("minutos_teste"):
+            self.campo_minutos_teste.set(float(dados["minutos_teste"]))
+            self.atualizar_botao_testar()
         if dados.get("limite_figurante"):
             self.campo_limite_figurante.set(int(dados["limite_figurante"]))
         if dados.get("teto_gastos"):
@@ -4309,7 +4340,7 @@ class JanelaModerna(ctk.CTk):
                   self.bt_testar_avisos, self.bt_testar_tmdb, self.bt_espelhar, self.bt_testar_legendas,
                   self.bt_conferir_espelhos, self.bt_relatorio, self.bt_gerenciar_espelhos, self.bt_traduzir_legendas,
                   self.bt_legendar_audio, self.bt_dublar, self.bt_sincronizar, self.bt_testar_claude,
-                  self.bt_av_olhar, self.bt_av_adicionar, self.bt_av_processar, self.bt_av_limpar):
+                  self.bt_av_olhar, self.bt_av_adicionar, self.bt_av_processar, self.bt_av_limpar, self.bt_av_testar):
             b.configure(state=estado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
         for parar in (self.bt_parar, self.bt_parar_jf, self.bt_parar_av):

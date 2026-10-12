@@ -449,3 +449,54 @@ def test_avulsos_mostra_o_andamento_da_dublagem(casa, tmp_path, monkeypatch):
     fracoes = [f for f, t in passos if t.startswith("Dublando 1 de 1: Aula –")]
     assert len(fracoes) >= 3 and fracoes == sorted(fracoes) and fracoes[-1] == 1.0
     assert any("%" in t for _, t in passos)
+
+
+
+def test_teste_de_alguns_minutos_traduz_e_ouve_so_o_trecho(casa, tmp_path, monkeypatch):
+    """Teste dos avulsos: com legenda em outro idioma, só as falas do trecho vão para o tradutor; sem legenda, o
+    Whisper ouve só o trecho. Nada é gravado ao lado do vídeo."""
+    from types import SimpleNamespace as NS
+    from jellyfin_tools import dublagem
+    from jellyfin_tools.traducao import Fala
+    from test_dublagem import FFMPEG, video_de_teste
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    casa(minutos_teste=1, avulsos_dublar=False, avulsos_legendar=True)
+    o, _ = automacao.opcoes_salvas()
+    caixa = tmp_path / "Avulsos"
+    caixa.mkdir()
+    video = video_de_teste(caixa / "Talk.mkv", segundos=200)
+    linhas = []
+    for k in range(40):                                        # 40 falas, uma a cada 5 s
+        ini = 5 * k
+        linhas.append(f"{k + 1}\n00:{ini // 60:02d}:{ini % 60:02d},000 --> 00:{ini // 60:02d}:{ini % 60:02d},900\n"
+                      f"Line {k}\n")
+    (caixa / "Talk.en.srt").write_text("\n".join(linhas), encoding="utf-8")
+    pedidas = []
+
+    class Tradutor:
+        def traduzir_falas(self, textos, titulo="", parar=None, ao_progresso=None):
+            pedidas.extend(textos)
+            return [f"Fala {t.split()[1]}" for t in textos]
+    monkeypatch.setattr(automacao, "tradutor_para", lambda o, idioma, ao_baixar=None: Tradutor())
+    r = automacao.testar_avulso(o, video, logging.getLogger("t"))
+    assert not r.erro, r.erro
+    assert len(pedidas) == 12 and r.trecho[1] - r.trecho[0] == 60      # 1 min = 12 falas, não as 40
+    assert r.amostra.is_file() and "Subtitle" in " ".join(dublagem_faixas(r.amostra))
+    assert sorted(p.name for p in caixa.iterdir()) == ["Talk.en.srt", "Talk.mkv"]      # nada novo ao lado
+    # sem legenda nenhuma: o Whisper ouve só o trecho
+    (caixa / "Talk.en.srt").unlink()
+    ouvidos = []
+
+    class Whisper:
+        def transcrever(self, audio, parar=None, ao_progresso=None):
+            ouvidos.append(audio)
+            return "pt", 60.0, [Fala("00:00:01,000 --> 00:00:02,000", "Olá.")]
+    r = automacao.testar_avulso(o, video, logging.getLogger("t"), transcritor=Whisper())
+    assert not r.erro, r.erro
+    assert len(ouvidos) == 1 and r.falas == 1 and r.trecho[0] > 0          # um pedaço depois da abertura
+
+
+def dublagem_faixas(arquivo):
+    from test_dublagem import faixas
+    return faixas(arquivo)

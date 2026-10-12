@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import re
 import sys
 import traceback
@@ -56,12 +57,13 @@ from jellyfin_tools.regras import carregar_regras
 from jellyfin_tools.resumo_diario import ResumoDiario
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca
 from jellyfin_tools.site_demo import iniciar_site_demo
-from jellyfin_tools.traducao import Tradutor, estimar_custo, legendas_para_traduzir, traduzir_arquivo
+from jellyfin_tools.traducao import _PORTUGUES, Tradutor, estimar_custo, legendas_para_traduzir, traduzir_arquivo
 from jellyfin_tools import traducao_lote
 from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sincronizar
 from jellyfin_tools.transcricao import Transcritor, legendar_pelo_audio, videos_sem_legenda
 from jellyfin_tools.dublagem import (PREFIXO_PIPER, ErroDublagem, MotorMisto, MotorPiper, dublar_video,
-                                     episodios_para_dublar, falas_da_legenda, localizar_ffmpeg, pasta_do_filme,
+                                     episodios_para_dublar, falas_da_legenda, horarios, localizar_ffmpeg,
+                                     pasta_do_filme,
                                      preparar_piper, preparar_voz, videos_para_dublar)
 from jellyfin_tools.legendas import ErroLegenda
 from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, ClienteTV, carregar_canais, carregar_historico,
@@ -1119,6 +1121,130 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
     if plano.vazio and not dublar_agora and not embutir_agora:
         resumo = "Vídeos avulsos: nada a fazer (já têm legenda em português e dublagem, ou não há vídeos)."
     return Resultado("--avulsos", PROBLEMA if erros else OK, resumo, erros, contas)
+
+
+# ---------------------------------------------------------------------------- teste (só alguns minutos)
+@dataclasses.dataclass
+class ResultadoTeste:
+    amostra: Path | None
+    trecho: tuple[float, float] = (0.0, 0.0)
+    falas: int = 0
+    passos: list = field(default_factory=list)    # o que foi feito (para a mensagem)
+    erro: str = ""
+
+
+def minutos_de_teste(o: OpcoesJellyfin) -> float:
+    return max(0.5, min(float(getattr(o, "minutos_teste", 2) or 2), 30.0))
+
+
+def _trecho_sem_legenda(duracao: float | None, segundos: float) -> tuple[float, float]:
+    """Sem legenda nenhuma ainda (não dá para achar o trecho com mais falas): um pedaço depois da abertura."""
+    if not duracao or duracao <= segundos * 1.5:
+        return 0.0, segundos
+    inicio = min(duracao * 0.2, duracao - segundos)
+    return inicio, inicio + segundos
+
+
+def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, motor=None, separar=None,
+                  transcritor=None, parar=None, andamento=None) -> ResultadoTeste:
+    """Teste de alguns minutos (Configurações > Dublagem > "Teste"): legenda e/ou dubla SÓ esse trecho, num vídeo
+    curto fora da biblioteca, para conferir antes de gastar com o vídeo inteiro. Não mexe no original nem cria o
+    .srt ao lado dele: tudo fica na pasta de trabalho do Maestro.
+    - já tem legenda em português: o trecho com mais falas;
+    - legenda em outro idioma: só as falas do trecho são traduzidas;
+    - sem legenda: o Whisper ouve só o trecho (e traduz, se não for português)."""
+    from jellyfin_tools.dublagem import (amostra_so_legenda, caminho_amostra, inspecionar, srt_do_trecho,
+                                         trecho_de_amostra)
+    from jellyfin_tools.traducao import Fala, gerar_srt, ler_srt
+    from jellyfin_tools.transcricao import tempo_srt
+    from jellyfin_tools.legendas import extrair_srt
+    andamento = andamento or (lambda fracao, texto: None)
+    video = Path(video)
+    idioma = o.idioma.split(",")[0].strip() or "pt-BR"
+    segundos = minutos_de_teste(o) * 60
+    ffmpeg = localizar_ffmpeg()
+    if not ffmpeg:
+        return ResultadoTeste(None, erro="falta o ffmpeg")
+    pasta = pasta_do_filme(pasta_dublagem(), video)
+    pasta.mkdir(parents=True, exist_ok=True)
+    legenda_teste = pasta / f"teste.{idioma}.srt"
+    r = ResultadoTeste(None)
+    try:
+        pt = srt_portugues(video, idioma)
+        if pt:                                            # 1) já tem em português
+            falas = ler_srt(extrair_srt(pt.read_bytes()))
+            r.trecho = trecho_de_amostra([(f, f.texto) for f in falas], segundos)
+            legenda_teste.write_text(gerar_srt(falas), encoding="utf-8")
+            r.passos.append(f"legenda em português: {pt.name}")
+        else:
+            estrangeiras = [i for i in legendas_para_traduzir(video.parent, idioma=idioma) if i.video == video]
+            tradutor = tradutor_para(o, idioma)
+            if estrangeiras:                              # 2) traduz só as falas do trecho
+                falas = ler_srt(extrair_srt(estrangeiras[0].origem.read_bytes()))
+                r.trecho = trecho_de_amostra([(f, f.texto) for f in falas], segundos)
+                dentro = [f for f in falas if r.trecho[0] <= horarios(f.tempo)[0] < r.trecho[1]]
+                if tradutor is None:
+                    raise ErroDublagem("a legenda está em outro idioma e falta a chave da Anthropic para traduzir")
+                andamento(0.1, f"Teste: traduzindo {len(dentro)} falas do trecho")
+                textos = tradutor.traduzir_falas([f.texto for f in dentro], titulo=video.stem, parar=parar)
+                legenda_teste.write_text(gerar_srt([Fala(f.tempo, t) for f, t in zip(dentro, textos)]),
+                                         encoding="utf-8")
+                r.passos.append(f"traduziu só as {len(dentro)} falas do trecho")
+            else:                                         # 3) o Whisper ouve só o trecho
+                r.trecho = _trecho_sem_legenda(inspecionar(ffmpeg, video).duracao, segundos)
+                audio = pasta / "teste-audio.wav"
+                subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{r.trecho[0]:.3f}",
+                                "-t", f"{segundos:.3f}", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000",
+                                str(audio)], check=True, capture_output=True)
+                transcritor = transcritor or Transcritor(modelo=o.modelo_whisper, usar_gpu=o.whisper_gpu,
+                                                         pasta_modelos=str(config.ARQUIVO.parent / "modelos_whisper"))
+                andamento(0.1, "Teste: o Whisper está ouvindo o trecho")
+                lingua, _, ouvidas = transcritor.transcrever(audio, parar=parar)
+                audio.unlink(missing_ok=True)
+                falas = [Fala(f"{tempo_srt(horarios(f.tempo)[0] + r.trecho[0])} --> "
+                              f"{tempo_srt(horarios(f.tempo)[1] + r.trecho[0])}", f.texto) for f in ouvidas]
+                if not falas:
+                    raise ErroDublagem("o Whisper não reconheceu nenhuma fala nesse trecho")
+                portugues = lingua in _PORTUGUES or lingua == idioma.lower().split("-")[0]
+                if not portugues:
+                    if tradutor is None:
+                        raise ErroDublagem(f"o áudio está em {lingua} e falta a chave da Anthropic para traduzir")
+                    textos = tradutor.traduzir_falas([f.texto for f in falas], titulo=video.stem, parar=parar)
+                    falas = [Fala(f.tempo, t) for f, t in zip(falas, textos)]
+                legenda_teste.write_text(gerar_srt(falas), encoding="utf-8")
+                r.passos.append(f"o Whisper ouviu só o trecho ({len(falas)} falas"
+                                + (", traduzidas)" if not portugues else ")"))
+        destino = caminho_amostra(pasta_dublagem(), video)
+        if o.avulsos_dublar:
+            motor = motor or preparar_motor(o)
+            r_dub = dublar_video(video, legenda_teste, motor, parar=parar, trecho=r.trecho, destino=destino,
+                                 adaptar=adaptador(o, video.stem), pasta_cache=pasta_dublagem(), separar=separar,
+                                 ambientar=getattr(o, "ambientar_voz", True), legenda_no_video=o.avulsos_legendar,
+                                 avisar=lambda texto: log.warning("Teste: %s", texto),
+                                 ao_progresso=lambda f: andamento(0.2 + 0.8 * f, f"Teste: dublando o trecho "
+                                                                                  f"({int(f * 100)}%)"))
+            if r_dub.status != "dublado":
+                raise ErroDublagem(r_dub.detalhe)
+            r.falas = r_dub.falas
+            r.passos.append(f"dublou só as {r_dub.falas} falas do trecho")
+        else:
+            texto = srt_do_trecho(ler_srt(legenda_teste.read_text(encoding="utf-8")), r.trecho)
+            janela = pasta / "teste-trecho.srt"
+            janela.write_text(texto, encoding="utf-8")
+            amostra_so_legenda(ffmpeg, video, janela, r.trecho, destino, parar,
+                               lambda f: andamento(0.2 + 0.8 * f, f"Teste: montando a amostra ({int(f * 100)}%)"))
+            r.falas = texto.count(" --> ")
+            r.passos.append("só a legenda (sem dublar)")
+        r.amostra = destino
+        log.info("Teste de %s (%s a %s): %s", video.name, tempo_srt(r.trecho[0])[:8], tempo_srt(r.trecho[1])[:8],
+                 "; ".join(r.passos))
+    except (ErroDublagem, OSError, ErroLegenda, subprocess.CalledProcessError, FaltaConfiguracao) as erro:
+        r.erro = str(erro)
+        log.error("Teste de %s: %s", video.name, erro)
+    except Exception as erro:                        # ErroTraducao, ErroTranscricao...
+        r.erro = str(erro)
+        log.error("Teste de %s: %s", video.name, erro)
+    return r
 
 
 def avulsos(log: logging.Logger) -> Resultado:

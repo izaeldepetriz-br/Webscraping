@@ -4149,13 +4149,13 @@ def test_amostra_de_1_minuto_antes_de_dublar(app, tmp_path, monkeypatch):
     app.var_jf_destino.set(str(filmes))
     abertos = []
     app._abrir_no_sistema = lambda caminho: abertos.append(caminho)
-    app.escolher = lambda t, m, opcoes, **k: app.BOTAO_AMOSTRA if app.BOTAO_AMOSTRA in opcoes else opcoes[0]
+    app.escolher = lambda t, m, opcoes, **k: app.botao_amostra() if app.botao_amostra() in opcoes else opcoes[0]
     app.bt_dublar.invoke()
     esperar(app)
     esperar(app)
     amostra = dublagem.caminho_amostra(automacao.pasta_dublagem(), video)
     assert amostra.is_file() and abertos == [str(amostra)]
-    assert "amostra" in app.caixas[-1][2].lower() and app.caixas[-1][0] == "sucesso"
+    assert "o teste de" in app.caixas[-1][2].lower() and app.caixas[-1][0] == "sucesso"
     assert not dublagem.caminho_dublado(video).exists()             # a biblioteca não muda
     pedidas = list(voz.textos)
     app.escolher = lambda t, m, opcoes, **k: opcoes[0]              # agora o filme inteiro
@@ -4509,3 +4509,39 @@ def test_resumo_mostra_se_a_pasta_do_download_fica(app):
     app.var_jf_apagar_pasta.set(True)
     app.atualizar_resumo_config()
     assert "Pasta do download: apaga" in app.lb_resumo_config.cget("text")
+
+
+
+def test_testar_alguns_minutos_na_aba_avulsos(app, tmp_path, monkeypatch):
+    """"🧪 Testar": legenda e dubla só alguns minutos do vídeo escolhido, num vídeo curto à parte (o original e o
+    .srt ao lado não mudam); a duração vem de Configurações > Dublagem."""
+    from jellyfin_tools import dublagem
+    from tests.test_dublagem import FFMPEG, SRT, faixas, video_de_teste
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    voz = _dublagem_falsa(monkeypatch)
+    from videoscraper import automacao
+    monkeypatch.setattr(automacao, "videos_para_dublar", app_moderna.videos_para_dublar)
+    caixa = tmp_path / "Avulsos"
+    caixa.mkdir()
+    video = video_de_teste(caixa / "Aula.mkv")
+    legenda = caixa / "Aula.pt-BR.srt"
+    legenda.write_text(SRT, encoding="utf-8")
+    antes = video.read_bytes()
+    app.campo_minutos_teste.set(1)
+    app.mostrar_aba("Avulsos")
+    assert app.bt_av_testar.cget("text") == "🧪 Testar 1 min"
+    app.var_jf_pasta_avulsos.set(str(caixa))
+    app.bt_av_olhar.invoke()
+    esperar(app)
+    abertos = []
+    app._abrir_no_sistema = lambda caminho: abertos.append(caminho)
+    app.bt_av_testar.invoke()
+    esperar(app)
+    esperar(app)
+    amostra = dublagem.caminho_amostra(automacao.pasta_dublagem(), video)
+    assert amostra.is_file() and abertos == [str(amostra)] and voz.textos
+    linhas = faixas(amostra)
+    assert len([l for l in linhas if "Audio" in l]) == 2 and [l for l in linhas if "Subtitle" in l]   # + a legenda
+    assert video.read_bytes() == antes and legenda.exists() and automacao.previas_pendentes() == []
+    assert app.caixas[-1][0] == "sucesso" and "o teste de aula" in app.caixas[-1][2].lower()

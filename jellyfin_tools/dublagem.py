@@ -384,11 +384,11 @@ def comando_mixar(ffmpeg: str, video: Path, trilha: Path, saida: Path, faixas: i
         comando += ["-i", str(sala)]
         indice_sala, proxima = proxima, proxima + 1
     indice_legenda = proxima
-    if legenda_nova and not trecho:
+    if legenda_nova:                                         # na amostra, a legenda já vem com os tempos do trecho
         comando += ["-i", str(legenda_nova)]
     comando += ["-filter_complex", filtro_mixagem(bool(fundo), ambiente, indice_sala),
                 "-map", "0:v:0?" if trecho else "0:v?", "-map", "[dub]", "-map", "0:a"]
-    if legenda_nova and not trecho:
+    if legenda_nova:
         comando += ["-map", f"{indice_legenda}:0"]           # a nova antes das outras: é a legenda nº 0 do arquivo
     if legendas and not trecho:                     # do .mkv (ou .mp4 -> .mp4) dá para copiar as legendas como estão
         comando += ["-map", "0:s?"] + (["-map", "0:t?"] if formato == "matroska" else [])
@@ -402,9 +402,9 @@ def comando_mixar(ffmpeg: str, video: Path, trilha: Path, saida: Path, faixas: i
                 "-disposition:a:0", "default"]
     for i in range(faixas):
         comando += [f"-disposition:a:{i + 1}", "0"]
-    if legenda_nova and not trecho:
+    if legenda_nova:
         comando += ["-metadata:s:s:0", "language=por", "-metadata:s:s:0", f"title={TITULO_LEGENDA}",
-                    "-disposition:s:0", "0"]               # com a dublagem, a legenda não liga sozinha
+                    "-disposition:s:0", "default" if trecho else "0"]   # na amostra, liga para você conferir
     return comando + ["-progress", "pipe:1", "-nostats", "-f", formato, str(saida)]
 
 
@@ -706,6 +706,38 @@ def trecho_de_amostra(falas: list, segundos: float = AMOSTRA) -> tuple[float, fl
     return inicio, inicio + segundos
 
 
+def srt_do_trecho(falas: list, trecho: tuple[float, float]) -> str:
+    """As falas (Fala) que começam no trecho, com os tempos contados a partir do início dele (para a amostra)."""
+    from .transcricao import tempo_srt
+    from .traducao import Fala, gerar_srt
+    inicio, fim = trecho
+    dentro = []
+    for f in falas:
+        a, b = horarios(f.tempo)
+        if inicio <= a < fim:
+            dentro.append(Fala(f"{tempo_srt(a - inicio)} --> {tempo_srt(min(b, fim) - inicio)}", f.texto))
+    return gerar_srt(dentro) if dentro else ""
+
+
+def amostra_so_legenda(ffmpeg: str, video: Path, srt_do_trecho_: Path, trecho: tuple[float, float],
+                       destino: Path, parar=None, ao_progresso=None) -> Path:
+    """Teste sem dublar: o trecho do vídeo com o áudio original e a legenda em português (ligada)."""
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    parcial = destino.with_name(destino.name + ".part")
+    comando = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{trecho[0]:.3f}",
+               "-t", f"{trecho[1] - trecho[0]:.3f}", "-i", str(video), "-i", str(srt_do_trecho_),
+               "-map", "0:v:0?", "-map", "0:a?", "-map", "1:0", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+               "-c:a", "aac", "-c:s", "srt", "-metadata:s:s:0", "language=por",
+               "-metadata:s:s:0", f"title={TITULO_LEGENDA}", "-disposition:s:0", "default",
+               "-progress", "pipe:1", "-nostats", "-f", "matroska", str(parcial)]
+    try:
+        _rodar_ffmpeg(comando, trecho[1] - trecho[0], parar, ao_progresso, "o ffmpeg não conseguiu montar a amostra")
+        parcial.replace(destino)
+    finally:
+        parcial.unlink(missing_ok=True)
+    return destino
+
+
 def caminho_amostra(pasta_cache: str | Path, video: Path) -> Path:
     """A amostra fica junto do progresso guardado do filme (fora da biblioteca: o Jellyfin não a mostra)."""
     return pasta_do_filme(pasta_cache, video) / "amostra.mkv"
@@ -904,6 +936,11 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
                 nova = pasta / "legenda.srt"
                 if not nova.is_file():
                     raise ErroDublagem(f"a legenda sumiu durante a dublagem: {legenda}")
+            elif legenda_no_video and trecho:            # amostra/teste: só as falas do trecho, tempos do trecho
+                texto = srt_do_trecho([f for f, _ in falas], trecho)
+                if texto:
+                    nova = pasta / f"legenda-{int(trecho[0])}-{int(trecho[1])}.srt"
+                    nova.write_text(texto, encoding="utf-8")
             mixar(ffmpeg, video, pasta / "trilha.wav", destino, duracao, len(idiomas), parar,
                   lambda f: andamento(fatias[3] + (1 - fatias[3]) * f), trecho, fundo, nova, formato, ambiente, sala)
             if no_original:
