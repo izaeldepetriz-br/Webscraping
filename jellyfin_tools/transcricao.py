@@ -106,10 +106,11 @@ class Transcritor:
         except ImportError as erro:
             raise ErroTranscricao("falta a biblioteca faster-whisper (pip install faster-whisper)") from erro
         try:
-            # placa: "auto" escolhe o que ELA aceita (as antigas, como a GeForce 920M, não têm float16 rápido e
-            # recusavam o modelo); processador: um núcleo fica livre para a janela do Maestro não travar
+            # placa: float16. Placa antiga (ex.: GeForce 920M) recusa logo ao carregar e o Whisper vai para o
+            # processador sem perder tempo (com "auto" ela carregaria e só falharia no meio, ou derrubaria o
+            # programa). Processador: um núcleo fica livre para a janela do Maestro não travar
             return WhisperModel(self.modelo, device="cuda" if gpu else "cpu",
-                                compute_type="auto" if gpu else "int8", download_root=self.pasta_modelos,
+                                compute_type="float16" if gpu else "int8", download_root=self.pasta_modelos,
                                 **({} if gpu else {"cpu_threads": nucleos_para_o_whisper()}))
         except Exception as erro:          # sem internet na 1ª vez, disco cheio, nome de modelo errado...
             if gpu:

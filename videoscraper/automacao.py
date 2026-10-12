@@ -1218,6 +1218,10 @@ class ResultadoTeste:
     erro: str = ""
 
 
+def _duracao(segundos: float) -> str:
+    return f"{segundos / 60:g} min".replace(".", ",") if segundos >= 60 else f"{int(segundos)} s"
+
+
 class _Relogio:
     """", faltam ~2 min" pela velocidade até agora (só depois de 15 s e 3% feitos, para não chutar)."""
 
@@ -1297,7 +1301,10 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
                                 str(audio)], check=True, capture_output=True)
                 transcritor = transcritor or Transcritor(modelo=o.modelo_whisper, usar_gpu=o.whisper_gpu,
                                                          pasta_modelos=str(config.ARQUIVO.parent / "modelos_whisper"))
-                andamento(0.05, "Teste: carregando o Whisper")
+                modelo = getattr(transcritor, "modelo", "")
+                andamento(0.05, f"Teste: carregando o Whisper ({modelo})" if modelo else "Teste: carregando o Whisper")
+                log.info("Teste: o Whisper (modelo %s) vai ouvir %s de %s", modelo or "?", _duracao(segundos),
+                         video.name)
                 relogio = _Relogio()
 
                 def ouvindo(fracao):                     # a barra anda enquanto o Whisper ouve (antes parava em 10%)
