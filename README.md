@@ -240,6 +240,16 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.18.2
+
+- **Whisper começa mais rápido**: com o modelo já baixado, ele abre direto do seu PC, sem consultar a internet a
+  cada teste ou vídeo (antes perguntava ao site do modelo toda vez).
+- **Log limpo e em português**: os avisos em inglês da biblioteca que baixa o modelo (atalhos do Windows, token,
+  pacote opcional) não aparecem mais; não pediam nada de você. O motivo de a placa de vídeo não servir para o Whisper
+  vem em português e com o que fazer (ex.: GeForce 920M: "o driver ou a própria placa são antigos demais para o
+  Whisper... desmarque Usar a placa de vídeo NVIDIA"). Recusada uma vez, a placa não é tentada de novo até fechar o
+  Maestro.
+
 ### Novidades da v2.18.1
 
 - **Minutos do teste ao lado do botão**: nas abas **Jellyfin** e **Avulsos**, o "🧪 Testar" tem o campo `[- 2 +] min`

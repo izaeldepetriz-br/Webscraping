@@ -190,3 +190,43 @@ def test_parar_responde_na_hora_mesmo_no_meio_de_um_pedaco():
 def test_erro_do_whisper_chega_a_quem_espera():
     with pytest.raises(ErroTranscricao, match="não deu para ouvir"):
         Transcritor(motor=WhisperFalso(erro=RuntimeError("quebrou"))).transcrever("a.wav")
+
+
+def test_placa_recusada_em_portugues_e_lembrada_na_sessao(monkeypatch, tmp_path):
+    """O erro da NVIDIA vira português, e o Whisper não tenta a placa de novo a cada vídeo da mesma sessão."""
+    from jellyfin_tools import transcricao
+    monkeypatch.setattr(transcricao, "_PLACA_RECUSADA", None)
+    tentativas = []
+
+    def abrir(self, gpu):
+        tentativas.append(gpu)
+        if gpu:
+            raise RuntimeError("CUDA failed with error CUDA driver version is insufficient for CUDA runtime version")
+        return WhisperFalso()
+    monkeypatch.setattr(Transcritor, "_abrir", abrir)
+    t = Transcritor(usar_gpu=True)
+    t.transcrever("a.wav")
+    assert tentativas == [True, False] and "antigos demais" in t.aviso and "CUDA failed" not in t.aviso
+    t2 = Transcritor(usar_gpu=True)
+    t2.transcrever("b.wav")
+    assert tentativas == [True, False, False] and "antigos demais" in t2.aviso      # não tentou a placa de novo
+    assert "bibliotecas da NVIDIA" in transcricao.motivo_da_placa(RuntimeError("Library cublas64_12.dll is not found"))
+
+
+def test_modelo_ja_baixado_nao_consulta_a_internet(monkeypatch, tmp_path):
+    """Com o modelo no PC, o Whisper abre só com os arquivos locais (antes perguntava ao Hugging Face toda vez)."""
+    import sys
+    from jellyfin_tools import transcricao
+    (tmp_path / "models--Systran--faster-whisper-small").mkdir()
+    chamadas = []
+
+    class Modelo:
+        def __init__(self, nome, **opcoes):
+            chamadas.append(opcoes)
+    monkeypatch.setitem(sys.modules, "faster_whisper", NS(WhisperModel=Modelo))
+    Transcritor(modelo="small", pasta_modelos=str(tmp_path))._abrir(gpu=False)
+    assert chamadas[0]["local_files_only"] is True and chamadas[0]["cpu_threads"] >= 2
+    Transcritor(modelo="base", pasta_modelos=str(tmp_path))._abrir(gpu=False)       # ainda não baixado: baixa
+    assert "local_files_only" not in chamadas[1]
+    import os
+    assert os.environ.get("HF_HUB_DISABLE_SYMLINKS_WARNING") == "1"

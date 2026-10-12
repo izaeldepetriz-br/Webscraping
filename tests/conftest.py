@@ -317,3 +317,12 @@ def pytest_runtest_makereport(item, call):
         linhas.append(f"[{nomes.get(ident, ident)}] " + " <- ".join(
             f"{Path(q.filename).name}:{q.lineno} {q.name}" for q in reversed(pilha)))
     relatorio.sections.append(("Threads quando falhou", "\n".join(sorted(linhas)) or "(nenhuma)"))
+
+
+@pytest.fixture(autouse=True)
+def _placa_do_whisper_esquecida():
+    """A placa recusada fica lembrada só durante a sessão do Maestro: cada teste começa do zero."""
+    from jellyfin_tools import transcricao
+    transcricao._PLACA_RECUSADA = None
+    yield
+    transcricao._PLACA_RECUSADA = None

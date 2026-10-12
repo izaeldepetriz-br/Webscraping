@@ -87,6 +87,44 @@ def falas_dos_segmentos(segmentos) -> list[Fala]:
 
 
 # ----------------------------------------------------------------- o Whisper
+_PLACA_RECUSADA: str | None = None    # o motivo, se a placa de vídeo já recusou o Whisper nesta sessão
+
+
+def motivo_da_placa(erro: Exception) -> str:
+    """O erro da NVIDIA/CUDA (em inglês) em português, com o que fazer."""
+    texto = str(erro).lower()
+    if "driver version is insufficient" in texto or "no kernel image" in texto or "compute capability" in texto:
+        return ("o driver ou a própria placa são antigos demais para o Whisper (ele precisa do CUDA 12; placas como "
+                "a GeForce 920M não têm suporte). Desmarque \"Usar a placa de vídeo NVIDIA\" em Configurações > "
+                "Legenda pelo áudio para não tentar mais")
+    if "float16" in texto:
+        return "a placa não faz as contas no formato que o Whisper usa (float16)"
+    if "cublas" in texto or "cudnn" in texto or ".dll" in texto or "library" in texto:
+        return ("faltam as bibliotecas da NVIDIA (CUDA 12 / cuDNN 9). Instale-as pelo site da NVIDIA ou desmarque "
+                "\"Usar a placa de vídeo NVIDIA\" em Configurações > Legenda pelo áudio")
+    if "no cuda" in texto or "cuda-capable" in texto or "not compiled with cuda" in texto:
+        return "não há placa de vídeo NVIDIA disponível"
+    return f"não funcionou ({str(erro)[:80]})"
+
+
+def _silenciar_hugging_face() -> None:
+    """A biblioteca que baixa o modelo (Hugging Face) escreve avisos em inglês que não pedem nada de você
+    (atalhos do Windows, token, pacote opcional): ficam fora do log."""
+    import logging
+    import os
+    import warnings
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+    os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+    os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
+    warnings.filterwarnings("ignore", module=r"huggingface_hub.*")
+    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+    try:
+        from huggingface_hub.utils import logging as hf_logging
+        hf_logging.set_verbosity_error()
+    except Exception:
+        pass
+
+
 def nucleos_para_o_whisper(total: int | None = None) -> int:
     """Quantos núcleos do processador o Whisper usa: todos menos um (a janela continua respondendo), de 2 a 8."""
     import os
@@ -103,17 +141,24 @@ class Transcritor:
     aviso: str = ""                    # ex.: "sem placa de vídeo: usando o processador"
 
     def _abrir(self, gpu: bool):
+        _silenciar_hugging_face()
         try:
             from faster_whisper import WhisperModel
         except ImportError as erro:
             raise ErroTranscricao("falta a biblioteca faster-whisper (pip install faster-whisper)") from erro
+        # placa: float16. Placa antiga (ex.: GeForce 920M) recusa logo ao carregar e o Whisper vai para o
+        # processador sem perder tempo (com "auto" ela carregaria e só falharia no meio, ou derrubaria o
+        # programa). Processador: um núcleo fica livre para a janela do Maestro não travar
+        opcoes = dict(device="cuda" if gpu else "cpu", compute_type="float16" if gpu else "int8",
+                      download_root=self.pasta_modelos, **({} if gpu else {"cpu_threads": nucleos_para_o_whisper()}))
         try:
-            # placa: float16. Placa antiga (ex.: GeForce 920M) recusa logo ao carregar e o Whisper vai para o
-            # processador sem perder tempo (com "auto" ela carregaria e só falharia no meio, ou derrubaria o
-            # programa). Processador: um núcleo fica livre para a janela do Maestro não travar
-            return WhisperModel(self.modelo, device="cuda" if gpu else "cpu",
-                                compute_type="float16" if gpu else "int8", download_root=self.pasta_modelos,
-                                **({} if gpu else {"cpu_threads": nucleos_para_o_whisper()}))
+            if modelo_baixado(self.modelo, self.pasta_modelos):
+                try:                       # já está no PC: nem consulta a internet (antes perguntava toda vez)
+                    return WhisperModel(self.modelo, local_files_only=True, **opcoes)
+                except Exception:
+                    if gpu:
+                        raise
+            return WhisperModel(self.modelo, **opcoes)       # 1ª vez (ou cópia incompleta): baixa
         except Exception as erro:          # sem internet na 1ª vez, disco cheio, nome de modelo errado...
             if gpu:
                 raise
@@ -121,8 +166,12 @@ class Transcritor:
                                   f"baixado da internet): {str(erro)[:200]}") from erro
 
     def _carregar(self) -> None:
+        global _PLACA_RECUSADA
         if self.motor is not None:
             return
+        if self.usar_gpu and _PLACA_RECUSADA:             # já recusou nesta sessão: nem tenta de novo
+            self.aviso = f"placa de vídeo: {_PLACA_RECUSADA}; usando o processador"
+            self.usar_gpu = False
         if self.usar_gpu:
             try:
                 self.motor = self._abrir(gpu=True)
@@ -130,7 +179,8 @@ class Transcritor:
             except ErroTranscricao:
                 raise
             except Exception as erro:
-                self.aviso = f"placa de vídeo indisponível ({str(erro)[:80]}): usando o processador"
+                _PLACA_RECUSADA = motivo_da_placa(erro)
+                self.aviso = f"placa de vídeo: {_PLACA_RECUSADA}; usando o processador"
                 self.usar_gpu = False
         self.motor = self._abrir(gpu=False)
 
@@ -164,7 +214,9 @@ class Transcritor:
             raise
         except Exception as erro:
             if self.usar_gpu:                           # a placa só falha na hora de usar (falta cuDNN...)
-                self.aviso = f"placa de vídeo falhou ({str(erro)[:80]}): usando o processador"
+                global _PLACA_RECUSADA
+                _PLACA_RECUSADA = motivo_da_placa(erro)
+                self.aviso = f"placa de vídeo: {_PLACA_RECUSADA}; usando o processador"
                 self.usar_gpu, self.motor = False, None
                 return self._ouvir(video, idioma, parar, ao_progresso, vad)
             raise ErroTranscricao(f"não deu para ouvir o áudio: {str(erro)[:200]}") from erro
