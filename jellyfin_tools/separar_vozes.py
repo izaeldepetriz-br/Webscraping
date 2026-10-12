@@ -99,28 +99,53 @@ def criar_sessao(modelo: str | Path, usar_gpu: bool = True, avisar=None, cronome
     cpu = ort.InferenceSession(str(modelo), opcoes(False), providers=["CPUExecutionProvider"])
     if not (usar_gpu and "DmlExecutionProvider" in provedores_disponiveis()):
         return cpu, "processador"
-    try:
-        gpu = ort.InferenceSession(str(modelo), opcoes(True),
-                                   providers=["DmlExecutionProvider", "CPUExecutionProvider"])
-        if "DmlExecutionProvider" not in gpu.get_providers():
-            return cpu, "processador (o DirectML não ativou: sem placa de vídeo com DirectX 12?)"
-        bloco = {cpu.get_inputs()[0].name: np.zeros((1, 4, DIM_F, DIM_T), dtype=np.float32)}
+    # Notebooks costumam ter DUAS placas (a integrada, Intel/AMD, e a NVIDIA/AMD dedicada): tenta cada uma
+    candidatas, motivos = [], []
+    for placa in range(PLACAS_A_TENTAR):
+        try:
+            gpu = ort.InferenceSession(str(modelo), opcoes(True),
+                                       providers=[("DmlExecutionProvider", {"device_id": placa}),
+                                                  "CPUExecutionProvider"])
+            if "DmlExecutionProvider" in gpu.get_providers():
+                candidatas.append((placa, gpu))
+        except Exception as erro:              # placa que não existe, antiga demais, driver desatualizado...
+            motivos.append(motivo_da_falha(erro))
+    if not candidatas:
+        motivo = motivos[0] if motivos else "o DirectML não ativou"
+        if avisar:
+            avisar(f"a placa de vídeo não deu certo ({motivo})")
+        return cpu, f"processador (a placa de vídeo não carregou: {motivo})"
+    bloco = {cpu.get_inputs()[0].name: np.zeros((1, 4, DIM_F, DIM_T), dtype=np.float32)}
 
-        def tempo(sessao) -> float:
+    def tempo(sessao) -> float | None:
+        try:
             sessao.run(None, bloco)            # a 1ª vez prepara (na placa de vídeo, compila): não conta
             inicio = cronometro()
             sessao.run(None, bloco)
             return cronometro() - inicio
-        t_gpu, t_cpu = tempo(gpu), tempo(cpu)
-        corrida = f"placa de vídeo {t_gpu:.2f} s x processador {t_cpu:.2f} s por bloco"
-        if t_gpu < t_cpu * 0.9:
-            return gpu, f"placa de vídeo ({corrida})"
-        return cpu, f"processador ({corrida}: a placa de vídeo não ganhou)"
-    except Exception as erro:                  # driver antigo, sem DirectX 12...
-        motivo = " ".join(str(erro).split())[:160]
-        if avisar:
-            avisar(f"a placa de vídeo não deu certo ({motivo}); usando o processador")
-        return cpu, f"processador (a placa de vídeo não carregou: {motivo})"
+        except Exception:                      # carregou, mas falhou ao rodar
+            return None
+    t_cpu = tempo(cpu)
+    tempos = [(t, placa, sessao) for placa, sessao in candidatas if (t := tempo(sessao)) is not None]
+    if not tempos:
+        return cpu, "processador (a placa de vídeo carregou, mas falhou ao separar)"
+    t_gpu, placa, melhor = min(tempos, key=lambda x: x[0])
+    corrida = f"placa de vídeo nº {placa} {t_gpu:.2f} s x processador {t_cpu:.2f} s por bloco"
+    if t_cpu is None or t_gpu < t_cpu * 0.9:
+        return melhor, f"placa de vídeo ({corrida})"
+    return cpu, f"processador ({corrida}: a placa de vídeo não ganhou)"
+
+
+PLACAS_A_TENTAR = 2
+
+
+def motivo_da_falha(erro: Exception) -> str:
+    """O motivo, em português. Quando o Windows recusa a placa, a mensagem dele vem em português com acentos, numa
+    codificação que o onnxruntime não lê (aparecia "'utf-8' codec can't decode byte 0xe2...")."""
+    if isinstance(erro, UnicodeDecodeError) or "codec can't decode" in str(erro):
+        return ("o Windows recusou esta placa de vídeo para o DirectML. Em geral é placa antiga, com DirectX 12 "
+                "incompleto (ex.: GeForce 920M/940M, série 700), ou o driver está desatualizado")
+    return " ".join(str(erro).split())[:160] or type(erro).__name__
 
 
 def _janela():

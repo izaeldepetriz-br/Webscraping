@@ -30,6 +30,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import wave
 import zipfile
 from dataclasses import dataclass, field
@@ -760,7 +761,40 @@ def _sintetizar(motor, pedidos, parar, ao_progresso=None) -> None:
         motor.sintetizar(faltando, parar=parar, ao_progresso=ao_progresso)
 
 
-def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | None = None,
+TRAVA_VALIDADE = 12 * 3600          # s: uma trava mais velha que isso é de um Maestro que fechou no meio
+
+
+def caminho_trava(video: str | Path) -> Path:
+    return Path(video).with_name(Path(video).name + ".maestro-trava")
+
+
+def dublar_video(video: str | Path, legenda: str | Path, motor, *args, trecho=None, **kwargs) -> ResultadoDublagem:
+    """Dubla com uma TRAVA ao lado do vídeo ('Nome.mkv.maestro-trava'): se outro Maestro (ex.: o robô agendado, ou
+    a vigia de outro PC) já estiver dublando o MESMO vídeo, este espera a vez em vez de os dois mexerem nos mesmos
+    arquivos ao mesmo tempo (um apagava a legenda que o outro ia usar). A amostra (trecho) não trava."""
+    if trecho:
+        return _dublar_video(video, legenda, motor, *args, trecho=trecho, **kwargs)
+    trava = caminho_trava(video)
+    try:
+        if trava.exists() and time.time() - trava.stat().st_mtime > TRAVA_VALIDADE:
+            trava.unlink(missing_ok=True)                    # ficou de um Maestro que fechou no meio
+        descritor = os.open(trava, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return ResultadoDublagem(Path(video), "erro", "outro Maestro (por exemplo, o robô agendado) está dublando "
+                                 "este vídeo agora; tente de novo quando ele terminar")
+    except OSError:
+        descritor = None                                      # pasta só de leitura etc.: segue sem trava
+    try:
+        if descritor is not None:
+            os.write(descritor, f"{os.getpid()}".encode())
+            os.close(descritor)
+        return _dublar_video(video, legenda, motor, *args, **kwargs)
+    finally:
+        if descritor is not None:
+            trava.unlink(missing_ok=True)
+
+
+def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | None = None,
                  pasta_trabalho: str | Path | None = None, parar=None, ao_progresso=None,
                  sondar=faixas_de_audio, adaptar=None, avisar=None, vozes: dict | None = None,
                  pasta_cache: str | Path | None = None, trecho: tuple[float, float] | None = None,
@@ -832,6 +866,8 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
         pedidos = [(falas[k][1], pasta / _nome_wav(k, falas[k][1], vozes.get(k, "")), vozes.get(k, ""))
                    for k in indices]
         retomadas = sum(1 for _, w, _ in pedidos if _pronto(w))
+        if legenda_no_video and not trecho:              # cópia de trabalho: a que entra no vídeo é ESTA
+            shutil.copyfile(legenda, pasta / "legenda.srt")
         # com a separação das vozes, as etapas dividem a barra de outro jeito (separar demora)
         fatias = ((0.4, 0.45, 0.5, 0.8) if separar else (0.5, 0.6, 0.7, 0.7))   # falas, adaptar, trilha, separar
         try:
@@ -863,7 +899,11 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
                 if usa_sala(ambiente):
                     sala = gerar_sala(pasta / "sala.wav", ambiente["eco"])
             antes = inspecionar(ffmpeg, video) if no_original else None
-            nova = legenda if legenda_no_video and not trecho else None
+            nova = None
+            if legenda_no_video and not trecho:          # a CÓPIA (se o original sumir no meio, segue igual)
+                nova = pasta / "legenda.srt"
+                if not nova.is_file():
+                    raise ErroDublagem(f"a legenda sumiu durante a dublagem: {legenda}")
             mixar(ffmpeg, video, pasta / "trilha.wav", destino, duracao, len(idiomas), parar,
                   lambda f: andamento(fatias[3] + (1 - fatias[3]) * f), trecho, fundo, nova, formato, ambiente, sala)
             if no_original:
@@ -890,6 +930,43 @@ def dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | No
     andamento(1.0)
     return ResultadoDublagem(video, "previa" if eh_previa else "dublado", "", destino, len(indices),
                              contas["aceleradas"], contas["cortadas"], adaptadas, retomadas, ambiente)
+
+
+def etapas_da_dublagem(separar: bool = False) -> list[tuple[float, float, str]]:
+    """[(início, fim, nome)] de cada etapa no andamento do dublar_video (as mesmas fatias de lá)."""
+    if separar:
+        return [(0.0, 0.4, "lendo as falas"), (0.4, 0.5, "montando a trilha"),
+                (0.5, 0.8, "tirando as vozes originais"), (0.8, 1.0, "juntando ao vídeo")]
+    return [(0.0, 0.5, "lendo as falas"), (0.5, 0.7, "montando a trilha"), (0.7, 1.0, "juntando ao vídeo")]
+
+
+def etapa_da_dublagem(fracao: float, separar: bool = False) -> str:
+    """O nome da etapa pela fração do andamento."""
+    return next((nome for _, fim, nome in etapas_da_dublagem(separar) if fracao < fim), "juntando ao vídeo")
+
+
+def _tempo(segundos: float) -> str:
+    minutos = max(1, round(segundos / 60))
+    return f"{minutos // 60}h{minutos % 60:02d}" if minutos >= 60 else f"{minutos} min"
+
+
+class RelogioDaDublagem:
+    """O texto do andamento: a etapa, a porcentagem DELA e quanto falta. A etapa mais longa (tirar as vozes
+    originais, no processador) ocupa só 30% da barra: na porcentagem total, ela parecia parada por minutos."""
+
+    def __init__(self, separar: bool = False, agora=None):
+        import time
+        self.etapas, self.agora = etapas_da_dublagem(separar), agora or time.monotonic
+        self.atual, self.inicio = None, 0.0
+
+    def texto(self, fracao: float) -> str:
+        inicio, fim, nome = next(((a, b, n) for a, b, n in self.etapas if fracao < b), self.etapas[-1])
+        parcial = min(max((fracao - inicio) / (fim - inicio), 0.0), 1.0)
+        if nome != self.atual:
+            self.atual, self.inicio = nome, self.agora()
+        decorrido = self.agora() - self.inicio
+        falta = decorrido * (1 - parcial) / parcial if parcial >= 0.02 and decorrido >= 20 else None
+        return f"{nome} {parcial * 100:.0f}%" + (f", faltam ~{_tempo(falta)}" if falta and parcial < 1 else "")
 
 
 def _ambiente_da_voz(fundo: Path, trilha: Path) -> dict | None:

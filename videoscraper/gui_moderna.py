@@ -3999,7 +3999,10 @@ class JanelaModerna(ctk.CTk):
             self._barra_animada = False
         fracao = min(max(fracao, 0.0), 1.0)
         self.barra.set(fracao)
-        self.var_status.set(f"{self._status_base} {int(fracao * 100)}%" + (f"  ·  {texto}" if texto else ""))
+        # uma casa decimal: em tarefas longas (dublar um filme) o número mostra que está andando
+        pct = fracao * 100
+        numero = f"{pct:.0f}" if pct in (0, 100) else f"{pct:.1f}".replace(".", ",")
+        self.var_status.set(f"{self._status_base} {numero}%" + (f"  ·  {texto}" if texto else ""))
 
     def definir_progresso_total(self, fracao: float | None, texto: str = "") -> None:
         """Barra e texto de progresso TOTAL no topo dos consoles ('O que está acontecendo')

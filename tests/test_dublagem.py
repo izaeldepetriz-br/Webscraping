@@ -583,8 +583,11 @@ def test_corrida_placa_de_video_x_processador(monkeypatch, custo_gpu, esperado):
 
     class Sessao:
         def __init__(self, modelo, opcoes=None, providers=()):
-            self.provedores = list(providers)
-            self.custo = custo_gpu if "DmlExecutionProvider" in providers else 1.0
+            self.provedores = [p[0] if isinstance(p, tuple) else p for p in providers]
+            placa = next((p[1]["device_id"] for p in providers if isinstance(p, tuple)), None)
+            if placa == 1:
+                raise UnicodeDecodeError("utf-8", b"\xe2", 0, 1, "invalid continuation byte")   # 2ª placa: recusada
+            self.custo = custo_gpu if "DmlExecutionProvider" in self.provedores else 1.0
 
         def get_providers(self):
             return self.provedores
@@ -605,3 +608,75 @@ def test_corrida_placa_de_video_x_processador(monkeypatch, custo_gpu, esperado):
     assert ("DmlExecutionProvider" in sessao.get_providers()) == (esperado == "placa de vídeo")
     sessao, dispositivo = sv.criar_sessao("m.onnx", usar_gpu=False)                 # desmarcado: processador
     assert dispositivo == "processador"
+    assert "Windows recusou" in sv.motivo_da_falha(UnicodeDecodeError("utf-8", b"\xe2", 0, 1, "x"))
+
+
+
+def test_placa_de_video_recusada_explica_em_portugues(monkeypatch):
+    """GeForce 920M: o Windows recusa e a mensagem (em português) chegava como "'utf-8' codec can't decode"."""
+    pytest.importorskip("numpy")
+    import sys
+    import types
+    from jellyfin_tools import separar_vozes as sv
+
+    class Sessao:
+        def __init__(self, modelo, opcoes=None, providers=()):
+            if any(isinstance(p, tuple) for p in providers):
+                raise UnicodeDecodeError("utf-8", b"\xe2", 0, 1, "invalid continuation byte")
+            self.provedores = list(providers)
+
+        def get_providers(self):
+            return self.provedores
+
+        def get_inputs(self):
+            return [types.SimpleNamespace(name="input")]
+    falso = types.SimpleNamespace(
+        InferenceSession=Sessao, SessionOptions=lambda: types.SimpleNamespace(),
+        ExecutionMode=types.SimpleNamespace(ORT_SEQUENTIAL=1),
+        get_available_providers=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"])
+    monkeypatch.setitem(sys.modules, "onnxruntime", falso)
+    avisos = []
+    sessao, dispositivo = sv.criar_sessao("m.onnx", avisar=avisos.append)
+    assert sessao.get_providers() == ["CPUExecutionProvider"]
+    assert "Windows recusou" in dispositivo and "codec" not in dispositivo and len(avisos) == 1
+
+
+@pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
+def test_legenda_que_some_no_meio_e_trava_entre_dois_maestros(tmp_path):
+    """Visto na prática: outro processo apagou o .srt no meio da dublagem e o ffmpeg falhou ("Error opening input
+    file ...pt-BR.srt"). Agora a legenda que entra no vídeo é uma CÓPIA de trabalho, e uma trava ao lado do vídeo
+    impede dois Maestros (a janela e o robô) de dublarem o mesmo vídeo ao mesmo tempo."""
+    import os
+    import time
+    video = video_de_teste(tmp_path / "Aquarela Do Brasil.mp4")
+    legenda = tmp_path / "Aquarela Do Brasil.pt-BR.srt"
+    legenda.write_text(SRT, encoding="utf-8")
+    trava = dublagem.caminho_trava(video)
+    trava.write_text("123")                                   # outro Maestro dublando agora
+    r = dublar_video(video, legenda, VozFalsa(), FFMPEG, sondar=lambda v: (6.0, ["eng"]), no_original=True)
+    assert r.status == "erro" and "outro Maestro" in r.detalhe and trava.exists()
+    antigo = time.time() - dublagem.TRAVA_VALIDADE - 60       # trava velha (um Maestro que fechou no meio)
+    os.utime(trava, (antigo, antigo))
+    chamadas = []
+    separar = _separar_falso(chamadas)
+
+    def separar_e_apagar(*args):                              # "o outro processo" apaga o .srt no meio
+        legenda.unlink()
+        return separar(*args)
+    r = dublar_video(video, legenda, VozFalsa(), FFMPEG, sondar=lambda v: (6.0, ["eng"]), no_original=True,
+                     legenda_no_video=True, separar=separar_e_apagar, pasta_cache=tmp_path / "cache")
+    assert r.status == "dublado", r.detalhe
+    assert [l for l in faixas(video) if "Subtitle" in l]      # a legenda entrou mesmo assim (da cópia)
+    assert not trava.exists()
+
+
+def test_relogio_mostra_a_etapa_e_quanto_falta():
+    agora = [0.0]
+    relogio = dublagem.RelogioDaDublagem(separar=True, agora=lambda: agora[0])
+    assert relogio.texto(0.2) == "lendo as falas 50%"
+    agora[0] = 100
+    assert relogio.texto(0.5) == "tirando as vozes originais 0%"          # começou a etapa longa
+    agora[0] = 100 + 600                                                  # 10 min depois: 10% da etapa
+    assert relogio.texto(0.53) == "tirando as vozes originais 10%, faltam ~1h30"
+    assert dublagem.etapa_da_dublagem(0.9, True) == "juntando ao vídeo"
+    assert dublagem.etapa_da_dublagem(0.6, False) == "montando a trilha"

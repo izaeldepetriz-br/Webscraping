@@ -1,5 +1,6 @@
 """Comandos para robôs (Maestro.exe --organizar, --conferir-espelhos...): sem janela, com código de saída e log."""
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -424,3 +425,27 @@ def test_arquivo_do_elenco_da_serie(tmp_path, monkeypatch):
     assert automacao.arquivo_elenco("Sweet Home (2020)") == tmp_path / "series" / "Sweet Home (2020).json"
     assert automacao.arquivo_elenco("A/B: C?") == tmp_path / "series" / "A_B_ C_.json"
     assert automacao.arquivo_elenco("") == tmp_path / "series" / "serie.json"
+
+
+def test_avulsos_mostra_o_andamento_da_dublagem(casa, tmp_path, monkeypatch):
+    """Antes a aba Avulsos só dizia "Dublando 1 de 1" e a porcentagem aparecia no fim."""
+    from jellyfin_tools import dublagem
+    from test_dublagem import FFMPEG, SRT, VozFalsa, video_de_teste
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    caixa = tmp_path / "Avulsos"
+    caixa.mkdir()
+    video_de_teste(caixa / "Aula.mkv")
+    (caixa / "Aula.pt-BR.srt").write_text(SRT, encoding="utf-8")
+    monkeypatch.setattr(automacao, "videos_para_dublar",
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, **{**k, "sondar": lambda v: (6.0, ["eng"])}))
+    monkeypatch.setattr(automacao, "videos_sem_legenda", lambda *p, **k: [])
+    casa(pasta_avulsos=str(caixa), encurtar_falas=False, dublagem_previa=False)
+    o, _ = automacao.opcoes_salvas()
+    passos = []
+    r = automacao.processar_avulsos(o, logging.getLogger("t"), str(caixa), motor=VozFalsa(),
+                                    andamento=lambda fracao, texto: passos.append((fracao, texto)))
+    assert r.contagens["dublados"] == 1
+    fracoes = [f for f, t in passos if t.startswith("Dublando 1 de 1: Aula –")]
+    assert len(fracoes) >= 3 and fracoes == sorted(fracoes) and fracoes[-1] == 1.0
+    assert any("%" in t for _, t in passos)

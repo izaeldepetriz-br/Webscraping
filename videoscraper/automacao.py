@@ -35,6 +35,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import re
 import sys
 import traceback
@@ -781,10 +782,8 @@ def separador_de_vozes(o: OpcoesJellyfin, log: logging.Logger | None = None, ao_
 
     def separar(video, destino, trecho, duracao, parar, ao_progresso):
         if "modelo" not in carregado:               # carrega uma vez só, para todos os vídeos da vez
-            avisar = (lambda texto: log.warning("Tirar as vozes originais: %s", texto)) if log else None
-            carregado["modelo"] = separar_vozes.Separador(modelo, usar_gpu=getattr(o, "separar_gpu", True),
-                                                          avisar=avisar)
-            if log:
+            carregado["modelo"] = separar_vozes.Separador(modelo, usar_gpu=getattr(o, "separar_gpu", True))
+            if log:                                  # uma linha só (o motivo, se a placa de vídeo não entrou)
                 log.info("Tirar as vozes originais: usando o(a) %s", carregado["modelo"].dispositivo)
         return separar_vozes.separar_fundo(ffmpeg, video, destino, modelo, trecho, duracao, parar, ao_progresso,
                                            carregado["modelo"])
@@ -826,8 +825,15 @@ def _salvar_previas(lista: list[dict]) -> None:
 
 
 def registrar_previa(video: Path, previa: Path, legenda: Path | None) -> None:
+    """legenda: a que vai para dentro do vídeo ao aprovar. Uma CÓPIA fica junto da prévia (se o .srt ao lado do
+    vídeo sumir até você aprovar, a legenda ainda entra); o original é apagado depois de aprovar."""
+    copia = ""
+    if legenda and Path(legenda).is_file():
+        copia = str(Path(previa).with_suffix(".srt"))
+        shutil.copyfile(legenda, copia)
     lista = [d for d in previas_pendentes() if _chave(d["video"]) != _chave(video)]
-    lista.append({"video": str(video), "previa": str(previa), "legenda": str(legenda) if legenda else "",
+    lista.append({"video": str(video), "previa": str(previa), "legenda": copia,
+                  "legenda_original": str(legenda) if legenda else "",
                   "criada": datetime.now().isoformat(timespec="minutes")})
     _salvar_previas(lista)
 
@@ -847,6 +853,8 @@ def aprovar_previa_de(video: str | Path, log: logging.Logger | None = None, para
     if not ffmpeg:
         raise ErroDublagem("falta o ffmpeg")
     final = aprovar_previa(ffmpeg, item["video"], item["previa"], item.get("legenda") or None, parar)
+    if item.get("legenda") and item.get("legenda_original"):
+        Path(item["legenda_original"]).unlink(missing_ok=True)   # está dentro do vídeo (senão apareceria 2 vezes)
     _salvar_previas([d for d in previas_pendentes() if _chave(d["video"]) != _chave(video)])
     if log:
         log.info("[aprovada] dublagem gravada no original: %s", final)
@@ -857,6 +865,8 @@ def descartar_previa_de(video: str | Path, log: logging.Logger | None = None) ->
     for d in previas_pendentes():
         if _chave(d["video"]) == _chave(video):
             Path(d["previa"]).unlink(missing_ok=True)
+            if d.get("legenda"):
+                Path(d["legenda"]).unlink(missing_ok=True)       # a cópia da legenda (o original fica)
             with contextlib.suppress(OSError):
                 Path(d["previa"]).parent.rmdir()
             if log:
@@ -1014,13 +1024,15 @@ def situacao_avulsos(plano: PlanoAvulsos, dublar: bool = True, legendar: bool = 
 
 
 def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", arquivos=(), parar=None,
-                      avisar=None, sondar=None, motor=None, separar=None) -> Resultado:
+                      avisar=None, sondar=None, motor=None, separar=None, andamento=None) -> Resultado:
     """Caixa de entrada: (1) traduz a legenda que já existe; (2) cria pelo áudio a dos que não têm nenhuma; (3) se
     marcado, dubla os que ficaram com legenda em português; (4) se marcado "Legendar", a legenda em português entra
     como faixa do vídeo. A dublagem e a legenda ficam no próprio arquivo (ou, se escolhido em Configurações >
     Dublagem, a dublagem fica à parte: 'Nome - Dublado IA.mkv')."""
-    from jellyfin_tools.dublagem import embutir_legenda
+    from jellyfin_tools.dublagem import RelogioDaDublagem, embutir_legenda
     avisar = avisar or (lambda texto: None)
+    # andamento(fração 0..1, texto): a barra e a porcentagem na tela (antes só aparecia no fim)
+    andamento = andamento or (lambda fracao, texto: avisar(texto))
     parado = parar or (lambda: False)
     legendar = getattr(o, "avulsos_legendar", True)
     idioma = o.idioma.split(",")[0].strip() or "pt-BR"
@@ -1032,7 +1044,7 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
     for k, p in enumerate(plano.traduzir if tradutor else []):
         if parado():
             break
-        avisar(f"Traduzindo a legenda {k + 1} de {len(plano.traduzir)}: {p.video.stem}")
+        andamento(k / len(plano.traduzir), f"Traduzindo a legenda {k + 1} de {len(plano.traduzir)}: {p.video.stem}")
         r = traduzir_arquivo(p.origem, p.destino, tradutor, titulo=p.video.stem)
         log.info("[%s] avulso %s -> %s%s", r.status, r.origem.name, r.destino.name,
                  f" ({r.detalhe})" if r.detalhe else "")
@@ -1046,7 +1058,9 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
         for k, item in enumerate(plano.pelo_audio):
             if parado():
                 break
-            avisar(f"Criando a legenda pelo áudio {k + 1} de {len(plano.pelo_audio)}: {item.video.stem}")
+            andamento(k / len(plano.pelo_audio),
+                      f"Criando a legenda pelo áudio {k + 1} de {len(plano.pelo_audio)}: {item.video.stem} (o "
+                      "Whisper ouve o vídeo inteiro: pode demorar)")
             r = legendar_pelo_audio(item.video, transcritor, tradutor, idioma)
             log.info("[%s] avulso %s%s", r.status, r.video.name, f" ({r.detalhe})" if r.detalhe else "")
             if r.status == "erro":
@@ -1068,8 +1082,14 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
         for k, item in enumerate(dublar_agora):
             if parado():
                 break
-            avisar(f"Dublando {k + 1} de {len(dublar_agora)}: {item.video.stem}")
-            r = dublar_item(o, item, motor, log, parar, separar=separar or None, legenda_no_video=legendar)
+            total, relogio = len(dublar_agora), RelogioDaDublagem(bool(separar))
+
+            def progresso(fracao, k=k, item=item, total=total, relogio=relogio):
+                andamento((k + fracao) / total,
+                          f"Dublando {k + 1} de {total}: {item.video.stem} – {relogio.texto(fracao)}")
+            progresso(0.0)
+            r = dublar_item(o, item, motor, log, parar, separar=separar or None, legenda_no_video=legendar,
+                            ao_progresso=progresso)
             log.info("[%s] avulso %s%s", r.status, r.video.name, f" ({r.detalhe})" if r.detalhe else "")
             if r.status == "erro":
                 erros.append(f"{item.video.name}: {r.detalhe}")
@@ -1084,7 +1104,7 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
     for k, (video, srt) in enumerate(embutir_agora):
         if parado() or not ffmpeg:
             break
-        avisar(f"Pondo a legenda no vídeo {k + 1} de {len(embutir_agora)}: {video.stem}")
+        andamento(k / len(embutir_agora), f"Pondo a legenda no vídeo {k + 1} de {len(embutir_agora)}: {video.stem}")
         try:
             final = embutir_legenda(ffmpeg, video, srt, parar=parar)
             log.info("[legenda no vídeo] avulso %s", final.name)

@@ -50,6 +50,7 @@ from jellyfin_tools.transcricao import (Transcritor, estimar as estimar_audio, l
                                         videos_sem_legenda)
 from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sincronizar
 from jellyfin_tools.dublagem import (ErroDublagem, caminho_amostra, dublar_video, episodios_para_dublar,
+                                     RelogioDaDublagem,
                                      falas_da_legenda, localizar_ffmpeg, pasta_series_dubladas, trecho_de_amostra,
                                      videos_para_dublar, voz_pronta)
 from jellyfin_tools.paralelo import prioridade_baixa
@@ -2712,7 +2713,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
         def tarefa():
             r = automacao.processar_avulsos(
                 o, self._log, pasta, arquivos, parar=self.evento_parar.is_set,
-                avisar=lambda texto: self.fila.put(("jf_analise", (0.0, texto))))
+                avisar=lambda texto: self.fila.put(("jf_analise", (0.0, texto))),
+                andamento=lambda fracao, texto: self.fila.put(("jf_analise", (fracao, texto))))
             self.resumo_diario.registrar("dublados", r.contagens.get("dublados", 0))
             detalhes = ("\n\nProblemas:\n" + "\n".join(f"• {d}" for d in r.detalhes[:6])) if r.detalhes else ""
             self.fila.put(("status_fim", r.resumo))
@@ -2859,11 +2861,12 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 if self.evento_parar.is_set():
                     break
 
-                def andamento(fracao, k=k, item=item):
+                relogio = RelogioDaDublagem(separar is not None)
+
+                def andamento(fracao, k=k, item=item, relogio=relogio):
                     geral = (k + fracao) / total
-                    etapa = "lendo as falas" if fracao < 0.6 else "juntando ao vídeo"
-                    self.fila.put(("jf_analise", (geral, f"Dublando {k + 1} de {total}: {item.video.stem} – {etapa} "
-                                                         f"({int(fracao * 100)}%)")))
+                    self.fila.put(("jf_analise", (geral, f"Dublando {k + 1} de {total}: {item.video.stem} – "
+                                                         f"{relogio.texto(fracao)}")))
                 adaptar = automacao.adaptador(o, item.video.stem)
                 if adaptar is not None:
                     adaptadores.append(adaptar)
