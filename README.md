@@ -240,6 +240,15 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.18.3
+
+- **Nada mais fica esperando para sempre**: os pedidos ao Gemini (voz) têm tempo-limite de 5 minutos e os do Claude,
+  de 3 minutos (antes, um pedido que o Google não respondesse prendia a dublagem sem fim, e o do Claude podia
+  esperar quase 1 hora entre tentativas). Enquanto espera, o botão **Parar** responde na hora.
+- **Cada etapa do teste aparece**: depois do Whisper, a barra e o log mostram "traduzindo N falas (Claude)",
+  "preparando a voz (Gemini)" e a etapa da dublagem com o tempo que falta. A barra só anda para a frente. Se algo
+  demorar, o log diz exatamente onde.
+
 ### Novidades da v2.18.2
 
 - **Whisper começa mais rápido**: com o modelo já baixado, ele abre direto do seu PC, sem consultar a internet a

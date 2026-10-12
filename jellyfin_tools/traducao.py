@@ -256,7 +256,8 @@ class Tradutor:
         if self.cliente is None:
             import anthropic                                         # só quando for traduzir de verdade
             # sem chave na tela, o SDK usa a variável ANTHROPIC_API_KEY (ou o login do 'ant')
-            self.cliente = anthropic.Anthropic(api_key=self.chave or None, max_retries=4)
+            # tempo-limite de 3 min por pedido (o padrão do SDK é 10 min, e com as tentativas ficava quase 1 hora)
+            self.cliente = anthropic.Anthropic(api_key=self.chave or None, max_retries=3, timeout=180.0)
         self._sistema = _SISTEMA.format(idioma=nome_do_idioma(self.idioma))
 
     @property

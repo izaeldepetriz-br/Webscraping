@@ -29,7 +29,7 @@ import re
 import time
 import wave
 from array import array
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 from . import gastos
@@ -55,6 +55,7 @@ PRECO_SAIDA = (6.0, 20.0)     # US$ por milhão de tokens de áudio: faixa dos m
 PRECO_OUVIR = 1.0             # US$ por milhão de tokens de áudio ENVIADO (ouvir quem fala; estimativa, confira)
 KBPS_OUVIR = 32               # o áudio enviado para ouvir vai em mp3 de 32 kbps (personagens.audio_do_trecho)
 SIMULTANEOS = 4               # blocos pedidos ao mesmo tempo
+TEMPO_LIMITE = 300            # segundos que um pedido pode levar (um bloco de 30 falas leva bem menos)
 TENTATIVAS = 6
 BLOCO = 30                    # falas por pedido
 LETRAS_POR_BLOCO = 2000
@@ -203,7 +204,8 @@ def _cliente(chave: str):
         from google import genai
     except ImportError as erro:
         raise ErroDublagem("falta a biblioteca do Gemini (pip install google-genai)") from erro
-    return genai.Client(api_key=chave)
+    # sem tempo-limite, um pedido que o Google não respondesse prendia a dublagem para sempre
+    return genai.Client(api_key=chave, http_options={"timeout": TEMPO_LIMITE * 1000})
 
 
 def testar_chave(chave: str, modelo: str = MODELO_PADRAO, cliente=None) -> str:
@@ -372,17 +374,23 @@ class MotorGemini:
         itens = [(p[0], Path(p[1]), p[2] if len(p) > 2 and p[2] else self.voz) for p in pedidos]
         grupos = blocos(itens, self.bloco)
         feitos = 0
-        with ThreadPoolExecutor(max_workers=self.simultaneos) as grupo:
-            futuros = {grupo.submit(self._falar_bloco, g, parar): len(g) for g in grupos}
-            try:
-                for futuro in as_completed(futuros):
+        # sem "with": no Parar (ou num erro), não espera os pedidos que ainda estão no Google
+        grupo = ThreadPoolExecutor(max_workers=self.simultaneos)
+        futuros = {grupo.submit(self._falar_bloco, g, parar): len(g) for g in grupos}
+        pendentes = set(futuros)
+        try:
+            while pendentes:                        # confere o Parar enquanto espera o Google responder
+                prontos, pendentes = wait(pendentes, timeout=0.5, return_when=FIRST_COMPLETED)
+                for futuro in prontos:
                     futuro.result()
                     feitos += futuros[futuro]
                     if ao_progresso:
                         ao_progresso(feitos / len(itens))
-            except BaseException:
-                for f in futuros:
-                    f.cancel()
-                raise
+                if pendentes and parar and parar():
+                    raise ErroDublagem("interrompido (botão Parar)")
+        except BaseException:
+            grupo.shutdown(wait=False, cancel_futures=True)
+            raise
+        grupo.shutdown(wait=False)
         if parar and parar():
             raise ErroDublagem("interrompido (botão Parar)")

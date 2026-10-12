@@ -1027,6 +1027,7 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
         # com a separação das vozes, as etapas dividem a barra de outro jeito (separar demora)
         fatias = ((0.4, 0.45, 0.5, 0.8) if separar else (0.5, 0.6, 0.7, 0.7))   # falas, adaptar, trilha, separar
         try:
+            andamento(0.0)                               # "lendo as falas 0%" já aparece (antes do 1º bloco voltar)
             reaproveitadas = _sintetizar(motor, pedidos, parar, lambda f: andamento(fatias[0] * f),
                                          Path(pasta_cache) / "frases" if pasta_cache else None)
             clipes = [(a - inicio, b - inicio, w) for k, (_, w, _) in zip(indices, pedidos)

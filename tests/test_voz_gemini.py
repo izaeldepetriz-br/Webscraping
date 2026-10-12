@@ -276,3 +276,35 @@ def test_elenco_da_serie_mantem_rotulos_e_vozes_entre_episodios(tmp_path):
     mapa = personagens.distribuir_vozes(lista, "Charon", fixas=guardado["vozes"])
     assert mapa == {"Ana": "Aoede", "Pessoa 1": "Orus"}                                # as mesmas do episódio 1
     assert personagens.carregar_elenco(tmp_path / "nao_existe.json") == {"pessoas": [], "vozes": {}}
+
+
+def test_gemini_que_nao_responde_nao_prende_o_parar(tmp_path):
+    """Um pedido que o Google não devolve: o Parar responde em menos de 1 s (antes esperava para sempre)."""
+    import threading
+    import time
+    liberar = threading.Event()
+
+    class Mudo(GeminiFalso):
+        def create(self, **k):
+            liberar.wait(10)                                                # o Google não responde
+            return super().create(**k)
+    motor = voz_gemini.MotorGemini("chave", cliente=Mudo(), simultaneos=1)
+    pedido = time.monotonic()
+    with pytest.raises(ErroDublagem, match="Parar"):
+        motor.sintetizar([("Olá.", tmp_path / "1.wav")], parar=lambda: time.monotonic() - pedido > 0.3)
+    assert time.monotonic() - pedido < 2
+    liberar.set()
+
+
+def test_cliente_do_gemini_tem_tempo_limite(monkeypatch):
+    import sys
+    from types import ModuleType
+    criados = []
+    genai = ModuleType("google.genai")
+    genai.Client = lambda **k: criados.append(k) or object()
+    google = ModuleType("google")
+    google.genai = genai
+    monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setitem(sys.modules, "google.genai", genai)
+    voz_gemini._cliente("chave")
+    assert criados[0]["http_options"] == {"timeout": voz_gemini.TEMPO_LIMITE * 1000}

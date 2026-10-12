@@ -1233,6 +1233,8 @@ class _Relogio:
         if fracao < 0.03 or passou < 15 or fracao >= 1:
             return ""
         segundos = passou * (1 - fracao) / fracao
+        if segundos < 5:
+            return ""
         return f", faltam ~{max(1, round(segundos / 60))} min" if segundos >= 60 else f", faltam ~{int(segundos)} s"
 
 
@@ -1321,9 +1323,13 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
                 if not falas:
                     raise ErroDublagem("o Whisper não reconheceu nenhuma fala nesse trecho")
                 portugues = lingua in _PORTUGUES or lingua == idioma.lower().split("-")[0]
+                log.info("Teste: o Whisper terminou (%d falas, áudio em %s)", len(falas), lingua or "?")
                 if not portugues:
                     if tradutor is None:
                         raise ErroDublagem(f"o áudio está em {lingua} e falta a chave da Anthropic para traduzir")
+                    quem = "tradução local" if usa_traducao_local(o) else "Claude"
+                    andamento(0.42, f"Teste: traduzindo {len(falas)} falas ({quem})")
+                    log.info("Teste: traduzindo %d falas (%s)", len(falas), quem)
                     textos = tradutor.traduzir_falas([f.texto for f in falas], titulo=video.stem, parar=parar)
                     falas = [Fala(f.tempo, t) for f, t in zip(falas, textos)]
                 legenda_teste.write_text(gerar_srt(falas), encoding="utf-8")
@@ -1331,13 +1337,19 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
                                 + (", traduzidas)" if not portugues else ")"))
         destino = caminho_amostra(pasta_dublagem(), video)
         if o.avulsos_dublar:
+            from jellyfin_tools.dublagem import RelogioDaDublagem
+            voz = ("Gemini" if usa_gemini(o) else "Google Cloud" if usa_cloud(o) else "Piper")
+            andamento(0.45, f"Teste: preparando a voz ({voz})")
+            log.info("Teste: dublando com a voz do %s%s", voz, ", tirando as vozes originais" if separar else "")
             motor = motor or preparar_motor(o)
+            relogio_dub = RelogioDaDublagem(bool(separar))
+            # a barra só anda para a frente: o Whisper e a tradução ficaram com até 45%
             r_dub = dublar_video(video, legenda_teste, motor, parar=parar, trecho=r.trecho, destino=destino,
                                  adaptar=adaptador(o, video.stem), pasta_cache=pasta_dublagem(), separar=separar,
                                  ambientar=getattr(o, "ambientar_voz", True), legenda_no_video=o.avulsos_legendar,
                                  avisar=lambda texto: log.warning("Teste: %s", texto),
-                                 ao_progresso=lambda f: andamento(0.2 + 0.8 * f, f"Teste: dublando o trecho "
-                                                                                  f"({int(f * 100)}%)"))
+                                 ao_progresso=lambda f: andamento(0.45 + 0.55 * f,
+                                                                  f"Teste: {relogio_dub.texto(f)} ({voz})"))
             if r_dub.status != "dublado":
                 raise ErroDublagem(r_dub.detalhe)
             r.falas = r_dub.falas
