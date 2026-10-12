@@ -4681,3 +4681,61 @@ def test_parar_libera_a_janela_mesmo_com_uma_etapa_presa(app, monkeypatch):
         app.update()
         time.sleep(0.02)
     assert viu_parar == [True] and len(app.caixas) == caixas   # a antiga viu "parar" e não mexeu na tela
+
+
+def test_previas_e_testes_abrem_no_vlc(app, tmp_path, monkeypatch):
+    """Prévias e testes abrem no VLC (o "Filmes e TV" do Windows às vezes recusa o .mkv com várias faixas); sem o
+    VLC, no programa padrão; "Outro programa..." vale um .exe qualquer."""
+    from videoscraper import automacao
+    vlc = tmp_path / "vlc.exe"
+    vlc.write_bytes(b"")
+    abertos, padrao = [], []
+    monkeypatch.setattr(app_moderna.subprocess, "Popen", lambda args, **k: abertos.append(args))
+    monkeypatch.setattr(app, "_abrir_no_sistema", lambda caminho: padrao.append(caminho))
+    monkeypatch.setattr(automacao, "localizar_vlc", lambda: str(vlc))
+    assert app.obter_opcoes_jellyfin().player_video == "vlc"               # o padrão é o VLC
+    app.abrir_video(str(tmp_path / "previa.mkv"))
+    assert abertos == [[str(vlc), str(tmp_path / "previa.mkv")]] and not padrao
+    app.var_jf_player_video.set(app.PLAYERS[1])                             # "Programa padrão do Windows"
+    app.abrir_video("b.mkv")
+    assert padrao == ["b.mkv"] and app.obter_opcoes_jellyfin().player_video == "padrao"
+    outro = tmp_path / "mpc-hc64.exe"
+    outro.write_bytes(b"")
+    monkeypatch.setattr(app_moderna.filedialog if hasattr(app_moderna, "filedialog") else __import__(
+        "videoscraper.gui_moderna", fromlist=["filedialog"]).filedialog, "askopenfilename", lambda **k: str(outro))
+    app.ao_escolher_player()
+    assert app.obter_opcoes_jellyfin().player_video == str(outro)
+    app.abrir_video("c.mkv")
+    assert abertos[-1] == [str(outro), "c.mkv"]
+    app.definir_player("vlc")
+    monkeypatch.setattr(automacao, "localizar_vlc", lambda: None)            # sem o VLC instalado
+    app.abrir_video("d.mkv")
+    assert padrao[-1] == "d.mkv"
+
+
+def test_testes_feitos_ficam_para_abrir_de_novo(app, tmp_path, monkeypatch):
+    """"🧪 Testes feitos": o teste fica guardado (mesmo depois que o filme inteiro é dublado) para abrir de novo,
+    abrir a pasta (outro player) ou apagar."""
+    from videoscraper import automacao
+    from videoscraper.gui_moderna import JanelaTestes
+    from jellyfin_tools import dublagem
+    video = tmp_path / "Farol (2020).mkv"
+    amostra = dublagem.caminho_amostra(automacao.pasta_dublagem(), video)
+    assert amostra.parent.name == "testes"                              # fora do progresso do filme
+    amostra.parent.mkdir(parents=True, exist_ok=True)
+    amostra.write_bytes(b"x")
+    automacao.registrar_teste(video, amostra, (75.0, 195.0))
+    abertos, pastas = [], []
+    monkeypatch.setattr(app, "abrir_video", lambda caminho: abertos.append(caminho))
+    monkeypatch.setattr(app, "_abrir_no_sistema", lambda caminho: pastas.append(caminho))
+    monkeypatch.setattr(app, "perguntar", lambda *a, **k: True)
+    app.mostrar_aba("Avulsos")
+    app.bt_testes_av.invoke()
+    janela = next(w for w in app.winfo_children() if isinstance(w, JanelaTestes))
+    assert janela.tabela.item("0", "values")[:2] == ("Farol (2020).mkv", "1:15 a 3:15")
+    janela.bt_abrir.invoke()
+    janela.bt_pasta.invoke()
+    assert abertos == [str(amostra)] and pastas == [str(amostra.parent)]
+    janela.bt_apagar.invoke()
+    assert not amostra.exists() and automacao.testes_feitos() == [] and not janela.tabela.get_children()
+    janela.destroy()

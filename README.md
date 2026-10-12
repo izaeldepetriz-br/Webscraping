@@ -251,6 +251,11 @@ primeira falha (antes esperava o tempo limite em cada filme).
 - **Parar nunca mais fica "Parando..."**: se a etapa atual não obedecer ao Parar em 3 segundos (presa esperando um
   serviço da internet, por exemplo), a janela é liberada na hora e a etapa fica para trás: ela termina sozinha em
   segundo plano, sem mexer mais na tela, e a próxima tarefa não a "religa".
+- **Prévias e testes abrem no VLC** (Configurações > Dublagem > "Abrir as prévias e os testes com"): o "Filmes e TV"
+  do Windows às vezes recusa o .mkv com várias faixas de áudio e de legenda. Sem o VLC instalado (grátis,
+  videolan.org), abre com o programa padrão; "Outro programa..." aceita qualquer player (.exe).
+- **🧪 Testes feitos** (abas Jellyfin e Avulsos): os vídeos de teste ficam guardados, mesmo depois que o vídeo
+  inteiro é dublado, para abrir de novo, abrir a pasta (e usar outro player, se o escolhido der problema) ou apagar.
 
 ### Novidades da v2.18.2
 

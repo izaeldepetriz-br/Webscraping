@@ -180,6 +180,7 @@ class OpcoesJellyfin:
     ambientar_voz: bool = True       # a voz dublada ganha o tom, o volume e o eco das vozes originais (com a separação)
     separar_gpu: bool = True         # dublagem natural na placa de vídeo (DirectML); se não der, no processador
     minutos_teste: float = 2.0       # "Testar": legenda e dubla só esses minutos (gasta pouco) num vídeo curto
+    player_video: str = "vlc"        # prévias e testes abrem com: "vlc", "padrao" (o do Windows) ou o caminho de um .exe
     resumo_diario: bool = False      # mandar no Discord/Telegram, uma vez por dia, o que o Maestro fez
     hora_resumo: int = 21
 
@@ -1866,6 +1867,79 @@ class JanelaPrevias(ctk.CTkToplevel):
             self.recarregar()
 
 
+class JanelaTestes(ctk.CTkToplevel):
+    """"Testes feitos": os vídeos de teste (alguns minutos dublados/legendados) para abrir de novo. Se o player der
+    problema, "Abrir a pasta" mostra o arquivo para abrir com outro. itens(): [{video, amostra, trecho, feito}];
+    abrir/pasta(item); apagar(item) -> True se apagou."""
+
+    def __init__(self, master, itens, abrir, pasta, apagar):
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.itens_de, self.abrir, self.pasta, self.apagar = itens, abrir, pasta, apagar
+        self.title("Testes feitos")
+        self.geometry("860x400")
+        self.minsize(640, 300)
+        self.transient(master)
+        ctk.CTkLabel(self, text="Testes feitos", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
+                     text_color=Tema.TEXTO, anchor="w").pack(fill="x", padx=24, pady=(18, 2))
+        ctk.CTkLabel(self, text="Os vídeos curtos dos botões \"🧪 Testar\" ficam guardados aqui. O player não abriu? Use "
+                     "\"Abrir a pasta\" e abra o arquivo com outro (ex.: VLC), ou troque o programa em Configurações > "
+                     "Dublagem.", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left",
+                     wraplength=800).pack(fill="x", padx=24, pady=(0, 10))
+        quadro = ctk.CTkFrame(self, fg_color=Tema.CARTAO)
+        quadro.pack(fill="both", expand=True, padx=24)
+        self.tabela = ttk.Treeview(quadro, columns=("video", "trecho", "feito"), show="headings",
+                                   selectmode="browse", style="Moderno.Treeview", height=6)
+        for chave, texto, largura, estica in (("video", "Vídeo", 420, True), ("trecho", "Trecho", 150, False),
+                                              ("feito", "Feito em", 150, False)):
+            self.tabela.heading(chave, text=texto, anchor="w")
+            self.tabela.column(chave, width=largura, stretch=estica, anchor="w")
+        self.tabela.pack(fill="both", expand=True)
+        self.tabela.bind("<Double-1>", lambda e: self._abrir())
+        botoes = ctk.CTkFrame(self, fg_color="transparent")
+        botoes.pack(fill="x", padx=24, pady=14)
+        self.bt_abrir = master._botao(botoes, "▶  Abrir", self._abrir, "primario", largura=120)
+        self.bt_pasta = master._botao(botoes, "📂  Abrir a pasta", self._pasta, largura=160)
+        self.bt_apagar = master._botao(botoes, "✕  Apagar", self._apagar, "perigo", largura=120)
+        for b in (self.bt_abrir, self.bt_pasta, self.bt_apagar):
+            b.pack(side="left", padx=(0, 10))
+        master._botao(botoes, "Fechar", self.destroy, "fantasma", largura=90).pack(side="right")
+        self.recarregar()
+
+    @staticmethod
+    def _minuto(segundos: float) -> str:
+        s = int(segundos)
+        return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
+
+    def recarregar(self) -> None:
+        self._itens = list(self.itens_de())
+        self.tabela.delete(*self.tabela.get_children())
+        for i, item in enumerate(self._itens):
+            inicio, fim = (item.get("trecho") or [0, 0])[:2]
+            self.tabela.insert("", "end", iid=str(i), values=(
+                Path(item["video"]).name, f"{self._minuto(inicio)} a {self._minuto(fim)}",
+                str(item.get("feito", "")).replace("T", " ")))
+        if self._itens:
+            self.tabela.selection_set("0")
+        for b in (self.bt_abrir, self.bt_pasta, self.bt_apagar):
+            b.configure(state="normal" if self._itens else "disabled")
+
+    def escolhido(self) -> dict | None:
+        selecao = self.tabela.selection()
+        return self._itens[int(selecao[0])] if selecao else None
+
+    def _abrir(self) -> None:
+        if (item := self.escolhido()):
+            self.abrir(item)
+
+    def _pasta(self) -> None:
+        if (item := self.escolhido()):
+            self.pasta(item)
+
+    def _apagar(self) -> None:
+        if (item := self.escolhido()) and self.apagar(item):
+            self.recarregar()
+
+
 def tamanho_inicial(largura_tela: int, altura_tela: int, escala: float = 1.0
                     ) -> tuple[int, int, int, int, tuple[int, int]]:
     """(largura, altura, x, y, (largura mínima, altura mínima)) da janela principal.
@@ -2435,11 +2509,12 @@ class JanelaModerna(ctk.CTk):
         self.campo_jf_minutos = self.campo_minutos(voz)
         self.bt_roteiro_jf = self._botao(voz, "📜 Roteiro...", self.ao_roteiro_jellyfin)
         self.bt_previas_jf = self._botao(voz, "🎧 Prévias", self.ao_previas)
+        self.bt_testes_jf = self._botao(voz, "🧪 Testes feitos", self.ao_testes_feitos)
         for b in (self.bt_traduzir_legendas, self.bt_legendar_audio, self.bt_sincronizar, self.bt_dublar,
-                  self.bt_testar_jf, self.bt_roteiro_jf, self.bt_previas_jf):
+                  self.bt_testar_jf, self.bt_roteiro_jf, self.bt_previas_jf, self.bt_testes_jf):
             b.configure(height=34)
         for b in (self.bt_traduzir_legendas, self.bt_legendar_audio, self.bt_sincronizar, self.bt_dublar,
-                  self.bt_testar_jf, self.campo_jf_minutos, self.bt_roteiro_jf, self.bt_previas_jf):
+                  self.bt_testar_jf, self.campo_jf_minutos, self.bt_roteiro_jf, self.bt_previas_jf, self.bt_testes_jf):
             b.pack(side="left", padx=(0, 8))
         self.bt_testar_jf.pack_configure(padx=(0, 4))
 
@@ -2825,6 +2900,8 @@ class JanelaModerna(ctk.CTk):
                                            self.var_jf_avulsos_dublar)
         self.cb_av_dublar.pack_configure(side="left")
         self._botao(baixo, "⚙ Opções", self.mostrar_opcoes_avulsos, "fantasma", largura=100).pack(side="right")
+        self.bt_testes_av = self._botao(baixo, "🧪 Testes feitos", self.ao_testes_feitos, "fantasma", largura=150)
+        self.bt_testes_av.pack(side="right", padx=(0, 6))
 
         barra = ctk.CTkFrame(aba, fg_color="transparent")
         barra.grid(row=1, column=0, sticky="ew", padx=28, pady=12)
@@ -3068,6 +3145,18 @@ class JanelaModerna(ctk.CTk):
             lateral, "Teste (botões \"Testar\"): quantos minutos legendar e dublar, num vídeo curto à parte (gasta só "
                      "o desse trecho; dá para mudar também ao lado dos botões):", 2, *self.MINUTOS_TESTE,
             var=self.var_minutos_teste())
+        self._rotulo(lateral, "Abrir as prévias e os testes com:").pack(anchor="w", pady=(4, 2), **p)
+        linha_player = ctk.CTkFrame(lateral, fg_color="transparent")
+        linha_player.pack(fill="x", **p)
+        self.var_jf_player_video = tk.StringVar(value=self.PLAYERS[0])
+        self.menu_player = self._menu_opcoes(linha_player, self.var_jf_player_video, self.PLAYERS)
+        self.menu_player.configure(width=300)
+        self.menu_player.pack(side="left")
+        self._botao(linha_player, "Outro programa...", self.ao_escolher_player, "fantasma",
+                    largura=150).pack(side="left", padx=(8, 0))
+        self._rotulo(lateral, "O VLC (grátis, videolan.org) abre os vídeos com várias faixas de áudio e de legenda, que "
+                              "o \"Filmes e TV\" do Windows às vezes recusa. Sem o VLC instalado, abre com o programa "
+                              "padrão.", fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(2, 6), **p)
         self.var_jf_dublagem_previa = tk.BooleanVar(value=True)
         self.cb_dublagem_previa = self._checkbox(
             lateral, "Fase de teste: primeiro uma prévia para eu ouvir e aprovar (botão \"🎧 Prévias\")",
@@ -3233,6 +3322,24 @@ class JanelaModerna(ctk.CTk):
         pass
 
     MINUTOS_TESTE = (1, 60, 1)                           # mínimo, máximo e passo dos minutos do teste
+    PLAYERS = ("VLC (recomendado)", "Programa padrão do Windows")
+
+    def valor_player(self) -> str:
+        """Do menu para o config: "vlc", "padrao" ou o caminho do programa escolhido em "Outro programa..."."""
+        texto = self.var_jf_player_video.get()
+        return {self.PLAYERS[0]: "vlc", self.PLAYERS[1]: "padrao"}.get(texto, texto)
+
+    def definir_player(self, valor: str) -> None:
+        texto = {"vlc": self.PLAYERS[0], "padrao": self.PLAYERS[1]}.get(valor or "vlc", valor)
+        self.menu_player.configure(values=list(self.PLAYERS) + ([texto] if texto not in self.PLAYERS else []))
+        self.var_jf_player_video.set(texto)
+
+    def ao_escolher_player(self) -> None:
+        """"Outro programa...": um .exe (MPC-HC, PotPlayer...) para abrir as prévias e os testes."""
+        caminho = filedialog.askopenfilename(parent=self, title="Programa para abrir as prévias",
+                                             filetypes=[("Programas", "*.exe"), ("Todos os arquivos", "*.*")])
+        if caminho:
+            self.definir_player(caminho)
 
     def var_minutos_teste(self) -> tk.StringVar:
         """Os minutos do teste: UM valor para o campo das Configurações e os campos ao lado dos botões Testar."""
@@ -3251,6 +3358,9 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_roteiro_jellyfin(self) -> None:              # o app faz: escolhe o filme ou episódio e o roteiro
+        pass
+
+    def ao_testes_feitos(self) -> None:                 # o app faz: a janela "Testes feitos"
         pass
 
     def ao_roteiro_avulso(self) -> None:                # o app faz: o roteiro do vídeo escolhido na lista
@@ -3825,6 +3935,7 @@ class JanelaModerna(ctk.CTk):
             dublagem_previa=self.var_jf_dublagem_previa.get(), separar_vozes=self.var_jf_separar_vozes.get(),
             ambientar_voz=self.var_jf_ambientar_voz.get(), separar_gpu=self.var_jf_separar_gpu.get(),
             minutos_teste=float(self.campo_minutos_teste.get()),
+            player_video=self.valor_player(),
             resumo_diario=self.var_jf_resumo_diario.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
 
@@ -3966,6 +4077,8 @@ class JanelaModerna(ctk.CTk):
                                              if valor_da_voz(v) == dados["voz_gemini"]), self.VOZES_GEMINI[0]))
         if dados.get("minutos_teste"):
             self.campo_minutos_teste.set(float(dados["minutos_teste"]))
+        if dados.get("player_video"):
+            self.definir_player(str(dados["player_video"]))
             self.atualizar_botao_testar()
         if dados.get("limite_figurante"):
             self.campo_limite_figurante.set(int(dados["limite_figurante"]))

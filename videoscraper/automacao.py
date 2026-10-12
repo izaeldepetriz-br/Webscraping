@@ -1222,6 +1222,63 @@ def _duracao(segundos: float) -> str:
     return f"{segundos / 60:g} min".replace(".", ",") if segundos >= 60 else f"{int(segundos)} s"
 
 
+# ---------------------------------------------------------------------------- testes feitos (para abrir de novo)
+def arquivo_testes() -> Path:
+    return pasta_dublagem() / "testes.json"
+
+
+def _ler_testes() -> list:
+    try:
+        dados = json.loads(arquivo_testes().read_text(encoding="utf-8"))
+        return [t for t in dados if isinstance(t, dict) and t.get("amostra")] if isinstance(dados, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def registrar_teste(video: str | Path, amostra: str | Path, trecho: tuple[float, float]) -> None:
+    """Guarda o teste na lista "Testes feitos" (o mais novo de cada vídeo; o vídeo de teste fica em 'testes')."""
+    lista = [t for t in _ler_testes() if _chave(t.get("video", "")) != _chave(video)]
+    lista.insert(0, {"video": str(video), "amostra": str(amostra), "trecho": [round(trecho[0], 1), round(trecho[1], 1)],
+                     "feito": datetime.now().isoformat(timespec="minutes")})
+    try:
+        arquivo_testes().parent.mkdir(parents=True, exist_ok=True)
+        arquivo_testes().write_text(json.dumps(lista, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def testes_feitos() -> list:
+    """Os testes cujo vídeo de teste ainda existe, do mais novo para o mais velho."""
+    return [t for t in _ler_testes() if Path(t["amostra"]).is_file()]
+
+
+def apagar_teste(teste: dict) -> None:
+    Path(teste["amostra"]).unlink(missing_ok=True)
+    lista = [t for t in _ler_testes() if t.get("amostra") != teste.get("amostra")]
+    try:
+        arquivo_testes().write_text(json.dumps(lista, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def localizar_vlc() -> str | None:
+    """O vlc.exe instalado (pasta padrão do Windows, 64 ou 32 bits) ou no PATH; None se não houver."""
+    candidatos = [os.path.join(os.environ.get(v, ""), "VideoLAN", "VLC", "vlc.exe")
+                  for v in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "LOCALAPPDATA") if os.environ.get(v)]
+    achado = next((c for c in candidatos if os.path.isfile(c)), None)
+    return achado or shutil.which("vlc")
+
+
+def programa_do_player(o) -> str | None:
+    """O programa que abre as prévias e os testes (None: o programa padrão do Windows)."""
+    escolha = (getattr(o, "player_video", "vlc") or "vlc").strip()
+    if escolha == "padrao":
+        return None
+    if escolha == "vlc":
+        return localizar_vlc()
+    return escolha if os.path.isfile(escolha) else localizar_vlc()
+
+
 class _Relogio:
     """", faltam ~2 min" pela velocidade até agora (só depois de 15 s e 3% feitos, para não chutar)."""
 
@@ -1363,6 +1420,7 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
             r.falas = texto.count(" --> ")
             r.passos.append("só a legenda (sem dublar)")
         r.amostra = destino
+        registrar_teste(video, destino, r.trecho)
         log.info("Teste de %s (%s a %s): %s", video.name, tempo_srt(r.trecho[0])[:8], tempo_srt(r.trecho[1])[:8],
                  "; ".join(r.passos))
     except (ErroDublagem, OSError, ErroLegenda, subprocess.CalledProcessError, FaltaConfiguracao) as erro:

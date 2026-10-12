@@ -794,8 +794,9 @@ def amostra_so_legenda(ffmpeg: str, video: Path, srt_do_trecho_: Path, trecho: t
 
 
 def caminho_amostra(pasta_cache: str | Path, video: Path) -> Path:
-    """A amostra fica junto do progresso guardado do filme (fora da biblioteca: o Jellyfin não a mostra)."""
-    return pasta_do_filme(pasta_cache, video) / "amostra.mkv"
+    """O teste (amostra) fica em 'testes', fora da biblioteca (o Jellyfin não o mostra) e fora do progresso do
+    filme: continua lá depois que o filme inteiro é dublado, para abrir de novo em "Testes feitos"."""
+    return Path(pasta_cache) / "testes" / f"{pasta_do_filme(pasta_cache, video).name}.mkv"
 
 
 # ----------------------------------------------------------------- um filme

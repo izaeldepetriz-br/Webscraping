@@ -2665,9 +2665,44 @@ class AppModerna(TVAoVivo, JanelaModerna):
         elif self.aba_atual() == "Avulsos" and self.linhas_avulsos():
             self.ao_olhar_avulsos()                      # descartou: a lista volta a dizer o que falta
 
+    def abrir_video(self, caminho: str) -> None:
+        """Prévias e testes: com o VLC (ou o programa escolhido em Configurações > Dublagem); sem ele, com o
+        programa padrão do Windows (o "Filmes e TV" às vezes recusa vídeos com várias faixas)."""
+        o = self.obter_opcoes_jellyfin()
+        programa = automacao.programa_do_player(o)
+        if programa:
+            subprocess.Popen([programa, str(caminho)])
+            return
+        if (o.player_video or "vlc") != "padrao":
+            self._log.info("Abrir a prévia: o VLC não foi encontrado (instale em videolan.org, grátis); abrindo com o "
+                           "programa padrão do Windows")
+        self._abrir_no_sistema(str(caminho))
+
+    def ao_testes_feitos(self) -> None:
+        """"🧪 Testes feitos": abrir de novo (no player escolhido), abrir a pasta (para usar outro player) ou apagar."""
+        from .gui_moderna import JanelaTestes
+        JanelaTestes(self, automacao.testes_feitos, self._abrir_teste, self._pasta_do_teste, self._apagar_teste)
+
+    def _abrir_teste(self, teste: dict) -> None:
+        try:
+            self.abrir_video(teste["amostra"])
+        except OSError as erro:
+            self.mostrar_mensagem("Testes feitos", f"Não deu para abrir: {erro}\n\nO teste está em: {teste['amostra']}\n"
+                                  "Use \"Abrir a pasta\" e abra com outro player (ex.: VLC).", "erro")
+
+    def _pasta_do_teste(self, teste: dict) -> None:
+        self._abrir_no_sistema(str(Path(teste["amostra"]).parent))
+
+    def _apagar_teste(self, teste: dict) -> bool:
+        if not self.perguntar("Apagar o teste", f"Apagar o teste de {Path(teste['video']).name}? O vídeo original e "
+                              "as falas já geradas continuam."):
+            return False
+        automacao.apagar_teste(teste)
+        return True
+
     def _ouvir_previa(self, item: dict) -> None:
         try:
-            self._abrir_no_sistema(item["previa"])
+            self.abrir_video(item["previa"])
         except OSError as erro:
             self.mostrar_mensagem("Prévia", f"Não deu para abrir a prévia: {erro}\n\nEla está em: {item['previa']}",
                                   "erro")
@@ -2923,6 +2958,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 self.fila.put(("msg", ("Amostra da dublagem", f"Não deu para fazer a amostra: {r.detalhe}", "erro")))
                 return
             minuto = f"{int(trecho[0]) // 60}:{int(trecho[0]) % 60:02d}"
+            automacao.registrar_teste(item.video, destino, trecho)          # fica em "Testes feitos"
             self._log.info("Amostra de %s (a partir de %s, %d falas): %s", item.video.name, minuto, r.falas, destino)
             self.fila.put(("abrir_amostra", (destino, item.video.stem, minuto, r.falas)))
 
@@ -2930,7 +2966,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
     def _mostrar_amostra(self, destino: Path, nome: str, minuto: str, falas: int) -> None:
         try:
-            self._abrir_no_sistema(str(destino))
+            self.abrir_video(str(destino))
             abriu = "Ela abriu no seu player de vídeo."
         except Exception as erro:                         # sem player associado: diz onde está
             self._log.warning("Abrir a amostra: %s", erro)
