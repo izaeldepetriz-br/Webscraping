@@ -240,6 +240,23 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.18.4
+
+- **A voz não troca mais no meio da dublagem**: as falas já geradas ficavam guardadas só pelo texto. Depois de trocar
+  a voz (ou o motor) e testar de novo, as falas antigas continuavam com a voz velha e a amostra misturava duas vozes.
+  Agora cada fala guardada leva o motor, a voz e o tom no nome, e as versões antigas são apagadas. (Uma dublagem que
+  estava pela metade com a versão anterior refaz as falas uma vez.)
+- **Gemini fora do banco de frases**: cada pedido ao Gemini sai num timbre e numa entonação um pouco diferentes; uma
+  frase curta reaproveitada de OUTRO filme, no meio desta cena, soava como outra pessoa. O banco continua valendo
+  para o Piper e o Google Cloud (que leem sempre igual).
+- **Emoção da cena** (Configurações > Dublagem > Emoção, ligada): o Gemini ouve o áudio ORIGINAL e diz como cada fala
+  é dita ("com raiva, gritando", "animada, explicando", "sussurrando"); esse tom vai no pedido da voz, fala por fala.
+  Antes, todas as falas iam com a mesma instrução genérica e a voz lia tudo no mesmo tom. Custo pequeno (~US$ 0,12
+  por hora de vídeo, só para ouvir); o teste manda só o áudio do trecho, e o que já foi ouvido não é pago de novo.
+- **Teste a partir do minuto que você quiser**: ao lado dos minutos do "🧪 Testar" (abas Jellyfin e Avulsos e
+  Configurações > Dublagem) há o campo **"a partir de"**: digite `12:30` (ou `1:02:30`) para testar uma cena com
+  várias pessoas falando. `auto` continua escolhendo o trecho com mais falas.
+
 ### Novidades da v2.18.3
 
 - **Nada mais fica esperando para sempre**: os pedidos ao Gemini (voz) têm tempo-limite de 5 minutos e os do Claude,

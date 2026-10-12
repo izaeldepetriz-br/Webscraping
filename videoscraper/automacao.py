@@ -65,13 +65,13 @@ from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sinc
 from jellyfin_tools.transcricao import Transcritor, legendar_pelo_audio, videos_sem_legenda
 from jellyfin_tools.dublagem import (PREFIXO_CLOUD, PREFIXO_PIPER, ErroDublagem, MotorMisto, MotorPiper, dublar_video,
                                      episodios_para_dublar, falas_da_legenda, horarios, localizar_ffmpeg,
-                                     pasta_do_filme,
+                                     motor_expressivo, pasta_do_filme,
                                      preparar_piper, preparar_voz, videos_para_dublar)
 from jellyfin_tools.legendas import ErroLegenda
 from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, ClienteTV, carregar_canais, carregar_historico,
                                        conferir_canais, mensagem_fora_do_ar, publicar, registrar_no_historico,
                                        salvar_historico)
-from jellyfin_tools import cotacao, gastos, personagens, vigia, voz_clonada, voz_cloud, voz_gemini
+from jellyfin_tools import cotacao, gastos, personagens, tom, vigia, voz_clonada, voz_cloud, voz_gemini
 from jellyfin_tools.adaptacao import Adaptador
 from jellyfin_tools.vigia import filtro_prontos
 
@@ -308,6 +308,25 @@ def preparar_motor(o: OpcoesJellyfin, progresso_piper=None, progresso_voz=None):
                           cloud=(lambda: motor_cloud(o)) if figurantes_no_cloud(o) else None,
                           reserva=o.voz_dublagem, avisar=lambda texto: obter_logger().warning("Dublagem: %s", texto))
     return motor_piper(o, progresso_piper=progresso_piper, progresso_voz=progresso_voz)
+
+
+def ouvinte_de_tons(o: OpcoesJellyfin, video: str | Path, motor, log: logging.Logger | None = None):
+    """Quem ouve o original e diz o TOM de cada fala (tom.py), para a voz do Gemini repetir a emoção da cena; ou
+    None: opção desligada, sem a chave do Gemini ou a voz não é do Gemini (o Piper não interpreta)."""
+    if not getattr(o, "emocao_da_cena", True) or not chave_gemini(o) or not motor_expressivo(motor):
+        return None
+    video = Path(video)
+
+    def ouvir(falas, ids, pasta, parar):
+        ffmpeg = localizar_ffmpeg()
+        if not ffmpeg:
+            raise ErroDublagem("falta o ffmpeg (pip install imageio-ffmpeg)")
+        if log:
+            log.info("Dublagem: o Gemini está ouvindo o tom de %d falas no original (emoção da cena)", len(ids))
+        return tom.ouvir_tons(video, falas, ids, voz_gemini._cliente(chave_gemini(o)), ffmpeg,
+                              Path(pasta) / "tons.json", parar=parar,
+                              avisar=(lambda texto: log.warning("Dublagem: %s", texto)) if log else None)
+    return ouvir
 
 
 def pasta_dublagem() -> Path:
@@ -948,7 +967,8 @@ def dublar_item(o: OpcoesJellyfin, item, motor, log: logging.Logger, parar=None,
                      avisar=lambda texto: log.warning("Dublagem: %s", texto), vozes=vozes_automaticas(o, item, log),
                      pasta_cache=pasta_dublagem(), destino=item.destino, parar=parar, ao_progresso=ao_progresso,
                      separar=separar, no_original=o.dublagem_no_original, legenda_no_video=legenda_no_video,
-                     previa=previa, ambientar=getattr(o, "ambientar_voz", True))
+                     previa=previa, ambientar=getattr(o, "ambientar_voz", True),
+                     tons=ouvinte_de_tons(o, item.video, motor, log))
     if r.status == "previa":
         registrar_previa(item.video, r.destino, item.legenda if legenda_no_video else None)
     return r
@@ -1299,6 +1319,50 @@ def minutos_de_teste(o: OpcoesJellyfin) -> float:
     return max(0.5, min(float(getattr(o, "minutos_teste", 2) or 2), 60.0))
 
 
+def ler_inicio(texto) -> float | None:
+    """O início do teste digitado: "12:30" (minutos:segundos), "1:02:30" (horas), "12" (minutos) ou vazio/"auto"
+    (None: o Maestro escolhe o trecho com mais falas). Texto que não dá para entender: ValueError."""
+    texto = str(texto or "").strip().lower()
+    if texto in ("", "auto", "automático", "automatico"):
+        return None
+    partes = texto.replace(",", ".").split(":")
+    try:
+        numeros = [float(x) for x in partes]
+    except ValueError:
+        raise ValueError(texto) from None
+    if len(numeros) > 3 or any(n < 0 for n in numeros) or any(n >= 60 for n in numeros[1:]):
+        raise ValueError(texto)
+    if len(numeros) == 1:
+        return numeros[0] * 60                       # um número só: minutos
+    segundos = 0.0
+    for n in numeros:
+        segundos = segundos * 60 + n
+    return segundos
+
+
+def texto_do_inicio(segundos: float) -> str:
+    s = int(segundos)
+    return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
+
+
+def trecho_do_teste(o: OpcoesJellyfin, falas: list | None, segundos: float,
+                    duracao: float | None = None) -> tuple[float, float]:
+    """(início, fim) do teste: a partir do minuto escolhido ("a partir de", para testar uma cena com várias pessoas
+    falando) ou, vazio, o trecho com mais falas (sem legenda: um pedaço depois da abertura)."""
+    from jellyfin_tools.dublagem import trecho_de_amostra
+    try:
+        inicio = ler_inicio(getattr(o, "inicio_teste", ""))
+    except ValueError:
+        raise ErroDublagem(f"não entendi o início do teste \"{o.inicio_teste}\": use minutos:segundos, como 12:30 "
+                           "(ou deixe vazio para o Maestro escolher)") from None
+    if inicio is None:
+        return trecho_de_amostra(falas, segundos) if falas else _trecho_sem_legenda(duracao, segundos)
+    if duracao and inicio >= duracao:
+        raise ErroDublagem(f"o teste começa em {texto_do_inicio(inicio)}, mas o vídeo tem só "
+                           f"{texto_do_inicio(duracao)}")
+    return inicio, inicio + segundos
+
+
 def _trecho_sem_legenda(duracao: float | None, segundos: float) -> tuple[float, float]:
     """Sem legenda nenhuma ainda (não dá para achar o trecho com mais falas): um pedaço depois da abertura."""
     if not duracao or duracao <= segundos * 1.5:
@@ -1315,8 +1379,7 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
     - já tem legenda em português: o trecho com mais falas;
     - legenda em outro idioma: só as falas do trecho são traduzidas;
     - sem legenda: o Whisper ouve só o trecho (e traduz, se não for português)."""
-    from jellyfin_tools.dublagem import (amostra_so_legenda, caminho_amostra, inspecionar, srt_do_trecho,
-                                         trecho_de_amostra)
+    from jellyfin_tools.dublagem import amostra_so_legenda, caminho_amostra, inspecionar, srt_do_trecho
     from jellyfin_tools.traducao import Fala, gerar_srt, ler_srt
     from jellyfin_tools.transcricao import tempo_srt
     from jellyfin_tools.legendas import extrair_srt
@@ -1335,7 +1398,7 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
         pt = srt_portugues(video, idioma)
         if pt:                                            # 1) já tem em português
             falas = ler_srt(extrair_srt(pt.read_bytes()))
-            r.trecho = trecho_de_amostra([(f, f.texto) for f in falas], segundos)
+            r.trecho = trecho_do_teste(o, [(f, f.texto) for f in falas], segundos)
             legenda_teste.write_text(gerar_srt(falas), encoding="utf-8")
             r.passos.append(f"legenda em português: {pt.name}")
         else:
@@ -1343,7 +1406,7 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
             tradutor = tradutor_para(o, idioma)
             if estrangeiras:                              # 2) traduz só as falas do trecho
                 falas = ler_srt(extrair_srt(estrangeiras[0].origem.read_bytes()))
-                r.trecho = trecho_de_amostra([(f, f.texto) for f in falas], segundos)
+                r.trecho = trecho_do_teste(o, [(f, f.texto) for f in falas], segundos)
                 dentro = [f for f in falas if r.trecho[0] <= horarios(f.tempo)[0] < r.trecho[1]]
                 if tradutor is None:
                     raise ErroDublagem("a legenda está em outro idioma e falta a chave da Anthropic para traduzir")
@@ -1353,7 +1416,7 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
                                          encoding="utf-8")
                 r.passos.append(f"traduziu só as {len(dentro)} falas do trecho")
             else:                                         # 3) o Whisper ouve só o trecho
-                r.trecho = _trecho_sem_legenda(inspecionar(ffmpeg, video).duracao, segundos)
+                r.trecho = trecho_do_teste(o, None, segundos, inspecionar(ffmpeg, video).duracao)
                 audio = pasta / "teste-audio.wav"
                 subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{r.trecho[0]:.3f}",
                                 "-t", f"{segundos:.3f}", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000",
@@ -1403,6 +1466,7 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
             # a barra só anda para a frente: o Whisper e a tradução ficaram com até 45%
             r_dub = dublar_video(video, legenda_teste, motor, parar=parar, trecho=r.trecho, destino=destino,
                                  adaptar=adaptador(o, video.stem), pasta_cache=pasta_dublagem(), separar=separar,
+                                 tons=ouvinte_de_tons(o, video, motor, log),
                                  ambientar=getattr(o, "ambientar_voz", True), legenda_no_video=o.avulsos_legendar,
                                  avisar=lambda texto: log.warning("Teste: %s", texto),
                                  ao_progresso=lambda f: andamento(0.45 + 0.55 * f,

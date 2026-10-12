@@ -76,11 +76,11 @@ def estimar_custo(segundos_de_fala: float) -> tuple[float, float]:
 
 
 def blocos(itens: list, bloco: int = BLOCO, letras: int = LETRAS_POR_BLOCO) -> list[list]:
-    """Agrupa [(texto, wav, voz)] em blocos de falas SEGUIDAS: até `bloco` falas, `letras` letras e 2 vozes."""
+    """Agrupa [(texto, wav, voz[, tom])] em blocos de falas SEGUIDAS: até `bloco` falas, `letras` letras e 2 vozes."""
     grupos, atual, vozes = [], [], set()
     for item in itens:
-        texto, _, voz = item
-        cabe = (len(atual) < bloco and sum(len(t) for t, _, _ in atual) + len(texto) <= letras
+        texto, _, voz = item[:3]
+        cabe = (len(atual) < bloco and sum(len(i[0]) for i in atual) + len(texto) <= letras
                 and len(vozes | {voz}) <= 2)
         if atual and not cabe:
             grupos.append(atual)
@@ -199,6 +199,11 @@ def _limite(erro: Exception) -> bool:
     return _codigo(erro) in (429, 500, 503) or "RESOURCE_EXHAUSTED" in str(erro)
 
 
+def estilo_da_fala(estilo: str, tom: str) -> str:
+    """O estilo geral + COMO esta fala é dita no original (tom.py): a voz repete a emoção da cena."""
+    return f"{estilo} Nesta fala, a interpretação do original: {tom}." if tom else estilo
+
+
 def _cliente(chave: str):
     try:
         from google import genai
@@ -298,8 +303,11 @@ def frase_de_teste(chave: str, voz: str, destino: Path, vozes_clonadas: dict | N
 
 # ----------------------------------------------------------------- o motor
 class MotorGemini:
+    expressiva = True        # interpreta: o jeito de dizer muda com o contexto (dublagem.motor_expressivo)
+
     """Gera as falas com as vozes do Gemini, em blocos. Mesma interface do MotorPiper; cada pedido pode
-    trazer a voz da fala: (texto, wav) usa a voz do motor, (texto, wav, voz) usa a voz dada.
+    trazer a voz da fala: (texto, wav) usa a voz do motor, (texto, wav, voz) usa a voz dada, e
+    (texto, wav, voz, tom) também diz COMO a fala é dita no original ("com raiva, gritando"; ver tom.py).
     vozes_clonadas: {"clone:Izael": "voicekey_..."} (ver voz_clonada.py); na hora do pedido, o nome vira a chave."""
 
     def __init__(self, chave: str, voz: str = VOZ_PADRAO, modelo: str = MODELO_PADRAO, estilo: str = ESTILO,
@@ -315,14 +323,14 @@ class MotorGemini:
 
     def _pedir(self, itens: list) -> tuple[array, int]:
         """Um pedido com as falas do bloco (diálogo, se houver 2 vozes). Devolve o áudio inteiro."""
-        vozes = list(dict.fromkeys(v for _, _, v in itens))
+        vozes = list(dict.fromkeys(v for _, _, v, _ in itens))
         if not all(self.conhece(v) for v in vozes):
             raise ErroDublagem(self._desconhecida([v for v in vozes if not self.conhece(v)]))
         dialogo = len(vozes) > 1
         falantes = {v: f"Pessoa {i + 1}" for i, v in enumerate(vozes)}
         entrada = []
-        for k, (texto, _, voz) in enumerate(itens):
-            anotacao = {"type": "speech_metadata", "style": self.estilo}
+        for k, (texto, _, voz, tom) in enumerate(itens):
+            anotacao = {"type": "speech_metadata", "style": estilo_da_fala(self.estilo, tom)}
             if dialogo:
                 anotacao["speaker"] = falantes[voz]
             entrada.append({"type": "text", "text": texto + (PAUSA if k < len(itens) - 1 else ""),
@@ -358,20 +366,21 @@ class MotorGemini:
         if parar and parar():
             raise ErroDublagem("interrompido (botão Parar)")
         amostras, taxa = self._pedir(itens)
-        cortes = separar_por_pausas(amostras, taxa, [max(1, len(t)) for t, _, _ in itens])
+        cortes = separar_por_pausas(amostras, taxa, [max(1, len(t)) for t, _, _, _ in itens])
         if cortes is None and len(itens) > 1:          # o corte não bateu: refaz este bloco fala por fala
             self.blocos_refeitos += 1
             for item in itens:
                 self._falar_bloco([item], parar)
             return
-        for (ini, fim), (_, wav, _) in zip(cortes or [(0, len(amostras))], itens):
+        for (ini, fim), (_, wav, _, _) in zip(cortes or [(0, len(amostras))], itens):
             _gravar_wav(amostras[ini:fim], taxa, Path(wav))
             self.falas_geradas += 1
 
     def sintetizar(self, pedidos: list, parar=None, ao_progresso=None) -> None:
-        """pedidos: [(texto, .wav)] ou [(texto, .wav, voz)]. Em blocos, alguns ao mesmo tempo; para no Parar. Se um
+        """pedidos: [(texto, .wav)], [(texto, .wav, voz)] ou [(texto, .wav, voz, tom)]. Em blocos, alguns ao mesmo tempo; para no Parar. Se um
         bloco falhar (limite do dia, sem internet), os que já terminaram ficam gravados."""
-        itens = [(p[0], Path(p[1]), p[2] if len(p) > 2 and p[2] else self.voz) for p in pedidos]
+        itens = [(p[0], Path(p[1]), p[2] if len(p) > 2 and p[2] else self.voz, p[3] if len(p) > 3 else "")
+                 for p in pedidos]
         grupos = blocos(itens, self.bloco)
         feitos = 0
         # sem "with": no Parar (ou num erro), não espera os pedidos que ainda estão no Google

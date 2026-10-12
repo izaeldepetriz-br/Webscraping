@@ -160,6 +160,7 @@ class OpcoesJellyfin:
     traducao_economica: bool = False  # Claude: tradução em LOTE (metade do preço, pronta em até 24 h)
     usar_roteiro: bool = True        # voz por personagem: o roteiro ao lado do vídeo diz quem fala (Gemini ouve menos)
     vozes_sem_tabela: bool = False   # voz por personagem: escolhe as vozes sozinho (sem abrir a tabela de conferir)
+    emocao_da_cena: bool = True      # Gemini: ouve o original e cada fala é dita com a mesma emoção (custo pequeno)
     figurantes_cloud: bool = False   # mista: figurantes no Google Cloud enquanto a cota grátis do mês der (depois Piper)
     perguntar_filmes: bool = True    # Gemini com vários filmes: perguntar quais vão com o Gemini (o resto, Piper)
     robo_so_piper: bool = False      # robôs agendados (--dublar): só o Piper, sem custo
@@ -180,6 +181,7 @@ class OpcoesJellyfin:
     ambientar_voz: bool = True       # a voz dublada ganha o tom, o volume e o eco das vozes originais (com a separação)
     separar_gpu: bool = True         # dublagem natural na placa de vídeo (DirectML); se não der, no processador
     minutos_teste: float = 2.0       # "Testar": legenda e dubla só esses minutos (gasta pouco) num vídeo curto
+    inicio_teste: str = "auto"       # "Testar" a partir deste minuto ("12:30"); "auto" = o trecho com mais falas
     player_video: str = "vlc"        # prévias e testes abrem com: "vlc", "padrao" (o do Windows) ou o caminho de um .exe
     resumo_diario: bool = False      # mandar no Discord/Telegram, uma vez por dia, o que o Maestro fez
     hora_resumo: int = 21
@@ -2902,6 +2904,8 @@ class JanelaModerna(ctk.CTk):
         self._botao(baixo, "⚙ Opções", self.mostrar_opcoes_avulsos, "fantasma", largura=100).pack(side="right")
         self.bt_testes_av = self._botao(baixo, "🧪 Testes feitos", self.ao_testes_feitos, "fantasma", largura=150)
         self.bt_testes_av.pack(side="right", padx=(0, 6))
+        self.bt_previas_av = self._botao(baixo, "🎧 Prévias", self.ao_previas, "fantasma", largura=120)
+        self.bt_previas_av.pack(side="right", padx=(0, 6))       # aqui em cima: a barra de baixo ficou cheia
 
         barra = ctk.CTkFrame(aba, fg_color="transparent")
         barra.grid(row=1, column=0, sticky="ew", padx=28, pady=12)
@@ -2913,13 +2917,11 @@ class JanelaModerna(ctk.CTk):
         self.campo_av_minutos = self.campo_minutos(barra)
         self.bt_av_roteiro = self._botao(barra, "📜 Roteiro", self.ao_roteiro_avulso, largura=120)
         self.bt_parar_av = self._botao(barra, "Parar", self.ao_parar, "perigo", largura=100)
-        self.bt_previas_av = self._botao(barra, "🎧 Prévias", self.ao_previas, largura=130)
         for b in (self.bt_av_olhar, self.bt_av_adicionar, self.bt_av_testar, self.campo_av_minutos,
                   self.bt_av_roteiro, self.bt_av_processar, self.bt_av_limpar):
             b.pack(side="left", padx=(0, 10))
         self.bt_av_testar.pack_configure(padx=(0, 6))
         self.bt_parar_av.pack(side="right")
-        self.bt_previas_av.pack(side="right", padx=(0, 10))
 
         corpo = self._corpo(aba, linha=2)
         self.tabela_av, faixa = self._criar_tabela(
@@ -3145,6 +3147,11 @@ class JanelaModerna(ctk.CTk):
             lateral, "Teste (botões \"Testar\"): quantos minutos legendar e dublar, num vídeo curto à parte (gasta só "
                      "o desse trecho; dá para mudar também ao lado dos botões):", 2, *self.MINUTOS_TESTE,
             var=self.var_minutos_teste())
+        self._rotulo(lateral, "A partir de (minutos:segundos, ex.: 12:30; \"auto\" = o Maestro escolhe o trecho com "
+                              "mais falas). Útil para testar uma cena com várias pessoas falando:").pack(
+            anchor="w", pady=(4, 2), **p)
+        ctk.CTkEntry(lateral, textvariable=self.var_inicio_teste(), width=120).pack(
+            anchor="w", **p)
         self._rotulo(lateral, "Abrir as prévias e os testes com:").pack(anchor="w", pady=(4, 2), **p)
         linha_player = ctk.CTkFrame(lateral, fg_color="transparent")
         linha_player.pack(fill="x", **p)
@@ -3264,6 +3271,14 @@ class JanelaModerna(ctk.CTk):
         self._checkbox(lateral, "Nos robôs agendados (--dublar), usar só o Piper (sem custo)",
                        self.var_jf_robo_so_piper)
 
+        self._rotulo(lateral, "Emoção", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
+        self.var_jf_emocao_da_cena = tk.BooleanVar(value=True)
+        self._checkbox(lateral, "Emoção da cena: o Gemini ouve o áudio original e cada fala é dita com a mesma emoção "
+                                "(raiva, alegria, sussurro...)", self.var_jf_emocao_da_cena)
+        self._rotulo(lateral, "Só com a voz do Gemini. Custo pequeno: ~US$ 0,12 por hora de vídeo (ele só ouve); o "
+                              "que já foi ouvido fica guardado, e o teste não paga de novo no vídeo inteiro.",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(0, 4), **p)
+
         self._rotulo(lateral, "Texto da fala", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
         self.var_jf_encurtar_falas = tk.BooleanVar(value=True)
         self._checkbox(lateral, "Falas longas: o Claude reescreve mais curtas e naturais (em vez de acelerar). A "
@@ -3347,11 +3362,18 @@ class JanelaModerna(ctk.CTk):
             self._var_minutos_teste = tk.StringVar(value="2")
         return self._var_minutos_teste
 
+    def var_inicio_teste(self) -> tk.StringVar:
+        """De onde o teste começa ("12:30"; vazio = automático): o MESMO valor nas Configurações e nas abas."""
+        if not hasattr(self, "_var_inicio_teste"):
+            self._var_inicio_teste = tk.StringVar(value="auto")
+        return self._var_inicio_teste
+
     def campo_minutos(self, barra) -> ctk.CTkFrame:
-        """"[ - 2 + ] min" ao lado de um botão Testar (o mesmo valor das Configurações)."""
+        """"[ - 2 + ] min a partir de [12:30]" ao lado de um botão Testar (os mesmos valores das Configurações)."""
         quadro = ctk.CTkFrame(barra, fg_color="transparent")
         CampoNumerico(quadro, 2, *self.MINUTOS_TESTE, largura=100, var=self.var_minutos_teste()).pack(side="left")
-        self._rotulo(quadro, "min").pack(side="left", padx=(6, 0))
+        self._rotulo(quadro, "min a partir de").pack(side="left", padx=(6, 4))
+        ctk.CTkEntry(quadro, textvariable=self.var_inicio_teste(), width=64).pack(side="left")
         return quadro
 
     def ao_testar_dublagem_jf(self) -> None:            # o app faz: o teste do filme com legenda, na aba Jellyfin
@@ -3378,6 +3400,11 @@ class JanelaModerna(ctk.CTk):
     def texto_minutos_teste(self) -> str:
         minutos = float(self.campo_minutos_teste.get())
         return f"{minutos:g}".replace(".", ",") + " min"
+
+    def texto_inicio_teste(self) -> str:
+        """" a partir de 12:30" (escolhido) ou "" (automático)."""
+        inicio = self.var_inicio_teste().get().strip()
+        return f" a partir de {inicio}" if inicio and inicio.lower() != "auto" else ""
 
     def atualizar_botao_testar(self) -> None:
         """Os minutos ficam no campo ao lado do botão (o mesmo das Configurações): só confere o valor."""
@@ -3916,7 +3943,7 @@ class JanelaModerna(ctk.CTk):
             modelo_whisper=self.var_jf_modelo_whisper.get(), whisper_gpu=self.var_jf_whisper_gpu.get(),
             voz_dublagem=self.var_jf_voz_dublagem.get(), motor_voz=self.var_jf_motor_voz.get(),
             voz_gemini=valor_da_voz(self.var_jf_voz_gemini.get()), chave_gemini=self.var_jf_chave_gemini.get().strip(),
-            encurtar_falas=self.var_jf_encurtar_falas.get(),
+            encurtar_falas=self.var_jf_encurtar_falas.get(), emocao_da_cena=self.var_jf_emocao_da_cena.get(),
             voz_por_personagem=self.var_jf_voz_por_personagem.get(),
             figurantes_piper=self.var_jf_figurantes_piper.get(),
             figurantes_cloud=self.var_jf_figurantes_cloud.get(),
@@ -3935,6 +3962,7 @@ class JanelaModerna(ctk.CTk):
             dublagem_previa=self.var_jf_dublagem_previa.get(), separar_vozes=self.var_jf_separar_vozes.get(),
             ambientar_voz=self.var_jf_ambientar_voz.get(), separar_gpu=self.var_jf_separar_gpu.get(),
             minutos_teste=float(self.campo_minutos_teste.get()),
+            inicio_teste=self.var_inicio_teste().get().strip(),
             player_video=self.valor_player(),
             resumo_diario=self.var_jf_resumo_diario.get(),
             filtros_ocultos=tuple(c for c, v in self.vars_filtro_jf.items() if not v.get()))
@@ -4036,7 +4064,8 @@ class JanelaModerna(ctk.CTk):
                   "jellyfin_url": self.var_jf_url,
                   "jellyfin_api_key": self.var_jf_chave_jellyfin, "discord_webhook": self.var_jf_discord,
                   "telegram_token": self.var_jf_telegram_token, "telegram_chat_id": self.var_jf_telegram_chat,
-                  "pasta_avulsos": self.var_jf_pasta_avulsos, "chave_cloud_tts": self.var_jf_chave_cloud}
+                  "pasta_avulsos": self.var_jf_pasta_avulsos, "chave_cloud_tts": self.var_jf_chave_cloud,
+                  "inicio_teste": self.var_inicio_teste()}
         marcas = {"tmdb": self.var_jf_tmdb, "incluir_tmdbid": self.var_jf_tmdbid,
                   "exigir_catalogo": self.var_jf_exigir, "legendas": self.var_jf_legendas,
                   "limpar_lixo": self.var_jf_lixo, "imagens_tmdb": self.var_jf_imagens,
@@ -4049,7 +4078,7 @@ class JanelaModerna(ctk.CTk):
                   "gerar_nfo": self.var_jf_nfo, "atualizar_jellyfin": self.var_jf_atualizar,
                   "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar,
                   "whisper_gpu": self.var_jf_whisper_gpu, "resumo_diario": self.var_jf_resumo_diario,
-                  "encurtar_falas": self.var_jf_encurtar_falas,
+                  "encurtar_falas": self.var_jf_encurtar_falas, "emocao_da_cena": self.var_jf_emocao_da_cena,
                   "voz_por_personagem": self.var_jf_voz_por_personagem,
                   "figurantes_piper": self.var_jf_figurantes_piper,
                   "figurantes_cloud": self.var_jf_figurantes_cloud,

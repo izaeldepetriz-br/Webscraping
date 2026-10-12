@@ -830,9 +830,33 @@ def pasta_do_filme(pasta_cache: str | Path, video: str | Path) -> Path:
     return Path(pasta_cache) / f"{nome}-{marca}"
 
 
-def _nome_wav(k: int, texto: str, voz: str, sufixo: str = "") -> str:
-    """O nome muda se o texto ou a voz mudarem: o que foi guardado só é reaproveitado se for o mesmo."""
-    return f"{k:05d}{sufixo}-{hashlib.sha1(f'{voz}|{texto}'.encode('utf-8')).hexdigest()[:10]}.wav"
+def _nome_wav(k: int, texto: str, voz: str, sufixo: str = "", motor=None, tom: str = "") -> str:
+    """O nome muda se o texto, a voz, o motor (Piper, Gemini, modelo, voz principal) ou o tom mudarem: o que foi
+    guardado só é reaproveitado se for o MESMO. Antes, sem o motor no nome, a fala gerada com a voz antiga continuava
+    sendo usada depois de trocar a voz, e a amostra misturava duas vozes."""
+    marca = f"{_assinatura(motor)}|{voz}|{tom}" if motor is not None else voz
+    return f"{k:05d}{sufixo}-{hashlib.sha1(f'{marca}|{texto}'.encode('utf-8')).hexdigest()[:10]}.wav"
+
+
+def _pedido_da_fala(pasta: Path, k: int, texto: str, voz: str, motor, tom: str, sufixo: str = "") -> tuple:
+    """(texto, wav, voz, tom). Se a fala já foi gerada com a MESMA voz, mas sem o tom (a escuta tinha falhado, ou o
+    teste foi antes da emoção da cena), fica a que já existe: não paga a mesma fala duas vezes."""
+    wav = Path(pasta) / _nome_wav(k, texto, voz, sufixo, motor, tom)
+    if tom and not _pronto(wav):
+        sem_tom = Path(pasta) / _nome_wav(k, texto, voz, sufixo, motor)
+        if _pronto(sem_tom):
+            return texto, sem_tom, voz, ""
+    return texto, wav, voz, tom
+
+
+def _sem_versoes_velhas(wavs) -> None:
+    """Apaga as versões antigas da mesma fala (outra voz, outro motor, outro tom): não servem mais e misturariam."""
+    for wav in wavs:
+        wav = Path(wav)
+        prefixo = wav.name.rsplit("-", 1)[0]
+        for velho in wav.parent.glob(f"{prefixo}-*.wav"):
+            if velho != wav and velho.name.rsplit("-", 1)[0] == prefixo:
+                velho.unlink(missing_ok=True)
 
 
 def _pronto(wav: Path) -> bool:
@@ -857,9 +881,19 @@ def _chave_frase(texto: str, voz: str, motor) -> str:
     return hashlib.sha1(f"{_assinatura(motor)}|{voz}|{' '.join(texto.split())}".encode("utf-8")).hexdigest()[:20]
 
 
-def _vai_ao_banco(texto: str, voz: str) -> bool:
-    """Frases curtas. Figurante do Google Cloud não: se a cota acabou, quem leu foi o Piper (outra voz)."""
-    return len(texto) <= BANCO_LETRAS and not voz.startswith(PREFIXO_CLOUD)
+def motor_expressivo(motor, voz: str = "") -> bool:
+    """A fala vai para uma voz que INTERPRETA (o Gemini): o jeito de dizer muda com o contexto e com o tom."""
+    if voz.startswith((PREFIXO_PIPER, PREFIXO_CLOUD)):
+        return False
+    return bool(getattr(getattr(motor, "premium", motor), "expressiva", False))
+
+
+def _vai_ao_banco(texto: str, voz: str, motor=None, tom: str = "") -> bool:
+    """Frases curtas. Figurante do Google Cloud não: se a cota acabou, quem leu foi o Piper (outra voz).
+    Gemini também não: cada pedido sai num timbre e numa entonação um pouco diferentes, e a frase de OUTRO filme
+    (outra cena, outra emoção) no meio desta soava como outra pessoa falando."""
+    return (len(texto) <= BANCO_LETRAS and not voz.startswith(PREFIXO_CLOUD) and not tom
+            and not motor_expressivo(motor, voz))
 
 
 def _guardar_no_banco(banco: Path, guardar: list[tuple[str, Path]]) -> None:
@@ -877,6 +911,18 @@ def _guardar_no_banco(banco: Path, guardar: list[tuple[str, Path]]) -> None:
         pass                                              # o banco é só economia: sem ele, segue igual
 
 
+def _ouvir_tons(tons, falas, indices, pasta, parar, avisar) -> dict:
+    """{número da fala: tom} ou {} (sem quem ouça, ou se falhar: a dublagem segue, só sem a emoção da cena)."""
+    if tons is None:
+        return {}
+    try:
+        return dict(tons(falas, indices, pasta, parar) or {})
+    except Exception as erro:                             # sem crédito, sem internet...: segue sem o tom
+        if avisar and not (parar and parar()):
+            avisar(f"o tom das falas não foi ouvido ({str(erro)[:150]}): a voz segue sem a emoção da cena")
+        return {}
+
+
 def _sintetizar(motor, pedidos, parar, ao_progresso=None, banco: Path | None = None) -> int:
     """Só as falas que ainda não estão prontas; a voz vai junto só quando há uma por personagem.
     A MESMA frase com a MESMA voz é pedida uma vez só e copiada para as outras ("Sim." 40 vezes no filme = 1
@@ -884,10 +930,12 @@ def _sintetizar(motor, pedidos, parar, ao_progresso=None, banco: Path | None = N
     Devolve quantas falas foram reaproveitadas (não pediram nada ao motor)."""
     reaproveitadas = 0
     faltando = []
-    for t, w, v in pedidos:
+    pedidos = [(p[0], p[1], p[2], p[3] if len(p) > 3 else "") for p in pedidos]     # (texto, wav, voz, tom)
+    for t, w, v, e in pedidos:
         if _pronto(w):
             continue
-        guardada = banco / f"{_chave_frase(t, v, motor)}.wav" if banco and _vai_ao_banco(t, v) else None
+        guardada = (banco / f"{_chave_frase(t, v, motor)}.wav" if banco and _vai_ao_banco(t, v, motor, e)
+                    else None)
         if guardada and _pronto(guardada):
             try:
                 shutil.copyfile(guardada, w)
@@ -896,25 +944,26 @@ def _sintetizar(motor, pedidos, parar, ao_progresso=None, banco: Path | None = N
                 continue
             except OSError:
                 pass
-        faltando.append((t, w, v))
-    primeira: dict[tuple[str, str], Path] = {}
+        faltando.append((t, w, v, e))
+    primeira: dict[tuple[str, str, str], Path] = {}
     unicas, copias = [], []
-    for t, w, v in faltando:
-        chave = (" ".join(t.split()), v)
+    for t, w, v, e in faltando:
+        chave = (" ".join(t.split()), v, e)
         if chave in primeira:
             copias.append((primeira[chave], w))
         else:
             primeira[chave] = w
-            unicas.append((t, w, v))
+            unicas.append((t, w, v, e))
     if unicas:
-        motor.sintetizar([(t, w, v) if v else (t, w) for t, w, v in unicas], parar=parar, ao_progresso=ao_progresso)
+        motor.sintetizar([(t, w, v, e) if e else (t, w, v) if v else (t, w) for t, w, v, e in unicas],
+                         parar=parar, ao_progresso=ao_progresso)
     for origem, w in copias:
         if _pronto(origem):
             shutil.copyfile(origem, w)
             reaproveitadas += 1
     if banco:
-        _guardar_no_banco(banco, [(_chave_frase(t, v, motor), w) for t, w, v in unicas
-                                  if _vai_ao_banco(t, v) and _pronto(w)])
+        _guardar_no_banco(banco, [(_chave_frase(t, v, motor), w) for t, w, v, e in unicas
+                                  if _vai_ao_banco(t, v, motor, e) and _pronto(w)])
     return reaproveitadas
 
 
@@ -957,7 +1006,7 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
                  pasta_cache: str | Path | None = None, trecho: tuple[float, float] | None = None,
                  destino: str | Path | None = None, separar=None, no_original: bool = False,
                  legenda_no_video: bool = False, previa: str | Path | None = None,
-                 ambientar: bool = False) -> ResultadoDublagem:
+                 ambientar: bool = False, tons=None) -> ResultadoDublagem:
     """Lê a legenda com a voz, monta a trilha e grava 'Nome - Dublado IA.mkv' (o original não é tocado) ou, com
     no_original, acrescenta a faixa 'Português (dublagem IA)' no PRÓPRIO arquivo (a cópia é conferida antes de trocar).
     separar(vídeo, destino.flac, trecho, duração, parar, ao_progresso): tira as vozes originais (separar_vozes) e a
@@ -970,6 +1019,8 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
     adaptar([(id, texto, máx. letras, fala anterior)]) -> {id: texto mais curto}: as falas que não cabem no tempo
     são reescritas (ver adaptacao.py) e lidas de novo. Se falhar, segue sem adaptar. avisar(texto): para o log.
     vozes: {número da fala: voz} (uma voz por personagem; ver personagens.py).
+    tons(falas, números, pasta, parar) -> {número da fala: tom}: COMO cada fala é dita no original ("animada,
+    explicando"; ver tom.py). Vai junto no pedido da voz que interpreta (Gemini). Se falhar, segue sem o tom.
     pasta_cache: guarda as falas já geradas (e as reescritas) por filme. Se parar no meio (limite do Gemini, sem
     internet, botão Parar), a próxima vez continua de onde parou, sem pedir (nem pagar) de novo.
     trecho (início, fim) + destino: só as falas desse pedaço, num vídeo curto (a AMOSTRA). As falas ficam no mesmo
@@ -1020,9 +1071,11 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
     with lugar as pasta:
         pasta = Path(pasta)
         pasta.mkdir(parents=True, exist_ok=True)
-        pedidos = [(falas[k][1], pasta / _nome_wav(k, falas[k][1], vozes.get(k, "")), vozes.get(k, ""))
+        tom_de = _ouvir_tons(tons, falas, indices, pasta, parar, avisar)
+        pedidos = [_pedido_da_fala(pasta, k, falas[k][1], vozes.get(k, ""), motor, tom_de.get(k, ""))
                    for k in indices]
-        retomadas = sum(1 for _, w, _ in pedidos if _pronto(w))
+        _sem_versoes_velhas(w for _, w, _, _ in pedidos)
+        retomadas = sum(1 for _, w, _, _ in pedidos if _pronto(w))
         if legenda_no_video and not trecho:              # cópia de trabalho: a que entra no vídeo é ESTA
             shutil.copyfile(legenda, pasta / "legenda.srt")
         # com a separação das vozes, as etapas dividem a barra de outro jeito (separar demora)
@@ -1031,12 +1084,12 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
             andamento(0.0)                               # "lendo as falas 0%" já aparece (antes do 1º bloco voltar)
             reaproveitadas = _sintetizar(motor, pedidos, parar, lambda f: andamento(fatias[0] * f),
                                          Path(pasta_cache) / "frases" if pasta_cache else None)
-            clipes = [(a - inicio, b - inicio, w) for k, (_, w, _) in zip(indices, pedidos)
+            clipes = [(a - inicio, b - inicio, w) for k, (_, w, _, _) in zip(indices, pedidos)
                       for a, b in [horarios(falas[k][0].tempo)]]
             adaptadas = 0
             if adaptar is not None:
                 clipes, adaptadas = _adaptar(clipes, [t for _, t in falas], duracao, motor, adaptar, parar, avisar,
-                                             vozes, pasta, indices)
+                                             vozes, pasta, indices, tom_de)
             andamento(fatias[1])
             contas = montar_trilha(clipes, duracao, pasta / "trilha.wav", acelerar_com_ffmpeg(ffmpeg),
                                    reamostrar_com_ffmpeg(ffmpeg))
@@ -1083,7 +1136,7 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
             detalhe = str(erro) if isinstance(erro, ErroDublagem) or type(erro).__name__ == "ErroSeparacao" \
                 else f"{type(erro).__name__}: {erro}"
             if pasta_cache:
-                prontas = sum(1 for _, w, _ in pedidos if _pronto(w))
+                prontas = sum(1 for _, w, _, _ in pedidos if _pronto(w))
                 detalhe += (f" — {prontas} de {len(pedidos)} falas já prontas e guardadas: dublar de novo continua "
                             "de onde parou")
             return ResultadoDublagem(video, "erro", detalhe, falas=len(falas), retomadas=retomadas)
@@ -1152,7 +1205,7 @@ def _ambiente_da_voz(fundo: Path, trilha: Path) -> dict | None:
         return None
 
 
-def _adaptar(clipes, textos, duracao, motor, adaptar, parar, avisar, vozes, pasta, indices=None):
+def _adaptar(clipes, textos, duracao, motor, adaptar, parar, avisar, vozes, pasta, indices=None, tons=None):
     """Reescreve (IA) as falas que só caberiam muito aceleradas e as lê de novo. Fica a versão que soar MAIS CURTA.
     As reescritas ficam guardadas (adaptadas.json) pelo número da fala NO FILME: ao continuar um filme (ou depois
     de uma amostra), não se paga de novo por elas. indices: o número de cada clipe no filme (amostra)."""
@@ -1183,11 +1236,13 @@ def _adaptar(clipes, textos, duracao, motor, adaptar, parar, avisar, vozes, past
     if not guardadas:
         return clipes, 0
     usar = [(k, texto) for k, texto in guardadas.items() if k in posicao]
-    pedidos = [(texto, Path(pasta) / _nome_wav(k, texto, vozes.get(k, ""), "-curta"), vozes.get(k, ""))
+    tons = tons or {}
+    pedidos = [_pedido_da_fala(pasta, k, texto, vozes.get(k, ""), motor, tons.get(k, ""), "-curta")
                for k, texto in usar]
+    _sem_versoes_velhas(w for _, w, _, _ in pedidos)
     _sintetizar(motor, pedidos, parar)
     clipes, adaptadas = list(clipes), 0
-    for (k, _), (_, wav, _) in zip(usar, pedidos):
+    for (k, _), (_, wav, _, _) in zip(usar, pedidos):
         pos = posicao[k]
         if _pronto(wav) and duracao_wav(wav) < duracao_wav(clipes[pos][2]):
             clipes[pos] = (clipes[pos][0], clipes[pos][1], wav)

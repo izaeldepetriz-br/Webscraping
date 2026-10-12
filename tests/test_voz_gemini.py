@@ -308,3 +308,65 @@ def test_cliente_do_gemini_tem_tempo_limite(monkeypatch):
     monkeypatch.setitem(sys.modules, "google.genai", genai)
     voz_gemini._cliente("chave")
     assert criados[0]["http_options"] == {"timeout": voz_gemini.TEMPO_LIMITE * 1000}
+
+
+def test_tom_de_cada_fala_vai_no_pedido_da_voz(tmp_path):
+    gemini = GeminiFalso()
+    motor = voz_gemini.MotorGemini("chave", cliente=gemini, simultaneos=1)
+    motor.sintetizar([("Saia daqui!", tmp_path / "1.wav", "", "com raiva, gritando"),
+                      ("Tá bom.", tmp_path / "2.wav")])
+    estilos = [i["annotations"][0]["style"] for i in gemini.pedidos[0]["input"]]
+    assert estilos[0].startswith(voz_gemini.ESTILO) and "com raiva, gritando" in estilos[0]
+    assert estilos[1] == voz_gemini.ESTILO                                # sem tom: só o estilo geral
+    assert duracao(tmp_path / "1.wav") > 0 and duracao(tmp_path / "2.wav") > 0
+
+
+def test_ouvir_o_tom_so_do_trecho_e_guardar(tmp_path):
+    """O Gemini ouve só em volta das falas pedidas (a amostra de 1 min manda ~1 min) e o que ouviu fica guardado:
+    o filme inteiro, depois, não paga de novo; a fala com outro texto é ouvida de novo."""
+    from jellyfin_tools import tom
+    falas = [(Fala(f"00:{m:02d}:{s:02d},000 --> 00:{m:02d}:{s + 2:02d},000", t), t) for m, s, t in
+             [(0, 5, "Saia daqui!"), (0, 9, "Tá bom."), (20, 1, "Bom dia.")]]
+    perguntas, trechos = [], []
+
+    class Ouvinte:
+        def __init__(self):
+            self.interactions = self
+
+        def create(self, model, input):
+            perguntas.append(input[0]["text"])
+            return SimpleNamespace(output_text=json.dumps({"falas": [
+                {"id": 0, "tom": '"com raiva, gritando".'}, {"id": 1, "tom": "cansado"}, {"id": 7, "tom": "x"}]}))
+    guardado = tmp_path / "tons.json"
+    extrair = lambda f, v, ini, dur: trechos.append((ini, dur)) or b"mp3"     # noqa: E731
+    achados = tom.ouvir_tons("f.mkv", falas, [0, 1], Ouvinte(), "ffmpeg", guardado, extrair=extrair)
+    assert achados == {0: "com raiva, gritando", 1: "cansado"}
+    assert trechos == [(4.0, 8.0)] and "1 [5.0s] Tá bom." in perguntas[0]      # 0:04 a 0:12, não 15 minutos
+    assert tom.ouvir_tons("f.mkv", falas, [0, 1], None, "ffmpeg", guardado) == achados   # guardado: não pede
+    falas[1] = (falas[1][0], "Está bem.")                                       # a legenda mudou
+    tom.ouvir_tons("f.mkv", falas, [0, 1], Ouvinte(), "ffmpeg", guardado, extrair=extrair)
+    assert len(perguntas) == 2 and "Saia daqui" not in perguntas[1]             # só a fala que mudou
+    assert 0.1 < tom.custo_estimado(3600) < 0.2                                 # ~US$ 0,12 por hora
+
+
+def test_escuta_que_falha_no_meio_fica_com_o_que_ouviu(tmp_path):
+    from jellyfin_tools import tom
+    falas = [(Fala(f"00:{m:02d}:00,000 --> 00:{m:02d}:02,000", f"Fala {m}."), f"Fala {m}.") for m in (0, 20)]
+
+    class Ouvinte:
+        def __init__(self):
+            self.interactions, self.vezes = self, 0
+
+        def create(self, model, input):
+            self.vezes += 1
+            if self.vezes > 1:
+                raise type("ClientError", (Exception,), {"code": 403})("sem crédito")
+            return SimpleNamespace(output_text='{"falas": [{"id": 0, "tom": "animado"}]}')
+    avisos = []
+    achados = tom.ouvir_tons("f.mkv", falas, [0, 1], Ouvinte(), "ffmpeg", tmp_path / "t.json",
+                             extrair=lambda *a: b"mp3", avisar=avisos.append)
+    assert achados == {0: "animado"} and "parte das falas" in avisos[0]
+    sem_credito = Ouvinte()
+    sem_credito.vezes = 1                                                    # já no 1º pedido: sem crédito
+    with pytest.raises(ErroDublagem):                                       # nada ouvido: o erro sobe
+        tom.ouvir_tons("f.mkv", falas, [1], sem_credito, "ffmpeg", tmp_path / "t.json", extrair=lambda *a: b"mp3")

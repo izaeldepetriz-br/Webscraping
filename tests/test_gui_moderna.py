@@ -4631,6 +4631,15 @@ def test_minutos_do_teste_ao_lado_dos_botoes_e_jellyfin(app, tmp_path, monkeypat
     assert app.obter_opcoes_jellyfin().minutos_teste == 7 and app.botao_amostra() == "Testar 7 min (amostra)"
     app.campo_minutos_teste.set(99)                                     # passa do máximo: fica em 60
     assert app.var_minutos_teste().get() == "60"
+    inicio_jf = app.campo_jf_minutos.winfo_children()[2]               # "a partir de" ao lado dos minutos
+    assert inicio_jf.get() == "auto"                                    # o Maestro escolhe o trecho
+    inicio_jf.delete(0, "end")
+    inicio_jf.insert(0, "12:30")
+    assert app.campo_av_minutos.winfo_children()[2].get() == "12:30"    # o mesmo valor na aba Avulsos
+    assert app.obter_opcoes_jellyfin().inicio_teste == "12:30" and app.texto_inicio_teste() == " a partir de 12:30"
+    assert app.obter_opcoes_jellyfin().emocao_da_cena
+    app.var_inicio_teste().set("")
+    assert app.texto_inicio_teste() == ""
     filmes = tmp_path / "Filmes"
     filmes.mkdir()
     app._destinos.update({"Filmes": str(filmes), "Séries": ""})

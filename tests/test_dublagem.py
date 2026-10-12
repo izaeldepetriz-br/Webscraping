@@ -715,3 +715,66 @@ def test_banco_de_frases_tem_tamanho_maximo(tmp_path, monkeypatch):
     pedidos = [(f"Frase {k}.", tmp_path / f"{k}.wav", "") for k in range(4)]
     dublagem._sintetizar(voz, pedidos, None, banco=banco)
     assert len(list(banco.glob("*.wav"))) == 2
+
+
+class GeminiFalso(VozComVoz):
+    """Uma voz que INTERPRETA (como o Gemini): guarda o tom pedido de cada fala."""
+    expressiva = True
+
+    def __init__(self):
+        super().__init__()
+        self.tons = []
+
+    def sintetizar(self, pedidos, parar=None, ao_progresso=None):
+        self.tons += [p[3] if len(p) > 3 else "" for p in pedidos]
+        super().sintetizar(pedidos, parar, ao_progresso)
+
+
+def test_gemini_fora_do_banco_e_o_tom_vai_junto(tmp_path):
+    """Cada pedido ao Gemini sai num timbre um pouco diferente: a frase de outro filme no meio desta soava como
+    outra pessoa. O tom da cena vai no pedido, e a mesma frase com outro tom é outra fala."""
+    voz, banco = GeminiFalso(), tmp_path / "frases"
+    pedidos = [("Sim.", tmp_path / "1.wav", "", "animada"), ("Sim.", tmp_path / "2.wav", "", "triste"),
+               ("Sim.", tmp_path / "3.wav", "", "animada"), ("Não.", tmp_path / "4.wav", "piper:faber", "")]
+    assert dublagem._sintetizar(voz, pedidos, None, banco=banco) == 1          # só a 3 (mesmo texto e tom da 1)
+    assert voz.textos == ["Sim.", "Sim.", "Não."] and voz.tons == ["animada", "triste", ""]
+    assert len(list(banco.glob("*.wav"))) == 1                                  # só a do Piper foi para o banco
+    assert dublagem.motor_expressivo(voz) and not dublagem.motor_expressivo(voz, "piper:faber")
+    assert not dublagem.motor_expressivo(VozComVoz())
+
+
+@pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
+def test_trocar_a_voz_nao_mistura_as_falas_da_voz_antiga(tmp_path):
+    """O teste guardava as falas pelo texto: depois de trocar a voz, as falas já feitas continuavam com a voz
+    antiga e a amostra misturava duas vozes. Agora o nome da fala leva o motor e a voz (e o tom)."""
+    pasta = tmp_path / "Filme (2003)"
+    pasta.mkdir()
+    video = video_de_teste(pasta / "Filme (2003).mkv", segundos=8)
+    legenda = pasta / "Filme (2003).pt-BR.srt"
+    legenda.write_text(SRT, encoding="utf-8")
+    cache, voz = tmp_path / "cache", VozComVoz()
+    amostra = dublagem.caminho_amostra(cache, video)
+    assert dublar_video(video, legenda, voz, pasta_cache=cache, trecho=(0, 8), destino=amostra).status == "dublado"
+    assert dublar_video(video, legenda, voz, pasta_cache=cache, trecho=(0, 8), destino=amostra).retomadas == 2
+    feitas = len(voz.textos)
+    voz.voz = "Kore"                                                     # trocou a voz e testou de novo
+    r = dublar_video(video, legenda, voz, pasta_cache=cache, trecho=(0, 8), destino=amostra)
+    assert r.status == "dublado" and r.retomadas == 0 and len(voz.textos) == feitas + 2   # tudo com a voz nova
+    pasta_filme = dublagem.pasta_do_filme(cache, video)
+    assert len(list(pasta_filme.glob("0000*-*.wav"))) == 2               # as da voz antiga foram apagadas
+    tons, gemini = [], GeminiFalso()
+    sem_tom = dublar_video(video, legenda, gemini, pasta_cache=cache, trecho=(0, 8), destino=amostra)
+    assert sem_tom.status == "dublado" and len(gemini.textos) == 2
+    r = dublar_video(video, legenda, gemini, pasta_cache=cache, trecho=(0, 8), destino=amostra,
+                     tons=lambda falas, ids, p, parar: tons.append(ids) or {ids[0]: "animada"})
+    assert r.status == "dublado" and tons == [[0, 1]]
+    assert r.retomadas == 2 and len(gemini.textos) == 2            # já geradas sem o tom: não paga de novo
+    gemini2 = GeminiFalso()
+    dublagem.shutil.rmtree(pasta_filme)                             # do zero: agora o tom vai no pedido
+    r = dublar_video(video, legenda, gemini2, pasta_cache=cache, trecho=(0, 8), destino=amostra,
+                     tons=lambda falas, ids, p, parar: {ids[0]: "animada"})
+    assert r.status == "dublado" and gemini2.tons == ["animada", ""]
+    avisos = []
+    r = dublar_video(video, legenda, voz, pasta_cache=cache, trecho=(0, 8), destino=amostra, avisar=avisos.append,
+                     tons=lambda *a: (_ for _ in ()).throw(RuntimeError("sem internet")))
+    assert r.status == "dublado" and "sem a emoção da cena" in avisos[0]  # sem o tom, a dublagem segue

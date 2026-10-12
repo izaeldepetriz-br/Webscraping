@@ -51,7 +51,7 @@ from jellyfin_tools.transcricao import (Transcritor, estimar as estimar_audio, l
 from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sincronizar
 from jellyfin_tools.dublagem import (ErroDublagem, caminho_amostra, dublar_video, episodios_para_dublar,
                                      RelogioDaDublagem,
-                                     falas_da_legenda, localizar_ffmpeg, pasta_series_dubladas, trecho_de_amostra,
+                                     falas_da_legenda, localizar_ffmpeg, pasta_series_dubladas,
                                      videos_para_dublar, voz_pronta)
 from jellyfin_tools.paralelo import prioridade_baixa
 from jellyfin_tools.lixeira import apagar_lotes, lotes_antigos, tamanho_legivel
@@ -2931,7 +2931,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
         As falas ficam no progresso guardado do filme: a dublagem inteira, depois, não paga de novo por elas."""
         minutos = automacao.minutos_de_teste(o)
         escolha = 0 if len(itens) == 1 else self.escolher_da_lista(
-            f"Teste de {self.texto_minutos_teste()}", "De qual filme?", [f"{i.video.stem} ({i.falas} falas)" for i in itens],
+            f"Teste de {self.texto_minutos_teste()}{self.texto_inicio_teste()}", "De qual filme?",
+            [f"{i.video.stem} ({i.falas} falas)" for i in itens],
             "Fazer a amostra")
         if escolha is None:
             return
@@ -2940,7 +2941,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         def tarefa():
             try:
                 motor = automacao.preparar_motor(o)
-                trecho = trecho_de_amostra(falas_da_legenda(item.legenda), minutos * 60)
+                trecho = automacao.trecho_do_teste(o, falas_da_legenda(item.legenda), minutos * 60)
                 separar = automacao.separador_de_vozes(o, self._log)
             except (ErroDublagem, OSError, ErroLegenda, automacao.FaltaConfiguracao) as erro:
                 self.fila.put(("msg", ("Amostra da dublagem", f"Não deu para fazer a amostra: {erro}", "erro")))
@@ -2952,7 +2953,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                              adaptar=automacao.adaptador(o, item.video.stem),
                              avisar=lambda texto: self._log.warning("Amostra: %s", texto),
                              pasta_cache=automacao.pasta_dublagem(), trecho=trecho, destino=destino,
-                             separar=separar, ambientar=o.ambientar_voz)
+                             separar=separar, ambientar=o.ambientar_voz,
+                             tons=automacao.ouvinte_de_tons(o, item.video, motor, self._log))
             if r.status != "dublado":
                 self._log.error("Amostra de %s: %s", item.video.name, r.detalhe)
                 self.fila.put(("msg", ("Amostra da dublagem", f"Não deu para fazer a amostra: {r.detalhe}", "erro")))
@@ -2962,7 +2964,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._log.info("Amostra de %s (a partir de %s, %d falas): %s", item.video.name, minuto, r.falas, destino)
             self.fila.put(("abrir_amostra", (destino, item.video.stem, minuto, r.falas)))
 
-        self._rodar(f"Fazendo o teste de {self.texto_minutos_teste()} de {item.video.stem}...", tarefa)
+        self._rodar(f"Fazendo o teste de {self.texto_minutos_teste()}{self.texto_inicio_teste()} de "
+                    f"{item.video.stem}...", tarefa)
 
     def _mostrar_amostra(self, destino: Path, nome: str, minuto: str, falas: int) -> None:
         try:
@@ -3081,7 +3084,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                  avisar=lambda texto: self._log.warning("Dublagem: %s", texto),
                                  vozes=vozes.get(str(item.video)), pasta_cache=automacao.pasta_dublagem(),
                                  destino=item.destino, separar=separar, no_original=o.dublagem_no_original,
-                                 previa=previa, ambientar=o.ambientar_voz)
+                                 previa=previa, ambientar=o.ambientar_voz,
+                                 tons=automacao.ouvinte_de_tons(o, item.video, deste, self._log))
                 if r.status == "previa":
                     automacao.registrar_previa(item.video, r.destino, None)
                 resultados.append(r)

@@ -513,6 +513,35 @@ def test_relogio_do_whisper_e_nucleos():
     assert (nucleos_para_o_whisper(4), nucleos_para_o_whisper(16), nucleos_para_o_whisper(2)) == (3, 8, 2)
 
 
+def test_teste_a_partir_do_minuto_escolhido():
+    """"a partir de 12:30": testar uma cena com várias pessoas falando, em vez do trecho com mais falas."""
+    from types import SimpleNamespace as NS
+    from jellyfin_tools.traducao import Fala
+    assert [automacao.ler_inicio(t) for t in ("", "auto", "12", "12:30", "1:02:30", "0:05,5")] == \
+        [None, None, 720, 750, 3750, 5.5]
+    for errado in ("12h", "1:75", "-3", "1:2:3:4"):
+        with pytest.raises(ValueError):
+            automacao.ler_inicio(errado)
+    falas = [(Fala(f"00:00:{s:02d},000 --> 00:00:{s:02d},900", "x"), "x") for s in range(0, 60, 2)]
+    assert automacao.trecho_do_teste(NS(inicio_teste="0:10"), falas, 60) == (10, 70)
+    assert automacao.trecho_do_teste(NS(inicio_teste=""), falas, 30) == (0, 30)       # automático
+    assert automacao.trecho_do_teste(NS(inicio_teste="2:00"), None, 60, duracao=600) == (120, 180)
+    with pytest.raises(automacao.ErroDublagem, match="vídeo tem só 1:40"):
+        automacao.trecho_do_teste(NS(inicio_teste="5:00"), None, 60, duracao=100)
+    with pytest.raises(automacao.ErroDublagem, match="não entendi"):
+        automacao.trecho_do_teste(NS(inicio_teste="meio"), falas, 60)
+
+
+def test_emocao_da_cena_so_com_a_voz_do_gemini(casa):
+    from test_dublagem import GeminiFalso, VozComVoz
+    casa(chave_gemini="chave", emocao_da_cena=True)
+    o, _ = automacao.opcoes_salvas()
+    assert automacao.ouvinte_de_tons(o, "f.mkv", GeminiFalso()) is not None
+    assert automacao.ouvinte_de_tons(o, "f.mkv", VozComVoz()) is None          # o Piper não interpreta
+    o.emocao_da_cena = False
+    assert automacao.ouvinte_de_tons(o, "f.mkv", GeminiFalso()) is None
+
+
 def dublagem_faixas(arquivo):
     from test_dublagem import faixas
     return faixas(arquivo)
