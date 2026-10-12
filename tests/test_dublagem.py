@@ -479,7 +479,8 @@ def test_amostra_separa_so_o_trecho_e_comando_com_fundo(tmp_path):
     assert mp4[-3:] == ["-f", "mp4", "s.part"] and "mov_text" in mp4 and "0:t?" not in mp4 and "2:0" in mp4
     amostra = comando_mixar("ffmpeg", Path("F.mkv"), Path("t.wav"), Path("s.part"), 1, True, (10.0, 70.0),
                             Path("fundo-10-70.flac"), Path("l.srt"))
-    assert "l.srt" not in amostra and "fundo-10-70.flac" in amostra       # a amostra não leva legenda
+    assert "fundo-10-70.flac" in amostra and amostra[amostra.index("l.srt") - 1] == "-i"   # a amostra leva a legenda
+    assert amostra[amostra.index("-disposition:s:0") + 1] == "default" and "0:s?" not in amostra
     assert dublagem.destino_no_original(Path("a.MKV"))[1] == "matroska"
     assert dublagem.destino_no_original(Path("a.m4v")) == (Path("a.m4v"), "mp4")
     assert dublagem.destino_no_original(Path("a.ts")) == (Path("a.mkv"), "matroska")
