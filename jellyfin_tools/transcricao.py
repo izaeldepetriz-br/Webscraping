@@ -16,7 +16,9 @@ linhas de 42 letras e 6 segundos), cortando de preferência no fim de uma frase 
 
 from __future__ import annotations
 
+import queue
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -150,17 +152,14 @@ class Transcritor:
 
     def _ouvir(self, video, idioma, parar, ao_progresso, vad: bool) -> tuple[str, float, list]:
         self._carregar()
-        extra = {} if vad else {"condition_on_previous_text": False}    # sem o filtro: não repete o anterior
+        # sem o filtro (música): não repete o anterior e lê cada pedaço uma vez só (beam 1): é a 2ª passada
+        extra = {} if vad else {"condition_on_previous_text": False, "beam_size": 1}
         try:
-            segmentos, info = self.motor.transcribe(str(video), language=idioma, vad_filter=vad,
-                                                    word_timestamps=True, beam_size=5, **extra)
-            ouvidos = []
-            for s in segmentos:                         # o Whisper trabalha enquanto os trechos são lidos
-                if parar and parar():
-                    raise ErroTranscricao("interrompido (botão Parar)")
-                ouvidos.append(s)
-                if ao_progresso and info.duration:
-                    ao_progresso(min(s.end / info.duration, 1.0))
+            info, ouvidos = self._em_segundo_plano(
+                lambda: self.motor.transcribe(str(video), language=idioma, vad_filter=vad, word_timestamps=True,
+                                              **{"beam_size": 5, "temperature": TEMPERATURAS, "best_of": 2,
+                                                 **extra}),
+                parar, ao_progresso)
         except ErroTranscricao:
             raise
         except Exception as erro:
@@ -172,6 +171,50 @@ class Transcritor:
         return (info.language or "").lower(), float(info.duration or 0), ouvidos
 
 
+    @staticmethod
+    def _em_segundo_plano(comecar, parar, ao_progresso) -> tuple:
+        """O Whisper ouve numa linha de trabalho à parte; esta só espera, conferindo o botão Parar 4 vezes por
+        segundo. Antes o Parar só era visto entre um trecho ouvido e o próximo (em música, minutos). Parado, o
+        trabalho à parte para sozinho no fim do pedaço que estava ouvindo; o Maestro não espera por ele."""
+        fila: queue.Queue = queue.Queue()
+
+        def trabalhar():
+            try:
+                segmentos, info = comecar()
+                fila.put(("info", info))
+                for s in segmentos:                 # o Whisper trabalha enquanto os trechos são lidos
+                    if parar and parar():
+                        return
+                    fila.put(("trecho", s))
+                fila.put(("fim", None))
+            except BaseException as erro:           # o erro vai para quem espera (mostrar, ou trocar de placa)
+                fila.put(("erro", erro))
+        threading.Thread(target=trabalhar, daemon=True, name="whisper").start()
+        info, ouvidos = None, []
+        while True:
+            try:
+                tipo, dado = fila.get(timeout=0.25)
+            except queue.Empty:
+                if parar and parar():
+                    raise ErroTranscricao("interrompido (botão Parar)")
+                continue
+            if tipo == "erro":
+                raise dado
+            if tipo == "fim":
+                return info, ouvidos
+            if tipo == "info":
+                info = dado
+                continue
+            ouvidos.append(dado)
+            if parar and parar():
+                raise ErroTranscricao("interrompido (botão Parar)")
+            if ao_progresso and getattr(info, "duration", 0):
+                ao_progresso(min(dado.end / info.duration, 1.0))
+
+
+# Quando o Whisper não fica seguro de um pedaço, ele lê de novo "mais solto" (temperatura maior). O padrão tenta 6
+# vezes com 5 candidatos cada: em música, isso multiplicava o tempo. Aqui: até 3 vezes, 2 candidatos.
+TEMPERATURAS = (0.0, 0.4, 0.8)
 MUSICA_MINIMO_S = 60          # só vale a pena ouvir de novo em áudio com mais de 1 minuto
 MUSICA_COBERTURA = 0.3        # o filtro de voz deixou passar menos de 30% do áudio: provável música
 

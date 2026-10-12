@@ -161,3 +161,32 @@ def test_musica_ouve_de_novo_sem_o_filtro_de_voz():
     w2 = WhisperFalso()
     Transcritor(motor=w2).transcrever("Filme.mkv")
     assert len(w2.chamadas) == 1
+
+
+def test_parar_responde_na_hora_mesmo_no_meio_de_um_pedaco():
+    """O Parar é visto 4 vezes por segundo, mesmo com o Whisper ocupado num pedaço longo (música)."""
+    import threading
+    import time
+    liberar = threading.Event()
+
+    class Lento(WhisperFalso):
+        def transcribe(self, caminho, **opcoes):
+            self.chamadas.append((caminho, opcoes))
+
+            def trechos():
+                liberar.wait(10)                                       # um pedaço que demora a sair
+                yield NS(start=1.0, end=2.0, text=" Oi.", words=palavras(1.0, "Oi."))
+            return trechos(), NS(language="pt", duration=10.0)
+    w = Lento()
+    pedido = time.monotonic()
+    with pytest.raises(ErroTranscricao, match="Parar"):
+        Transcritor(motor=w).transcrever("a.wav", parar=lambda: time.monotonic() - pedido > 0.3)
+    assert time.monotonic() - pedido < 2                               # antes: esperava o pedaço acabar
+    liberar.set()
+    opcoes = w.chamadas[0][1]
+    assert opcoes["temperature"] == (0.0, 0.4, 0.8) and opcoes["best_of"] == 2 and opcoes["beam_size"] == 5
+
+
+def test_erro_do_whisper_chega_a_quem_espera():
+    with pytest.raises(ErroTranscricao, match="não deu para ouvir"):
+        Transcritor(motor=WhisperFalso(erro=RuntimeError("quebrou"))).transcrever("a.wav")

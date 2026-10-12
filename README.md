@@ -250,6 +250,10 @@ primeira falha (antes esperava o tempo limite em cada filme).
   falta (antes ficava parada em 10% até o fim), e o log diz qual modelo do Whisper está ouvindo. O Whisper deixa um
   núcleo do processador livre, para a janela não travar. Em música, a barra avisa quando ele ouve de novo sem o
   filtro de voz.
+- **Parar na hora e Whisper mais rápido**: o botão **Parar** responde em menos de 1 segundo também enquanto o Whisper
+  ouve (antes esperava ele terminar o pedaço, minutos em música). Quando o Whisper não fica seguro de um pedaço, ele
+  lê de novo no máximo 3 vezes com 2 candidatos (antes eram até 6 vezes com 5), e a 2ª passada da música lê cada
+  pedaço uma vez só: em música, bem menos tempo; em fala normal, quase não muda.
 
 ### Novidades da v2.18.0
 
