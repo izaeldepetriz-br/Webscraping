@@ -123,11 +123,26 @@ class Transcritor:
 
     def transcrever(self, video: str | Path, idioma: str | None = None, parar=None,
                     ao_progresso=None) -> tuple[str, float, list[Fala]]:
-        """(idioma do áudio, duração em segundos, falas). ao_progresso(fração 0-1) a cada trecho ouvido."""
+        """(idioma do áudio, duração em segundos, falas). ao_progresso(fração 0-1) a cada trecho ouvido.
+        Com o filtro de voz (VAD), o Whisper pula o que "não é fala". Numa MÚSICA, o filtro joga fora quase todo
+        o canto (era o caso de "Aquarela do Brasil": só os primeiros 30 s viraram legenda). Se o que sobrou
+        cobre pouco do áudio, ouve de novo SEM o filtro e fica com o que pegou mais."""
+        lingua, duracao, segmentos = self._ouvir(video, idioma, parar, ao_progresso, vad=True)
+        if duracao >= MUSICA_MINIMO_S and _cobertura(segmentos, duracao) < MUSICA_COBERTURA:
+            self.aviso = ("o filtro de voz deixou passar pouco do áudio (parece música ou fala sob muito som): "
+                          "ouvindo de novo sem ele")
+            _, _, sem_filtro = self._ouvir(video, idioma, parar, ao_progresso, vad=False)
+            sem_filtro = _sem_invencoes(sem_filtro)
+            if _cobertura(sem_filtro, duracao) > _cobertura(segmentos, duracao):
+                segmentos = sem_filtro
+        return lingua, duracao, falas_dos_segmentos(segmentos)
+
+    def _ouvir(self, video, idioma, parar, ao_progresso, vad: bool) -> tuple[str, float, list]:
         self._carregar()
+        extra = {} if vad else {"condition_on_previous_text": False}    # sem o filtro: não repete o anterior
         try:
-            segmentos, info = self.motor.transcribe(str(video), language=idioma, vad_filter=True,
-                                                    word_timestamps=True, beam_size=5)
+            segmentos, info = self.motor.transcribe(str(video), language=idioma, vad_filter=vad,
+                                                    word_timestamps=True, beam_size=5, **extra)
             ouvidos = []
             for s in segmentos:                         # o Whisper trabalha enquanto os trechos são lidos
                 if parar and parar():
@@ -141,9 +156,35 @@ class Transcritor:
             if self.usar_gpu:                           # a placa só falha na hora de usar (falta cuDNN...)
                 self.aviso = f"placa de vídeo falhou ({str(erro)[:80]}): usando o processador"
                 self.usar_gpu, self.motor = False, None
-                return self.transcrever(video, idioma, parar, ao_progresso)
+                return self._ouvir(video, idioma, parar, ao_progresso, vad)
             raise ErroTranscricao(f"não deu para ouvir o áudio: {str(erro)[:200]}") from erro
-        return (info.language or "").lower(), float(info.duration or 0), falas_dos_segmentos(ouvidos)
+        return (info.language or "").lower(), float(info.duration or 0), ouvidos
+
+
+MUSICA_MINIMO_S = 60          # só vale a pena ouvir de novo em áudio com mais de 1 minuto
+MUSICA_COBERTURA = 0.3        # o filtro de voz deixou passar menos de 30% do áudio: provável música
+
+
+def _cobertura(segmentos, duracao: float) -> float:
+    """Quanto do áudio virou texto (0 a 1)."""
+    if not duracao:
+        return 0.0
+    return sum(max(0.0, s.end - s.start) for s in segmentos) / duracao
+
+
+def _sem_invencoes(segmentos) -> list:
+    """Sem o filtro de voz, o Whisper às vezes "inventa" nas partes só de música ("Obrigado por assistir"...).
+    Tira os trechos em que ele mesmo acha que não há voz, e a mesma frase repetida em seguida."""
+    limpos = []
+    for s in segmentos:
+        sem_voz = getattr(s, "no_speech_prob", 0.0) or 0.0
+        confianca = getattr(s, "avg_logprob", 0.0) or 0.0
+        if sem_voz > 0.6 and confianca < -1.0:
+            continue
+        if limpos and s.text.strip().lower() == limpos[-1].text.strip().lower():
+            continue
+        limpos.append(s)
+    return limpos
 
 
 def modelo_baixado(modelo: str, pasta_modelos: str | Path | None) -> bool:

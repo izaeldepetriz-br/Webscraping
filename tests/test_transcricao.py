@@ -129,3 +129,35 @@ def test_acha_os_videos_sem_nenhuma_legenda(tmp_path):
     assert achados == [SemLegenda(a, 5400.0)]
     horas, letras, falas = estimar(achados + [SemLegenda(a, None)])
     assert horas == 1.5 and letras == 5400 * 6 and falas > 1000
+
+
+def test_musica_ouve_de_novo_sem_o_filtro_de_voz():
+    """"Aquarela do Brasil": com o filtro de voz, só os primeiros 30 s viravam legenda (o canto com orquestra não
+    parece fala para o filtro). Cobrindo pouco do áudio, ouve de novo sem ele, sem as "invenções"."""
+    class Whisper:
+        def __init__(self):
+            self.chamadas = []
+
+        def transcribe(self, caminho, **opcoes):
+            self.chamadas.append(opcoes)
+            if opcoes["vad_filter"]:
+                trechos = [NS(start=15.0, end=30.0, text=" Brasil, meu Brasil brasileiro",
+                              words=palavras(15.0, "Brasil, meu Brasil brasileiro"))]
+            else:
+                trechos = [NS(start=15.0 + 20 * k, end=33.0 + 20 * k, text=f" verso {k}",
+                              words=palavras(15.0 + 20 * k, f"verso {k}"), no_speech_prob=0.1, avg_logprob=-0.3)
+                           for k in range(10)]
+                trechos.append(NS(start=230.0, end=234.0, text=" Obrigado por assistir", words=None,
+                                  no_speech_prob=0.9, avg_logprob=-1.5))                   # invenção no fim
+            return iter(trechos), NS(language="pt", duration=240.0)
+    w = Whisper()
+    t = Transcritor(motor=w)
+    lingua, duracao, falas = t.transcrever("Aquarela.mp4")
+    assert [c["vad_filter"] for c in w.chamadas] == [True, False]
+    assert w.chamadas[1]["condition_on_previous_text"] is False
+    assert len(falas) == 10 and not any("Obrigado" in f.texto for f in falas)
+    assert "parece música" in t.aviso
+    # fala normal (cobre bastante do áudio): uma passada só, com o filtro
+    w2 = WhisperFalso()
+    Transcritor(motor=w2).transcrever("Filme.mkv")
+    assert len(w2.chamadas) == 1
