@@ -240,6 +240,17 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.18.1
+
+- **Minutos do teste ao lado do botão**: nas abas **Jellyfin** e **Avulsos**, o "🧪 Testar" tem o campo `[- 2 +] min`
+  ao lado (de 1 a 60 minutos). É o mesmo valor de Configurações > Dublagem: mudar num lugar muda nos outros.
+- **Aba Jellyfin**: botões **🧪 Testar** (vai direto para o teste, sem perguntar se é para dublar tudo) e
+  **📜 Roteiro...** (escolhe o filme ou episódio, começando na biblioteca, e liga o roteiro a ele).
+- **Teste mais rápido e com andamento**: enquanto o Whisper ouve o trecho, a barra mostra a porcentagem e quanto
+  falta (antes ficava parada em 10% até o fim). O Whisper deixa um núcleo do processador livre, para a janela não
+  travar, e nas placas de vídeo antigas (ex.: GeForce 920M) escolhe sozinho o formato que a placa aceita. Em música, a
+  barra avisa quando ele ouve de novo sem o filtro de voz.
+
 ### Novidades da v2.18.0
 
 - **Economia na dublagem**:

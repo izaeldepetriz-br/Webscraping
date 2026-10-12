@@ -193,14 +193,15 @@ class CampoNumerico(ctk.CTkFrame):
     """Seletor numérico moderno ( -  [ valor ]  + ). O CustomTkinter não tem Spinbox."""
 
     def __init__(self, master, valor: float, minimo: float, maximo: float, passo: float = 1,
-                 decimal: bool = False, largura: int = 120, casas: int = 1, virgula: bool = False):
+                 decimal: bool = False, largura: int = 120, casas: int = 1, virgula: bool = False,
+                 var: tk.StringVar | None = None):
         """casas: casas decimais mostradas; virgula: mostra '5,44' (dinheiro, jeito brasileiro). Digitar com ponto
-        ou vírgula funciona nos dois casos."""
+        ou vírgula funciona nos dois casos. var: o mesmo valor em vários campos (mudar um muda todos)."""
         super().__init__(master, fg_color=Tema.CAMPO, corner_radius=Tema.RAIO_CONTROLE,
                          border_width=1, border_color=Tema.CAMPO_BORDA, width=largura, height=38)
         self.minimo, self.maximo, self.passo, self.decimal = minimo, maximo, passo, decimal
         self.casas, self.virgula = casas, virgula
-        self.var = tk.StringVar(value=self._formatar(valor))
+        self.var = var if var is not None else tk.StringVar(value=self._formatar(valor))
         fonte = ctk.CTkFont(Tema.FAMILIA, 13)
         estilo_botao = dict(width=30, height=30, corner_radius=8, fg_color="transparent",
                             hover_color=Tema.SECUNDARIA_HOVER, text_color=Tema.TEXTO_SUAVE,
@@ -2183,11 +2184,11 @@ class JanelaModerna(ctk.CTk):
         self.bt_escolher = self._botao(lateral, "Escolher...", self.ao_escolher_pasta)
         self.bt_escolher.pack(fill="x", pady=(8, 14), **p)
 
-    def _numero(self, master, texto, valor, minimo, maximo, passo, decimal=False, casas=1, virgula=False):
+    def _numero(self, master, texto, valor, minimo, maximo, passo, decimal=False, casas=1, virgula=False, var=None):
         linha = ctk.CTkFrame(master, fg_color="transparent")
         linha.pack(fill="x", padx=18, pady=(0, 6))
         campo = CampoNumerico(linha, valor, minimo, maximo, passo, decimal, largura=128,   # cabe "100000"
-                              casas=casas, virgula=virgula)
+                              casas=casas, virgula=virgula, var=var)
         campo.pack(side="right")
         self._rotulo(linha, texto).pack(side="left", fill="x", expand=True)
         return campo
@@ -2430,11 +2431,17 @@ class JanelaModerna(ctk.CTk):
         self.bt_legendar_audio = self._botao(voz, "Criar legenda pelo áudio...", self.ao_legendar_audio)
         self.bt_sincronizar = self._botao(voz, "Sincronizar legendas...", self.ao_sincronizar_legendas)
         self.bt_dublar = self._botao(voz, "Dublar...", self.ao_dublar)
+        self.bt_testar_jf = self._botao(voz, "🧪 Testar", self.ao_testar_dublagem_jf)
+        self.campo_jf_minutos = self.campo_minutos(voz)
+        self.bt_roteiro_jf = self._botao(voz, "📜 Roteiro...", self.ao_roteiro_jellyfin)
         self.bt_previas_jf = self._botao(voz, "🎧 Prévias", self.ao_previas)
         for b in (self.bt_traduzir_legendas, self.bt_legendar_audio, self.bt_sincronizar, self.bt_dublar,
-                  self.bt_previas_jf):
+                  self.bt_testar_jf, self.bt_roteiro_jf, self.bt_previas_jf):
             b.configure(height=34)
+        for b in (self.bt_traduzir_legendas, self.bt_legendar_audio, self.bt_sincronizar, self.bt_dublar,
+                  self.bt_testar_jf, self.campo_jf_minutos, self.bt_roteiro_jf, self.bt_previas_jf):
             b.pack(side="left", padx=(0, 8))
+        self.bt_testar_jf.pack_configure(padx=(0, 4))
 
         corpo = self._corpo(aba, linha=3)
         corpo.grid_rowconfigure(1, weight=0)          # painel Antes -> Depois: altura fixa
@@ -2825,13 +2832,15 @@ class JanelaModerna(ctk.CTk):
         self.bt_av_adicionar = self._botao(barra, "Adicionar vídeos...", self.ao_adicionar_avulsos, largura=170)
         self.bt_av_processar = self._botao(barra, "Processar", self.ao_processar_avulsos, largura=140)
         self.bt_av_limpar = self._botao(barra, "Tirar os adicionados", self.limpar_avulsos_adicionados, largura=170)
-        self.bt_av_testar = self._botao(barra, "🧪 Testar 2 min", self.ao_testar_avulso, largura=150)
+        self.bt_av_testar = self._botao(barra, "🧪 Testar", self.ao_testar_avulso, largura=110)
+        self.campo_av_minutos = self.campo_minutos(barra)
         self.bt_av_roteiro = self._botao(barra, "📜 Roteiro", self.ao_roteiro_avulso, largura=120)
         self.bt_parar_av = self._botao(barra, "Parar", self.ao_parar, "perigo", largura=100)
         self.bt_previas_av = self._botao(barra, "🎧 Prévias", self.ao_previas, largura=130)
-        for b in (self.bt_av_olhar, self.bt_av_adicionar, self.bt_av_testar, self.bt_av_roteiro, self.bt_av_processar,
-                  self.bt_av_limpar):
+        for b in (self.bt_av_olhar, self.bt_av_adicionar, self.bt_av_testar, self.campo_av_minutos,
+                  self.bt_av_roteiro, self.bt_av_processar, self.bt_av_limpar):
             b.pack(side="left", padx=(0, 10))
+        self.bt_av_testar.pack_configure(padx=(0, 6))
         self.bt_parar_av.pack(side="right")
         self.bt_previas_av.pack(side="right", padx=(0, 10))
 
@@ -3057,7 +3066,8 @@ class JanelaModerna(ctk.CTk):
                      fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", padx=(46, 18), pady=(0, 6))
         self.campo_minutos_teste = self._numero(
             lateral, "Teste (botões \"Testar\"): quantos minutos legendar e dublar, num vídeo curto à parte (gasta só "
-                     "o desse trecho):", 2, 1, 30, 1)
+                     "o desse trecho; dá para mudar também ao lado dos botões):", 2, *self.MINUTOS_TESTE,
+            var=self.var_minutos_teste())
         self.var_jf_dublagem_previa = tk.BooleanVar(value=True)
         self.cb_dublagem_previa = self._checkbox(
             lateral, "Fase de teste: primeiro uma prévia para eu ouvir e aprovar (botão \"🎧 Prévias\")",
@@ -3222,6 +3232,27 @@ class JanelaModerna(ctk.CTk):
     def ao_testar_avulso(self) -> None:                 # o app faz (numa tarefa)
         pass
 
+    MINUTOS_TESTE = (1, 60, 1)                           # mínimo, máximo e passo dos minutos do teste
+
+    def var_minutos_teste(self) -> tk.StringVar:
+        """Os minutos do teste: UM valor para o campo das Configurações e os campos ao lado dos botões Testar."""
+        if not hasattr(self, "_var_minutos_teste"):
+            self._var_minutos_teste = tk.StringVar(value="2")
+        return self._var_minutos_teste
+
+    def campo_minutos(self, barra) -> ctk.CTkFrame:
+        """"[ - 2 + ] min" ao lado de um botão Testar (o mesmo valor das Configurações)."""
+        quadro = ctk.CTkFrame(barra, fg_color="transparent")
+        CampoNumerico(quadro, 2, *self.MINUTOS_TESTE, largura=100, var=self.var_minutos_teste()).pack(side="left")
+        self._rotulo(quadro, "min").pack(side="left", padx=(6, 0))
+        return quadro
+
+    def ao_testar_dublagem_jf(self) -> None:            # o app faz: o teste do filme com legenda, na aba Jellyfin
+        pass
+
+    def ao_roteiro_jellyfin(self) -> None:              # o app faz: escolhe o filme ou episódio e o roteiro
+        pass
+
     def ao_roteiro_avulso(self) -> None:                # o app faz: o roteiro do vídeo escolhido na lista
         pass
 
@@ -3239,7 +3270,8 @@ class JanelaModerna(ctk.CTk):
         return f"{minutos:g}".replace(".", ",") + " min"
 
     def atualizar_botao_testar(self) -> None:
-        self.bt_av_testar.configure(text=f"🧪 Testar {self.texto_minutos_teste()}")
+        """Os minutos ficam no campo ao lado do botão (o mesmo das Configurações): só confere o valor."""
+        self.campo_minutos_teste.set(self.campo_minutos_teste.get())
 
     def video_avulso_escolhido(self) -> Path | None:
         """O vídeo selecionado na lista da aba Avulsos (ou o 1º com algo a fazer, ou o 1º)."""
@@ -3266,11 +3298,12 @@ class JanelaModerna(ctk.CTk):
     def ao_processar_avulsos(self) -> None:
         pass
 
-    def _pedir_arquivos_video(self) -> tuple:
-        """Janela do sistema para escolher um ou mais vídeos (em qualquer pasta)."""
+    def _pedir_arquivos_video(self, pasta: str = "", titulo: str = "Escolha os vídeos") -> tuple:
+        """Janela do sistema para escolher um ou mais vídeos (em qualquer pasta; começa em `pasta`, se houver)."""
         tipos = "*.mp4 *.mkv *.avi *.mov *.m4v *.wmv *.m2ts *.webm *.mpg *.mpeg"
-        return tuple(filedialog.askopenfilenames(parent=self, title="Escolha os vídeos",
-                                                 filetypes=[("Vídeos", tipos), ("Todos os arquivos", "*.*")]))
+        extra = {"initialdir": pasta} if pasta and Path(pasta).is_dir() else {}
+        return tuple(filedialog.askopenfilenames(parent=self, title=titulo,
+                                                 filetypes=[("Vídeos", tipos), ("Todos os arquivos", "*.*")], **extra))
 
     def ao_remover_voz_clonada(self) -> None:
         pass
@@ -4453,7 +4486,7 @@ class JanelaModerna(ctk.CTk):
                   self.bt_conferir_espelhos, self.bt_relatorio, self.bt_gerenciar_espelhos, self.bt_traduzir_legendas,
                   self.bt_legendar_audio, self.bt_dublar, self.bt_sincronizar, self.bt_testar_claude,
                   self.bt_av_olhar, self.bt_av_adicionar, self.bt_av_processar, self.bt_av_limpar, self.bt_av_testar,
-                  self.bt_av_roteiro):
+                  self.bt_av_roteiro, self.bt_testar_jf, self.bt_roteiro_jf):
             b.configure(state=estado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
         for parar in (self.bt_parar, self.bt_parar_jf, self.bt_parar_av):

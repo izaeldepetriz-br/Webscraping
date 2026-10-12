@@ -85,6 +85,13 @@ def falas_dos_segmentos(segmentos) -> list[Fala]:
 
 
 # ----------------------------------------------------------------- o Whisper
+def nucleos_para_o_whisper(total: int | None = None) -> int:
+    """Quantos núcleos do processador o Whisper usa: todos menos um (a janela continua respondendo), de 2 a 8."""
+    import os
+    total = total or os.cpu_count() or 4
+    return max(2, min(8, total - 1))
+
+
 @dataclass
 class Transcritor:
     modelo: str = MODELO_PADRAO
@@ -99,8 +106,11 @@ class Transcritor:
         except ImportError as erro:
             raise ErroTranscricao("falta a biblioteca faster-whisper (pip install faster-whisper)") from erro
         try:
+            # placa: "auto" escolhe o que ELA aceita (as antigas, como a GeForce 920M, não têm float16 rápido e
+            # recusavam o modelo); processador: um núcleo fica livre para a janela do Maestro não travar
             return WhisperModel(self.modelo, device="cuda" if gpu else "cpu",
-                                compute_type="float16" if gpu else "int8", download_root=self.pasta_modelos)
+                                compute_type="auto" if gpu else "int8", download_root=self.pasta_modelos,
+                                **({} if gpu else {"cpu_threads": nucleos_para_o_whisper()}))
         except Exception as erro:          # sem internet na 1ª vez, disco cheio, nome de modelo errado...
             if gpu:
                 raise

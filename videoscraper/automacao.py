@@ -39,6 +39,7 @@ import shutil
 import subprocess
 import re
 import sys
+import time
 import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1217,8 +1218,22 @@ class ResultadoTeste:
     erro: str = ""
 
 
+class _Relogio:
+    """", faltam ~2 min" pela velocidade até agora (só depois de 15 s e 3% feitos, para não chutar)."""
+
+    def __init__(self, agora=time.monotonic):
+        self.agora, self.inicio = agora, agora()
+
+    def falta(self, fracao: float) -> str:
+        passou = self.agora() - self.inicio
+        if fracao < 0.03 or passou < 15 or fracao >= 1:
+            return ""
+        segundos = passou * (1 - fracao) / fracao
+        return f", faltam ~{max(1, round(segundos / 60))} min" if segundos >= 60 else f", faltam ~{int(segundos)} s"
+
+
 def minutos_de_teste(o: OpcoesJellyfin) -> float:
-    return max(0.5, min(float(getattr(o, "minutos_teste", 2) or 2), 30.0))
+    return max(0.5, min(float(getattr(o, "minutos_teste", 2) or 2), 60.0))
 
 
 def _trecho_sem_legenda(duracao: float | None, segundos: float) -> tuple[float, float]:
@@ -1282,8 +1297,17 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
                                 str(audio)], check=True, capture_output=True)
                 transcritor = transcritor or Transcritor(modelo=o.modelo_whisper, usar_gpu=o.whisper_gpu,
                                                          pasta_modelos=str(config.ARQUIVO.parent / "modelos_whisper"))
-                andamento(0.1, "Teste: o Whisper está ouvindo o trecho")
-                lingua, _, ouvidas = transcritor.transcrever(audio, parar=parar)
+                andamento(0.05, "Teste: carregando o Whisper")
+                relogio = _Relogio()
+
+                def ouvindo(fracao):                     # a barra anda enquanto o Whisper ouve (antes parava em 10%)
+                    de_novo = (" (2ª vez, sem o filtro de voz: parece música)"
+                               if getattr(transcritor, "aviso", "").startswith("o filtro de voz") else "")
+                    andamento(0.05 + 0.35 * fracao, f"Teste: o Whisper está ouvindo o trecho {fracao * 100:.0f}%"
+                              + de_novo + relogio.falta(fracao))
+                lingua, _, ouvidas = transcritor.transcrever(audio, parar=parar, ao_progresso=ouvindo)
+                if getattr(transcritor, "aviso", ""):
+                    log.info("Whisper: %s", transcritor.aviso)
                 audio.unlink(missing_ok=True)
                 falas = [Fala(f"{tempo_srt(horarios(f.tempo)[0] + r.trecho[0])} --> "
                               f"{tempo_srt(horarios(f.tempo)[1] + r.trecho[0])}", f.texto) for f in ouvidas]

@@ -492,10 +492,25 @@ def test_teste_de_alguns_minutos_traduz_e_ouve_so_o_trecho(casa, tmp_path, monke
     class Whisper:
         def transcrever(self, audio, parar=None, ao_progresso=None):
             ouvidos.append(audio)
+            ao_progresso(0.5)                                           # o Whisper avisa quanto já ouviu
             return "pt", 60.0, [Fala("00:00:01,000 --> 00:00:02,000", "Olá.")]
-    r = automacao.testar_avulso(o, video, logging.getLogger("t"), transcritor=Whisper())
+    passos = []
+    r = automacao.testar_avulso(o, video, logging.getLogger("t"), transcritor=Whisper(),
+                                andamento=lambda fracao, texto: passos.append((fracao, texto)))
     assert not r.erro, r.erro
     assert len(ouvidos) == 1 and r.falas == 1 and r.trecho[0] > 0          # um pedaço depois da abertura
+    assert (0.225, "Teste: o Whisper está ouvindo o trecho 50%") in [(round(f, 3), t) for f, t in passos]
+
+
+def test_relogio_do_whisper_e_nucleos():
+    from jellyfin_tools.transcricao import nucleos_para_o_whisper
+    agora = [0.0]
+    relogio = automacao._Relogio(lambda: agora[0])
+    agora[0] = 10
+    assert relogio.falta(0.5) == ""                                       # cedo demais para estimar
+    agora[0] = 30
+    assert relogio.falta(0.25) == ", faltam ~2 min" and relogio.falta(0.75) == ", faltam ~10 s"
+    assert (nucleos_para_o_whisper(4), nucleos_para_o_whisper(16), nucleos_para_o_whisper(2)) == (3, 8, 2)
 
 
 def dublagem_faixas(arquivo):

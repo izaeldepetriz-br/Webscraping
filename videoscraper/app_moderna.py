@@ -2459,10 +2459,24 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._rodar(f"Conferindo {len(pares)} legenda(s) contra o áudio...", tarefa)
 
     # ================================================================== dublagem por IA (Piper)
-    def ao_dublar(self) -> None:
+    def ao_testar_dublagem_jf(self) -> None:
+        """"🧪 Testar" da aba Jellyfin: o teste de N minutos (o campo ao lado) de um filme ou episódio, sem perguntar
+        se é para dublar tudo."""
+        self.ao_dublar(so_teste=True)
+
+    def ao_roteiro_jellyfin(self) -> None:
+        """"📜 Roteiro..." da aba Jellyfin: escolhe o filme ou episódio (começa na biblioteca de Filmes) e o roteiro."""
+        destinos = self.destinos_jellyfin()
+        pasta = next((destinos.get(t) for t in ("Filmes", "Séries") if destinos.get(t)), "")
+        escolhidos = self._pedir_arquivos_video(pasta, "Escolha o filme ou episódio do roteiro")
+        if escolhidos:
+            self._ligar_roteiro(Path(escolhidos[0]))
+
+    def ao_dublar(self, so_teste: bool = False) -> None:
         """Botão "Dublar...": os filmes e episódios com legenda em português e sem áudio em português ganham uma
         versão dublada (filmes: 'Nome - Dublado IA.mkv' ao lado; episódios: na pasta irmã 'Séries (Dublado IA)', para
-        não aparecerem repetidos). O original não é tocado."""
+        não aparecerem repetidos). O original não é tocado. so_teste: só o teste de N minutos ("🧪 Testar")."""
+        self._so_teste = so_teste
         o = self.obter_opcoes_jellyfin()
         destinos = self.destinos_jellyfin()
         filmes, series = (destinos.get(t) or "" for t in ("Filmes", "Séries"))
@@ -2482,13 +2496,18 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._log.info("Dublar: %d vídeo(s) com legenda em %s e sem áudio em português", len(itens), idioma)
             self.fila.put(("dublar_pendente", (itens, o)))
 
-        self._rodar("Procurando filmes e episódios para dublar...", tarefa)
+        self._rodar("Procurando filmes e episódios para " + ("testar..." if so_teste else "dublar..."), tarefa)
 
     def _confirmar_dublagem(self, itens: list, o) -> None:
+        so_teste, self._so_teste = getattr(self, "_so_teste", False), False
         if not itens:
-            self.mostrar_mensagem("Dublar", "Nada para dublar: é preciso ter a legenda em português "
-                                  "(\"Criar legenda pelo áudio\" ou \"Traduzir legendas\" fazem uma) e não ter "
-                                  "áudio em português nem versão dublada.", "info")
+            self.mostrar_mensagem("Testar" if so_teste else "Dublar",
+                                  f"Nada para {'testar' if so_teste else 'dublar'}: é preciso ter a legenda em "
+                                  "português (\"Criar legenda pelo áudio\" ou \"Traduzir legendas\" fazem uma) e "
+                                  "não ter áudio em português nem versão dublada.", "info")
+            return
+        if so_teste:                                          # "🧪 Testar": direto para o teste, sem perguntar
+            self._amostra(itens, o)
             return
         espaco = sum(i.tamanho for i in itens)
         exemplos = "\n".join(f"• {i.video.name} ({i.falas} falas)" for i in itens[:5]) + (
@@ -2702,7 +2721,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
     def ao_roteiro_de_um_video(self) -> None:
         """Configurações > Dublagem: escolhe o vídeo (filme, episódio ou avulso) e liga o roteiro a ele."""
-        escolhidos = self._pedir_arquivos_video()
+        escolhidos = self._pedir_arquivos_video(titulo="Escolha o vídeo do roteiro")
         if escolhidos:
             self._ligar_roteiro(Path(escolhidos[0]))
 
@@ -2842,8 +2861,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 self.fila.put(("msg", ("Amostra da dublagem", f"Não deu para fazer a amostra: {erro}", "erro")))
                 return
             destino = caminho_amostra(automacao.pasta_dublagem(), item.video)
+            relogio = RelogioDaDublagem(bool(separar))
             r = dublar_video(item.video, item.legenda, motor, parar=self.evento_parar.is_set,
-                             ao_progresso=lambda f: self.fila.put(("jf_analise", (f, f"Amostra: {int(f * 100)}%"))),
+                             ao_progresso=lambda f: self.fila.put(("jf_analise", (f, f"Teste: {relogio.texto(f)}"))),
                              adaptar=automacao.adaptador(o, item.video.stem),
                              avisar=lambda texto: self._log.warning("Amostra: %s", texto),
                              pasta_cache=automacao.pasta_dublagem(), trecho=trecho, destino=destino,

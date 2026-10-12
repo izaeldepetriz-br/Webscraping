@@ -4530,7 +4530,7 @@ def test_testar_alguns_minutos_na_aba_avulsos(app, tmp_path, monkeypatch):
     antes = video.read_bytes()
     app.campo_minutos_teste.set(1)
     app.mostrar_aba("Avulsos")
-    assert app.bt_av_testar.cget("text") == "🧪 Testar 1 min"
+    assert app.bt_av_testar.cget("text") == "🧪 Testar" and app.var_minutos_teste().get() == "1"   # o campo ao lado
     app.var_jf_pasta_avulsos.set(str(caixa))
     app.bt_av_olhar.invoke()
     esperar(app)
@@ -4618,3 +4618,37 @@ def test_janela_do_roteiro(app, tmp_path):
     janela.var_link.set("  https://exemplo.com/roteiro.html ")
     janela.bt_ok.invoke()
     assert janela.resultado == "https://exemplo.com/roteiro.html"
+
+
+
+def test_minutos_do_teste_ao_lado_dos_botoes_e_jellyfin(app, tmp_path, monkeypatch):
+    """Os minutos do teste: um valor só, editável ao lado do "🧪 Testar" (Jellyfin e Avulsos) e nas Configurações.
+    O "🧪 Testar" da aba Jellyfin vai direto para o teste; o "📜 Roteiro..." escolhe o filme na biblioteca."""
+    from types import SimpleNamespace
+    app.campo_jf_minutos.winfo_children()[0].set(7)                  # o campo da aba Jellyfin
+    assert app.campo_minutos_teste.get() == 7 and app.var_minutos_teste().get() == "7"
+    assert app.campo_av_minutos.winfo_children()[0].get() == 7          # o da aba Avulsos é o mesmo
+    assert app.obter_opcoes_jellyfin().minutos_teste == 7 and app.botao_amostra() == "Testar 7 min (amostra)"
+    app.campo_minutos_teste.set(99)                                     # passa do máximo: fica em 60
+    assert app.var_minutos_teste().get() == "60"
+    filmes = tmp_path / "Filmes"
+    filmes.mkdir()
+    app._destinos.update({"Filmes": str(filmes), "Séries": ""})
+    app.var_jf_destino.set(str(filmes))
+    item = SimpleNamespace(video=filmes / "A.mkv", legenda=filmes / "A.pt-BR.srt", falas=10, serie="", destino=None)
+    monkeypatch.setattr(app_moderna, "videos_para_dublar", lambda *a, **k: [item])
+    monkeypatch.setattr(app_moderna, "episodios_para_dublar", lambda *a, **k: [])
+    testes = []
+    monkeypatch.setattr(app, "_amostra", lambda itens, o: testes.append(itens))
+    monkeypatch.setattr(app, "escolher", lambda *a, **k: pytest.fail("o Testar não pergunta se é para dublar tudo"))
+    app.mostrar_aba("Jellyfin")
+    app.bt_testar_jf.invoke()
+    esperar(app)
+    for _ in range(20):                                                 # a pergunta vem 50 ms depois do "fim"
+        app.update()
+        time.sleep(0.02)
+    assert testes == [[item]]
+    pastas = []
+    monkeypatch.setattr(app, "_pedir_arquivos_video", lambda pasta="", titulo="": pastas.append(pasta) or ())
+    app.bt_roteiro_jf.invoke()
+    assert pastas == [str(filmes)]
