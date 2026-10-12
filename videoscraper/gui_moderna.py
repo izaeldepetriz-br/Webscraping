@@ -2400,6 +2400,10 @@ class JanelaModerna(ctk.CTk):
         self.var_jf_apagar_pasta = tk.BooleanVar(value=False)
         self._checkbox(lateral, "Apagar a pasta do torrent depois de transferir (com o que sobrar nela)",
                        self.var_jf_apagar_pasta)
+        self._rotulo(lateral, "Vale também para a vigia. Desmarcado: o vídeo sai e a propaganda é apagada, mas a "
+                              "pasta antiga do download continua (com a amostra e o que mais sobrou). A pasta só é "
+                              "apagada se não sobrar nenhum outro vídeo de verdade nela.",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", padx=(46, 18), pady=(0, 6))
         self._rotulo(lateral, "Imagens (poster, backdrop...) e legendas locais vão junto com o filme.",
                      fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(2, 0), **p)
         self._separador(lateral)
@@ -2909,7 +2913,9 @@ class JanelaModerna(ctk.CTk):
         partes = [("TMDB ✓" if self.var_jf_tmdb.get() else "TMDB desligado"),
                   (f"Legendas: {idiomas}{', ' + outros if outros else ''}" if self.var_jf_legendas.get()
                    else "Legendas: não baixa"),
-                  ("Lixo do torrent: apagar" if self.var_jf_lixo.get() else "Lixo do torrent: deixar"),
+                  ("Propaganda do torrent: apaga" if self.var_jf_lixo.get() else "Propaganda do torrent: fica"),
+                  # a pasta antiga do download é OUTRA opção (antes não aparecia aqui e parecia que era apagada)
+                  ("Pasta do download: apaga" if self.var_jf_apagar_pasta.get() else "Pasta do download: fica"),
                   f"Dublagem: {self.NOMES_MODO_VOZ[self.var_jf_modo_voz.get()]}",
                   ("Vigia ligada" if self.var_jf_vigiar.get() else "Vigia desligada")]
         self.lb_resumo_config.configure(text="   ·   ".join(partes))
@@ -3304,6 +3310,10 @@ class JanelaModerna(ctk.CTk):
         selecao = ctk.CTkFrame(topo, fg_color="transparent")
         selecao.pack(side="bottom", fill="x", pady=(4, 0), before=linha)       # embaixo da linha "Mostrar:"
         self._rotulo(selecao, "Seleção:", fonte=ctk.CTkFont(Tema.FAMILIA, 11, "bold")).pack(side="left", padx=(0, 8))
+        # Corrigir nome / Resolver conflitos / Escolher no TMDB / Não identificados: aqui, sempre à vista (antes ficavam
+        # no painel Antes -> Depois, que sai sozinho em tela baixa, e os botões sumiam junto)
+        self.acoes_selecao_jf = ctk.CTkFrame(selecao, fg_color="transparent")
+        self.acoes_selecao_jf.pack(side="right")
         estilo = dict(height=22, corner_radius=6, fg_color="transparent", hover_color=Tema.SECUNDARIA_HOVER,
                       text_color=Tema.PRIMARIA, font=ctk.CTkFont(Tema.FAMILIA, 11))
         self.bt_marcar_jf = ctk.CTkButton(selecao, text="☑ Mover selecionados", width=130,
@@ -3315,8 +3325,8 @@ class JanelaModerna(ctk.CTk):
                                                   command=self.ao_proteger_pasta_jf, **estilo)
         for b in (self.bt_marcar_jf, self.bt_desmarcar_jf, self.bt_proteger_pasta_jf):
             b.pack(side="left", padx=(0, 4))
-        self._rotulo(selecao, "Só o que está ☑ e à vista é organizado · clique no título de uma coluna para filtrar",
-                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(side="left", padx=(10, 0))
+        self._rotulo(selecao, "Só o ☑ à vista é organizado", fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(
+            side="left", padx=(10, 0))
 
     def marcar_mover_jf(self, iids, mover: bool | None = None) -> int:
         """☑/☐ nas linhas "vai mover" (mover=None: inverte cada uma). Devolve quantas mudaram."""
@@ -3463,8 +3473,7 @@ class JanelaModerna(ctk.CTk):
                                               font=self.f_secao, text_color=Tema.TEXTO, anchor="w")
         self.lb_detalhe_titulo.grid(row=0, column=0, columnspan=3, sticky="w", padx=18, pady=(10, 4))
         # não identificado? você diz qual é a série/filme e o programa lembra (regra salva)
-        acoes = ctk.CTkFrame(cartao, fg_color="transparent")
-        acoes.grid(row=0, column=1, columnspan=2, sticky="e", padx=(0, 18), pady=(10, 4))   # 4 botões: 2 colunas
+        acoes = self.acoes_selecao_jf                     # na linha "Seleção:" da lista (sempre à vista)
         self.bt_corrigir_nome = self._botao(acoes, "Corrigir nome...", self.ao_corrigir_nome, "secundario",
                                             largura=130)
         # conflito (cópia repetida ou já na biblioteca): fica a melhor, a outra sai (dá para desfazer)
@@ -3477,8 +3486,8 @@ class JanelaModerna(ctk.CTk):
         self.bt_nao_identificados = self._botao(acoes, "Não identificados...", self.ao_nao_identificados,
                                                 "secundario", largura=150)
         for b in (self.bt_resolver_conflitos, self.bt_corrigir_nome, self.bt_escolher_tmdb, self.bt_nao_identificados):
-            b.configure(height=30)
-            b.pack(side="right", padx=(8, 0))
+            b.configure(height=26, font=ctk.CTkFont(Tema.FAMILIA, 12))
+            b.pack(side="right", padx=(6, 0))
         for coluna, texto in ((1, "Pasta"), (2, "Arquivo")):
             self._rotulo(cartao, texto, fonte=ctk.CTkFont(Tema.FAMILIA, 11, "bold")).grid(
                 row=1, column=coluna, sticky="w", padx=(0, 8))

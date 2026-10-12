@@ -4485,3 +4485,27 @@ def test_opcoes_da_dublagem_nova(app):
     from videoscraper import automacao
     salvo, _ = automacao.opcoes_salvas()
     assert salvo.dublagem_no_original is False and salvo.separar_vozes is True
+
+
+def test_botoes_de_correcao_visiveis_mesmo_sem_o_painel_antes_depois(app, monkeypatch):
+    """Em tela baixa o painel Antes -> Depois sai; os botões Resolver conflitos / Corrigir nome / Escolher no TMDB /
+    Não identificados ficam na linha "Seleção:" da lista (antes sumiam junto com o painel)."""
+    app.mostrar_aba("Jellyfin")
+    monkeypatch.setattr(app, "partes_visiveis_jf", lambda altura=None: (False, False))
+    app._ajustar_altura_jf()
+    app.update()
+    assert not app._cartao_detalhe_jf.winfo_ismapped()
+    for botao in (app.bt_resolver_conflitos, app.bt_corrigir_nome, app.bt_escolher_tmdb, app.bt_nao_identificados):
+        assert botao.master is app.acoes_selecao_jf and botao.winfo_ismapped()
+
+
+def test_resumo_mostra_se_a_pasta_do_download_fica(app):
+    """"Propaganda do torrent" e "Pasta do download" são duas opções diferentes: o resumo mostra as duas."""
+    app.var_jf_lixo.set(True)
+    app.var_jf_apagar_pasta.set(False)
+    app.atualizar_resumo_config()
+    texto = app.lb_resumo_config.cget("text")
+    assert "Propaganda do torrent: apaga" in texto and "Pasta do download: fica" in texto
+    app.var_jf_apagar_pasta.set(True)
+    app.atualizar_resumo_config()
+    assert "Pasta do download: apaga" in app.lb_resumo_config.cget("text")
