@@ -240,6 +240,43 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.18.0
+
+- **Economia na dublagem**:
+  - **Frases repetidas são geradas uma vez só**: "Sim.", "O quê?", "Vamos!"... com a mesma voz saem de um pedido só e
+    são copiadas para as outras vezes. As frases curtas ficam num **banco de frases** (até 3.000) e servem para os
+    próximos filmes e episódios com a mesma voz. O log mostra quantas foram reaproveitadas.
+  - **Figurantes na cota grátis do Google Cloud** (modo Misto, Configurações > Dublagem): quem fala pouco vai para o
+    Google Cloud TTS (voz melhor que a do Piper), com uma voz do gênero de cada figurante, **só enquanto couber na
+    cota grátis do mês** (até 95%). Passando disso, ou se o Google Cloud falhar, voltam para o Piper sozinhos.
+  - **Roteiro diz quem fala**: o botão **📜 Roteiro** (aba Avulsos, e "Roteiro de um vídeo..." em Configurações >
+    Dublagem) guarda o roteiro ao lado do vídeo ('Nome.roteiro.txt'), a partir de um link ou de um arquivo .txt,
+    .html ou .pdf com texto (o PDF que é só foto das páginas não tem texto para ler). Na voz por personagem, o roteiro é
+    comparado com a legenda **no seu PC, sem custo**: as falas achadas ganham o nome do personagem, o gênero vem das
+    descrições das cenas, e o **Gemini só ouve os trechos que o roteiro não cobriu**. Roteiro de filmagem não é o
+    filme final: falas cortadas ou improvisadas ficam para o Gemini.
+- **Vozes dos personagens sem a tabela** (Configurações > Dublagem): o "Dublar" da aba Jellyfin escolhe as vozes
+  sozinho, como os robôs e os vídeos avulsos já faziam.
+- **Economia no Claude**:
+  - O **modo econômico da Anthropic** (API de lotes, **metade do preço**, pronto em até 24 h) agora tem uma opção
+    visível em Configurações > **Tradução** e vale também para os **vídeos avulsos** (a dublagem desses fica para a
+    próxima vez, quando o lote voltar) e para o robô --traduzir-legendas. Antes ele só aparecia como 2º botão na
+    janela do "Traduzir legendas".
+  - **Cache de prompt**: as regras fixas de cada pedido (tradução e falas encurtadas) são reaproveitadas pela
+    Anthropic por 10% do preço nos pedidos seguintes. É uma economia pequena (o que mais pesa é o texto traduzido que
+    volta), e o painel de gastos já conta certo.
+- **🧪 Testar N min** (abas Avulsos e Jellyfin): legenda e/ou dubla só alguns minutos do vídeo (a duração fica em
+  Configurações > Dublagem), para conferir antes de gastar no filme inteiro. A amostra agora leva a legenda.
+- **Andamento que anda**: a etapa ("tirando as vozes originais 42%") e quanto falta, com uma casa decimal, na aba
+  Jellyfin e nos avulsos.
+- **Placa de vídeo recusada explicada** em português no log (e tenta as duas placas, em notebooks com duas).
+- **Legenda por áudio em músicas**: se o filtro de voz do Whisper parar nos primeiros segundos, ele ouve de novo
+  sem o filtro.
+- Correções: a legenda podia sumir no meio da dublagem quando dois Maestros (o app e o robô agendado) dublavam o
+  mesmo vídeo; agora há uma trava e uma cópia de trabalho da legenda. Os botões de corrigir nomes ficam sempre à
+  vista; o resumo diz se a pasta do download fica ou sai; a lista dos avulsos se atualiza depois de descartar uma
+  prévia.
+
 ### Novidades da v2.17.0
 
 - **Aba "Avulsos"** (ao lado de Vídeos e Jellyfin): a caixa de entrada e/ou vídeos de qualquer pasta ("Adicionar
