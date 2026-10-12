@@ -323,9 +323,34 @@ def ouvir_personagens(o: OpcoesJellyfin, video: Path, falas: list, cliente=None,
         raise ErroDublagem("falta o ffmpeg (pip install imageio-ffmpeg)")
     cliente = cliente or voz_gemini._cliente(chave_gemini(o))
     arquivo = pasta_do_filme(pasta_dublagem(), video) / "personagens.json"
-    elenco = personagens.carregar_elenco(arquivo_elenco(serie))["pessoas"] if serie else None
+    elenco = personagens.carregar_elenco(arquivo_elenco(serie))["pessoas"] if serie else []
+    achado = pelo_roteiro(o, video, falas)
+    sabidas = achado.falas if achado else None
+    if achado:                                    # o elenco do roteiro primeiro: o que a série já sabe vale mais
+        elenco = [{"rotulo": n, "genero": g, "descricao": "do roteiro"} for n, g in achado.generos.items()] + elenco
     return personagens.identificar(video, falas, cliente, ffmpeg, arquivo, ao_progresso=ao_progresso, parar=parar,
-                                   elenco=elenco)
+                                   elenco=elenco or None, sabidas=sabidas)
+
+
+def pelo_roteiro(o: OpcoesJellyfin, video: Path, falas: list):
+    """Quem fala cada fala pelo roteiro ao lado do vídeo ('Nome.roteiro.txt'), se houver e a opção estiver ligada.
+    Avisa no log quanto o roteiro cobriu e quantos trechos o Gemini não vai precisar ouvir."""
+    if not getattr(o, "usar_roteiro", True):
+        return None
+    from jellyfin_tools import roteiro
+    log = obter_logger()
+    try:
+        achado = roteiro.quem_fala(video, falas)
+    except (roteiro.ErroRoteiro, OSError) as erro:
+        log.warning("Roteiro de %s: %s (segue sem o roteiro)", Path(video).name, erro)
+        return None
+    if achado:
+        partes = personagens.trechos(falas)
+        pulados = sum(personagens.trecho_coberto(ids, achado.falas) for _, _, ids in partes)
+        log.info("Roteiro de %s: %d de %d falas com o nome de quem fala (%.0f%%), %d personagem(ns); o Gemini não "
+                 "precisa ouvir %d de %d trecho(s)", Path(video).name, len(achado.falas), achado.total,
+                 achado.cobertura * 100, len(achado.generos), pulados, len(partes))
+    return achado
 
 
 def arquivo_elenco(serie: str) -> Path:

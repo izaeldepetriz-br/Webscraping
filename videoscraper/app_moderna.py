@@ -2691,6 +2691,59 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
         self._rodar(f"Testando {minutos} de {video.stem} (só esse trecho)...", tarefa)
 
+    def ao_roteiro_avulso(self) -> None:
+        """"📜 Roteiro" da aba Avulsos: o roteiro do vídeo escolhido na lista."""
+        video = self.video_avulso_escolhido()
+        if video is None:
+            self.mostrar_mensagem("Roteiro", "Clique em Olhar (ou Adicionar vídeos) e escolha um vídeo da lista.",
+                                  "aviso")
+            return
+        self._ligar_roteiro(video)
+
+    def ao_roteiro_de_um_video(self) -> None:
+        """Configurações > Dublagem: escolhe o vídeo (filme, episódio ou avulso) e liga o roteiro a ele."""
+        escolhidos = self._pedir_arquivos_video()
+        if escolhidos:
+            self._ligar_roteiro(Path(escolhidos[0]))
+
+    def _ligar_roteiro(self, video: Path) -> None:
+        from jellyfin_tools import roteiro
+        origem = self.pedir_roteiro(video, roteiro.caminho_roteiro(video))
+        if not origem:
+            return
+        o = self.obter_opcoes_jellyfin()
+
+        def tarefa():
+            try:
+                texto = (roteiro.baixar_roteiro(origem) if re.match(r"https?://", origem)
+                         else roteiro.texto_do_roteiro(origem))
+                destino = roteiro.guardar_roteiro(video, texto)
+            except (roteiro.ErroRoteiro, OSError) as erro:
+                self.fila.put(("msg", ("Roteiro", f"Não deu para usar este roteiro: {erro}", "erro")))
+                return
+            dialogos = roteiro.ler_roteiro(texto)
+            nomes = sorted({d.personagem for d in dialogos}, key=lambda n: -sum(d.personagem == n for d in dialogos))
+            texto_fim = (f"Roteiro guardado: {destino.name}\n{len(dialogos)} falas de {len(nomes)} personagens "
+                         f"(ex.: {', '.join(nomes[:5])}).")
+            legenda = automacao.srt_portugues(video, o.idioma.split(",")[0].strip() or "pt-BR")
+            if legenda:
+                try:
+                    achado = roteiro.quem_fala(video, falas_da_legenda(legenda))
+                    texto_fim += (f"\n\nCom a legenda deste vídeo: {achado.cobertura:.0%} das falas com o nome de "
+                                  "quem fala. O resto, o Gemini ouve na dublagem (só esses trechos).")
+                except (roteiro.ErroRoteiro, OSError, ErroLegenda) as erro:
+                    texto_fim += f"\n\n(Não deu para comparar com a legenda agora: {erro})"
+            else:
+                texto_fim += ("\n\nAinda sem legenda em português ao lado do vídeo: a comparação acontece na hora "
+                              "de dublar.")
+            if not (automacao.usa_gemini(o) and o.voz_por_personagem):
+                texto_fim += ("\n\nPara usar: Configurações > Dublagem, motor Gemini (ou Misto) com \"Uma voz para "
+                              "cada personagem\" marcada.")
+            self._log.info("Roteiro: %s (%d falas, %d personagens)", destino, len(dialogos), len(nomes))
+            self.fila.put(("msg", ("Roteiro", texto_fim, "info")))
+
+        self._rodar(f"Lendo o roteiro de {video.stem}...", tarefa)
+
     def ao_processar_avulsos(self) -> None:
         self.ao_olhar_avulsos(processar=True)
 
@@ -2859,8 +2912,11 @@ class AppModerna(TVAoVivo, JanelaModerna):
             if not principais:
                 itens.append(item)
                 continue
-            escolha = self.pedir_vozes(item.video.stem, personagens.resumo(principais, falas, len(principais)),
-                                       [p.rotulo for p in principais], sugestao)
+            if o.vozes_sem_tabela:                             # Configurações: escolhe sozinho, sem a tabela
+                escolha = {p.rotulo: sugestao.get(p.rotulo, o.voz_gemini) for p in principais}
+            else:
+                escolha = self.pedir_vozes(item.video.stem, personagens.resumo(principais, falas, len(principais)),
+                                           [p.rotulo for p in principais], sugestao)
             if escolha is None:
                 self._log.info("Dublagem: %s pulado", item.video.name)
                 continue

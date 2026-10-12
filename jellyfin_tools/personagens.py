@@ -38,6 +38,8 @@ Diga QUEM fala cada fala, pela VOZ:
 - Pessoa nova: "Pessoa N" (o próximo número livre) ou o NOME do personagem, se ele for dito no filme.
 - genero: "m" (voz masculina), "f" (voz feminina) ou "?" (criança, robô, não dá para saber).
 - descricao: poucas palavras sobre a voz (ex.: "homem idoso, voz grave").
+- Falas marcadas com [roteiro: Nome] já têm dono certo (do roteiro do filme): use esse Nome como o rótulo da voz \
+dessa pessoa também nas outras falas dela.
 - Se não der para saber quem fala uma fala, use o rótulo "?".
 
 Responda SÓ com JSON, neste formato:
@@ -88,10 +90,13 @@ def _carregar(arquivo: Path | None) -> dict:
 
 def identificar(video: str | Path, falas: list, cliente, ffmpeg: str, arquivo: str | Path | None = None,
                 ao_progresso=None, parar=None, extrair=audio_do_trecho, tamanho: float = TRECHO,
-                esperar=None, elenco: list[dict] | None = None) -> list[Personagem]:
+                esperar=None, elenco: list[dict] | None = None,
+                sabidas: dict[int, str] | None = None) -> list[Personagem]:
     """Quem fala cada fala. falas: [(Fala, texto)] (dublagem.falas_da_legenda). arquivo: onde guardar o progresso
     (um trecho já ouvido não é pedido de novo). elenco: quem já foi identificado nos OUTROS episódios da série
-    ([{rotulo, genero, descricao}]): o Gemini reusa os mesmos rótulos, e cada um continua com a mesma voz."""
+    ([{rotulo, genero, descricao}]): o Gemini reusa os mesmos rótulos, e cada um continua com a mesma voz.
+    sabidas: {número da fala: personagem} já sabidas pelo ROTEIRO (roteiro.py): valem mais que o que o Gemini
+    disser, e o trecho com quase todas sabidas (trecho_coberto) nem é mandado para ouvir (não gasta)."""
     video = Path(video)
     arquivo = Path(arquivo) if arquivo else None
     progresso = _carregar(arquivo)
@@ -99,16 +104,22 @@ def identificar(video: str | Path, falas: list, cliente, ffmpeg: str, arquivo: s
     pessoas: dict[str, dict] = {p["rotulo"]: dict(p) for p in (elenco or []) if p.get("rotulo")}
     pessoas.update({p["rotulo"]: p for p in progresso.get("pessoas", [])})
     de_quem: dict[int, str] = {int(k): v for k, v in progresso.get("falas", {}).items()}
+    sabidas = sabidas or {}
+    de_quem.update(sabidas)
+    for rotulo in set(sabidas.values()):
+        pessoas.setdefault(rotulo, {"rotulo": rotulo, "genero": "?", "descricao": "do roteiro"})
     partes = trechos(falas, tamanho)
     for n, (inicio, fim, ids) in enumerate(partes):
         if parar and parar():
             raise ErroDublagem("interrompido (botão Parar)")
-        if inicio in feitos:
+        if inicio in feitos or trecho_coberto(ids, sabidas):
+            if ao_progresso:
+                ao_progresso((n + 1) / len(partes))
             continue
         conhecidas = "\n".join(f'  - "{p["rotulo"]}" ({p.get("genero", "?")}): {p.get("descricao", "")}'
                                for p in pessoas.values()) or "  (ninguém ainda)"
         linhas = "\n".join(f"{k} [{max(0.0, horarios(falas[k][0].tempo)[0] - inicio):.1f}s] {falas[k][1]}"
-                           for k in ids)
+                           + (f" [roteiro: {sabidas[k]}]" if k in sabidas else "") for k in ids)
         pergunta = _PERGUNTA.format(inicio=_hms(inicio), fim=_hms(fim), conhecidas=conhecidas, falas=linhas)
         mp3 = extrair(ffmpeg, video, inicio, fim - inicio)
         kwargs = {"esperar": esperar} if esperar else {}
@@ -126,7 +137,7 @@ def identificar(video: str | Path, falas: list, cliente, ffmpeg: str, arquivo: s
                 k, rotulo = int(item["id"]), str(item.get("rotulo", "")).strip()
             except (KeyError, TypeError, ValueError):
                 continue
-            if k in validos and rotulo and rotulo != "?":
+            if k in validos and rotulo and rotulo != "?" and k not in sabidas:     # o roteiro vale mais
                 de_quem[k] = rotulo
                 pessoas.setdefault(rotulo, {"rotulo": rotulo, "genero": "?", "descricao": ""})
         feitos.add(inicio)
@@ -143,6 +154,11 @@ def identificar(video: str | Path, falas: list, cliente, ffmpeg: str, arquivo: s
         if suas:
             lista.append(Personagem(rotulo, p.get("genero", "?"), p.get("descricao", ""), suas))
     return sorted(lista, key=lambda p: -len(p.falas))
+
+
+def trecho_coberto(ids: list[int], sabidas: dict | None, parte: float = 0.85) -> bool:
+    """O roteiro já diz quem fala quase todas as falas do trecho: não precisa mandar o áudio para o Gemini ouvir."""
+    return bool(sabidas) and bool(ids) and sum(k in sabidas for k in ids) >= parte * len(ids)
 
 
 def distribuir_vozes(personagens: list[Personagem], voz_principal: str = VOZ_PADRAO,

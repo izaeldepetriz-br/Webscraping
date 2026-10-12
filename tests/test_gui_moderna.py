@@ -4570,3 +4570,51 @@ def test_figurantes_no_google_cloud_na_tela(app, monkeypatch):
     monkeypatch.setattr(app, "wait_window", lambda janela: None)
     app.pedir_vozes("Filme", [], [], {})
     assert "Google Cloud pt-BR-Neural2-B (cota grátis)" in capturado["vozes"]
+
+
+def test_roteiro_na_aba_avulsos_e_vozes_sem_tabela(app, tmp_path, monkeypatch):
+    """"📜 Roteiro": grava 'Nome.roteiro.txt' ao lado do vídeo escolhido e diz quanto casou com a legenda.
+    "Escolher as vozes sozinho": o Dublar não abre a tabela."""
+    from types import SimpleNamespace
+    from jellyfin_tools import personagens
+    from tests.test_roteiro import EN, PT, ROTEIRO
+    from videoscraper import automacao
+    caixa = tmp_path / "Avulsos"
+    caixa.mkdir()
+    (caixa / "Farol.mkv").write_bytes(b"")
+    (caixa / "Farol.en.srt").write_text(EN, encoding="utf-8")
+    (caixa / "Farol.pt-BR.srt").write_text(PT, encoding="utf-8")
+    arquivo = tmp_path / "baixado.txt"
+    arquivo.write_text(ROTEIRO * 4, encoding="utf-8")
+    monkeypatch.setattr(app, "video_avulso_escolhido", lambda: caixa / "Farol.mkv")
+    pedidos = []
+    monkeypatch.setattr(app, "pedir_roteiro", lambda video, ja_tem: pedidos.append((video, ja_tem)) or str(arquivo))
+    app.mostrar_aba("Avulsos")
+    app.bt_av_roteiro.invoke()
+    esperar(app)
+    assert (caixa / "Farol.roteiro.txt").is_file() and pedidos == [(caixa / "Farol.mkv", None)]
+    assert app.caixas[-1][0] == "info" and "75% das falas" in app.caixas[-1][2], app.caixas[-1]
+    # Configurações: as duas opções novas são salvas
+    app.var_jf_vozes_sem_tabela.set(True)
+    app.var_jf_usar_roteiro.set(False)
+    o = app.obter_opcoes_jellyfin()
+    assert o.vozes_sem_tabela and not o.usar_roteiro
+    o.usar_roteiro = True
+    item = SimpleNamespace(video=caixa / "Farol.mkv", legenda=caixa / "Farol.pt-BR.srt", serie="", destino=None)
+    lista = [personagens.Personagem("Leo", "m", falas=[0, 3, 5]), personagens.Personagem("Mara", "f", falas=[1, 2, 7])]
+    monkeypatch.setattr(app, "pedir_vozes", lambda *a, **k: pytest.fail("não devia abrir a tabela"))
+    dublados = []
+    monkeypatch.setattr(app, "_dublar", lambda itens, o, vozes=None, premium=None: dublados.append(vozes))
+    app._escolher_vozes([(item, automacao.falas_da_legenda(item.legenda), lista)], o)
+    vozes = dublados[0][str(item.video)]
+    assert vozes[0] == vozes[3] and vozes[1] == vozes[2] and vozes[0] != vozes[1]   # cada um com a sua voz
+
+
+def test_janela_do_roteiro(app, tmp_path):
+    from videoscraper.gui_moderna import DialogoRoteiro
+    janela = DialogoRoteiro(app, tmp_path / "Farol.mkv", tmp_path / "Farol.roteiro.txt")
+    janela.bt_ok.invoke()
+    assert janela.resultado is None and janela.winfo_exists()             # sem link: não fecha
+    janela.var_link.set("  https://exemplo.com/roteiro.html ")
+    janela.bt_ok.invoke()
+    assert janela.resultado == "https://exemplo.com/roteiro.html"

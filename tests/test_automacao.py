@@ -533,3 +533,29 @@ def test_avulsos_no_modo_economico_vao_no_lote_e_dublam_depois(casa, tmp_path, m
     r = automacao.processar_avulsos(o, logging.getLogger("t"), str(caixa), sondar=lambda v: (60.0, ["eng"]))
     assert r.contagens["traduzidas"] == 1 and (caixa / "Aula.pt-BR.srt").is_file()
     assert not automacao.destinos_em_lote() and r.contagens["no_lote"] == 0
+
+
+def test_ouvir_personagens_usa_o_roteiro_ao_lado_do_video(casa, tmp_path, monkeypatch):
+    """Com 'Nome.roteiro.txt' ao lado do vídeo, o Gemini só ouve o que o roteiro não cobriu; com a opção
+    desligada, o roteiro é ignorado."""
+    from jellyfin_tools import personagens
+    from test_roteiro import EN, PT, ROTEIRO
+    pasta = tmp_path / "Farol"
+    pasta.mkdir()
+    video = pasta / "Farol.mkv"
+    video.write_bytes(b"")
+    (pasta / "Farol.en.srt").write_text(EN, encoding="utf-8")
+    (pasta / "Farol.pt-BR.srt").write_text(PT, encoding="utf-8")
+    (pasta / "Farol.roteiro.txt").write_text(ROTEIRO, encoding="utf-8")
+    monkeypatch.setattr(automacao, "localizar_ffmpeg", lambda: "ffmpeg")
+    pedidos = {}
+    monkeypatch.setattr(personagens, "identificar", lambda *a, **k: pedidos.update(k) or [])
+    casa(chave_gemini="AIza")
+    o, _ = automacao.opcoes_salvas()
+    falas = automacao.falas_da_legenda(pasta / "Farol.pt-BR.srt")
+    automacao.ouvir_personagens(o, video, falas, cliente=object())
+    assert pedidos["sabidas"][0] == "Leo" and len(pedidos["sabidas"]) == 6
+    assert {p["rotulo"] for p in pedidos["elenco"]} == {"Leo", "Mara", "Old Sailor"}
+    o.usar_roteiro = False
+    automacao.ouvir_personagens(o, video, falas, cliente=object())
+    assert pedidos["sabidas"] is None and pedidos["elenco"] is None

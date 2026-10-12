@@ -158,6 +158,8 @@ class OpcoesJellyfin:
     figurantes_piper: bool = False   # dublagem mista: quem fala pouco (figurante) fica com o Piper, grátis
     limite_figurante: int = 20       # dublagem mista: figurante = quem tem menos falas que isso
     traducao_economica: bool = False  # Claude: tradução em LOTE (metade do preço, pronta em até 24 h)
+    usar_roteiro: bool = True        # voz por personagem: o roteiro ao lado do vídeo diz quem fala (Gemini ouve menos)
+    vozes_sem_tabela: bool = False   # voz por personagem: escolhe as vozes sozinho (sem abrir a tabela de conferir)
     figurantes_cloud: bool = False   # mista: figurantes no Google Cloud enquanto a cota grátis do mês der (depois Piper)
     perguntar_filmes: bool = True    # Gemini com vários filmes: perguntar quais vão com o Gemini (o resto, Piper)
     robo_so_piper: bool = False      # robôs agendados (--dublar): só o Piper, sem custo
@@ -1053,6 +1055,61 @@ class DialogoVozes(ctk.CTkToplevel):
     def _ok(self) -> None:
         self.resultado = {rotulo: valor_da_voz(var.get()) for rotulo, var in self.vars.items()}
         self.destroy()
+
+
+class DialogoRoteiro(ctk.CTkToplevel):
+    """"Roteiro do vídeo": cola o link da página do roteiro ou escolhe o arquivo (.txt, .html, .pdf com texto).
+    `resultado`: o link, o caminho do arquivo ou None (Cancelar)."""
+
+    def __init__(self, master, video: Path, ja_tem: Path | None = None):
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.resultado = None
+        self.title("Roteiro do vídeo")
+        self.resizable(False, False)
+        self.transient(master)
+        corpo = ctk.CTkFrame(self, fg_color="transparent")
+        corpo.pack(fill="both", expand=True, padx=26, pady=(20, 6))
+        ctk.CTkLabel(corpo, text="Roteiro do vídeo", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
+                     text_color=Tema.TEXTO, anchor="w").pack(fill="x")
+        texto = (f"{video.name}\n\nCole o link da página do roteiro (o nome de quem fala em MAIÚSCULAS e a fala "
+                 "embaixo) ou escolha o arquivo. Ele fica ao lado do vídeo como 'roteiro.txt' e serve para a voz por "
+                 "personagem: quem fala cada fala sai do roteiro, sem custo, e o Gemini só ouve o que faltar.")
+        if ja_tem:
+            texto += f"\n\nEste vídeo já tem roteiro ({ja_tem.name}): o novo fica no lugar dele."
+        ctk.CTkLabel(corpo, text=texto, font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w",
+                     justify="left", wraplength=560).pack(fill="x", pady=(2, 10))
+        self.var_link = tk.StringVar()
+        self.campo_link = master._entrada(corpo, self.var_link, "https://...", width=560)
+        self.campo_link.pack(fill="x")
+        botoes = ctk.CTkFrame(self, fg_color="transparent")
+        botoes.pack(fill="x", padx=26, pady=(12, 20))
+        master._botao(botoes, "Cancelar", self.destroy, "secundario").pack(side="left")
+        self.bt_arquivo = master._botao(botoes, "Escolher arquivo...", self._arquivo, "fantasma")
+        self.bt_arquivo.pack(side="left", padx=(8, 0))
+        self.bt_ok = master._botao(botoes, "Usar este link", self._ok, "primario")
+        self.bt_ok.pack(side="right")
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.bind("<Return>", lambda e: self._ok())
+        self.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_reqwidth()) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - self.winfo_reqheight()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+    def _arquivo(self) -> None:
+        caminho = filedialog.askopenfilename(parent=self, title="Escolha o roteiro", filetypes=[
+            ("Roteiro (*.txt *.html *.htm *.pdf)", "*.txt *.html *.htm *.pdf"), ("Todos", "*.*")])
+        if caminho:
+            self.resultado = caminho
+            self.destroy()
+
+    def _ok(self) -> None:
+        if self.var_link.get().strip():
+            self.resultado = self.var_link.get().strip()
+            self.destroy()
 
 
 class DialogoClonarVoz(ctk.CTkToplevel):
@@ -2769,9 +2826,11 @@ class JanelaModerna(ctk.CTk):
         self.bt_av_processar = self._botao(barra, "Processar", self.ao_processar_avulsos, largura=140)
         self.bt_av_limpar = self._botao(barra, "Tirar os adicionados", self.limpar_avulsos_adicionados, largura=170)
         self.bt_av_testar = self._botao(barra, "🧪 Testar 2 min", self.ao_testar_avulso, largura=150)
+        self.bt_av_roteiro = self._botao(barra, "📜 Roteiro", self.ao_roteiro_avulso, largura=120)
         self.bt_parar_av = self._botao(barra, "Parar", self.ao_parar, "perigo", largura=100)
         self.bt_previas_av = self._botao(barra, "🎧 Prévias", self.ao_previas, largura=130)
-        for b in (self.bt_av_olhar, self.bt_av_adicionar, self.bt_av_testar, self.bt_av_processar, self.bt_av_limpar):
+        for b in (self.bt_av_olhar, self.bt_av_adicionar, self.bt_av_testar, self.bt_av_roteiro, self.bt_av_processar,
+                  self.bt_av_limpar):
             b.pack(side="left", padx=(0, 10))
         self.bt_parar_av.pack(side="right")
         self.bt_previas_av.pack(side="right", padx=(0, 10))
@@ -3025,6 +3084,20 @@ class JanelaModerna(ctk.CTk):
         self._checkbox(lateral, "Uma voz para cada personagem (o Gemini ouve o filme e separa quem fala; antes de "
                                 "dublar, a tabela \"Vozes dos personagens\" deixa trocar)",
                        self.var_jf_voz_por_personagem)
+        self.var_jf_vozes_sem_tabela = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Escolher as vozes dos personagens sozinho (sem abrir a tabela)",
+                       self.var_jf_vozes_sem_tabela)
+        self.var_jf_usar_roteiro = tk.BooleanVar(value=True)
+        self._checkbox(lateral, "Usar o roteiro do vídeo, quando houver, para saber quem fala", self.var_jf_usar_roteiro)
+        self._rotulo(lateral, "Os robôs e os vídeos avulsos já escolhem as vozes sozinhos; a opção acima faz o mesmo "
+                              "no \"Dublar\" da aba Jellyfin (a escolha fica guardada para os próximos episódios da "
+                              "série). Roteiro: 'Nome do vídeo.roteiro.txt' ao lado do vídeo (o botão abaixo grava "
+                              "assim, a partir de um link ou de um arquivo .txt, .html ou .pdf com texto). O roteiro "
+                              "é comparado com a legenda no SEU PC, sem custo; o Gemini só ouve os trechos que o "
+                              "roteiro não cobriu, e os personagens ficam com o nome de verdade.",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(0, 4), **p)
+        self._botao(lateral, "📜 Roteiro de um vídeo...", self.ao_roteiro_de_um_video, "fantasma",
+                    largura=210).pack(anchor="w", pady=(2, 4), **p)
 
         # --- Google Cloud TTS: o tipo de voz (preço e cota grátis de cada um) e a voz
         self._rotulo(lateral, "Google Cloud TTS", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
@@ -3148,6 +3221,18 @@ class JanelaModerna(ctk.CTk):
 
     def ao_testar_avulso(self) -> None:                 # o app faz (numa tarefa)
         pass
+
+    def ao_roteiro_avulso(self) -> None:                # o app faz: o roteiro do vídeo escolhido na lista
+        pass
+
+    def ao_roteiro_de_um_video(self) -> None:           # o app faz: escolhe o vídeo e o roteiro
+        pass
+
+    def pedir_roteiro(self, video: Path, ja_tem: Path | None) -> str | None:
+        """Janela "Roteiro" (ver DialogoRoteiro): o link ou o caminho do arquivo, ou None (Cancelar)."""
+        dialogo = DialogoRoteiro(self, video, ja_tem)
+        self.wait_window(dialogo)
+        return dialogo.resultado
 
     def texto_minutos_teste(self) -> str:
         minutos = float(self.campo_minutos_teste.get())
@@ -3693,6 +3778,7 @@ class JanelaModerna(ctk.CTk):
             figurantes_piper=self.var_jf_figurantes_piper.get(),
             figurantes_cloud=self.var_jf_figurantes_cloud.get(),
             traducao_economica=self.var_jf_traducao_economica.get(),
+            usar_roteiro=self.var_jf_usar_roteiro.get(), vozes_sem_tabela=self.var_jf_vozes_sem_tabela.get(),
             limite_figurante=int(self.campo_limite_figurante.get()), perguntar_filmes=self.var_jf_perguntar_filmes.get(),
             robo_so_piper=self.var_jf_robo_so_piper.get(), guardar_gravacoes=self.var_jf_guardar_gravacoes.get(),
             teto_gastos=float(self.campo_teto_gastos.get()), pasta_avulsos=self.var_jf_pasta_avulsos.get().strip(),
@@ -3824,6 +3910,7 @@ class JanelaModerna(ctk.CTk):
                   "figurantes_piper": self.var_jf_figurantes_piper,
                   "figurantes_cloud": self.var_jf_figurantes_cloud,
                   "traducao_economica": self.var_jf_traducao_economica,
+                  "usar_roteiro": self.var_jf_usar_roteiro, "vozes_sem_tabela": self.var_jf_vozes_sem_tabela,
                   "perguntar_filmes": self.var_jf_perguntar_filmes, "robo_so_piper": self.var_jf_robo_so_piper,
                   "guardar_gravacoes": self.var_jf_guardar_gravacoes,
                   "avulsos_dublar": self.var_jf_avulsos_dublar,
@@ -4365,7 +4452,8 @@ class JanelaModerna(ctk.CTk):
                   self.bt_testar_avisos, self.bt_testar_tmdb, self.bt_espelhar, self.bt_testar_legendas,
                   self.bt_conferir_espelhos, self.bt_relatorio, self.bt_gerenciar_espelhos, self.bt_traduzir_legendas,
                   self.bt_legendar_audio, self.bt_dublar, self.bt_sincronizar, self.bt_testar_claude,
-                  self.bt_av_olhar, self.bt_av_adicionar, self.bt_av_processar, self.bt_av_limpar, self.bt_av_testar):
+                  self.bt_av_olhar, self.bt_av_adicionar, self.bt_av_processar, self.bt_av_limpar, self.bt_av_testar,
+                  self.bt_av_roteiro):
             b.configure(state=estado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
         for parar in (self.bt_parar, self.bt_parar_jf, self.bt_parar_av):
