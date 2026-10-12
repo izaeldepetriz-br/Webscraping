@@ -232,23 +232,78 @@ def reamostrar_com_ffmpeg(ffmpeg: str):
 
 
 PREFIXO_PIPER = "piper:"      # voz de uma fala na dublagem mista: "piper:faber" = essa fala vai para o Piper
+PREFIXO_CLOUD = "cloud:"      # "cloud:pt-BR-Neural2-B" = essa fala vai para o Google Cloud TTS (cota grátis)
+COTA_SEGURA = 0.95            # figurantes no Google Cloud só até 95% da cota grátis do mês (a conta é estimada)
+
+
+def cabe_na_cota(voz: str, caracteres: int) -> bool:
+    """Os `caracteres` a mais ainda cabem na cota GRÁTIS do mês desse tipo de voz do Google Cloud? Sem o registro
+    dos gastos ligado não dá para saber: não arrisca (False)."""
+    from . import gastos
+    from .voz_cloud import TIPOS, tipo_da_voz
+    atual = gastos.atual()
+    if atual is None:
+        return False
+    tipo = tipo_da_voz(voz)
+    return atual.caracteres().get(tipo, 0) + caracteres <= COTA_SEGURA * TIPOS[tipo][3]
 
 
 class MotorMisto:
     """Dublagem mista: as falas com voz "piper:..." (figurantes) vão para o Piper, grátis; as outras para o motor
-    premium (Gemini). piper(voz) devolve o MotorPiper daquela voz (preparado só quando aparece)."""
+    premium (Gemini). piper(voz) devolve o MotorPiper daquela voz (preparado só quando aparece).
+    cloud() devolve o MotorCloudTTS: as falas "cloud:..." (figurantes) vão para o Google Cloud enquanto couberem na
+    cota grátis do mês (cabe); passando dela, ou se o Google Cloud falhar, vão para o Piper com a voz `reserva`."""
 
-    def __init__(self, premium, piper):
+    def __init__(self, premium, piper, cloud=None, reserva: str = "", cabe=cabe_na_cota, avisar=None):
         self.premium, self._fabrica, self._pipers = premium, piper, {}
+        self._fabrica_cloud, self._cloud, self.reserva, self._cabe = cloud, None, reserva, cabe
+        self.avisar = avisar
+        self.no_cloud = self.no_piper_por_cota = 0      # falas de figurantes: no Google Cloud / no Piper (sem cota)
 
     @property
     def pedidos(self) -> int:
         return getattr(self.premium, "pedidos", 0)
 
+    def _aviso(self, texto: str) -> None:
+        if self.avisar:
+            self.avisar(texto)
+
+    def _figurantes_na_nuvem(self, nuvem: list, parar) -> list:
+        """Manda para o Google Cloud o que couber na cota; devolve o que sobrou (vai para o Piper)."""
+        if not nuvem:
+            return []
+        if self._fabrica_cloud is None:
+            return nuvem
+        por_voz: dict[str, list] = {}
+        for p in nuvem:
+            por_voz.setdefault(p[2][len(PREFIXO_CLOUD):], []).append(p)
+        sobra = []
+        for voz, lista in por_voz.items():
+            if not self._cabe(voz, sum(len(p[0]) for p in lista)):
+                self._aviso(f"figurantes: a cota grátis do mês do Google Cloud ({voz}) acabou; vão com o Piper")
+                self.no_piper_por_cota += len(lista)
+                sobra += lista
+                continue
+            try:
+                if self._cloud is None:
+                    self._cloud = self._fabrica_cloud()
+                self._cloud.sintetizar([(p[0], p[1], voz) for p in lista], parar=parar)
+                self.no_cloud += len(lista)
+            except ErroDublagem as erro:
+                if parar and parar():
+                    raise
+                self._aviso(f"figurantes no Google Cloud: {erro}; vão com o Piper")
+                self._fabrica_cloud = None                  # não tenta de novo nesta dublagem
+                sobra += [p for p in lista if not _pronto(Path(p[1]))]
+        return sobra
+
     def sintetizar(self, pedidos: list, parar=None, ao_progresso=None) -> None:
         def voz(p):
             return p[2] if len(p) > 2 and p[2] else ""
         baratos: dict[str, list] = {}
+        nuvem = [p for p in pedidos if voz(p).startswith(PREFIXO_CLOUD)]
+        for p in self._figurantes_na_nuvem(nuvem, parar):
+            baratos.setdefault(self.reserva, []).append((p[0], p[1]))
         for p in pedidos:
             if voz(p).startswith(PREFIXO_PIPER):
                 baratos.setdefault(voz(p)[len(PREFIXO_PIPER):], []).append((p[0], p[1]))
@@ -256,7 +311,7 @@ class MotorMisto:
             if nome not in self._pipers:
                 self._pipers[nome] = self._fabrica(nome)
             self._pipers[nome].sintetizar(lista, parar=parar)
-        caros = [p for p in pedidos if not voz(p).startswith(PREFIXO_PIPER)]
+        caros = [p for p in pedidos if not voz(p).startswith((PREFIXO_PIPER, PREFIXO_CLOUD))]
         if caros:
             self.premium.sintetizar(caros, parar=parar, ao_progresso=ao_progresso)
         elif ao_progresso:
@@ -756,6 +811,7 @@ class ResultadoDublagem:
     adaptadas: int = 0             # falas que a IA reescreveu mais curtas para caber no tempo
     retomadas: int = 0             # falas que já estavam prontas de uma vez anterior (não pediu de novo)
     ambiente: dict | None = None   # ambientação da voz usada: {ganho_db, eq, eco} (None: sem)
+    reaproveitadas: int = 0        # falas repetidas (mesma frase, mesma voz): copiadas, sem pedir de novo
 
 
 def falas_da_legenda(legenda: str | Path) -> list:
@@ -786,11 +842,79 @@ def _pronto(wav: Path) -> bool:
         return False
 
 
-def _sintetizar(motor, pedidos, parar, ao_progresso=None) -> None:
-    """Só as falas que ainda não estão prontas; a voz vai junto só quando há uma por personagem."""
-    faltando = [(t, w, v) if v else (t, w) for t, w, v in pedidos if not _pronto(w)]
-    if faltando:
-        motor.sintetizar(faltando, parar=parar, ao_progresso=ao_progresso)
+BANCO_LETRAS = 40          # frases até esse tamanho vão para o banco de frases ("Sim.", "Vamos!", "O quê?")
+BANCO_MAXIMO = 3000        # arquivos no banco (~50 KB cada); passando disso, saem os usados há mais tempo
+
+
+def _assinatura(motor) -> str:
+    """O que faz a MESMA frase soar diferente: o motor, a voz, o modelo e o estilo (dublagem mista: o premium)."""
+    alvo = getattr(motor, "premium", motor)
+    return "|".join(str(getattr(alvo, a, "") or "") for a in ("voz", "modelo", "estilo")) + type(alvo).__name__
+
+
+def _chave_frase(texto: str, voz: str, motor) -> str:
+    return hashlib.sha1(f"{_assinatura(motor)}|{voz}|{' '.join(texto.split())}".encode("utf-8")).hexdigest()[:20]
+
+
+def _vai_ao_banco(texto: str, voz: str) -> bool:
+    """Frases curtas. Figurante do Google Cloud não: se a cota acabou, quem leu foi o Piper (outra voz)."""
+    return len(texto) <= BANCO_LETRAS and not voz.startswith(PREFIXO_CLOUD)
+
+
+def _guardar_no_banco(banco: Path, guardar: list[tuple[str, Path]]) -> None:
+    try:
+        banco.mkdir(parents=True, exist_ok=True)
+        for chave, wav in guardar:
+            if not (banco / f"{chave}.wav").exists():
+                shutil.copyfile(wav, banco / f"{chave}.wav")
+        arquivos = list(banco.glob("*.wav"))
+        if len(arquivos) > BANCO_MAXIMO:
+            arquivos.sort(key=lambda a: a.stat().st_mtime)
+            for velho in arquivos[:len(arquivos) - BANCO_MAXIMO]:
+                velho.unlink(missing_ok=True)
+    except OSError:
+        pass                                              # o banco é só economia: sem ele, segue igual
+
+
+def _sintetizar(motor, pedidos, parar, ao_progresso=None, banco: Path | None = None) -> int:
+    """Só as falas que ainda não estão prontas; a voz vai junto só quando há uma por personagem.
+    A MESMA frase com a MESMA voz é pedida uma vez só e copiada para as outras ("Sim." 40 vezes no filme = 1
+    pedido). banco: frases curtas já geradas em outros filmes/episódios, com a mesma voz (não pede de novo).
+    Devolve quantas falas foram reaproveitadas (não pediram nada ao motor)."""
+    reaproveitadas = 0
+    faltando = []
+    for t, w, v in pedidos:
+        if _pronto(w):
+            continue
+        guardada = banco / f"{_chave_frase(t, v, motor)}.wav" if banco and _vai_ao_banco(t, v) else None
+        if guardada and _pronto(guardada):
+            try:
+                shutil.copyfile(guardada, w)
+                os.utime(guardada)                         # usada agora: fica no banco por mais tempo
+                reaproveitadas += 1
+                continue
+            except OSError:
+                pass
+        faltando.append((t, w, v))
+    primeira: dict[tuple[str, str], Path] = {}
+    unicas, copias = [], []
+    for t, w, v in faltando:
+        chave = (" ".join(t.split()), v)
+        if chave in primeira:
+            copias.append((primeira[chave], w))
+        else:
+            primeira[chave] = w
+            unicas.append((t, w, v))
+    if unicas:
+        motor.sintetizar([(t, w, v) if v else (t, w) for t, w, v in unicas], parar=parar, ao_progresso=ao_progresso)
+    for origem, w in copias:
+        if _pronto(origem):
+            shutil.copyfile(origem, w)
+            reaproveitadas += 1
+    if banco:
+        _guardar_no_banco(banco, [(_chave_frase(t, v, motor), w) for t, w, v in unicas
+                                  if _vai_ao_banco(t, v) and _pronto(w)])
+    return reaproveitadas
 
 
 TRAVA_VALIDADE = 12 * 3600          # s: uma trava mais velha que isso é de um Maestro que fechou no meio
@@ -903,7 +1027,8 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
         # com a separação das vozes, as etapas dividem a barra de outro jeito (separar demora)
         fatias = ((0.4, 0.45, 0.5, 0.8) if separar else (0.5, 0.6, 0.7, 0.7))   # falas, adaptar, trilha, separar
         try:
-            _sintetizar(motor, pedidos, parar, lambda f: andamento(fatias[0] * f))
+            reaproveitadas = _sintetizar(motor, pedidos, parar, lambda f: andamento(fatias[0] * f),
+                                         Path(pasta_cache) / "frases" if pasta_cache else None)
             clipes = [(a - inicio, b - inicio, w) for k, (_, w, _) in zip(indices, pedidos)
                       for a, b in [horarios(falas[k][0].tempo)]]
             adaptadas = 0
@@ -966,7 +1091,8 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
         shutil.rmtree(pasta_do_filme(pasta_cache, video), ignore_errors=True)      # pronto: o progresso não serve mais
     andamento(1.0)
     return ResultadoDublagem(video, "previa" if eh_previa else "dublado", "", destino, len(indices),
-                             contas["aceleradas"], contas["cortadas"], adaptadas, retomadas, ambiente)
+                             contas["aceleradas"], contas["cortadas"], adaptadas, retomadas, ambiente,
+                             reaproveitadas)
 
 
 def etapas_da_dublagem(separar: bool = False) -> list[tuple[float, float, str]]:

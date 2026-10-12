@@ -157,6 +157,7 @@ class OpcoesJellyfin:
     voz_por_personagem: bool = False  # Gemini: ouve o filme, separa quem fala e dá uma voz para cada personagem
     figurantes_piper: bool = False   # dublagem mista: quem fala pouco (figurante) fica com o Piper, grátis
     limite_figurante: int = 20       # dublagem mista: figurante = quem tem menos falas que isso
+    figurantes_cloud: bool = False   # mista: figurantes no Google Cloud enquanto a cota grátis do mês der (depois Piper)
     perguntar_filmes: bool = True    # Gemini com vários filmes: perguntar quais vão com o Gemini (o resto, Piper)
     robo_so_piper: bool = False      # robôs agendados (--dublar): só o Piper, sem custo
     guardar_gravacoes: bool = False  # voz clonada: guardar as gravações no PC (para clonar de novo com um clique)
@@ -938,13 +939,16 @@ class DialogoAgendar(ctk.CTkToplevel):
 
 def valor_da_voz(texto: str) -> str:
     """Do menu para o valor: "Kore (feminina, firme)" -> "Kore"; "Piper faber (grátis, no PC)" -> "piper:faber";
-    "Clonada: Izael (autorizada por Izael)" -> "clone:Izael"."""
+    "Clonada: Izael (autorizada por Izael)" -> "clone:Izael"; "Google Cloud pt-BR-Neural2-B (cota grátis)" ->
+    "cloud:pt-BR-Neural2-B"."""
     clonada = voz_clonada.valor_do_menu(texto)
     if clonada:
         return clonada
     partes = texto.split()
     if not partes:
         return ""
+    if partes[:2] == ["Google", "Cloud"] and len(partes) > 2:
+        return f"cloud:{partes[2]}"
     return f"piper:{partes[1]}" if partes[0] == "Piper" and len(partes) > 1 else partes[0]
 
 
@@ -3064,6 +3068,10 @@ class JanelaModerna(ctk.CTk):
         self._rotulo(lateral, "Modo misto", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
         self.campo_limite_figurante = self._numero(lateral, "É figurante quem tem menos de (falas no filme):", 20, 2,
                                                    500, 5)
+        self.var_jf_figurantes_cloud = tk.BooleanVar(value=False)
+        self._checkbox(lateral, "Figurantes com o Google Cloud TTS enquanto a cota GRÁTIS do mês der (voz melhor que "
+                                "a do Piper, sem custo; precisa da chave do Google Cloud). Passando de 95% da cota, "
+                                "voltam para o Piper sozinhos.", self.var_jf_figurantes_cloud)
         self.var_jf_perguntar_filmes = tk.BooleanVar(value=True)
         self._checkbox(lateral, "Perguntar, a cada dublagem com vários filmes, quais vão com o Gemini (os outros vão "
                                 "inteiros com o Piper)", self.var_jf_perguntar_filmes)
@@ -3670,6 +3678,7 @@ class JanelaModerna(ctk.CTk):
             encurtar_falas=self.var_jf_encurtar_falas.get(),
             voz_por_personagem=self.var_jf_voz_por_personagem.get(),
             figurantes_piper=self.var_jf_figurantes_piper.get(),
+            figurantes_cloud=self.var_jf_figurantes_cloud.get(),
             limite_figurante=int(self.campo_limite_figurante.get()), perguntar_filmes=self.var_jf_perguntar_filmes.get(),
             robo_so_piper=self.var_jf_robo_so_piper.get(), guardar_gravacoes=self.var_jf_guardar_gravacoes.get(),
             teto_gastos=float(self.campo_teto_gastos.get()), pasta_avulsos=self.var_jf_pasta_avulsos.get().strip(),
@@ -3799,6 +3808,7 @@ class JanelaModerna(ctk.CTk):
                   "encurtar_falas": self.var_jf_encurtar_falas,
                   "voz_por_personagem": self.var_jf_voz_por_personagem,
                   "figurantes_piper": self.var_jf_figurantes_piper,
+                  "figurantes_cloud": self.var_jf_figurantes_cloud,
                   "perguntar_filmes": self.var_jf_perguntar_filmes, "robo_so_piper": self.var_jf_robo_so_piper,
                   "guardar_gravacoes": self.var_jf_guardar_gravacoes,
                   "avulsos_dublar": self.var_jf_avulsos_dublar,
@@ -4391,6 +4401,8 @@ class JanelaModerna(ctk.CTk):
     def pedir_vozes(self, filme: str, linhas: list[str], rotulos: list[str], sugestao: dict) -> dict | None:
         """Janela "Vozes dos personagens" (ver DialogoVozes)."""
         vozes = self.vozes_gemini_do_menu() + tuple(f"Piper {v} (grátis, no PC)" for v in self.VOZES_DUBLAGEM)
+        if self.var_jf_figurantes_cloud.get():               # figurantes no Google Cloud (cota grátis)
+            vozes += tuple(f"Google Cloud {v} (cota grátis)" for v in voz_cloud.vozes_do_tipo(self.tipo_cloud_escolhido()))
         dialogo = DialogoVozes(self, filme, linhas, rotulos, sugestao, vozes)
         self.wait_window(dialogo)
         return dialogo.resultado

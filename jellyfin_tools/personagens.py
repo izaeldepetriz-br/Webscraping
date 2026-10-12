@@ -20,7 +20,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .dublagem import SEM_JANELA, ErroDublagem, horarios
+from .dublagem import PREFIXO_CLOUD, SEM_JANELA, ErroDublagem, horarios
 from .voz_gemini import (VOZ_PADRAO, VOZES, VOZES_FEMININAS, VOZES_MASCULINAS, ler_json, perguntar_sobre_audio)
 
 TRECHO = 15 * 60              # segundos de áudio por pedido (o Gemini separa bem quem fala em até ~30 min)
@@ -151,18 +151,20 @@ def distribuir_vozes(personagens: list[Personagem], voz_principal: str = VOZ_PAD
     """{rótulo: voz}. Quem mais fala fica com a voz principal (se o gênero combinar); os outros, vozes do mesmo
     gênero ainda não usadas (repetem só quando acabam). Quem fala pouco fica com a voz principal. Uma voz clonada
     ("clone:Nome") como principal vai para quem mais fala, qualquer que seja o gênero (dá para trocar na tabela).
-    figurante ("piper:faber"): dublagem MISTA, quem tem menos de `limite` falas vai para essa voz (Piper, grátis)."""
+    figurante ("piper:faber"): dublagem MISTA, quem tem menos de `limite` falas vai para essa voz (Piper, grátis).
+    figurante "cloud:Neural2": vai para o Google Cloud (cota grátis), com uma voz do tipo e do gênero de cada um."""
     clonada = voz_principal.startswith("clone:")       # a SUA voz clonada como principal: vai para quem mais fala
     principal = voz_principal if voz_principal in VOZES or clonada else VOZ_PADRAO
     fixas = fixas or {}
     usadas: Counter = Counter(fixas.values())
-    mapa = {}
+    mapa, figurantes = {}, Counter()
     for p in personagens:                              # já vêm de quem fala mais para quem fala menos
         if p.rotulo in fixas:                          # série: a voz que esse personagem já tinha
             mapa[p.rotulo] = fixas[p.rotulo]
             continue
         if figurante and len(p.falas) < limite:
-            mapa[p.rotulo] = figurante
+            mapa[p.rotulo] = voz_de_figurante(figurante, p.genero, figurantes[p.genero])
+            figurantes[p.genero] += 1
             continue
         if len(p.falas) < MINIMO_FALAS:
             mapa[p.rotulo] = principal
@@ -175,6 +177,20 @@ def distribuir_vozes(personagens: list[Personagem], voz_principal: str = VOZ_PAD
         mapa[p.rotulo] = voz
         usadas[voz] += 1
     return mapa
+
+
+def voz_de_figurante(figurante: str, genero: str, n: int = 0) -> str:
+    """"cloud:Neural2" + gênero -> "cloud:pt-BR-Neural2-B" (homem) ou "-A"/"-C" (mulher, alternando: duas
+    figurantes seguidas não ficam com a mesma voz). "piper:faber" (ou uma voz do Cloud já completa) fica igual."""
+    from .voz_cloud import LETRAS, TIPOS, nome_da_voz
+    tipo = figurante[len(PREFIXO_CLOUD):] if figurante.startswith(PREFIXO_CLOUD) else ""
+    if tipo not in TIPOS:
+        return figurante
+    letras = LETRAS.get(tipo, "ABC")
+    femininas = [l for l in letras if l in "ACD"] or list(letras)
+    masculinas = [l for l in letras if l in "BE"] or list(letras)
+    grupo = femininas if genero == "f" else masculinas if genero == "m" else list(letras)
+    return f"{PREFIXO_CLOUD}{nome_da_voz(tipo, grupo[n % len(grupo)])}"
 
 
 def carregar_elenco(arquivo: str | Path) -> dict:

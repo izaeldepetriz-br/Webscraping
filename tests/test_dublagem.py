@@ -681,3 +681,37 @@ def test_relogio_mostra_a_etapa_e_quanto_falta():
     assert relogio.texto(0.53) == "tirando as vozes originais 10%, faltam ~1h30"
     assert dublagem.etapa_da_dublagem(0.9, True) == "juntando ao vídeo"
     assert dublagem.etapa_da_dublagem(0.6, False) == "montando a trilha"
+
+
+class VozComVoz(VozFalsa):
+    """Como a VozFalsa, mas aceita (texto, wav, voz) e guarda o que foi pedido."""
+    voz, modelo = "Charon", "tts"
+
+    def sintetizar(self, pedidos, parar=None, ao_progresso=None):
+        super().sintetizar([(p[0], p[1]) for p in pedidos], parar, ao_progresso)
+
+
+def test_frases_repetidas_sao_geradas_uma_vez_e_ficam_no_banco(tmp_path):
+    voz, banco = VozComVoz(), tmp_path / "frases"
+    pedidos = [("Sim.", tmp_path / "1.wav", "Puck"), ("Não!", tmp_path / "2.wav", ""),
+               ("Sim.", tmp_path / "3.wav", "Puck"), ("Sim.", tmp_path / "4.wav", "Kore"),
+               ("Sim.", tmp_path / "5.wav", "Puck")]
+    assert dublagem._sintetizar(voz, pedidos, None, banco=banco) == 2          # a 3 e a 5: cópias da 1
+    assert voz.textos == ["Sim.", "Não!", "Sim."]                               # Puck, voz do motor, Kore
+    assert all(dublagem._pronto(w) for _, w, _ in pedidos)
+    assert len(list(banco.glob("*.wav"))) == 3
+    outro = [("Sim.", tmp_path / "e1.wav", "Puck"), ("Uma frase longa demais para ir para o banco de frases.",
+                                                    tmp_path / "e2.wav", "Puck")]
+    assert dublagem._sintetizar(voz, outro, None, banco=banco) == 1             # outro episódio: Sim. do banco
+    assert voz.textos[3:] == ["Uma frase longa demais para ir para o banco de frases."]
+    assert len(list(banco.glob("*.wav"))) == 3                                  # a longa não entra no banco
+    voz.voz = "Orus"                                                            # trocou a voz principal
+    assert dublagem._sintetizar(voz, [("Não!", tmp_path / "x.wav", "")], None, banco=banco) == 0
+
+
+def test_banco_de_frases_tem_tamanho_maximo(tmp_path, monkeypatch):
+    monkeypatch.setattr(dublagem, "BANCO_MAXIMO", 2)
+    voz, banco = VozComVoz(), tmp_path / "frases"
+    pedidos = [(f"Frase {k}.", tmp_path / f"{k}.wav", "") for k in range(4)]
+    dublagem._sintetizar(voz, pedidos, None, banco=banco)
+    assert len(list(banco.glob("*.wav"))) == 2

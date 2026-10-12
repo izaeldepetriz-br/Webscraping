@@ -52,7 +52,7 @@ from jellyfin_tools.notificacoes import Notificador
 from jellyfin_tools.organizador import organizar_misto, problema_no_caminho
 from jellyfin_tools.paralelo import prioridade_baixa
 from jellyfin_tools.pos_processamento import ConfigPos, pos_processar
-from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao
+from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, iniciar_log_da_acao, obter_logger
 from jellyfin_tools.regras import carregar_regras
 from jellyfin_tools.resumo_diario import ResumoDiario
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca
@@ -61,7 +61,7 @@ from jellyfin_tools.traducao import _PORTUGUES, Tradutor, estimar_custo, legenda
 from jellyfin_tools import traducao_lote
 from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sincronizar
 from jellyfin_tools.transcricao import Transcritor, legendar_pelo_audio, videos_sem_legenda
-from jellyfin_tools.dublagem import (PREFIXO_PIPER, ErroDublagem, MotorMisto, MotorPiper, dublar_video,
+from jellyfin_tools.dublagem import (PREFIXO_CLOUD, PREFIXO_PIPER, ErroDublagem, MotorMisto, MotorPiper, dublar_video,
                                      episodios_para_dublar, falas_da_legenda, horarios, localizar_ffmpeg,
                                      pasta_do_filme,
                                      preparar_piper, preparar_voz, videos_para_dublar)
@@ -272,9 +272,19 @@ def motor_piper(o: OpcoesJellyfin, voz: str = "", progresso_piper=None, progress
                       preparar_voz(voz or o.voz_dublagem, pasta / "vozes", ao_progresso=progresso_voz))
 
 
+def figurantes_no_cloud(o: OpcoesJellyfin) -> bool:
+    """Mista com a opção "Figurantes com o Google Cloud enquanto a cota grátis do mês der" (e a chave)."""
+    return bool(usa_gemini(o) and o.figurantes_piper and getattr(o, "figurantes_cloud", False) and chave_cloud(o))
+
+
 def figurante(o: OpcoesJellyfin) -> str | None:
-    """Dublagem mista: a voz dos figurantes ("piper:faber"), ou None (todos com o Gemini)."""
-    return f"{PREFIXO_PIPER}{o.voz_dublagem}" if usa_gemini(o) and o.figurantes_piper else None
+    """Dublagem mista: a voz dos figurantes ("piper:faber" ou "cloud:Neural2", o tipo do Google Cloud: cada
+    figurante ganha uma voz do gênero dele), ou None (todos com o Gemini)."""
+    if not (usa_gemini(o) and o.figurantes_piper):
+        return None
+    if figurantes_no_cloud(o):
+        return f"{PREFIXO_CLOUD}{o.tipo_cloud if o.tipo_cloud in voz_cloud.TIPOS else voz_cloud.TIPO_PADRAO}"
+    return f"{PREFIXO_PIPER}{o.voz_dublagem}"
 
 
 def preparar_motor(o: OpcoesJellyfin, progresso_piper=None, progresso_voz=None):
@@ -290,7 +300,11 @@ def preparar_motor(o: OpcoesJellyfin, progresso_piper=None, progresso_voz=None):
         conferir_voz_clonada(o.voz_gemini, clonadas)
         gemini = voz_gemini.MotorGemini(chave_gemini(o), o.voz_gemini,
                                         vozes_clonadas=voz_clonada.chaves([v for v in clonadas if not v.vencida()]))
-        return MotorMisto(gemini, lambda voz: motor_piper(o, voz)) if o.figurantes_piper else gemini
+        if not o.figurantes_piper:
+            return gemini
+        return MotorMisto(gemini, lambda voz: motor_piper(o, voz),
+                          cloud=(lambda: motor_cloud(o)) if figurantes_no_cloud(o) else None,
+                          reserva=o.voz_dublagem, avisar=lambda texto: obter_logger().warning("Dublagem: %s", texto))
     return motor_piper(o, progresso_piper=progresso_piper, progresso_voz=progresso_voz)
 
 
@@ -722,10 +736,10 @@ def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
     for item in escolhidos:
         r = dublar_item(o, item, motor, log, separar=separar)
         resultados.append(r)
-        (log.error if r.status == "erro" else log.info)("[%s] %s%s (%d falas, %d adaptadas, %d aceleradas)",
-                                                         r.status, r.video.name,
+        (log.error if r.status == "erro" else log.info)("[%s] %s%s (%d falas, %d adaptadas, %d aceleradas, "
+                                                         "%d repetidas reaproveitadas)", r.status, r.video.name,
                                                          f" ({r.detalhe})" if r.detalhe else "", r.falas,
-                                                         r.adaptadas, r.aceleradas)
+                                                         r.adaptadas, r.aceleradas, r.reaproveitadas)
     feitos = [r for r in resultados if r.status == "dublado"]
     erros = [r for r in resultados if r.status == "erro"]
     if feitos and o.atualizar_jellyfin and o.jellyfin_url and o.jellyfin_api_key:

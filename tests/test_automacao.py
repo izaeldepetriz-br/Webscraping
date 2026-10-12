@@ -288,7 +288,8 @@ def test_dublar_pelo_robo_com_voz_por_personagem(casa, tmp_path, monkeypatch):
     # quem fala menos de 3 falas fica com a voz principal (Kore)
     assert set(vozes.values()) == {"Kore"} and len(vozes) == 3
     assert len([l for l in faixas(filmes / "A (2001)" / "A (2001).mkv") if "Audio" in l]) == 2
-    assert not any((tmp_path / "config" / "dublagem").iterdir())         # terminou: o progresso foi apagado
+    assert [a.name for a in (tmp_path / "config" / "dublagem").iterdir()] == ["frases"]   # terminou: o progresso
+    # foi apagado; fica só o banco das frases curtas (para os próximos filmes)
 
 
 def test_robo_dublagem_mista_figurantes_no_piper(casa, tmp_path, monkeypatch):

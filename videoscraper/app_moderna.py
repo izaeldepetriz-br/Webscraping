@@ -2921,9 +2921,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
                     automacao.registrar_previa(item.video, r.destino, None)
                 resultados.append(r)
                 (self._log.error if r.status == "erro" else self._log.info)(
-                    "[%s] %s%s (%d falas, %d adaptadas, %d aceleradas, %d cortadas, %d já prontas de antes)",
-                    r.status, r.video.name, f" ({r.detalhe})" if r.detalhe else "", r.falas, r.adaptadas,
-                    r.aceleradas, r.cortadas, r.retomadas)
+                    "[%s] %s%s (%d falas, %d adaptadas, %d aceleradas, %d cortadas, %d já prontas de antes, "
+                    "%d repetidas reaproveitadas)", r.status, r.video.name, f" ({r.detalhe})" if r.detalhe else "",
+                    r.falas, r.adaptadas, r.aceleradas, r.cortadas, r.retomadas, r.reaproveitadas)
             feitos = [r for r in resultados if r.status == "dublado"]
             previas = [r for r in resultados if r.status == "previa"]
             self.resumo_diario.registrar("dublados", len(feitos))
@@ -2942,6 +2942,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                      + (f"\nFalas longas reescritas pelo Claude: {adaptadas}"
                         + (f" (custo: {self._dinheiro(sum(custos))})" if custos else "") if adaptadas else "")
                      + (f"\nPedidos de voz ao Gemini: {pedidos}" if pedidos else "")
+                     + (f"\nFalas repetidas reaproveitadas (sem gerar de novo): {reaproveitadas}"
+                        if (reaproveitadas := sum(r.reaproveitadas for r in resultados)) else "")
                      + (f"\nNão feitos (parou antes): {total - len(resultados)}" if len(resultados) < total else "")
                      + f"\n\nTempo: {self._texto_duracao(time.monotonic() - inicio)}"
                      + (("\n\nNo Jellyfin, escolha o áudio \"Português (dublagem IA)\"." if o.dublagem_no_original

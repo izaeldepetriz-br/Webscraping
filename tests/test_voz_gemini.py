@@ -141,7 +141,7 @@ def test_limite_do_dia_guarda_o_que_fez_e_continua_depois(tmp_path):
     r = dublar_video(video, legenda, motor, FFMPEG, sondar=lambda v: (18.0, ["eng"]), pasta_cache=cache)
     assert r.status == "dublado" and r.retomadas == 4, r.detalhe
     assert len(gemini.pedidos) == 2                                      # só o bloco que faltava
-    assert not list(cache.iterdir())                                     # terminou: o progresso foi apagado
+    assert [a.name for a in cache.iterdir()] == ["frases"]           # terminou: o progresso foi apagado (fica o banco de frases curtas)
 
 
 def test_identifica_quem_fala_e_distribui_as_vozes(tmp_path):

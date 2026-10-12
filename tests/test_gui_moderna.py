@@ -3922,7 +3922,7 @@ def test_dublagem_mista_por_filme_e_figurantes(app, tmp_path, monkeypatch):
     app.var_jf_encurtar_falas.set(False)
     monkeypatch.setattr(app_moderna, "videos_para_dublar",
                         lambda *p, **k: dublagem.videos_para_dublar(*p, **{**k, "sondar": lambda v: (6.0, ["eng"])}))
-    gemini, piper = VozFalsa(), VozFalsa()
+    gemini, piper = VozFalsa(), type("PiperFalso", (VozFalsa,), {})()      # motores diferentes: o banco de frases não mistura
     monkeypatch.setattr(voz_gemini, "MotorGemini", lambda chave, nome, **k: gemini)
     monkeypatch.setattr(automacao, "motor_piper", lambda o, voz="", **k: piper)
     perguntas = []
@@ -4545,3 +4545,28 @@ def test_testar_alguns_minutos_na_aba_avulsos(app, tmp_path, monkeypatch):
     assert len([l for l in linhas if "Audio" in l]) == 2 and [l for l in linhas if "Subtitle" in l]   # + a legenda
     assert video.read_bytes() == antes and legenda.exists() and automacao.previas_pendentes() == []
     assert app.caixas[-1][0] == "sucesso" and "o teste de aula" in app.caixas[-1][2].lower()
+
+
+def test_figurantes_no_google_cloud_na_tela(app, monkeypatch):
+    """Modo misto: a opção dos figurantes no Google Cloud (cota grátis) muda a voz sugerida e a tabela."""
+    from videoscraper import automacao
+    from videoscraper.gui_moderna import valor_da_voz
+    monkeypatch.delenv("GOOGLE_TTS_API_KEY", raising=False)
+    app.var_jf_motor_voz.set(app.MOTORES_VOZ[1])
+    app.var_jf_figurantes_piper.set(True)
+    app.var_jf_figurantes_cloud.set(True)
+    o = app.obter_opcoes_jellyfin()
+    assert o.figurantes_cloud and automacao.figurante(o) == "piper:faber"      # sem a chave do Cloud: Piper
+    app.var_jf_chave_cloud.set("AIza-cloud")
+    o = app.obter_opcoes_jellyfin()
+    assert automacao.figurante(o) == f"cloud:{o.tipo_cloud}"
+    assert valor_da_voz("Google Cloud pt-BR-Neural2-B (cota grátis)") == "cloud:pt-BR-Neural2-B"
+    capturado = {}
+
+    class Dialogo:
+        def __init__(self, master, filme, linhas, rotulos, sugestao, vozes):
+            capturado["vozes"], self.resultado = vozes, {}
+    monkeypatch.setattr("videoscraper.gui_moderna.DialogoVozes", Dialogo)
+    monkeypatch.setattr(app, "wait_window", lambda janela: None)
+    app.pedir_vozes("Filme", [], [], {})
+    assert "Google Cloud pt-BR-Neural2-B (cota grátis)" in capturado["vozes"]

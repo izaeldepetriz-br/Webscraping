@@ -100,3 +100,72 @@ def test_validar_lista_as_vozes_pt_br():
         voz_cloud.listar_vozes(" ")
     with pytest.raises(ErroDublagem, match="recusada"):
         voz_cloud.listar_vozes("k", lambda *a, **k: SimpleNamespace(status_code=403, text="denied", json=dict))
+
+
+class _Gravador:
+    """Faz o papel de um motor: anota os textos (e a voz) e grava um wav curto."""
+
+    def __init__(self, nome, feitos, falhar=None):
+        self.nome, self.feitos, self.falhar, self.pedidos = nome, feitos, falhar, 0
+
+    def sintetizar(self, pedidos, parar=None, ao_progresso=None):
+        if self.falhar:
+            raise ErroDublagem(self.falhar)
+        for p in pedidos:
+            self.feitos.append((self.nome, p[0], p[2] if len(p) > 2 else ""))
+            with wave.open(str(p[1]), "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(24000)
+                w.writeframes(b"\x01\x00" * 100)
+
+
+def test_figurantes_no_google_cloud_ate_a_cota_e_depois_no_piper(tmp_path):
+    from jellyfin_tools.dublagem import MotorMisto
+    g = gastos.configurar(tmp_path / "gastos.json")
+    feitos, avisos = [], []
+    motor = MotorMisto(_Gravador("gemini", feitos), lambda voz: _Gravador(f"piper {voz}", feitos),
+                       cloud=lambda: _Gravador("cloud", feitos), reserva="faber", avisar=avisos.append)
+    motor.sintetizar([("Principal.", tmp_path / "1.wav", "Charon"),
+                      ("Guarda.", tmp_path / "2.wav", "cloud:pt-BR-Neural2-B"),
+                      ("Moça.", tmp_path / "3.wav", "cloud:pt-BR-Neural2-A")])
+    assert sorted(feitos) == [("cloud", "Guarda.", "pt-BR-Neural2-B"), ("cloud", "Moça.", "pt-BR-Neural2-A"),
+                              ("gemini", "Principal.", "Charon")]
+    assert motor.no_cloud == 2 and not avisos
+    g.registrar_caracteres("Neural2", 960_000, voz_cloud.TIPOS)               # passou de 95% da cota do mês
+    feitos.clear()
+    motor.sintetizar([("Outro guarda.", tmp_path / "4.wav", "cloud:pt-BR-Neural2-B")])
+    assert feitos == [("piper faber", "Outro guarda.", "")] and "cota grátis" in avisos[0]
+    gastos.configurar(None)
+
+
+def test_figurantes_voltam_para_o_piper_se_o_google_cloud_falhar(tmp_path):
+    from jellyfin_tools.dublagem import MotorMisto
+    feitos, avisos, criados = [], [], []
+    motor = MotorMisto(_Gravador("gemini", feitos), lambda voz: _Gravador(f"piper {voz}", feitos),
+                       cloud=lambda: criados.append(1) or _Gravador("cloud", feitos, falhar="chave recusada"),
+                       reserva="faber", avisar=avisos.append, cabe=lambda voz, n: True)
+    motor.sintetizar([("Guarda.", tmp_path / "1.wav", "cloud:pt-BR-Neural2-B")])
+    motor.sintetizar([("Guarda 2.", tmp_path / "2.wav", "cloud:pt-BR-Neural2-B")])
+    assert feitos == [("piper faber", "Guarda.", ""), ("piper faber", "Guarda 2.", "")]
+    assert criados == [1] and "chave recusada" in avisos[0]                   # não insiste na mesma dublagem
+
+
+def test_sem_registro_de_gastos_nao_arrisca_a_cota():
+    from jellyfin_tools.dublagem import cabe_na_cota
+    gastos.configurar(None)
+    assert not cabe_na_cota("pt-BR-Neural2-B", 10)
+
+
+def test_voz_de_cada_figurante_pelo_genero():
+    from jellyfin_tools import personagens
+    lista = [personagens.Personagem("Conde", "m", falas=list(range(50))),
+             personagens.Personagem("Guarda", "m", falas=[50, 51]),
+             personagens.Personagem("Moça", "f", falas=[52]), personagens.Personagem("Velha", "f", falas=[53]),
+             personagens.Personagem("Robô", "?", falas=[54])]
+    mapa = personagens.distribuir_vozes(lista, "Charon", figurante="cloud:Neural2")
+    assert mapa["Conde"] == "Charon" and mapa["Guarda"] == "cloud:pt-BR-Neural2-B"
+    assert (mapa["Moça"], mapa["Velha"]) == ("cloud:pt-BR-Neural2-A", "cloud:pt-BR-Neural2-C")   # alterna
+    assert mapa["Robô"].startswith("cloud:pt-BR-Neural2-")
+    assert personagens.voz_de_figurante("piper:faber", "f") == "piper:faber"
+    assert personagens.voz_de_figurante("cloud:Studio", "f") == "cloud:pt-BR-Studio-C"         # Studio: B e C
