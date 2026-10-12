@@ -37,6 +37,8 @@ PRECOS = {
     "claude-opus-4-6": (5.0, 25.0),
 }
 
+CACHE_ESCRITA, CACHE_LEITURA = 1.25, 0.10     # cache de prompt: gravar custa 1,25x a entrada; reler, 0,1x
+
 # idiomas da legenda de ORIGEM, na ordem de preferência (o nome do arquivo diz: 'Filme.en.srt')
 ORIGENS_PREFERIDAS = ("en", "eng", "en-us", "en-gb", "es", "spa", "es-419", "fr", "fre", "it", "ita", "de", "ger")
 _PORTUGUES = {"pt", "pt-br", "pt-pt", "por", "pob", "pb", "ptbr"}
@@ -245,6 +247,8 @@ class Tradutor:
     tokens_saida: int = 0
     pedidos: int = 0
     fator_preco: float = 1.0   # 0,5 no modo econômico (lote: metade do preço)
+    tokens_cache_escrita: int = 0  # cache de prompt: a parte fixa gravada (custa 1,25x a entrada)
+    tokens_cache_leitura: int = 0  # cache de prompt: a parte fixa reaproveitada (custa 0,1x a entrada)
     _sistema: str = field(default="", repr=False)
 
     def __post_init__(self):
@@ -258,8 +262,17 @@ class Tradutor:
     @property
     def custo(self) -> float | None:
         preco = PRECOS.get(self.modelo)
-        return ((self.tokens_entrada * preco[0] + self.tokens_saida * preco[1]) / 1_000_000 * self.fator_preco
-                if preco else None)
+        if not preco:
+            return None
+        entrada = (self.tokens_entrada + self.tokens_cache_escrita * CACHE_ESCRITA
+                   + self.tokens_cache_leitura * CACHE_LEITURA)
+        return (entrada * preco[0] + self.tokens_saida * preco[1]) / 1_000_000 * self.fator_preco
+
+    def sistema(self, texto: str) -> list[dict]:
+        """O texto fixo (as regras) com o CACHE DE PROMPT ligado: nos pedidos seguintes (até 5 min), a Anthropic
+        reaproveita essa parte por 10% do preço. Parte fixa curta demais (menos de ~1 a 4 mil tokens, conforme o
+        modelo) simplesmente não entra no cache: não dá erro e não custa a mais."""
+        return [{"type": "text", "text": texto, "cache_control": {"type": "ephemeral"}}]
 
     def parametros(self, lote: dict[int, str], titulo: str, anteriores: list[str], rotulo_contexto: str = "") -> dict:
         """O pedido de um lote de falas (o mesmo no modo normal e no econômico, em lote)."""
@@ -269,7 +282,7 @@ class Tradutor:
         pedido = (f"Título: {titulo or '(desconhecido)'}\n\n{contexto}"
                   f"Traduza para {nome_do_idioma(self.idioma)} e devolva cada fala com o mesmo id.\n"
                   f"Falas:\n{json.dumps(falas, ensure_ascii=False)}")
-        return {"model": self.modelo, "max_tokens": MAX_TOKENS, "system": self._sistema,
+        return {"model": self.modelo, "max_tokens": MAX_TOKENS, "system": self.sistema(self._sistema),
                 "messages": [{"role": "user", "content": pedido}],
                 "output_config": {"format": {"type": "json_schema", "schema": _ESQUEMA}}}
 
@@ -277,9 +290,15 @@ class Tradutor:
         antes = self.custo or 0.0
         self.pedidos += 1
         uso = getattr(resposta, "usage", None)
-        self.tokens_entrada += getattr(uso, "input_tokens", 0) or 0
-        self.tokens_saida += getattr(uso, "output_tokens", 0) or 0
+        self.somar_uso(uso)
         gastos.registrar("Claude", (self.custo or 0.0) - antes)     # o painel de gastos do mês
+
+    def somar_uso(self, uso, parte: int = 1) -> None:
+        """Os tokens de uma resposta (parte=2 no lote: cada token vale metade)."""
+        self.tokens_entrada += (getattr(uso, "input_tokens", 0) or 0) // parte
+        self.tokens_saida += (getattr(uso, "output_tokens", 0) or 0) // parte
+        self.tokens_cache_escrita += (getattr(uso, "cache_creation_input_tokens", 0) or 0) // parte
+        self.tokens_cache_leitura += (getattr(uso, "cache_read_input_tokens", 0) or 0) // parte
 
     def conferir_teto(self) -> None:
         """Antes de cada pedido: passou do teto de gastos do mês? Para (o que já foi traduzido fica)."""

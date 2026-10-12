@@ -501,3 +501,35 @@ def test_teste_de_alguns_minutos_traduz_e_ouve_so_o_trecho(casa, tmp_path, monke
 def dublagem_faixas(arquivo):
     from test_dublagem import faixas
     return faixas(arquivo)
+
+
+def test_avulsos_no_modo_economico_vao_no_lote_e_dublam_depois(casa, tmp_path, monkeypatch):
+    """Modo econômico ligado: a legenda em outro idioma vai num lote (metade do preço), não é enviada duas vezes,
+    e quando o lote fica pronto a legenda em português aparece e o vídeo entra na dublagem."""
+    from jellyfin_tools.traducao import Tradutor
+    from test_traducao import SRT, ClienteFalso
+    from test_traducao_lote import LoteFalso
+    caixa = tmp_path / "Avulsos"
+    caixa.mkdir()
+    (caixa / "Aula.mkv").write_bytes(b"")
+    (caixa / "Aula.en.srt").write_text(SRT, encoding="utf-8")
+    cliente = ClienteFalso()
+    cliente.batches = LoteFalso(cliente)
+    monkeypatch.setattr(automacao, "Tradutor", lambda **k: Tradutor(cliente=cliente, **{
+        c: v for c, v in k.items() if c != "chave"}))
+    monkeypatch.setattr(automacao, "videos_sem_legenda", lambda *p, **k: [])
+    from jellyfin_tools import dublagem
+    monkeypatch.setattr(dublagem, "embutir_legenda", lambda ffmpeg, video, srt, **k: Path(video))
+    casa(pasta_avulsos=str(caixa), avulsos_dublar=False, avulsos_legendar=True, traducao_economica=True,
+         chave_claude="sk-ant")
+    o, _ = automacao.opcoes_salvas()
+    assert automacao.usa_lote(o)
+    r = automacao.processar_avulsos(o, logging.getLogger("t"), str(caixa), sondar=lambda v: (60.0, ["eng"]))
+    assert r.contagens["no_lote"] == 1 and r.contagens["traduzidas"] == 0 and "modo econômico" in r.resumo
+    assert len(cliente.batches.criados) == 1 and not cliente.pedidos            # nada a preço cheio
+    r = automacao.processar_avulsos(o, logging.getLogger("t"), str(caixa), sondar=lambda v: (60.0, ["eng"]))
+    assert len(cliente.batches.criados) == 1 and r.contagens["no_lote"] == 1    # esperando: não manda de novo
+    cliente.batches.terminado = True
+    r = automacao.processar_avulsos(o, logging.getLogger("t"), str(caixa), sondar=lambda v: (60.0, ["eng"]))
+    assert r.contagens["traduzidas"] == 1 and (caixa / "Aula.pt-BR.srt").is_file()
+    assert not automacao.destinos_em_lote() and r.contagens["no_lote"] == 0

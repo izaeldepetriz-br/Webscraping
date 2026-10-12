@@ -64,7 +64,7 @@ class Adaptador:
         self.tradutor.conferir_teto()
         try:
             resposta = self.tradutor.cliente.messages.create(
-                model=self.tradutor.modelo, max_tokens=8000, system=_SISTEMA,
+                model=self.tradutor.modelo, max_tokens=8000, system=self.tradutor.sistema(_SISTEMA),
                 messages=[{"role": "user", "content": pedido}],
                 output_config={"format": {"type": "json_schema", "schema": _ESQUEMA}})
         except Exception as erro:

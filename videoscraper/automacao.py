@@ -57,7 +57,8 @@ from jellyfin_tools.regras import carregar_regras
 from jellyfin_tools.resumo_diario import ResumoDiario
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca
 from jellyfin_tools.site_demo import iniciar_site_demo
-from jellyfin_tools.traducao import _PORTUGUES, Tradutor, estimar_custo, legendas_para_traduzir, traduzir_arquivo
+from jellyfin_tools.traducao import (_PORTUGUES, ErroTraducao, Tradutor, estimar_custo, legendas_para_traduzir,
+                                     traduzir_arquivo)
 from jellyfin_tools import traducao_lote
 from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sincronizar
 from jellyfin_tools.transcricao import Transcritor, legendar_pelo_audio, videos_sem_legenda
@@ -537,10 +538,32 @@ def escolher_dentro_do_limite(pendentes: list, modelo: str, limite: float) -> tu
     return escolhidos, total
 
 
+def pasta_lotes() -> Path:
+    """As traduções em lote (modo econômico) esperando a resposta da Anthropic."""
+    return config.ARQUIVO.parent / "lotes"
+
+
+def usa_lote(o: OpcoesJellyfin) -> bool:
+    """Modo econômico ligado em Configurações > Tradução (só com o Claude: a tradução local já é grátis)."""
+    return bool(getattr(o, "traducao_economica", False)) and not usa_traducao_local(o)
+
+
+def destinos_em_lote() -> set[str]:
+    """As legendas (destino) que já estão num lote esperando: não são enviadas de novo."""
+    destinos = set()
+    for arquivo in traducao_lote.pendentes_no_disco(pasta_lotes()):
+        try:
+            dados = json.loads(arquivo.read_text(encoding="utf-8"))
+            destinos |= {_chave(a["destino"]) for a in dados.get("arquivos", [])}
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return destinos
+
+
 def coletar_lotes(log: logging.Logger, o) -> int:
     """Grava as traduções em lote (modo econômico) que já ficaram prontas. Devolve quantas legendas."""
     feitas = 0
-    for arquivo in traducao_lote.pendentes_no_disco(config.ARQUIVO.parent / "lotes"):
+    for arquivo in traducao_lote.pendentes_no_disco(pasta_lotes()):
         dados = json.loads(arquivo.read_text(encoding="utf-8"))
         tradutor = Tradutor(chave=o.chave_claude, modelo=dados.get("modelo") or o.modelo_traducao,
                             idioma=dados.get("idioma") or "pt-BR")
@@ -556,6 +579,7 @@ def coletar_lotes(log: logging.Logger, o) -> int:
 
 def traduzir_legendas(log: logging.Logger, limite: float = 1.0, economico: bool = False) -> Resultado:
     o, pastas = opcoes_salvas()
+    economico = economico or usa_lote(o)              # --economico ou a opção de Configurações > Tradução
     onde = bibliotecas(pastas)
     if not onde:
         raise FaltaConfiguracao("Escolha a biblioteca de Filmes e/ou de Séries na aba Jellyfin.")
@@ -1052,12 +1076,31 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
     parado = parar or (lambda: False)
     legendar = getattr(o, "avulsos_legendar", True)
     idioma = o.idioma.split(",")[0].strip() or "pt-BR"
+    contas, erros = {"traduzidas": 0, "pelo_audio": 0, "dublados": 0, "legendas_no_video": 0, "previas": 0,
+                     "no_lote": 0}, []
+    economico = usa_lote(o)
+    if economico:                                     # o que voltou do lote (metade do preço) entra na dublagem já
+        try:
+            contas["traduzidas"] += coletar_lotes(log, o)
+        except (ErroTraducao, ImportError, OSError, ValueError) as erro:
+            log.warning("Tradução em lote: %s", erro)
     plano = planejar_avulsos(o, pasta, arquivos, sondar)
     tradutor = tradutor_para(o, idioma)
-    contas, erros = {"traduzidas": 0, "pelo_audio": 0, "dublados": 0, "legendas_no_video": 0, "previas": 0}, []
     if plano.traduzir and tradutor is None:
         erros.append(f"{len(plano.traduzir)} legenda(s) em outro idioma: falta a chave da Anthropic para traduzir")
-    for k, p in enumerate(plano.traduzir if tradutor else []):
+    tradutor_das_legendas = tradutor
+    if economico and tradutor is not None and plano.traduzir:
+        tradutor_das_legendas = None                 # vão pelo lote: nenhuma é traduzida agora, a preço cheio
+        novos = [p for p in plano.traduzir if _chave(p.destino) not in destinos_em_lote()]
+        if novos:                                     # as que já estão num lote esperando não vão de novo
+            andamento(0.0, f"Enviando {len(novos)} legenda(s) no modo econômico (lote, metade do preço)...")
+            try:
+                codigo, _ = traducao_lote.enviar(novos, tradutor, pasta_lotes())
+                log.info("Tradução em lote %s: %d legenda(s) de vídeos avulsos", codigo, len(novos))
+            except ErroTraducao as erro:
+                erros.append(f"modo econômico: {erro}")
+        contas["no_lote"] = len({_chave(p.destino) for p in plano.traduzir} & destinos_em_lote())
+    for k, p in enumerate(plano.traduzir if tradutor_das_legendas else []):
         if parado():
             break
         andamento(k / len(plano.traduzir), f"Traduzindo a legenda {k + 1} de {len(plano.traduzir)}: {p.video.stem}")
@@ -1131,8 +1174,10 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
     resumo = (f"Vídeos avulsos: {contas['traduzidas']} legenda(s) traduzida(s), {contas['pelo_audio']} criada(s) pelo "
               f"áudio, {contas['dublados']} dublado(s), {contas['legendas_no_video']} com a legenda dentro do vídeo"
               + (f", {contas['previas']} prévia(s) para ouvir e aprovar" if contas["previas"] else "")
+              + (f", {contas['no_lote']} legenda(s) no modo econômico (metade do preço; prontas em até 24 h, a "
+                 "dublagem delas fica para a próxima vez)" if contas["no_lote"] else "")
               + (f", {len(erros)} problema(s)." if erros else "."))
-    if plano.vazio and not dublar_agora and not embutir_agora:
+    if plano.vazio and not dublar_agora and not embutir_agora and not contas["traduzidas"]:
         resumo = "Vídeos avulsos: nada a fazer (já têm legenda em português e dublagem, ou não há vídeos)."
     return Resultado("--avulsos", PROBLEMA if erros else OK, resumo, erros, contas)
 

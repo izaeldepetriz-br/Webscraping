@@ -157,6 +157,7 @@ class OpcoesJellyfin:
     voz_por_personagem: bool = False  # Gemini: ouve o filme, separa quem fala e dá uma voz para cada personagem
     figurantes_piper: bool = False   # dublagem mista: quem fala pouco (figurante) fica com o Piper, grátis
     limite_figurante: int = 20       # dublagem mista: figurante = quem tem menos falas que isso
+    traducao_economica: bool = False  # Claude: tradução em LOTE (metade do preço, pronta em até 24 h)
     figurantes_cloud: bool = False   # mista: figurantes no Google Cloud enquanto a cota grátis do mês der (depois Piper)
     perguntar_filmes: bool = True    # Gemini com vários filmes: perguntar quais vão com o Gemini (o resto, Piper)
     robo_so_piper: bool = False      # robôs agendados (--dublar): só o Piper, sem custo
@@ -2548,6 +2549,16 @@ class JanelaModerna(ctk.CTk):
         self._rotulo(lateral, "Modelo do Claude:").pack(anchor="w", pady=(6, 2), **p)
         self.var_jf_modelo_traducao = tk.StringVar(value="claude-sonnet-4-6")
         self._entrada(lateral, self.var_jf_modelo_traducao, "claude-sonnet-4-6", width=320).pack(anchor="w", **p)
+        self.var_jf_traducao_economica = tk.BooleanVar(value=False)
+        self.cb_traducao_economica = self._checkbox(lateral, "Modo econômico da Anthropic (metade do preço)",
+                                                    self.var_jf_traducao_economica)
+        self._rotulo(lateral, "As legendas vão num LOTE e ficam prontas em até 24 h (quase sempre menos de 1 h). Vale "
+                              "para \"Traduzir legendas\" (aba Jellyfin), os vídeos avulsos e o robô "
+                              "--traduzir-legendas. Nos avulsos, a dublagem desses vídeos fica para a próxima vez: ao "
+                              "abrir o Maestro (ou no robô --avulsos) o lote pronto é gravado. O Claude também "
+                              "reaproveita as regras fixas de cada pedido (cache de prompt: essa parte custa 10% nos "
+                              "pedidos seguintes); essa economia é pequena, porque o que mais pesa é o texto traduzido "
+                              "que volta.", fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(0, 4), **p)
 
         # ===================================================== Legenda pelo áudio (Whisper)
         lateral = self._secao_config("Legenda pelo áudio")
@@ -3069,9 +3080,11 @@ class JanelaModerna(ctk.CTk):
         self.campo_limite_figurante = self._numero(lateral, "É figurante quem tem menos de (falas no filme):", 20, 2,
                                                    500, 5)
         self.var_jf_figurantes_cloud = tk.BooleanVar(value=False)
-        self._checkbox(lateral, "Figurantes com o Google Cloud TTS enquanto a cota GRÁTIS do mês der (voz melhor que "
-                                "a do Piper, sem custo; precisa da chave do Google Cloud). Passando de 95% da cota, "
-                                "voltam para o Piper sozinhos.", self.var_jf_figurantes_cloud)
+        self._checkbox(lateral, "Figurantes com o Google Cloud TTS (cota grátis do mês)", self.var_jf_figurantes_cloud)
+        self._rotulo(lateral, "Voz melhor que a do Piper, sem custo (precisa da chave do Google Cloud; usa o tipo de "
+                              "voz escolhido acima, com uma voz do gênero de cada figurante). Passando de 95% da cota "
+                              "grátis do mês, voltam para o Piper sozinhos.",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(0, 4), **p)
         self.var_jf_perguntar_filmes = tk.BooleanVar(value=True)
         self._checkbox(lateral, "Perguntar, a cada dublagem com vários filmes, quais vão com o Gemini (os outros vão "
                                 "inteiros com o Piper)", self.var_jf_perguntar_filmes)
@@ -3679,6 +3692,7 @@ class JanelaModerna(ctk.CTk):
             voz_por_personagem=self.var_jf_voz_por_personagem.get(),
             figurantes_piper=self.var_jf_figurantes_piper.get(),
             figurantes_cloud=self.var_jf_figurantes_cloud.get(),
+            traducao_economica=self.var_jf_traducao_economica.get(),
             limite_figurante=int(self.campo_limite_figurante.get()), perguntar_filmes=self.var_jf_perguntar_filmes.get(),
             robo_so_piper=self.var_jf_robo_so_piper.get(), guardar_gravacoes=self.var_jf_guardar_gravacoes.get(),
             teto_gastos=float(self.campo_teto_gastos.get()), pasta_avulsos=self.var_jf_pasta_avulsos.get().strip(),
@@ -3809,6 +3823,7 @@ class JanelaModerna(ctk.CTk):
                   "voz_por_personagem": self.var_jf_voz_por_personagem,
                   "figurantes_piper": self.var_jf_figurantes_piper,
                   "figurantes_cloud": self.var_jf_figurantes_cloud,
+                  "traducao_economica": self.var_jf_traducao_economica,
                   "perguntar_filmes": self.var_jf_perguntar_filmes, "robo_so_piper": self.var_jf_robo_so_piper,
                   "guardar_gravacoes": self.var_jf_guardar_gravacoes,
                   "avulsos_dublar": self.var_jf_avulsos_dublar,

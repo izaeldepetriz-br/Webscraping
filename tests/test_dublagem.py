@@ -281,7 +281,7 @@ def test_adaptador_pede_ao_claude_e_so_aceita_o_que_encurtou():
     assert adaptar([(3, "Eu não acredito que você fez isso", 20, "Oi"), (7, "Curta", 3, "")]) == \
         {3: "Eu não acredito que"[:20].strip()}                                # a 7 voltou MAIOR: fica a original
     pedido = claude.pedidos[0]
-    assert "dublagem" in pedido["system"].lower() and "Filme: Matrix" in pedido["messages"][0]["content"]
+    assert "dublagem" in pedido["system"][0]["text"].lower() and pedido["system"][0]["cache_control"] and "Filme: Matrix" in pedido["messages"][0]["content"]
     assert '"antes": "Oi"' in pedido["messages"][0]["content"] and tradutor.tokens_entrada == 50
     assert limite_de_letras("x" * 60, duracao=3.0, vaga=1.5) == 28 and limite_de_letras("abc", 3.0, 0.1) == 4
 

@@ -70,7 +70,7 @@ def test_traduz_so_o_texto_com_o_mesmo_id_e_os_mesmos_horarios(tmp_path):
     assert [f.tempo for f in falas] == [f.tempo for f in ler_srt(SRT)]
     pedido = cliente.pedidos[0]
     assert pedido["model"] == "claude-sonnet-4-6" and pedido["output_config"]["format"]["type"] == "json_schema"
-    assert "Português" in pedido["system"] and "Filme (2003)" in pedido["messages"][0]["content"]
+    assert "Português" in pedido["system"][0]["text"] and pedido["system"][0]["cache_control"] == {"type": "ephemeral"} and "Filme (2003)" in pedido["messages"][0]["content"]
     assert "-->" not in pedido["messages"][0]["content"]                       # os horários nunca saem do PC
     assert (tradutor.tokens_entrada, tradutor.tokens_saida) == (100, 120)
     assert tradutor.custo == pytest.approx((100 * 3 + 120 * 15) / 1_000_000)
@@ -185,3 +185,16 @@ def test_testar_chave_sem_gastar_credito(tmp_path):
     (tmp_path / "models--Systran--faster-whisper-small").mkdir()
     assert modelo_baixado("small", tmp_path) and not modelo_baixado("large-v3", tmp_path)
     assert not voz_pronta("faber", tmp_path / "piper", tmp_path / "vozes")
+
+
+def test_cache_de_prompt_entra_na_conta_do_custo():
+    """A parte fixa reaproveitada (cache) custa 10% da entrada; gravar no cache, 125%."""
+    t = Tradutor(cliente=object(), modelo="claude-sonnet-4-6")
+    t.somar_uso(SimpleNamespace(input_tokens=1000, output_tokens=0, cache_creation_input_tokens=2000,
+                                cache_read_input_tokens=0))
+    assert t.custo == pytest.approx((1000 + 2500) * 3 / 1e6)
+    t.somar_uso(SimpleNamespace(input_tokens=0, output_tokens=0, cache_creation_input_tokens=0,
+                                cache_read_input_tokens=2000))
+    assert t.custo == pytest.approx((1000 + 2500 + 200) * 3 / 1e6)
+    t.somar_uso(SimpleNamespace(input_tokens=10, output_tokens=20))             # resposta sem os campos do cache
+    assert t.tokens_entrada == 1010 and t.tokens_saida == 20

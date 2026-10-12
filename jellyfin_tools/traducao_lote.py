@@ -85,15 +85,13 @@ def coletar(arquivo_lote: str | Path, tradutor: Tradutor) -> list[ResultadoTradu
         raise ErroTraducao(_explicar(erro)) from erro
     traduzidas: dict[int, dict[int, str]] = {}
     refazer: dict[int, list[int]] = {}
-    tokens = [0, 0]
+    usos = []
     for codigo, (n, ids) in dados["pedidos"].items():
         resultado = respostas.get(codigo)
         textos = {}
         if resultado is not None and getattr(resultado, "type", "") == "succeeded":
             mensagem = resultado.message
-            uso = getattr(mensagem, "usage", None)
-            tokens[0] += getattr(uso, "input_tokens", 0) or 0
-            tokens[1] += getattr(uso, "output_tokens", 0) or 0
+            usos.append(getattr(mensagem, "usage", None))
             if mensagem.stop_reason == "end_turn":
                 try:
                     textos = ler_resposta(mensagem)
@@ -103,8 +101,8 @@ def coletar(arquivo_lote: str | Path, tradutor: Tradutor) -> list[ResultadoTradu
         refazer.setdefault(n, []).extend(i for i in ids if i not in textos)
     # os tokens do lote custam metade: soma no tradutor como meio token (o custo final fica certo)
     antes = tradutor.custo or 0.0
-    tradutor.tokens_entrada += tokens[0] // 2
-    tradutor.tokens_saida += tokens[1] // 2
+    for uso in usos:
+        tradutor.somar_uso(uso, parte=2)
     gastos.registrar("Claude", (tradutor.custo or 0.0) - antes)
     resultados = []
     for n, info in enumerate(dados["arquivos"]):

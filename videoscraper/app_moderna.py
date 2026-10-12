@@ -2048,7 +2048,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             "\"Econômico\": metade do preço"
             + (f" (~{self._dinheiro(custo / 2)})" if custo is not None else "") + ", mas as legendas ficam prontas em até 24 h "
             "(quase sempre menos de 1 h). Pode fechar o Maestro: ao abrir de novo ele busca o resultado.",
-            (f"Traduzir os {len(pendentes)} agora", "Econômico (metade do preço)"))
+            (("Econômico (metade do preço)", f"Traduzir os {len(pendentes)} agora") if automacao.usa_lote(o)
+             else (f"Traduzir os {len(pendentes)} agora", "Econômico (metade do preço)")))
         if escolha is None:
             return
         if escolha.startswith("Econômico"):
@@ -2717,7 +2718,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
         linhas = []
         if plano.traduzir:
             linhas.append(f"• {len(plano.traduzir)} legenda(s) em outro idioma: {quem} traduz para o português"
-                          + ("" if traduz else " (FALTA a chave da Anthropic: ficam sem traduzir)"))
+                          + ("" if traduz else " (FALTA a chave da Anthropic: ficam sem traduzir)")
+                          + (" no MODO ECONÔMICO (lote, metade do preço: prontas em até 24 h; a dublagem delas fica "
+                             "para a próxima vez)" if traduz and automacao.usa_lote(o) else ""))
         if plano.pelo_audio:
             linhas.append(f"• {len(plano.pelo_audio)} vídeo(s) sem nenhuma legenda: o Whisper ouve no seu PC (grátis)"
                           + (f" e {quem} traduz se o áudio não for português" if traduz else ""))
