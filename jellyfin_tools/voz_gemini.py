@@ -243,13 +243,20 @@ def _explicar(erro: Exception) -> str:
         return "a chave do Google AI Studio foi recusada (confira em aistudio.google.com > Get API key)"
     if codigo == 404:
         return f"modelo do Gemini não encontrado ({texto[:80]})"
+    if _limite_por_minuto(erro):
+        return (f"o Gemini continuou no limite de pedidos por minuto depois de {TENTATIVAS} tentativas"
+                + (" (chave grátis)" if _camada_gratis(erro) else "") + "; o que já ficou pronto está guardado: "
+                "tente de novo em alguns minutos")
     if _camada_gratis(erro):
         return ("limite do dia da chave GRÁTIS do Gemini atingido (sem faturamento ativo no Google); o que já ficou "
                 "pronto está guardado e a próxima dublagem continua de onde parou")
     if codigo == 429 or "RESOURCE_EXHAUSTED" in texto:
         return ("limite de uso do Gemini atingido (a camada grátis tem limites baixos por dia); o que já ficou pronto "
                 "está guardado e a próxima dublagem continua de onde parou")
-    if type(erro).__name__ in ("ConnectError", "ConnectTimeout", "ReadTimeout"):
+    if type(erro).__name__ in ("APITimeoutError", "ReadTimeout", "TimeoutException"):
+        return (f"o Gemini não respondeu em {(TEMPO_LIMITE_FLEX if _flex['ligado'] else TEMPO_LIMITE) // 60} min "
+                "(o Google está lento agora); o que já ficou pronto está guardado: tente de novo daqui a pouco")
+    if type(erro).__name__ in ("ConnectError", "ConnectTimeout", "APIConnectionError"):
         return "sem conexão com o Gemini"
     return f"{type(erro).__name__}: {texto}"[:300]
 
@@ -323,7 +330,18 @@ def _cliente(chave: str, avisar=None):
     # sem tempo-limite, um pedido que o Google não respondesse prendia a dublagem para sempre
     flex = _flex["ligado"]
     base = genai.Client(api_key=chave, http_options={"timeout": (TEMPO_LIMITE_FLEX if flex else TEMPO_LIMITE) * 1000})
+    _sem_repeticoes_escondidas(base)
     return ClienteFlex(base, avisar) if flex else base
+
+
+def _sem_repeticoes_escondidas(cliente) -> None:
+    """A biblioteca do Google repete SOZINHA, e calada, o pedido que recebe limite (429) ou erro do servidor: até 4
+    vezes, esperando o tempo pedido pelo Google. Somado às 6 tentativas do Maestro, um pedido virava até 24, sem
+    nada no log (o teste parecia travado). Desliga: quem repete é _com_tentativas, que avisa cada espera."""
+    try:
+        cliente.interactions.sdk_configuration.retry_config = None
+    except Exception:                                  # outra versão da biblioteca: segue como ela fizer
+        pass
 
 
 def fator_de_preco(cliente) -> float:
@@ -370,6 +388,11 @@ def _limite_do_dia(erro: Exception) -> bool:
     return "perday" in str(erro).lower().replace("_", "")
 
 
+def _limite_por_minuto(erro: Exception) -> bool:
+    """O limite que acabou é o POR MINUTO (quotaId "...PerMinute..."): passa sozinho em instantes."""
+    return "perminute" in str(erro).lower().replace("_", "")
+
+
 def _com_tentativas(chamar, esperar=time.sleep, avisar=None):
     """Chama a API; no limite por minuto (429) ou instabilidade (5xx) espera e tenta de novo: 2, 4, 8, 16, 32 s ou
     o que o Google pedir (até 90 s), avisando no log. O limite do DIA não espera: avisa e para na hora."""
@@ -391,8 +414,8 @@ def _com_tentativas(chamar, esperar=time.sleep, avisar=None):
                            f"{TENTATIVAS} tentativas)")
                 esperar(espera)
                 continue
-            if _codigo(erro) == 429 or "RESOURCE_EXHAUSTED" in str(erro):     # o limite (do dia, na chave grátis)
-                gastos.marcar_cota("Gemini", "limite do dia")
+            if (_codigo(erro) == 429 or "RESOURCE_EXHAUSTED" in str(erro)) and not _limite_por_minuto(erro):
+                gastos.marcar_cota("Gemini", "limite do dia")             # o limite do dia (na chave grátis)
             raise ErroDublagem(_explicar(erro)) from erro
 
 

@@ -250,6 +250,11 @@ primeira falha (antes esperava o tempo limite em cada filme).
   tempo (até 90 s) e avisa no log, em vez de tentar cedo demais e desistir. O **limite do dia** não fica tentando à
   toa: para na hora, com a mensagem, e o que ficou pronto é guardado.
 - No modo Flex, o log avisa no começo que cada pedido pode levar até ~15 min.
+- **Sem repetições escondidas**: a biblioteca do Google repetia SOZINHA (e calada) o pedido que recebia limite ou
+  erro do servidor, até 4 vezes; somado às 6 tentativas do Maestro, um pedido virava até 24, sem nada no log. Agora
+  só o Maestro repete, e cada espera aparece no log. Se o limite por minuto não passar depois das 6 tentativas, a
+  mensagem diz isso (antes dizia "limite do dia"); se o Google não responder em 5 min, a mensagem diz que ele está
+  lento (antes: "sem conexão").
 
 ### Novidades da v2.18.9
 

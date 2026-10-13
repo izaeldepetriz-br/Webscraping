@@ -314,13 +314,20 @@ def test_cliente_do_gemini_tem_tempo_limite(monkeypatch):
     from types import ModuleType
     criados = []
     genai = ModuleType("google.genai")
-    genai.Client = lambda **k: criados.append(k) or object()
+    genai.Client = lambda **k: criados.append(k) or SimpleNamespace(
+        interactions=SimpleNamespace(sdk_configuration=SimpleNamespace(retry_config="repete 4x")))
     google = ModuleType("google")
     google.genai = genai
     monkeypatch.setitem(sys.modules, "google", google)
     monkeypatch.setitem(sys.modules, "google.genai", genai)
-    voz_gemini._cliente("chave")
+    cliente = voz_gemini._cliente("chave")
     assert criados[0]["http_options"] == {"timeout": voz_gemini.TEMPO_LIMITE * 1000}
+    # a biblioteca não repete calada (4 pedidos por 1); quem repete é o Maestro, avisando no log
+    assert cliente.interactions.sdk_configuration.retry_config is None
+    genai.Client = lambda **k: object()                                  # outra versão da biblioteca: não quebra
+    voz_gemini._cliente("chave")
+    demorou = type("APITimeoutError", (Exception,), {})("Request timed out.")
+    assert "não respondeu em 5 min" in voz_gemini._explicar(demorou)
 
 
 def test_tom_de_cada_fala_vai_no_pedido_da_voz(tmp_path):
@@ -557,6 +564,9 @@ def test_limite_por_minuto_espera_o_que_o_google_pede_e_avisa_e_o_do_dia_para_na
     esperas.clear()
     voz_gemini._com_tentativas(chamar, esperas.append)
     assert esperas == [voz_gemini.ESPERA_MAXIMA, voz_gemini.ESPERA_MAXIMA]          # nunca mais que 90 s
+    falhas[:] = [por_minuto] * 6                                                    # o por minuto não passou
+    with pytest.raises(ErroDublagem, match="continuou no limite de pedidos por minuto depois de 6 tentativas"):
+        voz_gemini._com_tentativas(chamar, lambda s: None)
     falhas[:] = [por_dia] * 6
     esperas.clear()
     with pytest.raises(ErroDublagem, match="chave GRÁTIS"):
