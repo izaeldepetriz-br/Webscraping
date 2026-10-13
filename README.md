@@ -278,6 +278,10 @@ primeira falha (antes esperava o tempo limite em cada filme).
   Na mesma aba: procurar, "Remover selecionados", "Desfazer última remoção", "Atualizar a lista" e, ao lado, a
   conferência automática (as mesmas opções de Configurações > Espelhos: ligar, a cada quantos minutos/horas/dias,
   remover os quebrados e a última conferência). Os botões "Conferir espelhos" e "Espelhos..." saíram da aba Jellyfin.
+- **Caixas de seleção (☐/☑) nas abas Jellyfin TV e Jellyfin Espelhos**, como nas outras listas: um clique marca ou
+  desmarca a linha sem perder as outras (Ctrl e Shift continuam valendo); na lista de espelhos, clicar num
+  espelhamento marca todos os itens dele. A linha "Selecionar:" ganhou "nenhum" e "inverter" (e, nos espelhos, "os
+  quebrados").
 - "Legendar", na aba Avulsos, já cria a legenda quando falta (traduz a que existe ou ouve o áudio com o Whisper) e a
   põe dentro do vídeo: é o "Criar legenda" dos Avulsos.
 

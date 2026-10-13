@@ -484,8 +484,9 @@ class PainelEspelhos(ctk.CTkFrame):
                                    button_hover_color=Tema.CAMPO_BORDA)
         rolagem.grid(row=0, column=1, sticky="ns", padx=(4, 0))
         self.arvore.configure(yscrollcommand=rolagem.set)
-        self.arvore.bind("<<TreeviewSelect>>", lambda e: self._contar())
         self.arvore.bind("<Delete>", lambda e: ao_remover(self.selecionados()))
+        # ☐/☑ ao lado de cada item e de cada espelhamento (marca todos os itens dele), como nas outras listas
+        self.caixas = CaixasNaArvore(self.arvore, ao_mudar=self._contar, grupos=True)
         self.lb_vazio = ctk.CTkLabel(quadro, text="", font=m.f_normal, text_color=Tema.TEXTO_FRACO,
                                      fg_color=Tema.CARTAO, wraplength=520, justify="center")
 
@@ -521,6 +522,21 @@ class PainelEspelhos(ctk.CTkFrame):
                                       justify="left", wraplength=270)
         self.lb_estado.pack(fill="x", padx=10, pady=(4, 8))
 
+        # a linha "Selecionar:" (embaixo da lista, em cima dos botões)
+        selecao = ctk.CTkFrame(self, fg_color="transparent")
+        selecao.pack(side="bottom", fill="x", padx=24, before=meio)
+        estilo = dict(height=28, corner_radius=6, fg_color="transparent", hover_color=Tema.SECUNDARIA_HOVER,
+                      text_color=Tema.PRIMARIA, font=ctk.CTkFont(Tema.FAMILIA, 12), width=20)
+        ctk.CTkLabel(selecao, text="Selecionar:", font=m.f_rotulo, text_color=Tema.TEXTO_FRACO).pack(side="left")
+        self.bt_selecionar_todos = ctk.CTkButton(selecao, text="todos", command=self.selecionar_todos, **estilo)
+        self.bt_selecionar_nenhum = ctk.CTkButton(selecao, text="nenhum", command=lambda: self.caixas.marcar([]),
+                                                  **estilo)
+        self.bt_inverter = ctk.CTkButton(selecao, text="inverter", command=self.caixas.inverter, **estilo)
+        self.bt_selecionar_quebrados = ctk.CTkButton(selecao, text="os quebrados", command=self.selecionar_quebrados,
+                                                     **estilo)
+        for botao in (self.bt_selecionar_todos, self.bt_selecionar_nenhum, self.bt_inverter,
+                      self.bt_selecionar_quebrados):
+            botao.pack(side="left")
         self.lb_resumo = ctk.CTkLabel(rodape, text="", font=m.f_rotulo, text_color=Tema.TEXTO_SUAVE)
         self.lb_resumo.pack(side="left")
         self.bt_remover = m._botao(rodape, "Remover selecionados", lambda: ao_remover(self.selecionados()),
@@ -549,19 +565,27 @@ class PainelEspelhos(ctk.CTkFrame):
             visiveis = [i for i in itens if procura in _sem_acentos(i[1])]
             if not visiveis:
                 continue
-            grupo = self.arvore.insert("", "end", iid=f"grupo-{n}", text=titulo, open=True, tags=("grupo",))
+            grupo = self.arvore.insert("", "end", iid=f"grupo-{n}", text=titulo, open=True, tags=("grupo",),
+                                       image=self.caixas.vazia)
             for k, item in enumerate(visiveis):
                 iid, nome, biblioteca, link = item[:4]
                 situacao, ok = (item[4], item[5]) if len(item) > 5 else ("—", None)
                 tag = "ok" if ok else "erro" if ok is False else ("par" if k % 2 == 0 else "impar")
-                self.arvore.insert(grupo, "end", iid=iid, text="   " + nome, values=(biblioteca, situacao, link),
-                                   tags=(tag,))
+                self.arvore.insert(grupo, "end", iid=iid, text="  " + nome, values=(biblioteca, situacao, link),
+                                   tags=(tag,), image=self.caixas.vazia)
         if not self._grupos and getattr(self, "_vazio", ""):
             self.lb_vazio.configure(text=self._vazio)
             self.lb_vazio.place(relx=0.5, rely=0.45, anchor="center")
         else:
             self.lb_vazio.place_forget()
-        self._contar()
+        self.caixas.recomecar()
+
+    def selecionar_todos(self) -> None:
+        self.caixas.marcar(self.caixas.folhas())
+
+    def selecionar_quebrados(self) -> None:
+        """Os que o último "Conferir espelhos" deu como quebrados (vermelhos)."""
+        self.caixas.marcar([i for i in self.caixas.folhas() if "erro" in self.arvore.item(i, "tags")])
 
     def selecionados(self) -> list[str]:
         """Os .strm escolhidos; um espelhamento selecionado vale por todos os itens dele (os visíveis)."""
@@ -954,6 +978,92 @@ class SeletorDeTabela:
             self.lb_selecao.pack(side="left", padx=(10, 0))
         self._atualizar()
         return barra
+
+
+def _imagem_caixa(dono, marcada: bool) -> tk.PhotoImage:
+    """☐/☑ desenhadas (18x16) para a coluna da árvore de um Treeview: o texto da linha (o nome) não muda."""
+    imagem = tk.PhotoImage(master=dono, width=18, height=16)
+    x0, y0, x1, y1 = 2, 2, 15, 15
+    if marcada:
+        imagem.put(Tema.PRIMARIA, to=(x0, y0, x1, y1))
+        for x, y in ((4, 8), (5, 9), (6, 10), (7, 9), (8, 8), (9, 7), (10, 6), (11, 5)):
+            imagem.put("#ffffff", to=(x, y, x + 2, y + 2))
+    else:
+        for caixa in ((x0, y0, x1, y0 + 1), (x0, y1 - 1, x1, y1), (x0, y0, x0 + 1, y1), (x1 - 1, y0, x1, y1)):
+            imagem.put(Tema.TEXTO_SUAVE, to=caixa)
+    return imagem
+
+
+class CaixasNaArvore:
+    """☐/☑ ao lado de cada linha de um Treeview (uma imagem na coluna da árvore), seguindo a seleção: um clique
+    marca/desmarca a linha SEM perder as outras (Ctrl e Shift continuam como antes); numa linha de grupo (com
+    filhos), marca/desmarca todos os filhos. O texto das linhas não muda. Usado nas listas de canais (Jellyfin TV)
+    e de espelhos (Jellyfin Espelhos). grupos: a árvore tem linhas de grupo (a caixa do grupo fica ☑ quando todos os
+    filhos estão marcados)."""
+
+    def __init__(self, arvore, ao_mudar=None, grupos: bool = False):
+        self.arvore, self.ao_mudar, self.grupos = arvore, ao_mudar or (lambda: None), grupos
+        self.vazia, self.cheia = _imagem_caixa(arvore, False), _imagem_caixa(arvore, True)
+        self._marcados: set[str] = set()
+        arvore.bind("<Button-1>", self._ao_clicar, add="+")
+        arvore.bind("<<TreeviewSelect>>", lambda e: self.atualizar(), add="+")
+
+    def folhas(self) -> list[str]:
+        """As linhas que se marcam (num grupo, os filhos), na ordem da lista."""
+        saida = []
+        for iid in self.arvore.get_children():
+            filhos = self.arvore.get_children(iid) if self.grupos else ()
+            saida += list(filhos) if filhos else [iid]
+        return saida
+
+    def marcar(self, iids) -> None:
+        self.arvore.selection_set(list(iids))
+        self.atualizar()
+
+    def inverter(self) -> None:
+        selecao = set(self.arvore.selection())
+        self.marcar([i for i in self.folhas() if i not in selecao])
+
+    def recomecar(self) -> None:
+        """Depois de apagar e inserir as linhas de novo (todas com ☐)."""
+        self._marcados = set()
+        self.atualizar()
+
+    def atualizar(self) -> None:
+        a = self.arvore
+        selecao = set(a.selection())
+        for iid in selecao ^ self._marcados:              # troca ☐/☑ só nas linhas que mudaram (listas grandes)
+            if a.exists(iid) and not (self.grupos and a.get_children(iid)):
+                a.item(iid, image=self.cheia if iid in selecao else self.vazia)
+        self._marcados = selecao
+        if self.grupos:
+            for grupo in a.get_children():
+                filhos = a.get_children(grupo)
+                if filhos:
+                    a.item(grupo, image=self.cheia if all(f in selecao for f in filhos) else self.vazia)
+        self.ao_mudar()
+
+    def _ao_clicar(self, evento):
+        a = self.arvore
+        if evento.state & 0x0005:                         # Shift (0x1) ou Ctrl (0x4): comportamento normal
+            return None
+        if a.identify_region(evento.x, evento.y) not in ("cell", "tree"):
+            return None                                   # título da coluna, borda: deixa o Treeview cuidar
+        if "indicator" in str(a.identify_element(evento.x, evento.y)):
+            return None                                   # a setinha do grupo: abre/fecha
+        iid = a.identify_row(evento.y)
+        if not iid:
+            return None
+        filhos = a.get_children(iid) if self.grupos else ()
+        alvo = list(filhos) if filhos else [iid]
+        selecao = set(a.selection())
+        if all(i in selecao for i in alvo):
+            a.selection_remove(*alvo)
+        else:
+            a.selection_add(*alvo)
+        a.focus(iid)
+        a.focus_set()
+        return "break"
 
 
 def dividir_pastas(texto: str) -> list[str]:
@@ -1954,8 +2064,10 @@ class PainelCanais(ctk.CTkFrame):
         self.bt_selecionar_duplicados = ctk.CTkButton(selecao, text="os repetidos",
                                                       command=self.selecionar_duplicados, **estilo)
         self.bt_tirar_filtros = ctk.CTkButton(selecao, text="Tirar os filtros", command=self.limpar_filtros, **estilo)
-        for botao in (self.bt_selecionar_todos, self.bt_selecionar_fora, self.bt_selecionar_mortos,
-                      self.bt_selecionar_duplicados):
+        self.bt_selecionar_nenhum = ctk.CTkButton(selecao, text="nenhum", command=self.selecionar_nenhum, **estilo)
+        self.bt_inverter = ctk.CTkButton(selecao, text="inverter", command=self.inverter_selecao, **estilo)
+        for botao in (self.bt_selecionar_todos, self.bt_selecionar_nenhum, self.bt_inverter, self.bt_selecionar_fora,
+                      self.bt_selecionar_mortos, self.bt_selecionar_duplicados):
             botao.pack(side="left")
         self.bt_tirar_filtros.pack(side="right")
 
@@ -1984,6 +2096,8 @@ class PainelCanais(ctk.CTkFrame):
         # duplo clique numa linha (não no título): editar o canal
         self.tabela.bind("<Double-1>", lambda e: self._ao_duplo_clique(e, acoes["editar"]))
         self.tabela.bind("<F2>", lambda e: acoes.get("editar_selecionados", lambda: None)())
+        # ☐/☑ ao lado do nome: um clique marca/desmarca sem perder os outros (como nas outras listas)
+        self.caixas = CaixasNaArvore(self.tabela, ao_mudar=self._texto_conferir)
 
         # ---- as configurações da TV (o que antes ficava embaixo da janela "TV ao vivo...")
         pequena = ctk.CTkFont(Tema.FAMILIA, 11)
@@ -2108,9 +2222,10 @@ class PainelCanais(ctk.CTkFrame):
         visiveis = [linha for linha in self._linhas if self._passa(linha)]
         for linha in visiveis:
             tags = () if linha.ok is None else ("ok" if linha.ok else "erro",)
-            self.tabela.insert("", "end", iid=linha.iid, text=linha.nome, tags=tags,
+            self.tabela.insert("", "end", iid=linha.iid, text=linha.nome, tags=tags, image=self.caixas.vazia,
                                values=(linha.numero, linha.grupo, linha.idioma or "—", linha.programacao or "—",
                                        linha.agora or "—", linha.situacao, linha.historico, linha.link))
+        self.caixas.recomecar()
         fora = sum(1 for linha in self._linhas if linha.ok is False)
         quantos = f"{len(visiveis)} de {len(self._linhas)}" if self._filtros else f"{len(self._linhas)}"
         self.lb_resumo.configure(text=f"{quantos} canal(is)" + (f" · {fora} fora do ar" if fora else "")
@@ -2197,6 +2312,13 @@ class PainelCanais(ctk.CTkFrame):
     def selecionar_todos(self) -> None:
         self.tabela.selection_set(self.tabela.get_children())
         self._texto_conferir()
+
+    def selecionar_nenhum(self) -> None:
+        self.tabela.selection_set([])
+        self._texto_conferir()
+
+    def inverter_selecao(self) -> None:
+        self.caixas.inverter()
 
     def _ao_duplo_clique(self, evento, editar) -> None:
         if self.tabela.identify_region(evento.x, evento.y) in ("cell", "tree"):
@@ -2797,8 +2919,7 @@ class JanelaModerna(ctk.CTk):
     SUBTITULOS = {
         "Vídeos": "1) Cole o endereço da página    2) Clique em Buscar vídeos    3) Selecione e clique em Baixar",
         "Jellyfin": "1) Escolha as pastas    2) Clique em Pré-visualizar    3) Confira e clique em Organizar",
-        "Jellyfin TV": "1) Adicione ou importe os canais    2) Clique em Conferir    3) Clique em Salvar e enviar ao "
-                       "Jellyfin",
+        "Jellyfin TV": "1) Adicione ou importe canais    2) Conferir    3) Salvar e enviar ao Jellyfin",
         "Jellyfin Espelhos": "1) Clique em Conferir espelhos    2) Veja a Situação    3) Remova os quebrados",
         "Avulsos": "1) Escolha a caixa de entrada ou adicione vídeos    2) Clique em Olhar    3) Confira e clique em "
                    "Processar",

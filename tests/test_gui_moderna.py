@@ -1618,6 +1618,63 @@ def test_espelhos_remover_qualquer_espelhamento_pela_janela(app, tmp_path, api_f
     assert not (filmes / "Nosferatu (1922)").exists()
 
 
+def test_caixas_de_selecao_nas_abas_de_tv_e_de_espelhos(app, tmp_path):
+    """☐/☑ ao lado de cada linha (canais e espelhos): um clique marca/desmarca sem perder os outros; no espelhamento,
+    marca todos os itens dele; "todos", "nenhum", "inverter", "os quebrados"/"os fora do ar". O nome não muda."""
+    from test_espelho_jellyfin import _tres_espelhamentos
+    from jellyfin_tools.tv_ao_vivo import Canal, Situacao
+    filmes, series, _ = _tres_espelhamentos(tmp_path)
+    app.mostrar_aba("Jellyfin")
+    app.var_jf_destino.set(str(filmes))
+    app._destinos["Séries"] = str(series)
+    strm = sorted(str(p) for p in filmes.rglob("*.strm"))[0]
+    app._situacao_espelhos = {strm: (False, "quebrado: HTTP 404")}
+    app.mostrar_aba("Jellyfin Espelhos")
+    painel = app.janela_espelhos
+    arvore, caixas = painel.arvore, painel.caixas
+    app.update()
+    folhas = caixas.folhas()
+    assert len(folhas) == 5 and all(str(arvore.item(i, "image")[0]) == str(caixas.vazia) for i in folhas)
+    primeiro = arvore.get_children()[0]
+
+    def clicar(iid):
+        arvore.see(iid)
+        app.update()
+        x, y, largura, altura = arvore.bbox(iid, "#0")
+        arvore.event_generate("<Button-1>", x=x + largura // 2, y=y + altura // 2)
+        app.update()
+    clicar(primeiro)                                                    # o espelhamento: os 2 itens dele
+    assert set(painel.selecionados()) == set(arvore.get_children(primeiro))
+    assert str(arvore.item(primeiro, "image")[0]) == str(caixas.cheia)
+    clicar(arvore.get_children(arvore.get_children()[1])[0])            # mais um, sem perder os outros
+    assert len(painel.selecionados()) == 3 and "3 selecionado(s)" in painel.lb_resumo.cget("text")
+    painel.bt_inverter.invoke()
+    assert len(painel.selecionados()) == 2
+    painel.bt_selecionar_nenhum.invoke()
+    assert painel.selecionados() == []
+    painel.bt_selecionar_quebrados.invoke()
+    assert [arvore.item(i, "text").strip() for i in painel.selecionados()] == [Path(strm).stem]
+    painel.bt_selecionar_todos.invoke()
+    assert len(painel.selecionados()) == 5
+    # a lista de canais (aba Jellyfin TV)
+    app.mostrar_aba("Jellyfin TV")
+    tv = app.janela_canais
+    app._canais = [Canal("TV Cultura", "https://a.org/1.m3u8"), Canal("Rádio", "https://b.net/r.mp3"),
+                   Canal("TV Brasil", "https://a.org/2.m3u8")]
+    app._situacao_canais = {app._canais[1].url: Situacao(False, "fora do ar (HTTP 404)")}
+    app._mostrar_canais()
+    app.update()
+    assert [tv.tabela.item(i, "text") for i in tv.tabela.get_children()] == ["TV Cultura", "Rádio", "TV Brasil"]
+    tv.caixas.marcar(["0"])
+    tv.bt_inverter.invoke()
+    assert tv.selecionados() == ["1", "2"] and str(tv.tabela.item("1", "image")[0]) == str(tv.caixas.cheia)
+    assert tv.bt_conferir.cget("text") == "Conferir 2 selecionado(s)"
+    tv.bt_selecionar_nenhum.invoke()
+    assert tv.selecionados() == [] and tv.bt_conferir.cget("text") == "Conferir todos"
+    tv.bt_selecionar_fora.invoke()
+    assert tv.selecionados() == ["1"]
+
+
 def test_espelhos_sem_selecao_avisa(app, tmp_path):
     from test_espelho_jellyfin import _tres_espelhamentos
     filmes, series, _ = _tres_espelhamentos(tmp_path)
