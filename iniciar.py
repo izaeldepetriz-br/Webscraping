@@ -87,6 +87,9 @@ def _verificar() -> int:
             import sounddevice  # noqa: F401
         except (ImportError, OSError) as erro:
             faltando.append(f"sounddevice (microfone): {erro}")
+    import importlib.util                                      # vídeo dentro da aba Áudio: o python-vlc veio junto?
+    if importlib.util.find_spec("vlc") is None:                # (o VLC em si é o do PC: não dá para importar aqui)
+        faltando.append("python-vlc (vídeo dentro da aba Áudio)")
     print(f"ok: versão {versao_atual()}, {len(catalogo.filmes)} títulos no catálogo, ffmpeg em {ffmpeg}, "
           f"instalador do navegador {'OK' if not faltando else 'FALTANDO: ' + str(faltando)}")
     return 1 if faltando else 0

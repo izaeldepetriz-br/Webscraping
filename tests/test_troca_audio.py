@@ -67,7 +67,8 @@ def _video(caminho: Path, duracao: float, audios: list, legendas: list = (), for
             comando += [f"-metadata:s:a:{i}", f"title={titulo}"]
     for k, (_, idioma, forcada) in enumerate(legendas):
         comando += [f"-metadata:s:s:{k}", f"language={idioma}", f"-disposition:s:{k}", "forced" if forcada else "0"]
-    subprocess.run(comando + ["-shortest", str(caminho)], check=True, capture_output=True)
+    subprocess.run(comando + ["-t", f"{duracao:.3f}", str(caminho)], check=True, capture_output=True)  # a legenda
+    # pode acabar antes (com -shortest, o arquivo era cortado no fim dela)
     return caminho
 
 

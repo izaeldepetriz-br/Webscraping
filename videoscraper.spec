@@ -10,6 +10,7 @@ if os.path.exists("videoscraper/versao_build.txt"):                          # a
     datas += [("videoscraper/versao_build.txt", "videoscraper")]
 binaries, hiddenimports = [], ["videoscraper.app_moderna", "videoscraper.gui", "videoscraper.menu"]
 hiddenimports += ["pystray._win32", "PIL.Image", "PIL.ImageDraw"]               # ícone perto do relógio
+hiddenimports += ["vlc"]                                                    # vídeo dentro da aba Áudio (VLC do PC)
 for pacote in ("imageio_ffmpeg", "playwright", "pystray",                   # ffmpeg, instalador do navegador, ícone
                "faster_whisper", "ctranslate2", "onnxruntime", "av", "tokenizers",    # Whisper (legenda pelo áudio)
                "google.genai",                                                     # Gemini (voz premium)

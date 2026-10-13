@@ -12,3 +12,4 @@ sounddevice>=0.4     # gravar a sua voz pelo microfone (para clonar); no Windows
 sentencepiece>=0.2   # tradução local grátis (modelos Argos no CTranslate2, o mesmo motor do Whisper)
 faster-whisper>=1.1  # criar a legenda ouvindo o áudio (Whisper, roda no PC)
 av>=11,<19           # o PyAV 19 tirou uma opção que o faster-whisper 1.2 ainda usa (metadata_errors)
+python-vlc>=3.0     # ver o vídeo dentro da aba 🎧 Áudio (usa o VLC instalado no PC; sem ele, abre no player)

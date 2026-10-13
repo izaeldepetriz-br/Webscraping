@@ -658,6 +658,8 @@ def _comando(ffmpeg: str, pedido: Pedido, saida: Path, formato: str, info_destin
         comando += ["-map", mapa]
     # codecs: a imagem é copiada (na amostra, refeita leve); o áudio novo copiado ou refeito
     if trecho:
+        if info_destino.videos:                       # até 720p: fica pronta mais rápido (para ver a boca, basta)
+            comando += ["-vf", "scale=-2:'min(720,ih)'"]
         comando += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-c:a", "aac", "-b:a", "192k"]
         primeiro_novo = 0
     else:
@@ -780,11 +782,12 @@ def ondas(ffmpeg: str, pedido: Pedido, faixa_destino: int, inicio: float, duraca
     ajustada=False: a faixa nova crua (sem o ajuste: as batidas ficam desencontradas)."""
     import numpy as np
     aj = pedido.ajuste if ajustada else Ajuste()
-    por_quadro = max(1, int(TAXA / pontos_por_segundo))
-    destino = nivel(som(ffmpeg, pedido.destino, faixa_destino, inicio, duracao), por_quadro)
-    taxa_origem = max(1000, int(round(TAXA * aj.fator)))
-    inicio_origem = (inicio - aj.atraso) / (taxa_origem / TAXA)
-    nova = nivel(som(ffmpeg, pedido.origem, pedido.audios[0].ordem, inicio_origem, duracao * TAXA / taxa_origem,
+    taxa = TAXA if duracao <= 300 else 1000          # o filme inteiro: menos amostras (cabe na memória e é rápido)
+    por_quadro = max(1, int(taxa / pontos_por_segundo))
+    destino = nivel(som(ffmpeg, pedido.destino, faixa_destino, inicio, duracao, taxa), por_quadro)
+    taxa_origem = max(100, int(round(taxa * aj.fator)))
+    inicio_origem = (inicio - aj.atraso) / (taxa_origem / taxa)
+    nova = nivel(som(ffmpeg, pedido.origem, pedido.audios[0].ordem, inicio_origem, duracao * taxa / taxa_origem,
                      taxa_origem), por_quadro)
     if aj.ganho_db:
         nova = nova * (10 ** (aj.ganho_db / 20))

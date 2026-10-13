@@ -4399,7 +4399,7 @@ def test_aba_avulsos_olhar_adicionar_e_processar(app, tmp_path, monkeypatch):
     from videoscraper import automacao
     monkeypatch.setattr(automacao, "videos_para_dublar", app_moderna.videos_para_dublar)
     assert app.seletor_aba.cget("values") == ["Vídeos", "Jellyfin", "Jellyfin TV", "Jellyfin Espelhos", "Avulsos",
-                                              app.ABA_CONFIG]
+                                              "🎧 Áudio", app.ABA_CONFIG]
     assert not hasattr(app, "bt_avulsos")                          # saiu da barra da aba Jellyfin
     caixa = tmp_path / "Para Dublar"
     caixa.mkdir()
@@ -5198,3 +5198,246 @@ def test_gastos_mostra_as_cotas_e_guarda_plano_e_flex(app, tmp_path):
     assert voz_gemini._flex["ligado"] is True and gastos.atual().plano_gemini == "pago"
     assert "Claude" in app.item_saude_gastos()[0] and app.item_saude_gastos()[1] is False
     voz_gemini.usar_flex(False)
+
+
+# ------------------------------------------------------------------ aba 🎧 Áudio (trocar o áudio entre versões)
+class _PlayerFalso:
+    """O VLC "de mentira": guarda o que a aba pediu (tocar, pausar, trocar a faixa de áudio)."""
+
+    def __init__(self):
+        self.chamadas, self.tocando, self.faixa, self.janela = [], False, None, None
+
+    def set_media(self, media):
+        self.media = media
+
+    def set_hwnd(self, janela):
+        self.janela = janela
+
+    set_xwindow = set_nsobject = set_hwnd
+
+    def play(self):
+        self.tocando = True
+        self.chamadas.append("play")
+
+    def pause(self):
+        self.tocando = not self.tocando
+        self.chamadas.append("pause")
+
+    def stop(self):
+        self.tocando = False
+        self.chamadas.append("stop")
+
+    def release(self):
+        self.chamadas.append("release")
+
+    def is_playing(self):
+        return self.tocando
+
+    def get_time(self):
+        return 12000
+
+    def get_length(self):
+        return 30000
+
+    def get_state(self):
+        return "State.Playing"
+
+    def set_time(self, ms):
+        self.chamadas.append(("set_time", ms))
+
+    def audio_get_track_description(self):
+        return [(-1, b"Disable"), (1, b"Track 1"), (2, b"Track 2")]
+
+    def audio_set_track(self, faixa):
+        self.faixa = faixa
+
+
+class _VlcFalso:
+    def __init__(self):
+        self.players = []
+
+    def media_player_new(self):
+        self.players.append(_PlayerFalso())
+        return self.players[-1]
+
+    def media_new(self, caminho):
+        return caminho
+
+
+def test_aba_audio_textos_do_ajuste():
+    from videoscraper.painel_audio import ids_das_faixas, numero_do_texto, segundos_do_texto, texto_segundos
+    assert numero_do_texto("−4,30") == -4.3 and numero_do_texto("+5,8 dB") == 5.8 and numero_do_texto("x") is None
+    assert segundos_do_texto("58:10") == 3490 and segundos_do_texto("1:02:03") == 3723
+    assert segundos_do_texto("auto") is None and segundos_do_texto("") is None and segundos_do_texto("1:2:3:4") is None
+    assert texto_segundos(-4.3) == "−4,30" and texto_segundos(1.5) == "+1,50" and texto_segundos(0.001) == "0,00"
+    assert ids_das_faixas([(-1, b"Disable"), (3, b"a"), (5, b"b")]) == [3, 5] and ids_das_faixas(None) == []
+
+
+def _esperar_ondas(app, painel, limite=30):
+    fim = time.time() + limite
+    while painel._ondas is None and time.time() < fim:
+        app.update()
+        time.sleep(0.05)
+    for _ in range(5):
+        app.update()
+    assert painel._ondas is not None, "as ondas não chegaram"
+
+
+def test_aba_audio_ler_conferir_ver_e_inserir(app, tmp_path, monkeypatch):
+    """A aba inteira: origem (faixas e legendas marcáveis, idioma descoberto/corrigido), destino ("Já tem"),
+    conferir o encaixe (versão europeia com atraso, volume mais baixo), as ondas (arrastar = atraso manual),
+    o vídeo de 30 s tocando na aba (troca Faixa nova/Original), Amostras feitas, inserir numa cópia e dentro do
+    destino e o histórico (Trocas feitas)."""
+    from tests.test_troca_audio import FFMPEG, _par
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    from videoscraper import audio_moderna, automacao
+    from videoscraper.gui_moderna import JanelaTestes
+    from videoscraper.painel_audio import JanelaTrocas
+    origem, destino = _par(tmp_path, atraso=-4.3, fator=25 / 23.976, legenda=True, volume_origem=0.4, duracao=90)
+    monkeypatch.setattr(app, "_detectar_idiomas",       # o Whisper "ouve" a faixa sem idioma: espanhol
+                        lambda ffmpeg, info, faixas, o: [setattr(f, "idioma", "spa") or setattr(f, "detectado", True)
+                                                         for f in faixas])
+    abertos = []
+    monkeypatch.setattr(app, "abrir_video", lambda caminho: abertos.append(caminho))
+    vlc = _VlcFalso()
+    monkeypatch.setattr(audio_moderna, "_VLC", {"instancia": vlc})
+
+    app.mostrar_aba("🎧 Áudio")
+    assert app.lb_titulo.cget("text") == "Trocar o áudio entre versões de um filme"
+    p = app.painel_audio
+    assert p is not None and app.seletor_aba.get() == "🎧 Áudio"
+    assert p.bt_conferir.cget("state") == "disabled" and p.bt_inserir.cget("state") == "disabled"
+    assert p.bt_ouvir.cget("text") == "🎬 Ver 30 s"
+
+    p.definir_caminho("origem", str(origem))
+    app.audio_ler("origem")
+    esperar(app)
+    t = p.tabela_audios
+    assert t.item("a0", "values")[:3] == ("☑ 1", "Português (por)", "AC3")
+    assert t.item("a1", "values")[1] == "Espanhol (detectado)" and "Whisper" in t.item("a1", "values")[5]
+    assert p.sel_audios.marcados() == ["a0"]                         # a em português já vem marcada
+    assert p.tabela_legendas.item("s0", "values")[1:4] == ("Português (por)", "texto (SRT)", "sim")
+    assert p.sel_legendas.marcados() == ["s0"]                       # a forçada de texto também
+    assert p.bt_conferir.cget("state") == "disabled"                 # falta o destino
+    p.definir_idioma(p.info["origem"].audios[1], "ita")              # duplo clique no idioma: corrige
+    assert t.item("a1", "values")[1] == "Italiano (ita)"
+    p.definir_idioma(p.info["origem"].audios[1], "spa")
+
+    p.definir_caminho("destino", str(destino))
+    app.audio_ler("destino")
+    esperar(app)
+    assert "Já tem: áudio Inglês" in p.lb_ja_tem.cget("text") and p.var_comparar.get().startswith("1. Inglês")
+    assert p.bt_conferir.cget("state") == "normal" and p.bt_inserir.cget("text") == "Inserir 1 faixa"
+
+    p.bt_conferir.invoke()
+    esperar(app)
+    e = p.encaixe
+    assert e is not None and e.situacao == "ajuste" and not e.manual
+    assert p.var_atraso.get() == "−4,30" and "25 → 23,976" in p.lb_achou.cget("text")
+    assert "Encaixa com o ajuste automático" in p.lb_res_titulo.cget("text")
+    assert "velocidade 25 → 23,976" in p.lb_res_detalhe.cget("text")
+    assert len(p.quadro_pontos.winfo_children()) == 12                # 3 títulos + 3 pontos × 3 colunas
+    assert p.var_volume.get() == "Igualar ao áudio original do destino"        # a origem está ~8 dB mais baixa
+    assert p.ganho() > 5 and "mais baixa" in p.lb_medido.cget("text")
+    assert p.var_ver.get().startswith("30 s em ")                    # as ondas: o trecho do meio
+    _esperar_ondas(app, p)
+    assert p.tela.find_withtag("nova") and p.tela.find_withtag("verde")
+    p.mudar_zoom(1)
+    assert p._zoom == 1 and p.tela.find_withtag("destino")
+
+    p.arrastar_atraso(0.5)                                           # arrastou a onda de baixo: ajuste manual
+    assert p.var_modo.get() == "Manual" and p.var_atraso.get() == "−3,80" and not p.encaixe_valido
+    assert "mudou depois da conferência" in p.lb_res_aviso.cget("text")
+    p.voltar_ao_automatico()
+    assert p.var_modo.get() == "Automático" and p.var_atraso.get() == "−4,30" and p.encaixe_valido
+
+    p.var_inicio.set("0:40")
+    p.bt_ouvir.invoke()                                              # 🎬 Ver 30 s: toca dentro da aba
+    esperar(app)
+    for _ in range(5):
+        app.update()
+    teste = automacao.testes_feitos()[0]
+    assert teste["aba"] == "audio" and teste["trecho"] == [40.0, 70.0] and "atraso −4,30 s" in teste["detalhe"]
+    assert Path(teste["amostra"]).is_file() and abertos == []        # não abriu o player de fora
+    player = vlc.players[-1]
+    assert player.media == teste["amostra"] and player.tocando and player.janela == p.previa.tela.winfo_id()
+    p.previa.seg_ouvir.set("Original")
+    p.previa.ouvir("Original")                                       # o áudio original, no mesmo ponto
+    assert player.faixa == 2
+    p.previa.ouvir("Faixa nova")
+    assert player.faixa == 1
+    p.previa.alternar()
+    assert not player.tocando                                        # ⏸
+    p.previa.abrir_no_player()
+    assert abertos == [teste["amostra"]]
+
+    p.bt_amostras.invoke()                                           # 📂 Amostras feitas: só as da aba Áudio
+    janela = next(w for w in app.winfo_children() if isinstance(w, JanelaTestes))
+    assert janela.seletor.filtros["aba"] == {"Áudio"} and janela.tabela.item("0", "values")[6].startswith("Português")
+    assert janela.bt_ajustar.cget("state") == "disabled"             # a amostra da aba Áudio não tem falas
+    janela.bt_apagar.invoke()                                        # apagar: o vídeo da aba solta o arquivo antes
+    assert "release" in player.chamadas and not Path(teste["amostra"]).exists()
+    janela.destroy()
+
+    monkeypatch.setattr(audio_moderna, "_VLC", {"instancia": None})  # sem o VLC no PC: abre no player
+    p.bt_ouvir.invoke()
+    esperar(app)
+    for _ in range(5):
+        app.update()
+    assert len(abertos) == 2 and "instale o VLC" in p.previa.lb_tela.cget("text")
+
+    p.var_onde.set(p.menu_onde.cget("values")[1])                    # numa cópia à parte
+    p.bt_inserir.invoke()
+    esperar(app)
+    copia = destino.with_name("Filme 1080p - com áudio Português.mkv")
+    assert copia.is_file() and any("A cópia com a faixa nova" in c[2] for c in app.caixas)
+    from jellyfin_tools import troca_audio as ta
+    feita = ta.ler_arquivo(FFMPEG, copia)
+    assert [a.idioma for a in feita.audios] == ["eng", "por"] and "25 → 23,976" in feita.audios[1].titulo
+    assert [(s.idioma, s.forcada) for s in feita.legendas] == [("por", True)]
+
+    p.var_onde.set(p.menu_onde.cget("values")[0])                    # dentro do próprio destino
+    p.bt_inserir.invoke()
+    esperar(app)
+    for _ in range(30):                                              # lê o destino de novo, sozinho
+        app.update()
+        time.sleep(0.05)
+    esperar(app)
+    assert "Português" in p.lb_ja_tem.cget("text") and len(p.info["destino"].audios) == 2
+
+    p.bt_trocas.invoke()                                             # 📜 Trocas feitas
+    trocas = next(w for w in app.winfo_children() if isinstance(w, JanelaTrocas))
+    assert len(trocas.seletor.ordem) == 2
+    assert trocas.tabela.item("1", "values")[2:] == ("Filme 1080p.mkv", "Português",
+                                                      "atraso −4,30 s · 25 → 23,976 · " + trocas.tabela.item(
+                                                          "1", "values")[4].split(" · ")[-1], "cópia à parte")
+    assert trocas.tabela.item("0", "values")[5] == "no próprio arquivo"
+    trocas.bt_abrir.invoke()
+    assert abertos[-1] == str(destino)
+    trocas.seletor.marcar_todos()
+    trocas.bt_tirar.invoke()
+    assert ta.trocas_feitas(app.arquivo_trocas) == [] and copia.exists()    # tirar do histórico não apaga nada
+    trocas.destroy()
+
+
+def test_aba_audio_versoes_diferentes_desligam_inserir(app, tmp_path, monkeypatch):
+    from tests.test_troca_audio import FFMPEG, _par
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    origem, destino = _par(tmp_path, atraso=2.0, corte=(40.0, 6.0))
+    app.mostrar_aba("🎧 Áudio")
+    p = app.painel_audio
+    for lado, caminho in (("origem", origem), ("destino", destino)):
+        p.definir_caminho(lado, str(caminho))
+        app.audio_ler(lado)
+        esperar(app)
+    p.sel_audios.marcar(["a0"], somar=False)
+    p.bt_conferir.invoke()
+    esperar(app)
+    assert p.encaixe.situacao == "cortes" and "Versões diferentes" in p.lb_res_titulo.cget("text")
+    assert p.bt_inserir.cget("state") == "disabled" and "fica desligado" in p.lb_res_aviso.cget("text")
+    assert p.bt_extrair.cget("state") == "normal"
+    app.audio_inserir()                                              # mesmo chamando direto: não insere
+    assert any("versões são diferentes" in c[2] for c in app.caixas)
+    assert len(app.painel_audio.info["destino"].audios) == 1

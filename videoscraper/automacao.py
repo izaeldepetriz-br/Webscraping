@@ -1681,11 +1681,12 @@ def _legenda_do_teste(legenda: Path, amostra: Path) -> Path:
 
 def registrar_teste(video: str | Path, amostra: str | Path, trecho: tuple[float, float], legenda=None,
                     vozes: dict | None = None, custo: float | None = None, legendar: bool = False,
-                    custos: dict | None = None, aba: str = "jellyfin") -> None:
+                    custos: dict | None = None, aba: str = "jellyfin", detalhe: str = "") -> None:
     """Guarda o teste na lista "Testes feitos" (o vídeo de teste fica em 'testes'). Cada teste fica guardado, até
     vários do mesmo vídeo (antes, o novo apagava o anterior), até você apagar. aba: 'jellyfin', 'avulsos' ou
     'audio' (de onde veio; a janela abre mostrando os da aba). legenda e vozes: para "Ajustar falas" refazer só uma
-    fala do teste; custo (US$): para prever o vídeo inteiro."""
+    fala do teste; custo (US$): para prever o vídeo inteiro; detalhe: o que o teste tem (na aba Áudio, o ajuste:
+    'Português · atraso −4,30 s · 25 → 23,976 · +5,8 dB')."""
     lista = [t for t in _ler_testes() if t.get("amostra") != str(amostra)]
     registro = {"video": str(video), "amostra": str(amostra), "trecho": [round(trecho[0], 1), round(trecho[1], 1)],
                 "feito": datetime.now().isoformat(timespec="seconds"), "minutos": round((trecho[1] - trecho[0]) / 60, 2),
@@ -1698,6 +1699,8 @@ def registrar_teste(video: str | Path, amostra: str | Path, trecho: tuple[float,
         registro["custo"] = round(max(0.0, custo), 4)
     if custos:
         registro["custos"] = {api: [round(usd, 5), bool(gratis)] for api, (usd, gratis) in custos.items()}
+    if detalhe:
+        registro["detalhe"] = detalhe
     lista.insert(0, registro)
     _gravar_testes(lista)
 

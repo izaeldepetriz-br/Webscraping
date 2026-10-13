@@ -2454,8 +2454,9 @@ class JanelaTestes(ctk.CTkToplevel):
     itens(): [{video, amostra, trecho, feito, custo, aba}]; abrir/pasta(item); apagar(itens, todos) -> True se
     apagou; ajustar(item): "Ajustar falas" (refazer só uma fala); tamanho(itens) -> bytes (opcional)."""
     ABAS = {"jellyfin": "Jellyfin", "avulsos": "Avulsos", "audio": "Áudio"}
-    COLUNAS = (("n", "#", 64, False), ("aba", "Aba", 96, False), ("video", "Vídeo", 330, True),
-               ("trecho", "Trecho", 120, False), ("custo", "Custou", 100, False), ("feito", "Feito em", 150, False))
+    COLUNAS = (("n", "#", 64, False), ("aba", "Aba", 96, False), ("video", "Vídeo", 290, True),
+               ("trecho", "Trecho", 120, False), ("custo", "Custou", 90, False), ("feito", "Feito em", 140, False),
+               ("detalhe", "Detalhe", 250, False))
     FILTROS = {"aba": "Aba", "video": "Vídeo", "custo": "Custou", "feito": "Feito em"}
 
     def __init__(self, master, itens, abrir, pasta, apagar, ajustar=None, aba: str | None = None, tamanho=None):
@@ -2465,7 +2466,7 @@ class JanelaTestes(ctk.CTkToplevel):
         self._itens: list[dict] = []
         self._dinheiro = getattr(master, "_dinheiro", lambda d: f"US$ {d:.2f}")
         self.title("Testes feitos")
-        self.geometry("980x500")
+        self.geometry("1120x500")
         self.minsize(720, 360)
         self.transient(master)
         ctk.CTkLabel(self, text="Testes feitos", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
@@ -2539,7 +2540,8 @@ class JanelaTestes(ctk.CTkToplevel):
                 self.ABAS.get(item.get("aba", ""), "—"), Path(item["video"]).name,
                 f"{self._minuto(inicio)} a {self._minuto(fim)}",
                 "-" if custo is None else ("grátis" if not custo else self._dinheiro(float(custo))),
-                self._quando(item.get("feito", ""))), ("par" if i % 2 == 0 else "impar",)))
+                self._quando(item.get("feito", "")), item.get("detalhe") or "—"),
+                ("par" if i % 2 == 0 else "impar",)))
         self.seletor.preencher(linhas)
         if antes is None:
             marcar = self.seletor.visiveis()[:1]
@@ -2554,6 +2556,8 @@ class JanelaTestes(ctk.CTkToplevel):
         um = "normal" if marcados else "disabled"
         for b in (self.bt_abrir, self.bt_ajustar, self.bt_pasta):
             b.configure(state=um)
+        if (item := self.escolhido()) is not None and item.get("aba") == "audio":
+            self.bt_ajustar.configure(state="disabled")    # a amostra da aba Áudio não tem falas geradas
         self.bt_apagar.configure(state=um, text=f"✕  Apagar marcados ({len(marcados)})" if marcados
                                  else "✕  Apagar marcados")
         self.bt_apagar_todos.configure(state="normal" if visiveis else "disabled",
@@ -2858,15 +2862,17 @@ class JanelaModerna(ctk.CTk):
         self.aba_tv = ctk.CTkFrame(self, fg_color="transparent")         # "Jellyfin TV" (a TV ao vivo)
         self.aba_espelhos = ctk.CTkFrame(self, fg_color="transparent")   # "Jellyfin Espelhos" (os .strm)
         self.aba_avulsos = ctk.CTkFrame(self, fg_color="transparent")
+        self.aba_audio = ctk.CTkFrame(self, fg_color="transparent")      # "🎧 Áudio" (trocar o áudio entre versões)
         self.aba_config = ctk.CTkFrame(self, fg_color="transparent")
         for aba in (self.aba_videos, self.aba_jellyfin, self.aba_tv, self.aba_espelhos, self.aba_avulsos,
-                    self.aba_config):
+                    self.aba_audio, self.aba_config):
             aba.grid(row=1, column=0, sticky="nsew")
             aba.grid_columnconfigure(0, weight=1)
         self.aba_videos.grid_rowconfigure(2, weight=1)
         self.aba_jellyfin.grid_rowconfigure(3, weight=1)
         self.aba_tv.grid_rowconfigure(0, weight=1)        # o painel dos canais entra na 1ª vez que a aba abre
         self.aba_espelhos.grid_rowconfigure(0, weight=1)  # o dos espelhos também
+        self.aba_audio.grid_rowconfigure(0, weight=1)     # e o da troca de áudio
         # ⚙ Configurações primeiro: as outras abas põem as opções delas nas categorias de lá
         self._montar_aba_config(self.aba_config)
         self._montar_endereco(self.aba_videos)
@@ -2923,6 +2929,7 @@ class JanelaModerna(ctk.CTk):
         "Jellyfin Espelhos": "1) Clique em Conferir espelhos    2) Veja a Situação    3) Remova os quebrados",
         "Avulsos": "1) Escolha a caixa de entrada ou adicione vídeos    2) Clique em Olhar    3) Confira e clique em "
                    "Processar",
+        "🎧 Áudio": "1) Escolha a origem e a faixa    2) Escolha o destino    3) Confira o encaixe e clique em Inserir",
         "⚙ Configurações": "Tudo o que muda o jeito do programa trabalhar fica aqui. Vale na hora e fica salvo.",
     }
     TITULOS = {"Vídeos": "Extrair e baixar vídeos públicos",
@@ -2930,6 +2937,7 @@ class JanelaModerna(ctk.CTk):
                "Jellyfin TV": "TV ao vivo no Jellyfin",
                "Jellyfin Espelhos": "Espelhos (.strm) no Jellyfin",
                "Avulsos": "Legendar e dublar vídeos avulsos",
+               "🎧 Áudio": "Trocar o áudio entre versões de um filme",
                "⚙ Configurações": "Configurações"}
 
     def _montar_cabecalho(self) -> None:
@@ -2956,7 +2964,8 @@ class JanelaModerna(ctk.CTk):
         self.lb_saude = ctk.CTkLabel(topo, text="", font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO_SUAVE,
                                      anchor="w", justify="left", wraplength=1100)   # muita coisa: quebra a linha
         self.seletor_aba = ctk.CTkSegmentedButton(
-            topo, values=["Vídeos", "Jellyfin", "Jellyfin TV", "Jellyfin Espelhos", "Avulsos", "⚙ Configurações"],
+            topo, values=["Vídeos", "Jellyfin", "Jellyfin TV", "Jellyfin Espelhos", "Avulsos", "🎧 Áudio",
+                          "⚙ Configurações"],
             command=self.mostrar_aba, height=38,
             corner_radius=Tema.RAIO_CONTROLE, font=self.f_botao, fg_color=Tema.CARTAO,
             selected_color=Tema.PRIMARIA, selected_hover_color=Tema.PRIMARIA_HOVER,
@@ -2975,13 +2984,45 @@ class JanelaModerna(ctk.CTk):
             if largura > 300 and abs(largura - int(self.lb_saude.cget("wraplength"))) > 20:
                 self.lb_saude.configure(wraplength=largura)
         topo.bind("<Configure>", quebrar_saude, add="+")
+        self._topo = topo
+        topo.bind("<Configure>", self._caber_titulo, add="+")
+
+    TAMANHOS_TITULO = (26, 24, 22, 20, 18)
+    TAMANHOS_SUBTITULO = (13, 12, 11)
+
+    def _caber_titulo(self, _evento=None) -> None:
+        """Com 7 abas, um título comprido ("Trocar o áudio entre versões de um filme") não cabia ao lado delas numa
+        tela de notebook e era cortado: a letra diminui (até 18) e o subtítulo quebra a linha no espaço que sobra."""
+        from tkinter import font as tkfont
+        try:
+            escala = self._pontos()
+            livre = (self._topo.winfo_width() - self.seletor_aba.winfo_width() - self.bt_atualizacoes.winfo_width()
+                     - round(96 * escala))                # o ícone e os espaços entre as partes
+        except tk.TclError:
+            return
+        if livre < 120:
+            return                                     # a janela ainda não foi desenhada
+        titulo, subtitulo = self.lb_titulo.cget("text"), self.lb_subtitulo.cget("text")
+        tamanho = next((t for t in self.TAMANHOS_TITULO if tkfont.Font(
+            family=Tema.FAMILIA, size=-round(t * escala), weight="bold").measure(titulo) <= livre),
+                       self.TAMANHOS_TITULO[-1])
+        if self.f_titulo.cget("size") != tamanho:
+            self.f_titulo.configure(size=tamanho)
+        tamanho = next((t for t in self.TAMANHOS_SUBTITULO if tkfont.Font(
+            family=Tema.FAMILIA, size=-round(t * escala)).measure(subtitulo) <= livre), self.TAMANHOS_SUBTITULO[-1])
+        if self.f_sub.cget("size") != tamanho:
+            self.f_sub.configure(size=tamanho)
+        quebra = max(200, round(livre / escala))
+        if abs(int(self.lb_subtitulo.cget("wraplength") or 0) - quebra) > 10:
+            self.lb_subtitulo.configure(wraplength=quebra, justify="left")
 
     ABAS_COM_SAUDE = ("Jellyfin", "Jellyfin TV", "Jellyfin Espelhos", "⚙ Configurações")
 
     def mostrar_aba(self, nome: str) -> None:
-        """'Vídeos', 'Jellyfin', 'Jellyfin TV', 'Jellyfin Espelhos', 'Avulsos' ou '⚙ Configurações'."""
+        """'Vídeos', 'Jellyfin', 'Jellyfin TV', 'Jellyfin Espelhos', 'Avulsos', '🎧 Áudio' ou '⚙ Configurações'."""
         abas = {"Vídeos": self.aba_videos, "Jellyfin": self.aba_jellyfin, "Jellyfin TV": self.aba_tv,
-                "Jellyfin Espelhos": self.aba_espelhos, "Avulsos": self.aba_avulsos, self.ABA_CONFIG: self.aba_config}
+                "Jellyfin Espelhos": self.aba_espelhos, "Avulsos": self.aba_avulsos, "🎧 Áudio": self.aba_audio,
+                self.ABA_CONFIG: self.aba_config}
         saindo_da_config = self.seletor_aba.get() == self.ABA_CONFIG and nome != self.ABA_CONFIG
         for outro, aba in abas.items():
             if outro != nome:
@@ -2990,6 +3031,7 @@ class JanelaModerna(ctk.CTk):
         self.seletor_aba.set(nome)
         self.lb_titulo.configure(text=self.TITULOS[nome])
         self.lb_subtitulo.configure(text=self.SUBTITULOS[nome])
+        self.after_idle(self._caber_titulo)              # o título novo pode ser mais comprido
         if saindo_da_config and hasattr(self, "_salvar_config"):
             self._salvar_config()                       # o que mudou nas configurações já fica guardado
         if nome == "Jellyfin":
@@ -3000,6 +3042,10 @@ class JanelaModerna(ctk.CTk):
             self.ao_abrir_aba_tv()
         if nome == "Jellyfin Espelhos":
             self.ao_abrir_aba_espelhos()
+        if nome == "🎧 Áudio":
+            self.ao_abrir_aba_audio()
+        elif getattr(self, "painel_audio", None) is not None and self.painel_audio.winfo_exists():
+            self.painel_audio.previa.pausar()            # saiu da aba: o vídeo não continua tocando escondido
         if nome in self.ABAS_COM_SAUDE and self.lb_saude.cget("text"):
             self._mostrar_saude()
         else:
@@ -5674,6 +5720,9 @@ class JanelaModerna(ctk.CTk):
         if painel is not None and painel.winfo_exists():
             for b in painel.botoes_de_trabalho:
                 b.configure(state=estado)
+        painel = getattr(self, "painel_audio", None)           # a aba 🎧 Áudio (montada na 1ª vez)
+        if painel is not None and painel.winfo_exists():
+            painel.definir_ocupado(ocupado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
         for parar in (self.bt_parar, self.bt_parar_jf, self.bt_parar_av):
             parar.configure(state="normal" if ocupado else "disabled",
@@ -5936,6 +5985,9 @@ class JanelaModerna(ctk.CTk):
         self.mostrar_aba("Jellyfin TV")
 
     def ao_abrir_aba_tv(self) -> None:                  # o app faz: monta o painel dos canais e lê a lista
+        pass
+
+    def ao_abrir_aba_audio(self) -> None:               # o app faz: monta o painel da troca de áudio
         pass
 
     def ao_verificar_atualizacoes(self) -> None:

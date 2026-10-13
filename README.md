@@ -240,6 +240,45 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.19.0
+
+Esta versão traz também **todas as novidades da v2.18.12** (logo abaixo: Testes feitos guardados e com seleção,
+Roteiro na aba Jellyfin, seleção nos Avulsos, 🤖 Automático, as abas **Jellyfin TV** e **Jellyfin Espelhos** e as
+caixas ☐/☑), que não chegaram a sair sozinhas.
+
+- **Aba nova "🎧 Áudio": trocar o áudio entre versões de um filme** (que são suas: ex.: o seu DVD dublado e o seu
+  Blu-ray). Tudo no PC, sem custo, sem refazer a imagem:
+  - **1. Origem**: o arquivo que tem o áudio que você quer ("Escolher..."). Aparecem as faixas de áudio (☐ #,
+    Idioma, Formato, Canais, Duração, Título, com ☐/☑ e filtro por coluna) e as **legendas da origem** (marque as que
+    vêm junto: a forçada de texto já vem marcada, e os horários dela são corrigidos com o mesmo ajuste). Faixa sem
+    idioma marcado: o **Whisper ouve 30 s** e mostra "Espanhol (detectado)"; duplo clique no idioma corrige.
+  - **2. Destino**: o arquivo que vai RECEBER a faixa. "Já tem: áudio Inglês (DTS 5.1) · legendas ... · duração";
+    "Comparar com" (qual áudio do destino), **Onde**: dentro do próprio arquivo (a cópia nova é conferida antes de
+    tomar o lugar do original) ou numa cópia à parte ("Nome - com áudio Português.mkv"); "A 1ª marcada como
+    principal".
+  - **3. Encaixe**: **"Conferir encaixe"** compara a música e os efeitos (iguais nos dois idiomas) no começo, no
+    meio e no fim do filme e acha sozinho o **atraso** e a **velocidade** (ex.: versão europeia, 25 → 23,976). O
+    resultado mostra os 3 pontos ("✓ boca e voz juntas", com a diferença que sobrou) ou avisa **"Versões
+    diferentes"** (cena a mais ou a menos: aí "Inserir" fica desligado). **Ajuste manual**: atraso com −1, −0,1,
+    +0,1, +1 (ou digitando), a velocidade (Igual, 25 → 23,976, 23,976 → 25, 24 → 23,976, Esticar), "Conferir este
+    ajuste" e "Voltar ao automático".
+  - **Volume**: o Maestro mede as duas faixas (LUFS) e, com 2 dB ou mais de diferença, sugere **"Igualar ao áudio
+    original do destino"** (os picos são protegidos); dá para manter ou ajustar à mão (±1 dB).
+  - **Comparar as ondas**: o áudio do destino em cima e a faixa nova embaixo, "Antes"/"Depois do ajuste", o filme
+    inteiro ou 30 s em cada ponto, com zoom; as **linhas verdes** mostram onde as batidas coincidem. **Arrastar a
+    onda de baixo ajusta o atraso** à mão.
+  - **🎬 Ver 30 s — o vídeo na própria aba**: o trecho do filme toca no quadro **"Ver o encaixe"** (ao lado do
+    resultado), para ver se **a boca bate com a voz**. "Ouvir: Faixa nova | Original" troca o áudio no mesmo ponto,
+    para comparar; "⛶ Abrir no player" abre em tela cheia. Usa o **VLC** instalado no PC (grátis, videolan.org); sem
+    ele, o trecho abre no player padrão. "a partir de" escolhe o ponto (ex.: 58:10; "auto" = o meio do filme).
+  - **"Inserir N faixas"** (a faixa é copiada como está quando só o atraso muda; com velocidade ou volume, só o áudio
+    é refeito em AC3, na mesma qualidade) ou **"Só extrair (.mka)"**. O ajuste fica registrado no **título da
+    faixa** ("Português · de DVD dublado · atraso −4,30 s · 25 → 23,976 · +5,8 dB"), em **📂 Amostras feitas** (a
+    janela "Testes feitos", agora com a coluna **Detalhe**, abre mostrando as da aba Áudio) e em **📜 Trocas
+    feitas** (o histórico: abrir o arquivo, abrir a pasta, tirar do histórico sem apagar nada).
+- O título do topo diminui a letra quando não cabe ao lado das 7 abas (em vez de ser cortado), e o subtítulo quebra
+  a linha.
+
 ### Novidades da v2.18.12
 
 - **Testes feitos que ficam guardados**: cada teste ganha a data e a hora no nome

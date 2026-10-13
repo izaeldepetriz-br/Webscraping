@@ -75,6 +75,7 @@ from . import agendador, atualizacao, automacao, instalacao, bandeja, inicializa
 from .gui_moderna import (DialogoCompletar, PainelEspelhos, JanelaModerna, JanelaNaoIdentificados, JanelaPrevias,
                           OpcoesInterface, Tema)
 from .tv_moderna import TVAoVivo
+from .audio_moderna import TrocaDeAudio
 from .navegador import PERFIL_PADRAO, PlaywrightAusente
 from .rede import pode_ignorar_robots, site_de
 from .servico import MENSAGEM_ROBOTS, Trabalho, fazer_login
@@ -180,7 +181,7 @@ STATUS_LEGENDA = {"baixada": ("baixada", "ok"), "ja_existe": ("já existia", Non
                   "sem_video": ("sem vídeo", None)}
 
 
-class AppModerna(TVAoVivo, JanelaModerna):
+class AppModerna(TVAoVivo, TrocaDeAudio, JanelaModerna):
     def __init__(self):
         super().__init__(pasta_padrao=PASTA_PADRAO)
         self._abandonadas: set[int] = set()          # tarefas que não obedeceram ao Parar a tempo
@@ -220,6 +221,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._versao_agendada = None
         self._bandeja = None                    # ícone perto do relógio (quando escondida)
         self._iniciar_tv_ao_vivo()
+        self._iniciar_troca_audio()
         self._saindo = False
         self._espelhos_salvos = {}
         self._vigia_conferindo = False
@@ -781,6 +783,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.definir_saude(self.itens_saude())
         elif tipo == "tocar":
             self._tocar(dado)
+        elif tipo == "audio":                          # aba 🎧 Áudio: faixas lidas, encaixe, ondas, amostra, troca
+            self._mensagem_audio(*dado)
         elif tipo == "abrir_amostra":
             self.after(50, lambda d=dado: self._mostrar_amostra(*d))
         elif tipo == "gemini_estado":
@@ -2917,6 +2921,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         if not self.perguntar("Apagar testes" if len(testes) > 1 else "Apagar o teste",
                               f"{pergunta} Libera {espaco}.\n\nO vídeo original e as falas já geradas continuam."):
             return False
+        self._soltar_previa()                          # o vídeo da aba Áudio não pode estar aberto
         quantos = automacao.apagar_testes(testes)
         self._log.info("Testes feitos: %d apagado(s) (%s liberados)", quantos, espaco)
         return True
