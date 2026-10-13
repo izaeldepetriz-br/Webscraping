@@ -260,6 +260,10 @@ primeira falha (antes esperava o tempo limite em cada filme).
   agora anota onde eles estão, e nesses momentos o som original da pessoa volta para a trilha (não há o que traduzir
   num bocejo). Vale para qualquer vídeo; Configurações > Dublagem > "Manter os sons sem fala do original". Falas já
   ouvidas numa versão anterior: o Maestro pergunta só pelos sons (pedido curto), sem refazer as vozes.
+- **Link de cada chave embaixo do nome** (Configurações > Chaves de API): "Criar a chave (abre o site)" abre a página
+  certa de cada serviço (TMDB, OpenSubtitles, SubDL, Anthropic, Google AI Studio, Google Cloud); o do Jellyfin abre a
+  página das chaves no SEU servidor (o endereço preenchido em Configurações > Jellyfin). O botão solto "Criar a chave
+  do Gemini no AI Studio" virou o link embaixo do Gemini.
 
 ### Novidades da v2.18.8
 
@@ -585,8 +589,8 @@ primeira falha (antes esperava o tempo limite em cada filme).
   Claude reescreve..." (marcada; precisa da chave da Anthropic).
 - **Voz premium do Gemini (Google AI Studio)**: em "Motor da voz", escolha **Gemini** no lugar do Piper: voz bem
   mais natural, com entonação. Vozes prontas (masculinas e femininas); a partir da v2.13.0, também a sua voz clonada (com consentimento).
-  Pago por uso: a confirmação mostra uma estimativa. Botões **"Criar a chave no AI Studio"** e **"Testar chave do
-  Gemini"** (o teste não gera áudio). O painel de saúde mostra "Gemini (voz) ativa" quando ele está escolhido.
+  Pago por uso: a confirmação mostra uma estimativa. O link **"Criar a chave"** (embaixo do nome, em Configurações >
+  Chaves de API) e o botão **"Validar"** (o teste não gera áudio). O painel de saúde mostra "Gemini (voz) ativa" quando ele está escolhido.
 - **Gemini mais econômico e sem perder trabalho**: as falas vão em **blocos de até 30 por pedido** (um filme de
   ~1.200 falas faz ~40 pedidos, não 1.200), com uma pausa entre elas; o Maestro corta o áudio nas pausas e confere
   cada pedaço (se não bater, refaz só aquele bloco fala por fala). O progresso fica **guardado por filme**

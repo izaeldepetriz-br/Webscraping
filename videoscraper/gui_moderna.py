@@ -3650,6 +3650,15 @@ class JanelaModerna(ctk.CTk):
                              border_width=2 if valor == modo else 1)
 
     # ---- Chaves de API: todas num lugar, cada uma com "Validar" e a situação ao lado
+    # Onde se cria cada chave: o link embaixo do nome abre o site certo (o do Jellyfin é no SEU servidor)
+    SITES_DAS_CHAVES = {"tmdb": "https://www.themoviedb.org/settings/api",
+                        "os": "https://www.opensubtitles.com/consumers",
+                        "subdl": "https://subdl.com/panel/api",
+                        "claude": "https://console.anthropic.com/settings/keys",
+                        "gemini": "https://aistudio.google.com/apikey",
+                        "cloud": "https://console.cloud.google.com/apis/credentials",
+                        "jellyfin": "/web/#/dashboard/keys"}
+
     def _montar_config_chaves(self, lateral) -> None:
         self._rotulo(lateral, "Validar não gasta crédito: só confere se a chave funciona.").pack(anchor="w", padx=18,
                                                                                                pady=(0, 8))
@@ -3677,6 +3686,7 @@ class JanelaModerna(ctk.CTk):
                    "console.cloud.google.com > Credenciais", self.ao_testar_cloud_tts, "cloud"),
                   ("Jellyfin", "scan da biblioteca, TV ao vivo", self.var_jf_chave_jellyfin,
                    "Painel > Avançado > Chaves de API", self.ao_testar_jellyfin, "jellyfin"))
+        self.links_das_chaves: dict[str, ctk.CTkLabel] = {}
         for n, (nome, descricao, var, dica, comando, chave) in enumerate(linhas):
             nomes = ctk.CTkFrame(grade, fg_color="transparent")
             nomes.grid(row=n, column=0, sticky="w", pady=6)
@@ -3684,6 +3694,12 @@ class JanelaModerna(ctk.CTk):
             rotulo.pack(anchor="w")
             ctk.CTkLabel(nomes, text=descricao, font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_FRACO,
                          anchor="w").pack(anchor="w")
+            texto = "Abrir as chaves no seu Jellyfin ↗" if chave == "jellyfin" else "Criar a chave (abre o site) ↗"
+            link = ctk.CTkLabel(nomes, text=texto, font=ctk.CTkFont(Tema.FAMILIA, 11, underline=True),
+                                text_color=Tema.PRIMARIA, anchor="w", cursor="hand2")
+            link.pack(anchor="w")
+            link.bind("<Button-1>", lambda _e, c=chave: self.ao_abrir_site_da_chave(c))
+            self.links_das_chaves[chave] = link
             campo = self._entrada(grade, var, dica, show="•")
             campo.grid(row=n, column=1, sticky="ew", padx=12)
             botao = self._botao(grade, "Validar", comando, largura=110)
@@ -3705,9 +3721,6 @@ class JanelaModerna(ctk.CTk):
         self.bt_testar_gemini, self.lb_estado_gemini = self._botao_chave_gemini, self._estado_chave_gemini
         self.bt_testar_cloud, self.lb_estado_cloud = self._botao_chave_cloud, self._estado_chave_cloud
         self.bt_testar_jellyfin = self._botao_chave_jellyfin
-        self.bt_criar_chave_gemini = self._botao(lateral, "Criar a chave do Gemini no AI Studio (abre o site)",
-                                                 self.ao_criar_chave_gemini, "fantasma")
-        self.bt_criar_chave_gemini.pack(anchor="w", padx=18, pady=(6, 0))
         self._separador(lateral)
         self.var_jf_lembrar = tk.BooleanVar(value=False)
         self._checkbox(lateral, "Lembrar as chaves neste computador", self.var_jf_lembrar)
@@ -4958,6 +4971,9 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_criar_chave_gemini(self) -> None:
+        pass
+
+    def ao_abrir_site_da_chave(self, chave: str) -> None:
         pass
 
     def ao_simular_vigia(self) -> None:

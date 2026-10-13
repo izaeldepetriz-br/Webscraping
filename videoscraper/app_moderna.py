@@ -2573,8 +2573,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
         if automacao.usa_gemini(o):
             if not automacao.chave_gemini(o):
                 self.mostrar_mensagem("Dublar filmes", "A voz premium do Gemini precisa da chave do Google AI Studio: "
-                                      "clique em \"Criar a chave no AI Studio\", entre com sua conta Google, clique em "
-                                      "\"Get API key\" (ou \"Create API key\") e cole a chave no campo.\n\nSem chave, "
+                                      "em Configurações > Chaves de API, clique em \"Criar a chave\" embaixo do "
+                                      "Gemini, entre com sua conta Google, clique em \"Get API key\" (ou \"Create "
+                                      "API key\") e cole a chave no campo.\n\nSem chave, "
                                       "escolha o motor \"Piper (grátis, no PC)\".", "aviso")
                 return
             fala = sum(i.falas for i in itens) * 2.5               # ~2,5 s por fala, para a estimativa
@@ -3261,6 +3262,22 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
         self._rodar("Testando a chave da Anthropic...", tarefa)
 
+    def ao_abrir_site_da_chave(self, chave: str) -> None:
+        """O link embaixo do nome de cada chave (Configurações > Chaves de API): abre o site onde ela é criada. A do
+        Jellyfin fica no próprio servidor (Painel > Chaves de API), então usa o endereço preenchido no campo."""
+        if chave == "gemini":
+            self.ao_criar_chave_gemini()
+            return
+        site = self.SITES_DAS_CHAVES[chave]
+        if chave == "jellyfin":
+            servidor = self.var_jf_url.get().strip().rstrip("/")
+            if not servidor:
+                self.mostrar_mensagem("Chave do Jellyfin", "Preencha o endereço do Jellyfin (ex.: http://localhost:8096) "
+                                      "para abrir a página das chaves no seu servidor.", "aviso")
+                return
+            site = servidor + site
+        webbrowser.open(site)
+
     def ao_criar_chave_gemini(self) -> None:
         """Abre a página do Google AI Studio onde se cria a chave (entra com a conta Google)."""
         webbrowser.open("https://aistudio.google.com/apikey")
@@ -3273,8 +3290,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
         """Botão "Validar chave do Gemini": a chave funciona e o modelo de voz existe? Não gera áudio (sem custo)."""
         o = self.obter_opcoes_jellyfin()
         if not automacao.chave_gemini(o):
-            self.mostrar_mensagem("Gemini (voz premium)", "Cole a chave do Google AI Studio no campo acima (botão "
-                                  "\"Criar a chave no AI Studio\").", "aviso")
+            self.mostrar_mensagem("Gemini (voz premium)", "Cole a chave do Google AI Studio no campo acima (link "
+                                  "\"Criar a chave\", embaixo do nome).", "aviso")
             return
 
         def tarefa():
@@ -3303,7 +3320,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         o = self.obter_opcoes_jellyfin()
         if not automacao.chave_gemini(o):
             self.mostrar_mensagem("Clonar uma voz", "A clonagem usa o Gemini: cole a chave do Google AI Studio em "
-                                  "Configurações > Chaves de API (botão \"Criar a chave no AI Studio\").", "aviso")
+                                  "Configurações > Chaves de API (link \"Criar a chave\", embaixo do Gemini).", "aviso")
             return
         pasta = automacao.arquivo_vozes_clonadas().parent / "gravacoes"
         pasta.mkdir(parents=True, exist_ok=True)

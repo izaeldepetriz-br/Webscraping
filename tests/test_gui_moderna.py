@@ -3733,6 +3733,37 @@ def test_testar_chave_da_anthropic_e_painel_de_saude(app, monkeypatch):
     assert any(t.startswith("Whisper (baixa na 1ª vez) · Piper (baixa na 1ª vez)") for t, _ in app.itens_saude())
 
 
+def test_link_embaixo_de_cada_chave_abre_o_site_certo(app, monkeypatch):
+    """Configurações > Chaves de API: cada nome tem, embaixo, o link do site onde se cria a chave; o do Jellyfin abre
+    a página das chaves no servidor do campo (e pede o endereço se estiver vazio)."""
+    abertos = []
+    monkeypatch.setattr(app_moderna.webbrowser, "open", abertos.append)
+    assert set(app.links_das_chaves) == {"tmdb", "os", "subdl", "claude", "gemini", "cloud", "jellyfin"}
+    assert all(l.cget("text").endswith("↗") for l in app.links_das_chaves.values())
+    assert not hasattr(app, "bt_criar_chave_gemini")                  # o botão solto embaixo da lista saiu
+    for chave in ("tmdb", "os", "subdl", "claude", "cloud"):
+        app.ao_abrir_site_da_chave(chave)
+    assert abertos == ["https://www.themoviedb.org/settings/api", "https://www.opensubtitles.com/consumers",
+                       "https://subdl.com/panel/api", "https://console.anthropic.com/settings/keys",
+                       "https://console.cloud.google.com/apis/credentials"]
+    app.ao_abrir_site_da_chave("gemini")
+    assert abertos[-1] == "https://aistudio.google.com/apikey" and "Create API key" in app.caixas[-1][2]
+    app.var_jf_url.set("http://192.168.0.10:8096/")
+    app.ao_abrir_site_da_chave("jellyfin")
+    assert abertos[-1] == "http://192.168.0.10:8096/web/#/dashboard/keys"
+    app.var_jf_url.set("")
+    app.ao_abrir_site_da_chave("jellyfin")
+    assert len(abertos) == 7 and app.caixas[-1][0] == "aviso" and "endereço do Jellyfin" in app.caixas[-1][2]
+    app.mostrar_aba(app.ABA_CONFIG)                                     # o clique de verdade no link (à vista)
+    app.mostrar_config("Chaves de API")
+    app.update()
+    link = app.links_das_chaves["tmdb"]
+    assert link.winfo_ismapped()
+    link._label.event_generate("<Button-1>", x=2, y=2)
+    app.update()
+    assert abertos[-1] == "https://www.themoviedb.org/settings/api"
+
+
 def test_simular_a_vigia_mostra_sem_mover_nada(app, tmp_path):
     """Botão "O que a vigia faria agora?": a mesma conta da vigia, mas nada sai do lugar."""
     import os
