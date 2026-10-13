@@ -171,3 +171,61 @@ def test_google_diz_que_a_chave_e_gratis_e_o_plano_marcado_e_pago(tmp_path):
     g.anotar_gemini_gratis()
     agora[0] = datetime(2026, 10, 14, 9, 0)                           # no dia seguinte, a resposta de ontem não vale
     assert g.aviso_do_plano() == ""
+
+
+def test_dia_do_google_vira_a_meia_noite_da_california():
+    """O limite do dia da chave grátis volta à meia-noite da Califórnia (no Brasil, 4h ou 5h), com o horário de
+    verão de lá (sem depender do tzdata, que o Windows não tem)."""
+    from datetime import timezone
+    utc = lambda *a: datetime(*a, tzinfo=timezone.utc)
+    assert gastos.hora_do_pacifico(utc(2026, 10, 13, 14, 36)) == datetime(2026, 10, 13, 7, 36)     # PDT (UTC-7)
+    assert gastos.hora_do_pacifico(utc(2026, 12, 1, 7, 59)) == datetime(2026, 11, 30, 23, 59)     # PST (UTC-8)
+    assert gastos.hora_do_pacifico(utc(2026, 3, 8, 9, 59)).hour == 1                               # muda às 2h
+    assert gastos.hora_do_pacifico(utc(2026, 3, 8, 10, 0)).hour == 3
+    assert gastos.hora_do_pacifico(utc(2026, 11, 1, 8, 59)).hour == 1
+    assert gastos.hora_do_pacifico(utc(2026, 11, 1, 9, 0)).hour == 1                               # 1h de novo
+    agora = [utc(2026, 10, 13, 14, 36)]
+    g = gastos.Gastos("/nao/existe.json", agora=lambda: agora[0])
+    assert g.dia_do_google() == "2026-10-13" and g.virada_do_dia() == "07:00"     # 7h UTC = 4h em Brasília
+    agora[0] = utc(2026, 10, 14, 6, 59)                                            # 3h59 em Brasília: ainda é dia 13
+    assert g.dia_do_google() == "2026-10-13"
+    agora[0] = utc(2026, 10, 14, 7, 0)
+    assert g.dia_do_google() == "2026-10-14"
+
+
+def test_quanto_resta_hoje_na_chave_gratis_do_gemini(tmp_path):
+    """O Google não diz quanto resta: o Maestro conta os pedidos do dia e guarda o limite que o Google informa na
+    mensagem de limite ("quotaValue: 15"). Restam = limite - feitos; quando o do dia acaba, restam 0."""
+    from datetime import timezone
+    agora = [datetime(2026, 10, 13, 14, 36, tzinfo=timezone.utc)]
+    g = gastos.configurar(tmp_path / "gastos.json", plano_gemini="gratis")
+    g._agora = lambda: agora[0]
+    assert g.uso_do_dia_gemini() == []
+    erro_do_dia = type("ClientError", (Exception,), {"code": 429})(
+        "429 RESOURCE_EXHAUSTED. {'details': [{'violations': [{'quotaId': 'GenerateRequestsPerMinutePerProject"
+        "PerModel-FreeTier', 'quotaValue': '3'}, {'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', "
+        "'quotaDimensions': {'model': 'tts'}, 'quotaValue': '15'}]}]}")
+    assert voz_gemini.limites_do_erro(erro_do_dia) == {"minuto": 3, "dia": 15}
+    motor = voz_gemini.MotorGemini("x", "Kore", cliente=GeminiFalso(), esperar=lambda s: None, simultaneos=1)
+    motor.sintetizar([("Olá, tudo bem?", tmp_path / "1.wav"), ("Tchau.", tmp_path / "2.wav")])
+    linhas = g.uso_do_dia_gemini()
+    assert linhas[0].startswith("Gemini (voz): 1 pedido(s) hoje") and "vira às" in linhas[-1]
+    g.anotar_limite_gemini("voz", por_dia=15)                       # o Google disse o tamanho (num 429 por minuto)
+    assert g.uso_do_dia_gemini()[0] == "Gemini (voz): 1 de 15 pedidos grátis hoje; restam ~14"
+    assert g.resumo_do_dia_gemini() == ("Gemini grátis hoje: voz 1/15 (restam ~14)", None)    # painel do topo
+    with pytest.raises(ErroDublagem, match="limite do dia"):
+        voz_gemini._com_tentativas(lambda: (_ for _ in ()).throw(erro_do_dia), lambda s: None)
+    assert g.uso_do_dia_gemini()[0] == "Gemini (voz): o limite do dia ACABOU às 14:36 (15 pedidos); restam 0"
+    assert "Gemini" in g.cotas_acabadas()
+    assert g.resumo_do_dia_gemini() == ("Gemini grátis hoje: voz ACABOU (volta às 07:00)", False)
+    agora[0] = datetime(2026, 10, 14, 7, 0, tzinfo=timezone.utc)   # virou o dia do Google: tudo de novo
+    assert g.uso_do_dia_gemini()[0] == "Gemini (voz): 0 de 15 pedidos grátis hoje; restam ~15"
+    assert "Gemini" not in g.cotas_acabadas()
+    voz_gemini.perguntar_sobre_audio(SimpleNamespace(interactions=SimpleNamespace(
+        create=lambda **k: SimpleNamespace(output_text="{}"))), "quem fala?", b"x", esperar=lambda s: None)
+    motor.sintetizar([("De novo.", tmp_path / "3.wav")])
+    assert g.uso_do_dia_gemini()[:2] == ["Gemini (voz): 1 de 15 pedidos grátis hoje; restam ~14",
+                                          "Gemini (escuta do original): 1 pedido(s) hoje (o limite do dia aparece "
+                                          "aqui quando o Google avisar pela 1ª vez)"]
+    g.plano_gemini = "pago"
+    assert g.uso_do_dia_gemini() == [] and g.resumo_do_dia_gemini() is None     # chave paga: sem limite grátis

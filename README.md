@@ -242,6 +242,12 @@ primeira falha (antes esperava o tempo limite em cada filme).
 
 ### Novidades da v2.18.10
 
+- **Quanto resta HOJE na chave grátis do Gemini**: Configurações > Gastos tem o quadro "Chave grátis do Gemini:
+  quanto resta HOJE" (com "Atualizar"), o painel do topo mostra o resumo em todas as abas ("Gemini grátis hoje: voz
+  9/15 (restam ~6) · escuta 4 pedido(s)") e o fim de cada teste também. O Google não informa quanto resta: o Maestro
+  conta os pedidos que ele fez no dia e usa o tamanho do limite que o Google informa na mensagem de limite ("limit:
+  15"); quando o limite do dia acaba, mostra "ACABOU" e a hora em que volta. O dia das cotas do Google vira à
+  meia-noite da Califórnia (no Brasil, 4h ou 5h), e não à meia-noite daqui.
 - **O teste não parece mais travado quando o Gemini demora**: enquanto o Google não responde, o log avisa a cada
   minuto ("esperando a resposta do Google há 2 min; cada pedido pode levar até 5 min; o botão Parar interrompe").
   Antes a barra parava sem explicação (ex.: logo depois de "o corte de 10 falas não bateu... pedindo de novo em

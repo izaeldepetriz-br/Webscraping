@@ -3035,6 +3035,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             partes.append(previsao or f"O teste custou ~{self._dinheiro(custo)}.")
         if custos:
             partes.append(automacao.texto_dos_custos(custos))
+        if (atual := gastos.atual()) is not None and (hoje := atual.uso_do_dia_gemini()):
+            partes.append("Chave grátis do Gemini hoje:\n" + "\n".join(f"• {linha}" for linha in hoje))
         if problemas:
             partes.append(f"Confira {len(problemas)} fala(s) (em \"🧪 Testes feitos\" > \"Ajustar falas\" dá para "
                           "refazer só elas):\n" + "\n".join(f"• {p}" for p in problemas[:8])
@@ -4254,6 +4256,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 itens.append(("Gemini (voz): chave não testada", None))
         if item_gastos := self.item_saude_gastos():
             itens.append(item_gastos)
+        if (atual := gastos.atual()) is not None and (item_dia := atual.resumo_do_dia_gemini()):
+            itens.append(item_dia)                      # quanto resta hoje na chave grátis do Gemini
         itens.extend(self.item_saude_cloud())
         self.atualizar_gastos()
         self.atualizar_cota_cloud()
@@ -4647,6 +4651,16 @@ class AppModerna(TVAoVivo, JanelaModerna):
     def atualizar_gastos(self) -> None:
         if (atual := gastos.atual()) is not None and hasattr(self, "lb_cotas"):
             self.lb_cotas.configure(text="\n".join(f"• {linha}" for linha in atual.situacao_das_cotas(voz_cloud.TIPOS)))
+        if (atual := gastos.atual()) is not None and hasattr(self, "lb_gemini_hoje"):
+            linhas = atual.uso_do_dia_gemini()
+            if linhas:
+                texto = "\n".join(f"• {linha}" for linha in linhas)
+            elif atual.plano_gemini == "pago":
+                texto = "Chave paga: não há limite grátis por dia (os limites da chave paga são bem maiores)."
+            else:
+                texto = (f"Nenhum pedido ao Gemini hoje. O limite do dia aparece aqui quando o Google avisar pela 1ª "
+                         f"vez; o dia do Google vira às {atual.virada_do_dia()} (meia-noite na Califórnia).")
+            self.lb_gemini_hoje.configure(text=texto)
         if (atual := gastos.atual()) is not None and hasattr(self, "lb_gastos_mes"):
             self.lb_gastos_mes.configure(text=atual.resumo())
             self.lb_cotacao.configure(text=atual.conversao or ("Em dólar, como as APIs cobram." if not atual.fator

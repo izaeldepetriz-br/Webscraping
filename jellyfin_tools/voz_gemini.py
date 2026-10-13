@@ -399,11 +399,27 @@ def _tempo_esgotado(erro: Exception) -> bool:
 
 
 def _limite_por_minuto(erro: Exception) -> bool:
-    """O limite que acabou é o POR MINUTO (quotaId "...PerMinute..."): passa sozinho em instantes."""
-    return "perminute" in str(erro).lower().replace("_", "")
+    """O limite que acabou é o POR MINUTO (quotaId "...PerMinute..."): passa sozinho em instantes. Se o do DIA vier
+    junto na mesma mensagem, vale o do dia (esperar segundos não adianta)."""
+    return "perminute" in str(erro).lower().replace("_", "") and not _limite_do_dia(erro)
 
 
-def _com_tentativas(chamar, esperar=time.sleep, avisar=None):
+def limites_do_erro(erro: Exception) -> dict[str, int]:
+    """O tamanho dos limites que o Google informou no erro 429: {"dia": 15, "minuto": 3} (cada violação traz o
+    quotaId, "...PerDay..." ou "...PerMinute...", e o quotaValue)."""
+    achados = {}
+    for pedaco in str(erro).split("quotaId")[1:]:
+        tipo = re.match(r"['\"]?\s*:\s*['\"]([^'\"]+)", pedaco)
+        valor = re.search(r"quotaValue['\"]?\s*:\s*['\"]?(\d+)", pedaco)
+        if tipo and valor:
+            nome = tipo.group(1).lower()
+            chave = "dia" if "perday" in nome else "minuto" if "perminute" in nome else None
+            if chave and "request" in nome:                 # o limite de PEDIDOS (não o de tokens)
+                achados[chave] = int(valor.group(1))
+    return achados
+
+
+def _com_tentativas(chamar, esperar=time.sleep, avisar=None, servico: str = "voz"):
     """Chama a API; no limite por minuto (429) ou instabilidade (5xx) espera e tenta de novo: 2, 4, 8, 16, 32 s ou
     o que o Google pedir (até 90 s), avisando no log. O limite do DIA não espera: avisa e para na hora. Sem resposta
     no tempo-limite, tenta de novo UMA vez (o Google às vezes perde um pedido; o 2º costuma vir na hora)."""
@@ -416,6 +432,9 @@ def _com_tentativas(chamar, esperar=time.sleep, avisar=None):
         except Exception as erro:
             if _camada_gratis(erro):                    # o Google disse qual é a camada da chave: confere o plano
                 gastos.anotar_gemini_gratis()
+            if limites := limites_do_erro(erro):         # o tamanho do limite: mostra quanto resta no dia
+                gastos.anotar_limite_gemini(servico, limites.get("dia"), limites.get("minuto"),
+                                            esgotou=_limite_do_dia(erro))
             if _tempo_esgotado(erro) and not esgotados:
                 esgotados += 1
                 if avisar:
@@ -489,7 +508,9 @@ def perguntar_sobre_audio(cliente, pergunta: str, mp3: bytes, modelo: str = MODE
                {"type": "audio", "data": base64.b64encode(mp3).decode(), "mime_type": "audio/mp3"}]
     _conferir_teto()
     resposta = _com_tentativas(lambda: _com_aviso_de_espera(
-        lambda: cliente.interactions.create(model=modelo, input=entrada), avisar, "ouvindo o original"), esperar, avisar)
+        lambda: cliente.interactions.create(model=modelo, input=entrada), avisar, "ouvindo o original"), esperar, avisar,
+        "escuta")
+    gastos.contar_pedido_gemini("escuta")
     segundos = len(mp3) * 8 / (KBPS_OUVIR * 1000)
     gastos.registrar("Gemini (escuta)", segundos * TOKENS_POR_SEGUNDO * PRECO_OUVIR / 1_000_000 * fator_de_preco(cliente))
     return texto_da_resposta(resposta)
@@ -553,8 +574,9 @@ class MotorGemini:
             return self.cliente.interactions.create(model=self.modelo, input=entrada, response_format={"type": "audio"},
                                                     generation_config={"speech_config": config})
         _conferir_teto()
-        resposta = _com_tentativas(chamar, self._esperar, self.avisar)
+        resposta = _com_tentativas(chamar, self._esperar, self.avisar, "voz")
         self.pedidos += 1
+        gastos.contar_pedido_gemini("voz")
         audio = getattr(resposta, "output_audio", None)
         if audio is None or not getattr(audio, "data", None):
             raise ErroDublagem("o Gemini não devolveu áudio")

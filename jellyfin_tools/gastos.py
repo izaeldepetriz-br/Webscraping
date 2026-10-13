@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 SERVICOS = ("Claude", "Gemini (voz)", "Gemini (escuta)", "Gemini", "Google TTS")   # "Gemini": meses antigos
@@ -27,6 +27,22 @@ PLANOS_GEMINI = {"?": "não sei", "gratis": "grátis (sem cartão)", "pago": "pa
 
 def servico_gemini(servico: str) -> bool:
     return servico.startswith("Gemini")
+
+
+NOMES_PEDIDOS_GEMINI = {"voz": "voz", "escuta": "escuta do original"}
+
+
+def hora_do_pacifico(utc: datetime) -> datetime:
+    """O horário da Califórnia: o "dia" das cotas do Google vira à meia-noite de lá (no Brasil, entre 4h e 5h).
+    Sem o tzdata (o Windows não tem): PDT (UTC-7) do 2º domingo de março ao 1º domingo de novembro, às 2h; senão
+    PST (UTC-8)."""
+    utc = utc.astimezone(timezone.utc).replace(tzinfo=None) if utc.tzinfo else utc
+
+    def domingo(mes: int, n: int) -> datetime:
+        dia = datetime(utc.year, mes, 1)
+        return dia + timedelta(days=(6 - dia.weekday()) % 7 + 7 * (n - 1))
+    verao = domingo(3, 2) + timedelta(hours=10) <= utc < domingo(11, 1) + timedelta(hours=9)
+    return utc - timedelta(hours=7 if verao else 8)
 
 
 class TetoAtingido(Exception):
@@ -120,11 +136,12 @@ class Gastos:
             dados = self._ler()
             cotas = dados.setdefault("cotas", {}).setdefault(self.mes(), {})
             anterior = cotas.get(api, {})
-            hoje = f"{self._agora():%Y-%m-%d}"
-            if anterior.get("situacao") == situacao and str(anterior.get("quando", "")).startswith(
-                    hoje if situacao == "limite do dia" else self.mes()):
+            if anterior.get("situacao") == situacao and (
+                    anterior.get("dia") == self.dia_do_google() if situacao == "limite do dia"
+                    else str(anterior.get("quando", "")).startswith(self.mes())):
                 return False
-            cotas[api] = {"situacao": situacao, "quando": self._agora().isoformat(timespec="minutes")}
+            cotas[api] = {"situacao": situacao, "quando": self._agora().isoformat(timespec="minutes"),
+                          "dia": self.dia_do_google()}
             self._gravar(dados)
             return True
 
@@ -158,6 +175,97 @@ class Gastos:
             return "Gemini: hoje o Google respondeu como chave GRÁTIS: escolha \"Grátis\" abaixo"
         return ""
 
+    # ---------------------------------------------------------------- pedidos do dia (chave grátis do Gemini)
+    def _utc(self) -> datetime:
+        return self._agora().astimezone(timezone.utc)              # o relógio do PC (naive = hora local)
+
+    def dia_do_google(self) -> str:
+        """O dia das cotas do Google (vira à meia-noite da Califórnia)."""
+        return f"{hora_do_pacifico(self._utc()):%Y-%m-%d}"
+
+    def virada_do_dia(self) -> str:
+        """A hora LOCAL em que o dia do Google vira (o limite do dia volta): 'HH:MM'."""
+        agora = hora_do_pacifico(self._utc())
+        meia_noite = datetime(agora.year, agora.month, agora.day) + timedelta(days=1)
+        return f"{self._agora() + (meia_noite - agora):%H:%M}"
+
+    def _pedidos_de_hoje(self, dados: dict) -> dict:
+        hoje = self.dia_do_google()
+        pedidos = dados.get("pedidos_gemini", {})
+        if not isinstance(pedidos, dict) or hoje not in pedidos:
+            dados["pedidos_gemini"] = pedidos = {hoje: {}}            # só o dia de hoje fica guardado
+        return pedidos[hoje]
+
+    def contar_pedido_gemini(self, tipo: str) -> None:
+        """Um pedido ao Gemini que deu certo ("voz" ou "escuta"): conta para o limite do dia da chave grátis."""
+        with self._trava:
+            dados = self._ler()
+            hoje = self._pedidos_de_hoje(dados)
+            hoje[tipo] = int(hoje.get(tipo, 0) or 0) + 1
+            self._gravar(dados)
+
+    def anotar_limite_gemini(self, tipo: str, por_dia: int | None = None, por_minuto: int | None = None,
+                             esgotou: bool = False) -> None:
+        """O que o Google disse no erro de limite: o tamanho do limite por dia/minuto ("limit: 15") e se o do dia
+        acabou HOJE (aí restam 0, mesmo que a conta do Maestro diga outra coisa)."""
+        with self._trava:
+            dados = self._ler()
+            limites = dados.setdefault("limites_gemini", {}).setdefault(tipo, {})
+            if por_dia:
+                limites["dia"] = int(por_dia)
+            if por_minuto:
+                limites["minuto"] = int(por_minuto)
+            if esgotou:
+                self._pedidos_de_hoje(dados)[f"{tipo}_esgotou"] = self._agora().isoformat(timespec="minutes")
+            self._gravar(dados)
+
+    def uso_do_dia_gemini(self) -> list[str]:
+        """Chave grátis do Gemini: quantos pedidos foram feitos HOJE e quantos restam (o Google não diz quanto
+        resta: o Maestro conta os pedidos dele e o limite vem da 1ª mensagem de limite do Google). Vazio na chave
+        paga."""
+        if self.plano_gemini == "pago":
+            return []
+        dados = self._ler()
+        hoje = dados.get("pedidos_gemini", {}).get(self.dia_do_google(), {})
+        limites = dados.get("limites_gemini", {})
+        linhas = []
+        for tipo, nome in NOMES_PEDIDOS_GEMINI.items():
+            feitos, limite = int(hoje.get(tipo, 0) or 0), (limites.get(tipo) or {}).get("dia")
+            if hoje.get(f"{tipo}_esgotou"):
+                linhas.append(f"Gemini ({nome}): o limite do dia ACABOU às {str(hoje[f'{tipo}_esgotou'])[11:16]}"
+                              + (f" ({limite} pedidos)" if limite else "") + "; restam 0")
+            elif limite:
+                linhas.append(f"Gemini ({nome}): {feitos} de {limite} pedidos grátis hoje; "
+                              f"restam ~{max(0, limite - feitos)}")
+            elif feitos:
+                linhas.append(f"Gemini ({nome}): {feitos} pedido(s) hoje (o limite do dia aparece aqui quando o "
+                              "Google avisar pela 1ª vez)")
+        if linhas:
+            linhas.append(f"O dia do Google vira às {self.virada_do_dia()} (meia-noite na Califórnia): aí o limite "
+                          "do dia volta inteiro")
+        return linhas
+
+    def resumo_do_dia_gemini(self) -> tuple[str, bool | None] | None:
+        """Para o painel do topo: "Gemini grátis hoje: voz 3/15 (restam ~12) · escuta 1/20 (restam ~19)". Vermelho
+        quando o limite do dia de algum acabou. None na chave paga ou sem nada a mostrar."""
+        if self.plano_gemini == "pago":
+            return None
+        dados = self._ler()
+        hoje = dados.get("pedidos_gemini", {}).get(self.dia_do_google(), {})
+        limites, partes, acabou = dados.get("limites_gemini", {}), [], False
+        for tipo in NOMES_PEDIDOS_GEMINI:
+            feitos, limite = int(hoje.get(tipo, 0) or 0), (limites.get(tipo) or {}).get("dia")
+            if hoje.get(f"{tipo}_esgotou"):
+                partes.append(f"{tipo} ACABOU (volta às {self.virada_do_dia()})")
+                acabou = True
+            elif limite:
+                partes.append(f"{tipo} {feitos}/{limite} (restam ~{max(0, limite - feitos)})")
+            elif feitos:
+                partes.append(f"{tipo} {feitos} pedido(s)")
+        if not partes:
+            return None
+        return "Gemini grátis hoje: " + " · ".join(partes), (False if acabou else None)
+
     def cotas(self, mes: str | None = None) -> dict:
         cotas = self._ler().get("cotas", {}).get(mes or self.mes(), {})
         return dict(cotas) if isinstance(cotas, dict) else {}
@@ -183,8 +291,7 @@ class Gastos:
         if self.plano_gemini == "gratis":
             linhas.append("Gemini: chave GRÁTIS (sem faturamento): não cobra; quando o limite do dia acaba, para até o "
                           "dia seguinte" + (f" (o de hoje acabou às {quando('Gemini')[-5:]})"
-                                            if str(cotas.get("Gemini", {}).get("quando", "")).startswith(
-                                                f"{self._agora():%Y-%m-%d}") else ""))
+                                            if self._limite_do_dia_hoje(cotas.get("Gemini", {})) else ""))
         elif self.plano_gemini == "pago":
             linhas.append("Gemini: chave com faturamento: pago desde o 1º pedido (não há cota grátis)")
         else:
@@ -195,11 +302,16 @@ class Gastos:
         linhas.append("Whisper, Piper e tradução local: grátis (rodam no seu PC)")
         return linhas
 
+    def _limite_do_dia_hoje(self, cota: dict) -> bool:
+        """O limite do dia acabou no dia do Google de HOJE? (registros antigos, sem "dia": pelo dia local)"""
+        if "dia" in cota:
+            return cota["dia"] == self.dia_do_google()
+        return str(cota.get("quando", "")).startswith(f"{self._agora():%Y-%m-%d}")
+
     def cotas_acabadas(self) -> list[str]:
         """As que acabaram neste mês (para o aviso no painel de saúde)."""
-        hoje = f"{self._agora():%Y-%m-%d}"
         return [api for api, c in self.cotas().items()
-                if c.get("situacao") != "limite do dia" or str(c.get("quando", "")).startswith(hoje)]
+                if c.get("situacao") != "limite do dia" or self._limite_do_dia_hoje(c)]
 
     def caracteres(self, mes: str | None = None) -> dict[str, int]:
         """Google Cloud TTS: {tipo: caracteres lidos no mês} (para a cota grátis de cada tipo)."""
@@ -277,6 +389,23 @@ def anotar_gemini_gratis() -> bool:
         except OSError:
             pass
     return False
+
+
+def contar_pedido_gemini(tipo: str) -> None:
+    if _atual is not None:
+        try:
+            _atual.contar_pedido_gemini(tipo)
+        except OSError:
+            pass
+
+
+def anotar_limite_gemini(tipo: str, por_dia: int | None = None, por_minuto: int | None = None,
+                         esgotou: bool = False) -> None:
+    if _atual is not None:
+        try:
+            _atual.anotar_limite_gemini(tipo, por_dia, por_minuto, esgotou)
+        except OSError:
+            pass
 
 
 def custos_entre(antes: dict | None, depois: dict | None) -> dict[str, tuple[float, bool]]:

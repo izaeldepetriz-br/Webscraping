@@ -2889,6 +2889,17 @@ class JanelaModerna(ctk.CTk):
         self.lb_cotas = ctk.CTkLabel(lateral, text="", font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO,
                                      anchor="w", justify="left", wraplength=620)
         self.lb_cotas.pack(anchor="w", pady=(0, 8), **p)
+        # chave grátis do Gemini: quanto resta HOJE (o Google não diz; o Maestro conta os pedidos dele)
+        self._rotulo(lateral, "Chave grátis do Gemini: quanto resta HOJE", suave=False).pack(anchor="w", pady=(0, 2), **p)
+        self.lb_gemini_hoje = ctk.CTkLabel(lateral, text="", font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO,
+                                           anchor="w", justify="left", wraplength=620)
+        self.lb_gemini_hoje.pack(anchor="w", **p)
+        self._rotulo(lateral, "O Google não informa quanto resta: o Maestro conta os pedidos que ele fez hoje e usa o "
+                              "limite que o Google informou na mensagem de limite. Pedidos feitos fora do Maestro (no "
+                              "site do AI Studio, por exemplo) não entram na conta.",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(2, 2), **p)
+        self.bt_atualizar_gemini_hoje = self._botao(lateral, "Atualizar", self.atualizar_gastos, "fantasma", largura=110)
+        self.bt_atualizar_gemini_hoje.pack(anchor="w", pady=(0, 10), **p)
         self._rotulo(lateral, "A sua chave do Gemini:").pack(anchor="w", **p)
         self.var_jf_plano_gemini = tk.StringVar(self, value=self.PLANOS_GEMINI[0])
         self.menu_plano_gemini = self._menu_opcoes(lateral, self.var_jf_plano_gemini, self.PLANOS_GEMINI)
@@ -5003,6 +5014,9 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_escolher_plano_gemini(self, valor: str) -> None:
+        pass
+
+    def atualizar_gastos(self) -> None:
         pass
 
     def ao_ativar_faturamento_gemini(self) -> None:

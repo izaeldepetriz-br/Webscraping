@@ -3757,6 +3757,27 @@ def test_cadastrou_o_cartao_do_gemini_vale_na_hora_e_avisa_se_o_google_ainda_diz
     assert abertos == ["https://aistudio.google.com/apikey"] and "Set up billing" in app.caixas[-1][2]
 
 
+def test_quanto_resta_hoje_do_gemini_gratis_em_gastos_e_no_painel(app, monkeypatch, tmp_path):
+    """Chave grátis do Gemini: Configurações > Gastos mostra quanto resta HOJE (com "Atualizar") e o painel do topo
+    resume ("Gemini grátis hoje: voz 3/15 (restam ~12)"), vermelho quando o limite do dia acaba."""
+    from jellyfin_tools import gastos
+    monkeypatch.setattr(app_moderna.automacao, "arquivo_gastos", lambda: tmp_path / "gastos.json")
+    app.var_jf_plano_gemini.set(app.PLANOS_GEMINI[1])
+    app.ao_escolher_plano_gemini(app.PLANOS_GEMINI[1])
+    assert "Nenhum pedido ao Gemini hoje" in app.lb_gemini_hoje.cget("text")
+    assert not any(t.startswith("Gemini grátis hoje") for t, _ in app.itens_saude())
+    for _ in range(3):
+        gastos.contar_pedido_gemini("voz")
+    gastos.anotar_limite_gemini("voz", por_dia=15)
+    app.bt_atualizar_gemini_hoje.invoke()
+    assert "Gemini (voz): 3 de 15 pedidos grátis hoje; restam ~12" in app.lb_gemini_hoje.cget("text")
+    assert ("Gemini grátis hoje: voz 3/15 (restam ~12)", None) in app.itens_saude()
+    gastos.anotar_limite_gemini("voz", esgotou=True)
+    assert any(t.startswith("Gemini grátis hoje: voz ACABOU") and ok is False for t, ok in app.itens_saude())
+    assert "o limite do dia ACABOU" in app.lb_gemini_hoje.cget("text")
+    assert "Chave grátis do Gemini hoje:" in app.texto_do_teste([], 0.0, "/v/Filme.mkv")
+
+
 def test_link_embaixo_de_cada_chave_abre_o_site_certo(app, monkeypatch):
     """Configurações > Chaves de API: cada nome tem, embaixo, o link do site onde se cria a chave; o do Jellyfin abre
     a página das chaves no servidor do campo (e pede o endereço se estiver vazio)."""
