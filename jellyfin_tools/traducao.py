@@ -213,6 +213,10 @@ def estimar_custo(caracteres: int, falas: int, modelo: str) -> tuple[int, int, f
 def _explicar(erro: Exception) -> str:
     """O erro do SDK da Anthropic em português (pelo nome da classe: o SDK só é importado quando usado)."""
     nome = type(erro).__name__
+    if "credit balance" in str(erro).lower():               # os créditos pré-pagos acabaram
+        gastos.marcar_cota("Claude", "créditos acabaram")
+        return ("os créditos da API da Anthropic acabaram: recarregue em console.anthropic.com > Billing (a "
+                "assinatura do Claude não cobre a API)")
     return {"AuthenticationError": "a chave de API foi recusada (confira em console.anthropic.com)",
             "PermissionDeniedError": "a chave de API não tem permissão para esse modelo",
             "NotFoundError": "modelo não encontrado: confira o nome do modelo",

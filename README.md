@@ -240,6 +240,22 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.18.9
+
+- **Custos separados por API**: no fim do teste, quanto custou cada uma (Claude, Gemini voz, Gemini ouvindo o
+  original, Google Cloud TTS), com a dica de como economizar na mais cara; o painel do mês (Configurações > Gastos)
+  também separa a voz e a escuta do Gemini.
+- **Modo econômico do Gemini (Flex)** (Configurações > Gastos): os pedidos vão no nível Flex do Google, pela metade do
+  preço, em troca de mais demora (cada pedido pode levar até ~15 min; bom para dublar o vídeo inteiro à noite). Se o
+  Google não aceitar o Flex para o modelo, o Maestro volta sozinho ao preço normal e avisa no log.
+- **Aviso de cota grátis**: Configurações > Gastos mostra a situação de cada API: a cota grátis do mês do Google Cloud
+  TTS (quanto já foi usado e QUANDO acabou: daí em diante é pago), a chave do Gemini (grátis: não cobra e para no
+  limite do dia; com faturamento: pago desde o 1º pedido), os créditos do Claude (quando acabarem) e o que é sempre
+  grátis (Whisper, Piper, tradução local). O painel de saúde avisa quando uma cota acaba, e a mensagem do teste também.
+- **Chave grátis do Gemini não vira gasto**: escolhendo "Grátis (sem cartão)", o uso do Gemini aparece como grátis e
+  não conta para o teto do mês.
+- A duração na previsão de custo agora é arredondada ("29 min", "1 h 40 min"; antes "28,9932 min").
+
 ### Novidades da v2.18.8
 
 - **Refazer só uma fala** ("🧪 Testes feitos" > "✏ Ajustar falas"): a lista das falas do teste com a voz e o tom de

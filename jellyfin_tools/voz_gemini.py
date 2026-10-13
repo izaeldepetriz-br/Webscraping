@@ -58,6 +58,9 @@ PRECO_OUVIR = 1.0             # US$ por milhão de tokens de áudio ENVIADO (ouv
 KBPS_OUVIR = 32               # o áudio enviado para ouvir vai em mp3 de 32 kbps (personagens.audio_do_trecho)
 SIMULTANEOS = 4               # blocos pedidos ao mesmo tempo
 TEMPO_LIMITE = 300            # segundos que um pedido pode levar (um bloco de 30 falas leva bem menos)
+TEMPO_LIMITE_FLEX = 1200      # no modo Flex, o Google pode demorar de 1 a 15 minutos por pedido
+DESCONTO_FLEX = 0.5           # o Flex custa metade do preço normal
+_flex = {"ligado": False}     # Configurações > Gastos > "Modo econômico do Gemini (Flex)" (usar_flex)
 TENTATIVAS = 6
 BLOCO = 10                    # falas por pedido (com 30, uma pausa no lugar errado jogava palavras na fala seguinte)
 LETRAS_POR_BLOCO = 700
@@ -262,13 +265,58 @@ def estilo_da_fala(estilo: str, tom: str) -> str:
     return f"{estilo} {DIRECAO} {nota}"
 
 
-def _cliente(chave: str):
+def usar_flex(ligado: bool) -> None:
+    """Modo econômico: os pedidos ao Gemini vão no nível "Flex" (metade do preço, mais lentos: o Google responde
+    quando tem folga, em até ~15 min por pedido). Vale para a voz e para a escuta do original."""
+    _flex["ligado"] = bool(ligado)
+
+
+class _PedidosFlex:
+    """interactions.create com service_tier="flex"; se o Google (ou a versão da biblioteca) não aceitar, volta ao
+    normal sozinho e avisa uma vez (o pedido não se perde)."""
+
+    def __init__(self, base, dono):
+        self.base, self.dono = base, dono
+
+    def create(self, **k):
+        if self.dono.flex:
+            try:
+                return self.base.create(service_tier="flex", **k)
+            except TypeError:
+                pass                                       # a biblioteca instalada ainda não conhece o Flex
+            except Exception as erro:
+                texto = str(erro).lower()
+                if _codigo(erro) != 400 or not ("service_tier" in texto or "flex" in texto or "tier" in texto):
+                    raise
+            self.dono.flex = False
+            if self.dono.avisar:
+                self.dono.avisar("o modo Flex do Gemini não foi aceito para este modelo: seguindo no preço normal")
+        return self.base.create(**k)
+
+
+class ClienteFlex:
+    """O cliente do Gemini no modo Flex: mesmo uso do genai.Client (interactions.create, models.get)."""
+
+    def __init__(self, base, avisar=None):
+        self.base, self.flex, self.avisar = base, True, avisar
+        self.interactions = _PedidosFlex(base.interactions, self)
+        self.models = base.models
+
+
+def _cliente(chave: str, avisar=None):
     try:
         from google import genai
     except ImportError as erro:
         raise ErroDublagem("falta a biblioteca do Gemini (pip install google-genai)") from erro
     # sem tempo-limite, um pedido que o Google não respondesse prendia a dublagem para sempre
-    return genai.Client(api_key=chave, http_options={"timeout": TEMPO_LIMITE * 1000})
+    flex = _flex["ligado"]
+    base = genai.Client(api_key=chave, http_options={"timeout": (TEMPO_LIMITE_FLEX if flex else TEMPO_LIMITE) * 1000})
+    return ClienteFlex(base, avisar) if flex else base
+
+
+def fator_de_preco(cliente) -> float:
+    """1,0 no preço normal; 0,5 no modo Flex (para o painel de gastos estimar certo)."""
+    return DESCONTO_FLEX if getattr(cliente, "flex", False) is True else 1.0
 
 
 def testar_chave(chave: str, modelo: str = MODELO_PADRAO, cliente=None) -> str:
@@ -310,6 +358,8 @@ def _com_tentativas(chamar, esperar=time.sleep):
             if _limite(erro) and tentativa < TENTATIVAS - 1:
                 esperar(min(60, 2 ** (tentativa + 1)))
                 continue
+            if _codigo(erro) == 429 or "RESOURCE_EXHAUSTED" in str(erro):     # o limite (do dia, na chave grátis)
+                gastos.marcar_cota("Gemini", "limite do dia")
             raise ErroDublagem(_explicar(erro)) from erro
 
 
@@ -341,7 +391,7 @@ def perguntar_sobre_audio(cliente, pergunta: str, mp3: bytes, modelo: str = MODE
     _conferir_teto()
     resposta = _com_tentativas(lambda: cliente.interactions.create(model=modelo, input=entrada), esperar)
     segundos = len(mp3) * 8 / (KBPS_OUVIR * 1000)
-    gastos.registrar("Gemini", segundos * TOKENS_POR_SEGUNDO * PRECO_OUVIR / 1_000_000)
+    gastos.registrar("Gemini (escuta)", segundos * TOKENS_POR_SEGUNDO * PRECO_OUVIR / 1_000_000 * fator_de_preco(cliente))
     return texto_da_resposta(resposta)
 
 
@@ -408,7 +458,7 @@ class MotorGemini:
         if audio is None or not getattr(audio, "data", None):
             raise ErroDublagem("o Gemini não devolveu áudio")
         amostras, taxa = _ler_audio(audio.data)
-        gastos.registrar("Gemini", custo_da_fala(len(amostras) / taxa))       # o painel de gastos do mês
+        gastos.registrar("Gemini (voz)", custo_da_fala(len(amostras) / taxa) * fator_de_preco(self.cliente))
         return amostras, taxa
 
     def conhece(self, voz: str) -> bool:
@@ -433,7 +483,7 @@ class MotorGemini:
         if cortes is None and len(itens) > 1:
             with self._trava:
                 self.blocos_refeitos += 1
-                self.gasto_refeito += custo_da_fala(len(amostras) / taxa)     # este áudio foi pago e jogado fora
+                self.gasto_refeito += custo_da_fala(len(amostras) / taxa) * fator_de_preco(self.cliente)  # jogado fora
             meio = len(itens) // 2
             return [itens[:meio], itens[meio:]]
         for (ini, fim), (_, wav, _, _) in zip(cortes or [(0, len(amostras))], itens):

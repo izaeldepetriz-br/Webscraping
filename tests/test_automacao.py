@@ -609,7 +609,7 @@ def test_custo_do_teste_preve_o_video_inteiro_e_ajustar_uma_fala(casa, tmp_path,
     teste = automacao.testes_feitos()[0]
     assert teste["custo"] == 0.06 and teste["minutos"] == 2.0 and teste["vozes"] == {"1": "Kore"}
     assert automacao.previsao_pelo_teste(video, 100 * 60) == \
-        "Pelo teste deste vídeo (US$ 0.06 em 2 min), o vídeo inteiro (100 min) deve custar ~US$ 3.00."
+        "Pelo teste deste vídeo (US$ 0.06 em 2 min), o vídeo inteiro (1 h 40 min) deve custar ~US$ 3.00."
     assert automacao.previsao_pelo_teste(tmp_path / "outro.mkv", 600) == ""
     teste["trecho"] = [0, 8]
     linhas = automacao.falas_do_teste(teste)
@@ -632,6 +632,18 @@ def test_relatorio_de_qualidade_no_log(caplog):
         automacao.registrar_qualidade(logging.getLogger("t"), NS(video="B.mkv", problemas=[]))
     assert "1 fala(s) para conferir em A.mkv" in caplog.text and '0:05 "Oi.": cortada' in caplog.text
     assert "B.mkv" not in caplog.text
+
+
+def test_duracao_arredondada_e_custos_por_api_com_dica():
+    assert [automacao._duracao(x) for x in (45, 120, 90, 1739.6, 6000, 7200)] == \
+        ["45 s", "2 min", "1,5 min", "29 min", "1 h 40 min", "2 h"]           # antes: "28,9932 min"
+    texto = automacao.texto_dos_custos({"Claude": (0.05, False), "Gemini (voz)": (0.40, False),
+                                        "Gemini (escuta)": (0.16, True)}, valor=lambda d: f"US$ {d:.2f}")
+    assert texto.splitlines()[:4] == ["Custos por API:", "• Gemini (voz): US$ 0.40",
+                                      "• Gemini (ouvir o original: quem fala e emoção): grátis",
+                                      "• Claude (tradução e falas encurtadas): US$ 0.05"]
+    assert "Para economizar em Gemini (voz)" in texto and "Flex" in texto
+    assert automacao.texto_dos_custos({}) == ""
 
 
 def dublagem_faixas(arquivo):

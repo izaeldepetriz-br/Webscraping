@@ -2823,6 +2823,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
         def tarefa():
             andamento = lambda fracao, texto: self.fila.put(("jf_analise", (fracao, texto)))   # noqa: E731
+            foto_antes = automacao.foto_dos_gastos()
             r = automacao.testar_avulso(o, video, self._log, separar=automacao.separador_de_vozes(o, self._log),
                                         parar=self.evento_parar.is_set, andamento=andamento)
             if r.erro or not r.amostra:
@@ -2830,7 +2831,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 return
             minuto = f"{int(r.trecho[0]) // 60}:{int(r.trecho[0]) % 60:02d}"
             self.fila.put(("abrir_amostra", (r.amostra, video.stem, minuto, r.falas,
-                                              self.texto_do_teste(r.problemas, r.custo, video))))
+                                              self.texto_do_teste(r.problemas, r.custo, video, None, r.custos,
+                                                                  automacao.cotas_que_acabaram(foto_antes)))))
 
         self._rodar(f"Testando {minutos} de {video.stem} (só esse trecho)...", tarefa)
 
@@ -2978,7 +2980,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         item = itens[escolha]
 
         def tarefa():
-            gasto_antes = automacao.gasto_ate_agora()
+            gasto_antes, foto_antes = automacao.gasto_ate_agora(), automacao.foto_dos_gastos()
             try:
                 motor = automacao.preparar_motor(o)
                 trecho = automacao.trecho_do_teste(o, falas_da_legenda(item.legenda), minutos * 60)
@@ -3004,18 +3006,22 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 return
             minuto = f"{int(trecho[0]) // 60}:{int(trecho[0]) % 60:02d}"
             custo = max(0.0, automacao.gasto_ate_agora() - gasto_antes)
-            automacao.registrar_teste(item.video, destino, trecho, item.legenda, vozes, custo)   # "Testes feitos"
             automacao.registrar_qualidade(self._log, r, "Teste")
             self._log.info("Amostra de %s (a partir de %s, %d falas): %s", item.video.name, minuto, r.falas, destino)
+            custos = automacao.custos_por_api(foto_antes)
+            automacao.registrar_teste(item.video, destino, trecho, item.legenda, vozes, custo, custos=custos)
             self.fila.put(("abrir_amostra", (destino, item.video.stem, minuto, r.falas,
-                                              self.texto_do_teste(r.problemas, custo, item.video, item.duracao))))
+                                              self.texto_do_teste(r.problemas, custo, item.video, item.duracao,
+                                                                  custos, automacao.cotas_que_acabaram(foto_antes)))))
 
         self._rodar(f"Fazendo o teste de {self.texto_minutos_teste()}{self.texto_inicio_teste()} de "
                     f"{item.video.stem}...", tarefa)
 
-    def texto_do_teste(self, problemas: list, custo: float, video, duracao: float | None = None) -> str:
-        """O fim da mensagem do teste: o custo (e a previsão do vídeo inteiro) e as falas para conferir."""
-        partes = []
+    def texto_do_teste(self, problemas: list, custo: float, video, duracao: float | None = None,
+                       custos: dict | None = None, cotas: list | None = None) -> str:
+        """O fim da mensagem do teste: o custo (e a previsão do vídeo inteiro), o custo de cada API com a dica de
+        economia, as cotas grátis que acabaram e as falas para conferir."""
+        partes = [f"⚠ Atenção: {c}." for c in (cotas or [])]
         if custo > 0:
             if duracao is None:
                 try:
@@ -3026,6 +3032,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                     duracao = None
             previsao = automacao.previsao_pelo_teste(video, duracao)
             partes.append(previsao or f"O teste custou ~{self._dinheiro(custo)}.")
+        if custos:
+            partes.append(automacao.texto_dos_custos(custos))
         if problemas:
             partes.append(f"Confira {len(problemas)} fala(s) (em \"🧪 Testes feitos\" > \"Ajustar falas\" dá para "
                           "refazer só elas):\n" + "\n".join(f"• {p}" for p in problemas[:8])
@@ -4602,6 +4610,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.fila.put(("cotacao", dados))
 
     def atualizar_gastos(self) -> None:
+        if (atual := gastos.atual()) is not None and hasattr(self, "lb_cotas"):
+            self.lb_cotas.configure(text="\n".join(f"• {linha}" for linha in atual.situacao_das_cotas(voz_cloud.TIPOS)))
         if (atual := gastos.atual()) is not None and hasattr(self, "lb_gastos_mes"):
             self.lb_gastos_mes.configure(text=atual.resumo())
             self.lb_cotacao.configure(text=atual.conversao or ("Em dólar, como as APIs cobram." if not atual.fator
@@ -4613,6 +4623,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
         if atual is None:
             return None
         total = atual.total()
+        acabadas = atual.cotas_acabadas()
+        if acabadas:                                     # a cota grátis (ou o crédito) acabou: agora é pago
+            nomes = ", ".join(a.replace("Google TTS", "Google Cloud TTS") for a in acabadas)
+            return (f"Cota grátis/crédito acabou: {nomes} (veja em Configurações > Gastos)", False)
         if not total and not atual.teto:
             return None
         texto = f"Gastos do mês: {atual.valor(total)}" + (f" de {atual._teto_texto()}" if atual.teto else "")

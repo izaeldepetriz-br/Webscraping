@@ -162,6 +162,8 @@ class OpcoesJellyfin:
     vozes_sem_tabela: bool = False   # voz por personagem: escolhe as vozes sozinho (sem abrir a tabela de conferir)
     emocao_da_cena: bool = True      # Gemini: ouve o original e cada fala é dita com a mesma emoção (custo pequeno)
     pronuncias: str = ""             # "Johnson = Djônson; Madrid = Madri": como a voz diz cada nome
+    gemini_flex: bool = False        # Gemini no nível Flex: metade do preço, mais lento (até ~15 min por pedido)
+    plano_gemini: str = "?"          # a chave do Gemini: "gratis" (sem faturamento), "pago" ou "?" (não sei)
     figurantes_cloud: bool = False   # mista: figurantes no Google Cloud enquanto a cota grátis do mês der (depois Piper)
     perguntar_filmes: bool = True    # Gemini com vários filmes: perguntar quais vão com o Gemini (o resto, Piper)
     robo_so_piper: bool = False      # robôs agendados (--dublar): só o Piper, sem custo
@@ -2881,6 +2883,23 @@ class JanelaModerna(ctk.CTk):
         self.lb_cotacao = ctk.CTkLabel(lateral, text="", font=ctk.CTkFont(Tema.FAMILIA, 11),
                                        text_color=Tema.TEXTO_SUAVE, anchor="w")
         self.lb_cotacao.pack(anchor="w", pady=(0, 10), **p)
+        self._rotulo(lateral, "Cotas grátis e créditos de cada API (quando acabam, o uso passa a custar dinheiro):",
+                     suave=False).pack(anchor="w", pady=(0, 2), **p)
+        self.lb_cotas = ctk.CTkLabel(lateral, text="", font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO,
+                                     anchor="w", justify="left", wraplength=620)
+        self.lb_cotas.pack(anchor="w", pady=(0, 8), **p)
+        self._rotulo(lateral, "A sua chave do Gemini:").pack(anchor="w", **p)
+        self.var_jf_plano_gemini = tk.StringVar(self, value=self.PLANOS_GEMINI[0])
+        menu_plano = self._menu_opcoes(lateral, self.var_jf_plano_gemini, self.PLANOS_GEMINI)
+        menu_plano.configure(width=420)
+        menu_plano.pack(anchor="w", pady=(2, 2), **p)
+        self._rotulo(lateral, "Sem cartão cadastrado no AI Studio a chave é grátis: o Gemini não cobra e, quando o "
+                              "limite do dia acaba, para até o dia seguinte. Com faturamento ativo, tudo é pago (não "
+                              "há cota grátis).", fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(0, 6),
+                                                                                             **p)
+        self.var_jf_gemini_flex = tk.BooleanVar(self, value=False)
+        self._checkbox(lateral, "Modo econômico do Gemini (Flex): metade do preço, mais lento (cada pedido pode "
+                                "levar até ~15 min; bom para dublar o vídeo inteiro à noite)", self.var_jf_gemini_flex)
         self._rotulo(lateral, "Mostrar em:").pack(anchor="w", **p)
         self.var_jf_moeda_gastos = tk.StringVar(value=self.MOEDAS_GASTOS[0])
         menu = self._menu_opcoes(lateral, self.var_jf_moeda_gastos, self.MOEDAS_GASTOS)
@@ -3397,6 +3416,9 @@ class JanelaModerna(ctk.CTk):
 
     MOTORES_TRADUCAO = ("Claude (pago, tradução mais natural)", "Local (grátis, no seu PC, mais literal)")
     MOEDAS_GASTOS = ("R$ (real, com a cotação do dólar + IOF)", "US$ (dólar, como as APIs cobram)")
+    PLANOS_GEMINI = ("Não sei (conta como paga)", "Grátis (sem cartão: para no limite do dia, não cobra)",
+                     "Paga (com faturamento ativo no Google)")
+    _CHAVES_PLANO = ("?", "gratis", "pago")
 
     # ---- Vozes clonadas: a lista vem do app (vozes_clonadas.json); aqui só o que aparece na tela
     _vozes_clonadas: tuple = ()
@@ -4060,6 +4082,9 @@ class JanelaModerna(ctk.CTk):
             robo_so_piper=self.var_jf_robo_so_piper.get(), guardar_gravacoes=self.var_jf_guardar_gravacoes.get(),
             teto_gastos=float(self.campo_teto_gastos.get()), pasta_avulsos=self.var_jf_pasta_avulsos.get().strip(),
             moeda_gastos=self.var_jf_moeda_gastos.get().split()[0],
+            gemini_flex=self.var_jf_gemini_flex.get(),
+            plano_gemini=self._CHAVES_PLANO[self.PLANOS_GEMINI.index(self.var_jf_plano_gemini.get())]
+            if self.var_jf_plano_gemini.get() in self.PLANOS_GEMINI else "?",
             motor_traducao=self.var_jf_motor_traducao.get().split()[0],
             tipo_cloud=self.tipo_cloud_escolhido(), voz_cloud=self.var_jf_voz_cloud.get().split()[0],
             chave_cloud_tts=self.var_jf_chave_cloud.get().strip(), cotacao_dolar=float(self.campo_cotacao_dolar.get()),
@@ -4186,6 +4211,7 @@ class JanelaModerna(ctk.CTk):
                   "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar,
                   "whisper_gpu": self.var_jf_whisper_gpu, "resumo_diario": self.var_jf_resumo_diario,
                   "encurtar_falas": self.var_jf_encurtar_falas, "emocao_da_cena": self.var_jf_emocao_da_cena,
+                  "gemini_flex": self.var_jf_gemini_flex,
                   "voz_por_personagem": self.var_jf_voz_por_personagem,
                   "figurantes_piper": self.var_jf_figurantes_piper,
                   "figurantes_cloud": self.var_jf_figurantes_cloud,
@@ -4231,6 +4257,8 @@ class JanelaModerna(ctk.CTk):
         if dados.get("moeda_gastos"):
             self.var_jf_moeda_gastos.set(next((m for m in self.MOEDAS_GASTOS if m.split()[0] == dados["moeda_gastos"]),
                                               self.MOEDAS_GASTOS[0]))
+        if dados.get("plano_gemini") in self._CHAVES_PLANO:
+            self.var_jf_plano_gemini.set(self.PLANOS_GEMINI[self._CHAVES_PLANO.index(dados["plano_gemini"])])
         if dados.get("cotacao_dolar") is not None:
             self.campo_cotacao_dolar.set(float(dados["cotacao_dolar"]))
         if dados.get("iof_cartao") is not None:

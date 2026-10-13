@@ -4780,3 +4780,22 @@ def test_ajustar_falas_escolhe_a_fala_e_o_que_trocar(app, monkeypatch):
     monkeypatch.setattr(app, "_rodar", lambda texto, tarefa: pedidos.append(texto))
     app._ajustar_teste(teste)
     assert pedidos == ["Refazendo 1 fala do teste..."]
+
+
+def test_gastos_mostra_as_cotas_e_guarda_plano_e_flex(app, tmp_path):
+    """Configurações > Gastos: a situação de cada API (cota grátis, créditos) e as opções da chave do Gemini e do
+    modo Flex (metade do preço)."""
+    from jellyfin_tools import gastos, voz_gemini
+    from videoscraper import automacao
+    app.var_jf_plano_gemini.set(app.PLANOS_GEMINI[1])
+    app.var_jf_gemini_flex.set(True)
+    o = app.obter_opcoes_jellyfin()
+    assert (o.plano_gemini, o.gemini_flex) == ("gratis", True)
+    automacao.configurar_gastos(o, consultar=False)
+    assert voz_gemini._flex["ligado"] is True and gastos.atual().plano_gemini == "gratis"
+    gastos.marcar_cota("Claude", "créditos acabaram")
+    app.atualizar_gastos()
+    texto = app.lb_cotas.cget("text")
+    assert "Gemini: chave GRÁTIS" in texto and "créditos ACABARAM" in texto
+    assert "Claude" in app.item_saude_gastos()[0] and app.item_saude_gastos()[1] is False
+    voz_gemini.usar_flex(False)

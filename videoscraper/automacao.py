@@ -155,7 +155,9 @@ def configurar_gastos(o: OpcoesJellyfin, consultar: bool = True):
     dólares por engano: fica sem teto até a cotação chegar."""
     fator, texto = conversao_reais(o, consultar)
     teto = o.teto_gastos if (fator or o.moeda_gastos != "R$") else 0.0
-    return gastos.configurar(arquivo_gastos(), teto, fator=fator, conversao=texto)
+    voz_gemini.usar_flex(getattr(o, "gemini_flex", False))      # modo econômico do Gemini (metade do preço)
+    return gastos.configurar(arquivo_gastos(), teto, fator=fator, conversao=texto,
+                             plano_gemini=getattr(o, "plano_gemini", "?"))
 
 
 def arquivo_gastos() -> Path:
@@ -375,6 +377,59 @@ def registrar_qualidade(log: logging.Logger, r, onde: str = "Dublagem") -> None:
         log.warning("  %s", linha)
     if len(problemas) > 40:
         log.warning("  ... e mais %d", len(problemas) - 40)
+
+
+NOMES_DAS_APIS = {"Claude": "Claude (tradução e falas encurtadas)", "Gemini (voz)": "Gemini (voz)",
+                  "Gemini (escuta)": "Gemini (ouvir o original: quem fala e emoção)", "Gemini": "Gemini",
+                  "Google TTS": "Google Cloud TTS"}
+DICAS_DE_ECONOMIA = {
+    "Gemini (voz)": "ligue o \"Modo econômico do Gemini (Flex)\" em Configurações > Gastos (metade do preço, mais "
+                    "lento) ou use o Piper/Google Cloud nos figurantes",
+    "Gemini (escuta)": "desligar a \"Emoção da cena\" deixa a escuta mais curta (o gênero de quem fala continua)",
+    "Claude": "a \"Tradução econômica\" (em lote, metade do preço, pronta em até 24 h) ou a tradução local, grátis",
+    "Google TTS": "a cota grátis do mês acabou: o resto do mês fica mais barato no Piper",
+}
+
+
+def foto_dos_gastos() -> dict | None:
+    """Uso e gasto de cada API agora (para medir quanto um teste custou em cada uma)."""
+    atual = gastos.atual()
+    return atual.foto() if atual is not None else None
+
+
+def custos_por_api(antes: dict | None) -> dict[str, tuple[float, bool]]:
+    """{API: (US$, foi grátis?)} desde a foto `antes` (foto_dos_gastos)."""
+    return gastos.custos_entre(antes, foto_dos_gastos())
+
+
+def texto_dos_custos(custos: dict, valor=None) -> str:
+    """"Claude (tradução) R$ 0,05 · Gemini (voz) R$ 0,40 · Gemini (ouvir) grátis" + a dica da mais cara."""
+    if not custos:
+        return ""
+    atual = gastos.atual()
+    valor = valor or (atual.valor if atual is not None else (lambda d: f"US$ {d:.2f}"))
+    partes = [f"{NOMES_DAS_APIS.get(api, api)}: " + ("grátis" if gratis else valor(usd))
+              for api, (usd, gratis) in sorted(custos.items(), key=lambda x: -x[1][0])]
+    pagos = {api: usd for api, (usd, gratis) in custos.items() if not gratis and usd > 0}
+    dica = ""
+    if pagos and (mais := max(pagos, key=pagos.get)) in DICAS_DE_ECONOMIA:
+        dica = f"\nPara economizar em {NOMES_DAS_APIS.get(mais, mais)}, que foi a mais cara: {DICAS_DE_ECONOMIA[mais]}."
+    return "Custos por API:\n" + "\n".join(f"• {p}" for p in partes) + dica
+
+
+NOMES_DAS_COTAS = {"Claude": "os créditos da Anthropic (Claude) acabaram: recarregue em console.anthropic.com",
+                   "Gemini": "o limite do dia do Gemini acabou (chave grátis: volta amanhã; com faturamento, é pago)"}
+
+
+def cotas_que_acabaram(antes: dict | None) -> list[str]:
+    """As cotas grátis (ou créditos) que acabaram desde a foto `antes`: o aviso "agora é pago"."""
+    depois = foto_dos_gastos()
+    if not antes or not depois:
+        return []
+    novas = [api for api, c in depois.get("cotas", {}).items() if antes.get("cotas", {}).get(api) != c]
+    return [NOMES_DAS_COTAS.get(api, f"a cota grátis do mês do {api.replace('Google TTS', 'Google Cloud TTS (')}"
+                                     f"{')' if api.startswith('Google TTS') else ''} acabou: daqui para frente é pago")
+            for api in novas]
 
 
 def gasto_ate_agora() -> float:
@@ -1350,10 +1405,19 @@ class ResultadoTeste:
     erro: str = ""
     problemas: list = field(default_factory=list)  # relatório de qualidade (falas para conferir)
     custo: float = 0.0                             # US$ gastos no teste (para prever o vídeo inteiro)
+    custos: dict = field(default_factory=dict)     # {API: (US$, grátis?)}: o custo do teste em cada API
 
 
 def _duracao(segundos: float) -> str:
-    return f"{segundos / 60:g} min".replace(".", ",") if segundos >= 60 else f"{int(segundos)} s"
+    """"45 s", "2 min", "1,5 min", "29 min", "1 h 40 min" (antes: "28,9932 min")."""
+    if segundos < 60:
+        return f"{int(segundos)} s"
+    minutos = segundos / 60
+    if minutos >= 60:
+        horas, resto = divmod(round(minutos), 60)
+        return f"{horas} h {resto} min" if resto else f"{horas} h"
+    return (f"{minutos:.1f}".rstrip("0").rstrip(".") if minutos < 10 else f"{round(minutos)}").replace(".", ",") \
+        + " min"
 
 
 # ---------------------------------------------------------------------------- testes feitos (para abrir de novo)
@@ -1370,7 +1434,8 @@ def _ler_testes() -> list:
 
 
 def registrar_teste(video: str | Path, amostra: str | Path, trecho: tuple[float, float], legenda=None,
-                    vozes: dict | None = None, custo: float | None = None, legendar: bool = False) -> None:
+                    vozes: dict | None = None, custo: float | None = None, legendar: bool = False,
+                    custos: dict | None = None) -> None:
     """Guarda o teste na lista "Testes feitos" (o mais novo de cada vídeo; o vídeo de teste fica em 'testes').
     legenda e vozes: para "Ajustar falas" refazer só uma fala do teste; custo (US$): para prever o vídeo inteiro."""
     lista = [t for t in _ler_testes() if _chave(t.get("video", "")) != _chave(video)]
@@ -1383,6 +1448,8 @@ def registrar_teste(video: str | Path, amostra: str | Path, trecho: tuple[float,
         registro["vozes"] = {str(k): v for k, v in vozes.items()}
     if custo is not None:
         registro["custo"] = round(max(0.0, custo), 4)
+    if custos:
+        registro["custos"] = {api: [round(usd, 5), bool(gratis)] for api, (usd, gratis) in custos.items()}
     lista.insert(0, registro)
     try:
         arquivo_testes().parent.mkdir(parents=True, exist_ok=True)
@@ -1561,7 +1628,7 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
     from jellyfin_tools.legendas import extrair_srt
     andamento = andamento or (lambda fracao, texto: None)
     video = Path(video)
-    gasto_antes = gasto_ate_agora()
+    gasto_antes, foto_antes = gasto_ate_agora(), foto_dos_gastos()
     vozes_teste = None
     idioma = o.idioma.split(",")[0].strip() or "pt-BR"
     segundos = minutos_de_teste(o) * 60
@@ -1666,8 +1733,9 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
             r.passos.append("só a legenda (sem dublar)")
         r.amostra = destino
         r.custo = max(0.0, gasto_ate_agora() - gasto_antes)
+        r.custos = custos_por_api(foto_antes)
         registrar_teste(video, destino, r.trecho, legenda_teste if o.avulsos_dublar else None, vozes_teste, r.custo,
-                        o.avulsos_legendar)
+                        o.avulsos_legendar, r.custos)
         log.info("Teste de %s (%s a %s): %s", video.name, tempo_srt(r.trecho[0])[:8], tempo_srt(r.trecho[1])[:8],
                  "; ".join(r.passos))
     except (ErroDublagem, OSError, ErroLegenda, subprocess.CalledProcessError, FaltaConfiguracao) as erro:
