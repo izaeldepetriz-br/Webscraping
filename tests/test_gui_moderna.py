@@ -3934,7 +3934,7 @@ def test_voz_por_personagem_pela_janela(app, tmp_path, monkeypatch):
     app.var_jf_encurtar_falas.set(False)
     monkeypatch.setattr(app_moderna, "videos_para_dublar",
                         lambda *p, **k: dublagem.videos_para_dublar(*p, **{**k, "sondar": lambda v: (6.0, ["eng"])}))
-    monkeypatch.setattr(voz_gemini, "_cliente", lambda chave: object())
+    monkeypatch.setattr(voz_gemini, "_cliente", lambda chave, avisar=None: object())
     ouvidos = []
 
     def ouvir(o, video, falas, cliente=None, ao_progresso=None, parar=None, serie=""):
@@ -4155,7 +4155,7 @@ def test_clonar_voz_pela_janela(app, tmp_path, monkeypatch):
         return d.resultado
     monkeypatch.setattr(app, "pedir_clonagem", preencher)
     vozes = VozesFalsas()
-    monkeypatch.setattr(voz_gemini, "_cliente", lambda chave: SimpleNamespace(voices=vozes))
+    monkeypatch.setattr(voz_gemini, "_cliente", lambda chave, avisar=None: SimpleNamespace(voices=vozes))
     app.bt_clonar_voz.invoke()
     esperar(app)
     assert app.caixas[-1][0] == "sucesso" and "Izael" in app.caixas[-1][2]
@@ -4174,7 +4174,7 @@ def test_clonar_voz_pela_janela(app, tmp_path, monkeypatch):
     from jellyfin_tools import microfone
     from tests.test_voz_gemini import GeminiFalso
     falso, tocados = GeminiFalso(), []
-    monkeypatch.setattr(voz_gemini, "_cliente", lambda chave: falso)
+    monkeypatch.setattr(voz_gemini, "_cliente", lambda chave, avisar=None: falso)
     monkeypatch.setattr(microfone, "tocar", lambda arquivo: tocados.append(Path(arquivo)))
     app.bt_ouvir_voz.invoke()
     esperar(app)
@@ -4189,7 +4189,7 @@ def test_clonar_voz_pela_janela(app, tmp_path, monkeypatch):
     app.atualizar_vozes_clonadas(salvas)
     app.var_jf_guardar_gravacoes.set(True)
     vozes = VozesFalsas()
-    monkeypatch.setattr(voz_gemini, "_cliente", lambda chave: SimpleNamespace(voices=vozes))
+    monkeypatch.setattr(voz_gemini, "_cliente", lambda chave, avisar=None: SimpleNamespace(voices=vozes))
     app.bt_clonar_voz.invoke()                                      # a mesma janela de antes, preenchida de novo
     esperar(app)
     salvas = voz_clonada.carregar(automacao.arquivo_vozes_clonadas())
