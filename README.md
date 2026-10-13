@@ -272,6 +272,12 @@ primeira falha (antes esperava o tempo limite em cada filme).
   (XMLTV), "Programação dos canais...", "Conferir programação", "Diagnóstico do Jellyfin", a velocidade da
   conferência e "Conferir sozinho toda semana". O botão "TV ao vivo..." saiu da aba Jellyfin. O botão do topo
   "Verificar atualizações" virou "⟳ Atualizações" (com 5 abas, ele ficava cortado).
+- **Aba "Jellyfin Espelhos"** (entre Jellyfin TV e Avulsos): os espelhos (.strm) também ganharam aba. A lista dos
+  espelhamentos (1, 2, 3...) com a coluna **Situação**: "Conferir espelhos" testa o link de cada .strm e mostra
+  "funcionando" (verde) ou "quebrado: ..." (vermelho) ali mesmo (antes, o resultado ia para a tabela da aba Jellyfin).
+  Na mesma aba: procurar, "Remover selecionados", "Desfazer última remoção", "Atualizar a lista" e, ao lado, a
+  conferência automática (as mesmas opções de Configurações > Espelhos: ligar, a cada quantos minutos/horas/dias,
+  remover os quebrados e a última conferência). Os botões "Conferir espelhos" e "Espelhos..." saíram da aba Jellyfin.
 - "Legendar", na aba Avulsos, já cria a legenda quando falta (traduz a que existe ou ouve o áudio com o Whisper) e a
   põe dentro do vídeo: é o "Criar legenda" dos Avulsos.
 

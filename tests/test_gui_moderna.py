@@ -1378,16 +1378,28 @@ def test_conferir_espelhos_e_desfazer_pela_janela(app, tmp_path, api_falsa, monk
     app.var_jf_destino.set(str(filmes))
     perguntas = []
     app.perguntar = lambda t, m: (perguntas.append(t), True)[1]
-    app.bt_conferir_espelhos.invoke()
+    app.mostrar_aba("Jellyfin Espelhos")                                 # os espelhos têm aba própria
+    painel = app.janela_espelhos
+    arvore = painel.arvore
+
+    def situacoes():
+        return {arvore.item(i, "text").strip(): arvore.set(i, "situacao")
+                for g in arvore.get_children() for i in arvore.get_children(g)}
+    assert situacoes() == {"Bom (2000)": "não conferido", "Quebrado (2001)": "não conferido"}
+    painel.bt_conferir.invoke()
     esperar(app)
     esperar(app)                                                         # a remoção oferecida no fim
-    assert [l[1].split()[-1] for l in _linhas_jf(app)] == ["funcionando", "quebrado"]
     assert "Espelhos quebrados" in perguntas
     assert not (filmes / "Quebrado (2001)" / "Quebrado (2001).strm").exists()
     assert (filmes / "Bom (2000)" / "Bom (2000).strm").exists()
+    app.update()
+    assert list(situacoes()) == ["Bom (2000)"] and situacoes()["Bom (2000)"].startswith("funcionando")
     app.bt_desfazer.invoke()                                              # volta o removido
     esperar(app)
     assert (filmes / "Quebrado (2001)" / "Quebrado (2001).strm").exists()
+    painel.bt_atualizar.invoke()
+    assert situacoes()["Quebrado (2001)"].startswith("quebrado")         # a coluna Situação lembra o Conferir
+    assert "1 quebrado(s)" in painel.lb_resumo.cget("text")
 
 
 def test_vigia_organiza_sozinho_o_que_terminou(app, tmp_path):
@@ -1566,7 +1578,8 @@ def test_espelhos_remover_qualquer_espelhamento_pela_janela(app, tmp_path, api_f
     app.var_jf_chave_jellyfin.set("chave")
     perguntas = []
     app.perguntar = lambda t, m: perguntas.append(m) or True
-    app.ao_gerenciar_espelhos()
+    app.ao_gerenciar_espelhos()                                      # o atalho antigo leva à aba
+    assert app.aba_atual() == "Jellyfin Espelhos"
     janela = app.janela_espelhos
     arvore = janela.arvore
     titulos = [arvore.item(g, "text") for g in arvore.get_children()]
@@ -1667,9 +1680,11 @@ def test_totais_nos_filtros_e_conferir_espelhos_com_filtro_desmarcado(app, tmp_p
         esperar(app)
     finally:
         espelho.verificar_links = original
-    linhas = _linhas_jf(app)
-    assert len(linhas) == 1 and "funcionando" in linhas[0][1]        # antes: "0 de 1", tela vazia
-    assert all(v.get() for v in app.vars_filtro_jf.values())
+    assert len(_linhas_jf(app)) == 3                                  # a tabela da aba Jellyfin não é trocada
+    app.mostrar_aba("Jellyfin Espelhos")                              # o resultado fica na aba dos espelhos
+    arvore = app.janela_espelhos.arvore
+    itens = [i for g in arvore.get_children() for i in arvore.get_children(g)]
+    assert len(itens) == 1 and arvore.set(itens[0], "situacao").startswith("funcionando")
 
 
 def test_selecionar_todos_e_so_filmes_e_series_na_aba_videos(app):
@@ -4326,7 +4341,8 @@ def test_aba_avulsos_olhar_adicionar_e_processar(app, tmp_path, monkeypatch):
     voz = _dublagem_falsa(monkeypatch)
     from videoscraper import automacao
     monkeypatch.setattr(automacao, "videos_para_dublar", app_moderna.videos_para_dublar)
-    assert app.seletor_aba.cget("values") == ["Vídeos", "Jellyfin", "Jellyfin TV", "Avulsos", app.ABA_CONFIG]
+    assert app.seletor_aba.cget("values") == ["Vídeos", "Jellyfin", "Jellyfin TV", "Jellyfin Espelhos", "Avulsos",
+                                              app.ABA_CONFIG]
     assert not hasattr(app, "bt_avulsos")                          # saiu da barra da aba Jellyfin
     caixa = tmp_path / "Para Dublar"
     caixa.mkdir()

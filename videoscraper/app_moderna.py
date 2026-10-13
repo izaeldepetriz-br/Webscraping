@@ -72,7 +72,7 @@ from .cli import salvar
 from .extracao import LinkVideo
 from .gui import ORIGENS, _SaidaParaFila, _so_caracteres_basicos
 from . import agendador, atualizacao, automacao, instalacao, bandeja, inicializacao
-from .gui_moderna import (DialogoCompletar, JanelaEspelhos, JanelaModerna, JanelaNaoIdentificados, JanelaPrevias,
+from .gui_moderna import (DialogoCompletar, PainelEspelhos, JanelaModerna, JanelaNaoIdentificados, JanelaPrevias,
                           OpcoesInterface, Tema)
 from .tv_moderna import TVAoVivo
 from .navegador import PERFIL_PADRAO, PlaywrightAusente
@@ -202,7 +202,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
         self._remocao_pendente = None           # "Conferir espelhos": .strm quebrados a oferecer remoção
         self._vigia_agendada = None             # pasta vigiada: id do próximo after()
         self._conferencia_agendada = None       # conferência automática dos espelhos
-        self.janela_espelhos = None             # "Espelhos...": remover qualquer espelhamento
+        self.janela_espelhos = None             # o painel da aba "Jellyfin Espelhos" (montado na 1ª vez)
+        self._situacao_espelhos: dict[str, tuple[bool, str]] = {}   # .strm -> (funciona?, texto) do último Conferir
         self._conflitos_pendentes = None        # "Resolver conflitos": decisões esperando a confirmação
         self._previa_pendente = False
         self._versao_pendente = None            # aviso de versão nova que chegou durante uma tarefa
@@ -885,7 +886,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._conflitos_pendentes = dado               # pergunta depois do "fim" (a janela já está livre)
         elif tipo == "previa_de_novo":
             self._previa_pendente = True
-        elif tipo == "espelhos_atualizar":             # janela "Espelhos...": relê a lista
+        elif tipo == "espelhos_atualizar":             # aba Jellyfin Espelhos: relê a lista
             if self.janela_espelhos is not None and self.janela_espelhos.winfo_exists():
                 self._preencher_espelhos()
         elif tipo == "jf_relatorio":                   # o que falta na biblioteca
@@ -893,12 +894,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.mostrar_todos_jf()
             for i, (item, falta, detalhe) in enumerate(dado):
                 self.adicionar_linha_jf(str(i), i + 1, f"falta {falta}", "pulado", item, detalhe)
-        elif tipo == "jf_espelhos":                    # resultado do "Conferir espelhos"
-            self.limpar_tabela_jf()
-            self.mostrar_todos_jf()                    # "funcionando" não pode sumir num filtro da prévia
-            for i, (nome, ok, texto) in enumerate(dado):
-                self.adicionar_linha_jf(str(i), i + 1, "funcionando" if ok else "quebrado", "ok" if ok else "erro",
-                                        nome, texto, categoria="organizado" if ok else "erro")
+        elif tipo == "espelhos_conferidos":            # "Conferir espelhos": a coluna Situação da aba Espelhos
+            self._situacao_espelhos.update(dado)
+            if self.janela_espelhos is not None and self.janela_espelhos.winfo_exists():
+                self._preencher_espelhos()
         elif tipo == "fim":
             self.trabalhando = False
             self._fim_da_tarefa = time.monotonic()
@@ -1553,26 +1552,25 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 resultado, quebrados, removidos = conferir_e_avisar(
                     *pastas, notificador=notificador, remover=o.remover_quebrados, parar=self.evento_parar.is_set,
                     ao_progresso=self._progresso_com_velocidade("Conferindo espelhos"))
-            linhas = []
+            situacoes = {}
             for raiz, arquivo, url, v in resultado:
                 texto = v.problema or v.aviso or "funcionando"
                 (self._log.info if v.ok else self._log.warning)("[%s] %s (%s)", "ok" if v.ok else "quebrado",
                                                                  arquivo, texto)
-                linhas.append(("/".join(arquivo.relative_to(raiz).parts), v.ok, texto))
+                situacoes[str(arquivo)] = (v.ok, texto if v.ok else f"quebrado: {texto}")
+            if situacoes:
+                self.fila.put(("espelhos_conferidos", situacoes))       # a aba Jellyfin Espelhos
             fora = []
             if canais:                                 # canais ao vivo: avisa se algum saiu do ar
                 with prioridade_baixa():
-                    situacoes = conferir_canais(canais, trabalhadores, parar=self.evento_parar.is_set,
-                                                ao_progresso=self._progresso_com_velocidade(
-                                                    "Conferência automática: todos os canais ao vivo"))
-                fora = [(c, s) for c, s in situacoes if not s.ok]
-                self._registrar_canais(situacoes)
-                self.fila.put(("canais_conferidos", situacoes))
-                linhas += [(f"TV ao vivo/{c.nome}", s.ok, s.detalhe) for c, s in situacoes]
+                    canais_vistos = conferir_canais(canais, trabalhadores, parar=self.evento_parar.is_set,
+                                                    ao_progresso=self._progresso_com_velocidade(
+                                                        "Conferência automática: todos os canais ao vivo"))
+                fora = [(c, s) for c, s in canais_vistos if not s.ok]
+                self._registrar_canais(canais_vistos)
+                self.fila.put(("canais_conferidos", canais_vistos))   # a aba Jellyfin TV
                 if fora and notificador.ativo:
                     notificador.enviar(*mensagem_fora_do_ar(fora))
-            if linhas:
-                self.fila.put(("jf_espelhos", linhas))
             if (quebrados or fora) and not notificador.ativo:
                 self._log.warning("Há espelhos/canais com problema, mas o Discord/Telegram não está configurado")
             self.fila.put(("conferencia_feita", (datetime.now().isoformat(timespec="seconds"), len(resultado) + len(canais),
@@ -1623,10 +1621,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
         pastas = [p for p in dict.fromkeys((self._destinos.get("Filmes"), self._destinos.get("Séries"),
                                             self.pasta_videos_comuns)) if p and Path(p).is_dir()]
         if not pastas:
-            self.mostrar_mensagem("Conferir espelhos", "Escolha a biblioteca de Filmes e/ou de Séries.", "aviso")
+            self.mostrar_mensagem("Conferir espelhos", "Escolha a biblioteca de Filmes e/ou de Séries (na aba "
+                                  "Jellyfin).", "aviso")
             return
-        self._previa = None
-        self.liberar_organizar(False)
 
         def tarefa():
             resultado = conferir_espelhos(*pastas, parar=self.evento_parar.is_set,
@@ -1635,14 +1632,14 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 self.fila.put(("msg", ("Conferir espelhos", "Nenhum .strm nas bibliotecas:\n" + "\n".join(pastas),
                                        "info")))
                 return
-            linhas = []
+            situacoes = {}
             for raiz, arquivo, url, v in resultado:
                 texto = v.problema or v.aviso or (f"funcionando ({v.tempo:.1f} s)" if v.tempo is not None
                                                   else "funcionando")
                 (self._log.info if v.ok else self._log.warning)("[%s] %s -> %s (%s)", "ok" if v.ok else "quebrado",
                                                                  arquivo, url, texto)
-                linhas.append(("/".join(arquivo.relative_to(raiz).parts), v.ok, texto))
-            self.fila.put(("jf_espelhos", linhas))
+                situacoes[str(arquivo)] = (v.ok, texto if v.ok else f"quebrado: {texto}")
+            self.fila.put(("espelhos_conferidos", situacoes))     # a coluna Situação da aba Jellyfin Espelhos
             quebrados = [r for r in resultado if not r[3].ok]
             self.resumo_diario.registrar("espelhos_quebrados", len(quebrados))
             self.fila.put(("status_fim", f"Espelhos: {len(resultado) - len(quebrados)} funcionando, "
@@ -1663,19 +1660,22 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 pastas.setdefault(pasta, tipo)
         return pastas
 
-    def ao_gerenciar_espelhos(self) -> None:
-        if not self._bibliotecas():
-            self.mostrar_mensagem("Espelhos", "Escolha a biblioteca de Filmes e/ou de Séries (ou espelhe vídeos "
-                                  "comuns numa pasta).", "aviso")
-            return
+    def ao_abrir_aba_espelhos(self) -> None:
+        """Aba "Jellyfin Espelhos": na 1ª vez, monta o painel (antes, a janela "Espelhos..."); sempre, lê de novo os
+        .strm das bibliotecas (com a situação do último "Conferir espelhos")."""
         if self.janela_espelhos is None or not self.janela_espelhos.winfo_exists():
-            self.janela_espelhos = JanelaEspelhos(self, self._remover_espelhos_escolhidos,
-                                                  self._desfazer_remocao_espelhos)
+            self.janela_espelhos = PainelEspelhos(self.aba_espelhos, self, {
+                "remover": self._remover_espelhos_escolhidos, "desfazer": self._desfazer_remocao_espelhos,
+                "conferir": self.ao_conferir_espelhos, "atualizar": self._preencher_espelhos})
+            self.janela_espelhos.grid(row=0, column=0, sticky="nsew", padx=28, pady=(14, 14))
+            if self.trabalhando:
+                for botao in self.janela_espelhos.botoes_de_trabalho:
+                    botao.configure(state="disabled")
         self._preencher_espelhos()
-        self.janela_espelhos.lift()
-        self.janela_espelhos.focus_force()
 
     def _preencher_espelhos(self) -> None:
+        if self.janela_espelhos is None or not self.janela_espelhos.winfo_exists():
+            return
         bibliotecas = self._bibliotecas()
         tipos = {Path(p).resolve(): t for p, t in bibliotecas.items()}
         self._espelhos_salvos, grupos = {}, []
@@ -1684,9 +1684,14 @@ class AppModerna(TVAoVivo, JanelaModerna):
             for espelho in lote.itens:
                 iid = f"e{len(self._espelhos_salvos)}"
                 self._espelhos_salvos[iid] = espelho
-                linhas.append((iid, espelho.nome, tipos.get(espelho.raiz.resolve(), espelho.raiz.name), espelho.url))
+                ok, situacao = self._situacao_espelhos.get(str(espelho.arquivo), (None, "não conferido"))
+                linhas.append((iid, espelho.nome, tipos.get(espelho.raiz.resolve(), espelho.raiz.name), espelho.url,
+                               situacao, ok))
             grupos.append((lote.titulo, linhas))
-        self.janela_espelhos.preencher(grupos)
+        vazio = ("Escolha a biblioteca de Filmes e/ou de Séries na aba Jellyfin (ou espelhe vídeos comuns numa pasta, "
+                 "na aba Vídeos)." if not bibliotecas else
+                 "Nenhum espelho (.strm) nas bibliotecas. Na aba Vídeos, \"Espelhar no Jellyfin\" cria os espelhos.")
+        self.janela_espelhos.preencher(grupos, vazio)
 
     def _scan_se_ligado(self, o) -> None:
         if o.atualizar_jellyfin and o.jellyfin_url and o.jellyfin_api_key:
@@ -1749,7 +1754,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
 
     def _oferecer_remocao(self, quebrados: list) -> None:
         if not self.perguntar("Espelhos quebrados",
-                              f"{len(quebrados)} .strm não funcionam mais (veja a tabela).\n\n"
+                              f"{len(quebrados)} .strm não funcionam mais (veja a coluna Situação, na aba Jellyfin "
+                              "Espelhos).\n\n"
                               "Remover da biblioteca? O Jellyfin deixa de mostrar esses itens no próximo scan.\n"
                               "Se mudar de ideia, 'Desfazer última' os coloca de volta."):
             return
@@ -1759,6 +1765,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self._log.info("%d espelho(s) quebrado(s) removido(s)", removidos)
             self.fila.put(("status_fim", f"{removidos} espelho(s) quebrado(s) removido(s)."))
             self.fila.put(("msg", ("Espelhos quebrados", f"{removidos} .strm removido(s).", "sucesso")))
+            self.fila.put(("espelhos_atualizar", None))
 
         self._rodar("Removendo espelhos quebrados...", tarefa)
 

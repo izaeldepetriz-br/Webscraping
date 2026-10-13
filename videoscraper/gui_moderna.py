@@ -427,72 +427,119 @@ class DialogoLista(ctk.CTkToplevel):
                                        + (f"\n{self._rodape_mensagem}" if self._rodape_mensagem else ""))
 
 
-class JanelaEspelhos(ctk.CTkToplevel):
-    """Os espelhos (.strm) das bibliotecas agrupados por espelhamento (1, 2, 3...), para tirar
-    qualquer um, não só o último: um espelhamento inteiro, um filme ou alguns episódios."""
+class PainelEspelhos(ctk.CTkFrame):
+    """Aba "Jellyfin Espelhos": os espelhos (.strm) das bibliotecas agrupados por espelhamento (1, 2, 3...), para
+    conferir e tirar qualquer um, não só o último (um espelhamento inteiro, um filme ou alguns episódios), e, ao lado,
+    a conferência automática (as MESMAS opções de Configurações > Espelhos). Antes: a janela "Espelhos..." e o botão
+    "Conferir espelhos" da aba Jellyfin, com o resultado na tabela de lá.
+    acoes: {'remover' (iids dos .strm escolhidos), 'desfazer', 'conferir', 'atualizar'}."""
 
-    COLUNAS = (("biblioteca", "Biblioteca", 110), ("link", "Link", 360))
+    COLUNAS = (("biblioteca", "Biblioteca", 110), ("situacao", "Situação", 230), ("link", "Link", 340))
 
-    def __init__(self, master, ao_remover, ao_desfazer):
-        """ao_remover(iids dos .strm escolhidos); ao_desfazer(): volta a última remoção."""
-        super().__init__(master, fg_color=Tema.CARTAO)
-        self.title("Espelhos no Jellyfin")
-        self.geometry("1040x620")
-        self.minsize(760, 420)
-        self.transient(master)
-        self._grupos: list[tuple[str, list[tuple[str, str, str, str]]]] = []
+    def __init__(self, pai, app, acoes: dict):
+        super().__init__(pai, fg_color=Tema.CARTAO, corner_radius=Tema.RAIO, border_width=1,
+                         border_color=Tema.CARTAO_BORDA)
+        self.app = m = app
+        self._grupos: list[tuple[str, list[tuple]]] = []
+        ao_remover = acoes["remover"]
 
         topo = ctk.CTkFrame(self, fg_color="transparent")
-        topo.pack(fill="x", padx=24, pady=(18, 6))
-        ctk.CTkLabel(topo, text="Espelhos (.strm) nas bibliotecas", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
-                     text_color=Tema.TEXTO, anchor="w").pack(fill="x")
+        topo.pack(fill="x", padx=24, pady=(14, 6))
         ctk.CTkLabel(topo, text="Escolha um espelhamento inteiro (ex.: o 1º) ou só um filme/episódio "
-                     "(Ctrl+clique para vários) e clique em Remover. Nada é apagado de vez: "
-                     "\"Desfazer última remoção\" põe de volta.", font=master.f_rotulo,
-                     text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left", wraplength=980).pack(fill="x", pady=(4, 8))
+                     "(Ctrl+clique para vários) e clique em Remover. Nada é apagado de vez: \"Desfazer última "
+                     "remoção\" põe de volta. \"Conferir espelhos\" testa o link de cada .strm (o site ainda tem o "
+                     "vídeo?) e mostra na coluna Situação.", font=m.f_rotulo, text_color=Tema.TEXTO_SUAVE,
+                     anchor="w", justify="left", wraplength=1020).pack(fill="x", pady=(0, 8))
         busca = ctk.CTkFrame(topo, fg_color="transparent")
         busca.pack(fill="x")
-        ctk.CTkLabel(busca, text="Procurar:", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE).pack(side="left")
+        ctk.CTkLabel(busca, text="Procurar:", font=m.f_rotulo, text_color=Tema.TEXTO_SUAVE).pack(side="left")
         self.var_busca = tk.StringVar()
-        self.campo_busca = master._entrada(busca, self.var_busca, "nome do filme ou da série", altura=34)
+        self.campo_busca = m._entrada(busca, self.var_busca, "nome do filme ou da série", altura=34)
         self.campo_busca.pack(side="left", fill="x", expand=True, padx=(8, 0))
         self.var_busca.trace_add("write", lambda *_: self._mostrar())
 
-        quadro = ctk.CTkFrame(self, fg_color=Tema.CARTAO)
-        quadro.pack(fill="both", expand=True, padx=24, pady=6)
+        # a lista (à esquerda, com a altura toda) e a conferência automática (à direita)
+        rodape = ctk.CTkFrame(self, fg_color="transparent")
+        rodape.pack(side="bottom", fill="x", padx=24, pady=(4, 14))
+        meio = ctk.CTkFrame(self, fg_color="transparent")
+        meio.pack(fill="both", expand=True, padx=24, pady=(4, 0))
+        meio.grid_columnconfigure(0, weight=1)
+        meio.grid_rowconfigure(0, weight=1)
+        quadro = ctk.CTkFrame(meio, fg_color=Tema.CARTAO)
+        quadro.grid(row=0, column=0, sticky="nsew")
         quadro.grid_columnconfigure(0, weight=1)
         quadro.grid_rowconfigure(0, weight=1)
         self.arvore = ttk.Treeview(quadro, columns=[c[0] for c in self.COLUNAS], show="tree headings",
                                    selectmode="extended", style="Moderno.Treeview")
         self.arvore.heading("#0", text="Espelhamento / item", anchor="w")
-        self.arvore.column("#0", width=430, minwidth=200, stretch=True, anchor="w")
+        self.arvore.column("#0", width=380, minwidth=200, stretch=True, anchor="w")
         for chave, texto, largura in self.COLUNAS:
             self.arvore.heading(chave, text=texto, anchor="w")
             self.arvore.column(chave, width=largura, minwidth=60, stretch=chave == "link", anchor="w")
         self.arvore.tag_configure("grupo", background=Tema.SECUNDARIA, font=(Tema.FAMILIA, 11, "bold"))
+        self.arvore.tag_configure("ok", background="#13251b")
+        self.arvore.tag_configure("erro", background="#2a1618")
         self.arvore.grid(row=0, column=0, sticky="nsew")
         rolagem = ctk.CTkScrollbar(quadro, command=self.arvore.yview, button_color=Tema.CARTAO_BORDA,
                                    button_hover_color=Tema.CAMPO_BORDA)
         rolagem.grid(row=0, column=1, sticky="ns", padx=(4, 0))
         self.arvore.configure(yscrollcommand=rolagem.set)
         self.arvore.bind("<<TreeviewSelect>>", lambda e: self._contar())
+        self.arvore.bind("<Delete>", lambda e: ao_remover(self.selecionados()))
+        self.lb_vazio = ctk.CTkLabel(quadro, text="", font=m.f_normal, text_color=Tema.TEXTO_FRACO,
+                                     fg_color=Tema.CARTAO, wraplength=520, justify="center")
 
-        rodape = ctk.CTkFrame(self, fg_color="transparent")
-        rodape.pack(fill="x", padx=24, pady=(6, 18))
-        self.lb_resumo = ctk.CTkLabel(rodape, text="", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE)
+        lateral = ctk.CTkScrollableFrame(meio, fg_color=Tema.CAMPO, corner_radius=Tema.RAIO_CONTROLE, width=300)
+        lateral.grid(row=0, column=1, sticky="ns", padx=(14, 0))
+        ctk.CTkLabel(lateral, text="Conferência automática", font=ctk.CTkFont(Tema.FAMILIA, 13, "bold"),
+                     text_color=Tema.TEXTO, anchor="w").pack(fill="x", padx=10, pady=(6, 2))
+        ctk.CTkLabel(lateral, text="As mesmas opções de Configurações > Espelhos (mudar aqui muda lá).",
+                     font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_FRACO, anchor="w", justify="left",
+                     wraplength=270).pack(fill="x", padx=10)
+        caixa = dict(font=m.f_rotulo, text_color=Tema.TEXTO, fg_color=Tema.PRIMARIA, hover_color=Tema.PRIMARIA_HOVER,
+                     border_color=Tema.CAMPO_BORDA, checkbox_width=18, checkbox_height=18, corner_radius=4,
+                     border_width=2)
+        self.cb_conferir_auto = ctk.CTkCheckBox(
+            lateral, text="Conferir os espelhos (e os canais) sozinho\ne avisar no Discord/Telegram se quebrar",
+            variable=m.var_jf_conferir_auto, command=m.ao_alternar_conferencia, **caixa)
+        self.cb_conferir_auto.pack(anchor="w", padx=10, pady=(10, 4))
+        linha = ctk.CTkFrame(lateral, fg_color="transparent")
+        linha.pack(anchor="w", padx=10, pady=(2, 4))
+        ctk.CTkLabel(linha, text="A cada:", font=m.f_rotulo, text_color=Tema.TEXTO_SUAVE).pack(side="left",
+                                                                                               padx=(0, 6))
+        self.campo_a_cada = CampoNumerico(linha, 7, 1, 999, 1, largura=96, var=m.campo_conferir_a_cada.var)
+        self.campo_a_cada.pack(side="left", padx=(0, 6))
+        ctk.CTkOptionMenu(linha, variable=m.var_jf_conferir_unidade, values=["minutos", "horas", "dias"], width=90,
+                          height=32, corner_radius=Tema.RAIO_CONTROLE, font=m.f_rotulo, fg_color=Tema.CARTAO,
+                          button_color=Tema.SECUNDARIA, button_hover_color=Tema.SECUNDARIA_HOVER,
+                          dropdown_fg_color=Tema.CARTAO, text_color=Tema.TEXTO).pack(side="left")
+        self.cb_remover_quebrados = ctk.CTkCheckBox(lateral, text="Remover os quebrados (dá para desfazer)",
+                                                    variable=m.var_jf_remover_quebrados, **caixa)
+        self.cb_remover_quebrados.pack(anchor="w", padx=10, pady=(6, 4))
+        self.lb_estado = ctk.CTkLabel(lateral, text=m.lb_estado_conferencia.cget("text"), font=m.f_rotulo,
+                                      text_color=m.lb_estado_conferencia.cget("text_color"), anchor="w",
+                                      justify="left", wraplength=270)
+        self.lb_estado.pack(fill="x", padx=10, pady=(4, 8))
+
+        self.lb_resumo = ctk.CTkLabel(rodape, text="", font=m.f_rotulo, text_color=Tema.TEXTO_SUAVE)
         self.lb_resumo.pack(side="left")
-        master._botao(rodape, "Fechar", self.destroy, "fantasma", largura=90).pack(side="right")
-        self.bt_remover = master._botao(rodape, "Remover selecionados", lambda: ao_remover(self.selecionados()),
-                                        "perigo", largura=190)
-        self.bt_remover.pack(side="right", padx=(0, 8))
-        self.bt_desfazer = master._botao(rodape, "Desfazer última remoção", ao_desfazer, largura=200)
+        self.bt_remover = m._botao(rodape, "Remover selecionados", lambda: ao_remover(self.selecionados()),
+                                   "perigo", largura=190)
+        self.bt_remover.pack(side="right")
+        self.bt_desfazer = m._botao(rodape, "Desfazer última remoção", acoes["desfazer"], largura=200)
         self.bt_desfazer.pack(side="right", padx=(0, 8))
-        self.bind("<Escape>", lambda e: self.destroy())
-        self.bind("<Delete>", lambda e: ao_remover(self.selecionados()))
+        self.bt_atualizar = m._botao(rodape, "⟳  Atualizar a lista", acoes["atualizar"], "fantasma", largura=150)
+        self.bt_atualizar.pack(side="right", padx=(0, 8))
+        self.bt_conferir = m._botao(rodape, "Conferir espelhos", acoes["conferir"], "primario", largura=170)
+        self.bt_conferir.pack(side="right", padx=(0, 8))
+        # desligados enquanto o programa trabalha (como os botões das outras abas)
+        self.botoes_de_trabalho = (self.bt_conferir, self.bt_atualizar, self.bt_desfazer, self.bt_remover)
 
-    def preencher(self, grupos: list[tuple[str, list[tuple[str, str, str, str]]]]) -> None:
-        """grupos: [(título do espelhamento, [(iid, nome, biblioteca, link)])]."""
+    def preencher(self, grupos: list[tuple[str, list[tuple]]], vazio: str = "") -> None:
+        """grupos: [(título do espelhamento, [(iid, nome, biblioteca, link[, situação, ok])])]; vazio: o texto no
+        meio da lista quando não há nenhum espelho (ex.: falta escolher a biblioteca)."""
         self._grupos = grupos
+        self._vazio = vazio
         self._mostrar()
 
     def _mostrar(self) -> None:
@@ -503,9 +550,17 @@ class JanelaEspelhos(ctk.CTkToplevel):
             if not visiveis:
                 continue
             grupo = self.arvore.insert("", "end", iid=f"grupo-{n}", text=titulo, open=True, tags=("grupo",))
-            for k, (iid, nome, biblioteca, link) in enumerate(visiveis):
-                self.arvore.insert(grupo, "end", iid=iid, text="   " + nome, values=(biblioteca, link),
-                                   tags=("par" if k % 2 == 0 else "impar",))
+            for k, item in enumerate(visiveis):
+                iid, nome, biblioteca, link = item[:4]
+                situacao, ok = (item[4], item[5]) if len(item) > 5 else ("—", None)
+                tag = "ok" if ok else "erro" if ok is False else ("par" if k % 2 == 0 else "impar")
+                self.arvore.insert(grupo, "end", iid=iid, text="   " + nome, values=(biblioteca, situacao, link),
+                                   tags=(tag,))
+        if not self._grupos and getattr(self, "_vazio", ""):
+            self.lb_vazio.configure(text=self._vazio)
+            self.lb_vazio.place(relx=0.5, rely=0.45, anchor="center")
+        else:
+            self.lb_vazio.place_forget()
         self._contar()
 
     def selecionados(self) -> list[str]:
@@ -517,9 +572,11 @@ class JanelaEspelhos(ctk.CTkToplevel):
         return escolhidos
 
     def _contar(self) -> None:
-        total = sum(len(self.arvore.get_children(g)) for g in self.arvore.get_children())
+        itens = [i for g in self.arvore.get_children() for i in self.arvore.get_children(g)]
+        quebrados = sum(1 for i in itens if "erro" in self.arvore.item(i, "tags"))
         escolhidos = len(self.selecionados())
-        self.lb_resumo.configure(text=f"{total} espelho(s)" + (f" · {escolhidos} selecionado(s)" if escolhidos else ""))
+        self.lb_resumo.configure(text=f"{len(itens)} espelho(s)" + (f" · {quebrados} quebrado(s)" if quebrados else "")
+                                 + (f" · {escolhidos} selecionado(s)" if escolhidos else ""))
 
 
 # Uma pasta por linha; também aceita ";" e "," quando a vírgula separa dois caminhos ("E:\\A, E:\\B"). Uma
@@ -2677,14 +2734,17 @@ class JanelaModerna(ctk.CTk):
         self.aba_videos = ctk.CTkFrame(self, fg_color="transparent")
         self.aba_jellyfin = ctk.CTkFrame(self, fg_color="transparent")
         self.aba_tv = ctk.CTkFrame(self, fg_color="transparent")         # "Jellyfin TV" (a TV ao vivo)
+        self.aba_espelhos = ctk.CTkFrame(self, fg_color="transparent")   # "Jellyfin Espelhos" (os .strm)
         self.aba_avulsos = ctk.CTkFrame(self, fg_color="transparent")
         self.aba_config = ctk.CTkFrame(self, fg_color="transparent")
-        for aba in (self.aba_videos, self.aba_jellyfin, self.aba_tv, self.aba_avulsos, self.aba_config):
+        for aba in (self.aba_videos, self.aba_jellyfin, self.aba_tv, self.aba_espelhos, self.aba_avulsos,
+                    self.aba_config):
             aba.grid(row=1, column=0, sticky="nsew")
             aba.grid_columnconfigure(0, weight=1)
         self.aba_videos.grid_rowconfigure(2, weight=1)
         self.aba_jellyfin.grid_rowconfigure(3, weight=1)
         self.aba_tv.grid_rowconfigure(0, weight=1)        # o painel dos canais entra na 1ª vez que a aba abre
+        self.aba_espelhos.grid_rowconfigure(0, weight=1)  # o dos espelhos também
         # ⚙ Configurações primeiro: as outras abas põem as opções delas nas categorias de lá
         self._montar_aba_config(self.aba_config)
         self._montar_endereco(self.aba_videos)
@@ -2739,6 +2799,7 @@ class JanelaModerna(ctk.CTk):
         "Jellyfin": "1) Escolha as pastas    2) Clique em Pré-visualizar    3) Confira e clique em Organizar",
         "Jellyfin TV": "1) Adicione ou importe os canais    2) Clique em Conferir    3) Clique em Salvar e enviar ao "
                        "Jellyfin",
+        "Jellyfin Espelhos": "1) Clique em Conferir espelhos    2) Veja a Situação    3) Remova os quebrados",
         "Avulsos": "1) Escolha a caixa de entrada ou adicione vídeos    2) Clique em Olhar    3) Confira e clique em "
                    "Processar",
         "⚙ Configurações": "Tudo o que muda o jeito do programa trabalhar fica aqui. Vale na hora e fica salvo.",
@@ -2746,6 +2807,7 @@ class JanelaModerna(ctk.CTk):
     TITULOS = {"Vídeos": "Extrair e baixar vídeos públicos",
                "Jellyfin": "Organizar a biblioteca do Jellyfin",
                "Jellyfin TV": "TV ao vivo no Jellyfin",
+               "Jellyfin Espelhos": "Espelhos (.strm) no Jellyfin",
                "Avulsos": "Legendar e dublar vídeos avulsos",
                "⚙ Configurações": "Configurações"}
 
@@ -2773,8 +2835,8 @@ class JanelaModerna(ctk.CTk):
         self.lb_saude = ctk.CTkLabel(topo, text="", font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO_SUAVE,
                                      anchor="w", justify="left", wraplength=1100)   # muita coisa: quebra a linha
         self.seletor_aba = ctk.CTkSegmentedButton(
-            topo, values=["Vídeos", "Jellyfin", "Jellyfin TV", "Avulsos", "⚙ Configurações"], command=self.mostrar_aba,
-            height=38,
+            topo, values=["Vídeos", "Jellyfin", "Jellyfin TV", "Jellyfin Espelhos", "Avulsos", "⚙ Configurações"],
+            command=self.mostrar_aba, height=38,
             corner_radius=Tema.RAIO_CONTROLE, font=self.f_botao, fg_color=Tema.CARTAO,
             selected_color=Tema.PRIMARIA, selected_hover_color=Tema.PRIMARIA_HOVER,
             unselected_color=Tema.CARTAO, unselected_hover_color=Tema.SECUNDARIA_HOVER, text_color=Tema.TEXTO)
@@ -2793,10 +2855,12 @@ class JanelaModerna(ctk.CTk):
                 self.lb_saude.configure(wraplength=largura)
         topo.bind("<Configure>", quebrar_saude, add="+")
 
+    ABAS_COM_SAUDE = ("Jellyfin", "Jellyfin TV", "Jellyfin Espelhos", "⚙ Configurações")
+
     def mostrar_aba(self, nome: str) -> None:
-        """'Vídeos', 'Jellyfin', 'Jellyfin TV', 'Avulsos' ou '⚙ Configurações'."""
+        """'Vídeos', 'Jellyfin', 'Jellyfin TV', 'Jellyfin Espelhos', 'Avulsos' ou '⚙ Configurações'."""
         abas = {"Vídeos": self.aba_videos, "Jellyfin": self.aba_jellyfin, "Jellyfin TV": self.aba_tv,
-                "Avulsos": self.aba_avulsos, self.ABA_CONFIG: self.aba_config}
+                "Jellyfin Espelhos": self.aba_espelhos, "Avulsos": self.aba_avulsos, self.ABA_CONFIG: self.aba_config}
         saindo_da_config = self.seletor_aba.get() == self.ABA_CONFIG and nome != self.ABA_CONFIG
         for outro, aba in abas.items():
             if outro != nome:
@@ -2813,7 +2877,9 @@ class JanelaModerna(ctk.CTk):
             self.atualizar_botao_testar()                # os minutos de teste podem ter mudado nas Configurações
         if nome == "Jellyfin TV":
             self.ao_abrir_aba_tv()
-        if nome in ("Jellyfin", "Jellyfin TV", self.ABA_CONFIG) and self.lb_saude.cget("text"):
+        if nome == "Jellyfin Espelhos":
+            self.ao_abrir_aba_espelhos()
+        if nome in self.ABAS_COM_SAUDE and self.lb_saude.cget("text"):
             self._mostrar_saude()
         else:
             self.lb_saude.pack_forget()
@@ -2824,7 +2890,7 @@ class JanelaModerna(ctk.CTk):
                                for rotulo, ok in itens)
         self.lb_saude.configure(text=texto, text_color=Tema.AVISO if any(ok is False for _, ok in itens)
                                 else Tema.TEXTO_SUAVE)
-        if self.aba_atual() in ("Jellyfin", "Jellyfin TV", self.ABA_CONFIG):
+        if self.aba_atual() in self.ABAS_COM_SAUDE:
             self._mostrar_saude()
 
     def _mostrar_saude(self) -> None:
@@ -3146,12 +3212,9 @@ class JanelaModerna(ctk.CTk):
         self.bt_organizar = self._botao(barra, "Organizar", self.ao_organizar, largura=130)
         self.bt_legendas = self._botao(barra, "Completar biblioteca", self.ao_baixar_legendas, largura=190)
         self.bt_desfazer = self._botao(barra, "Desfazer última", self.ao_desfazer, largura=140)
-        self.bt_conferir_espelhos = self._botao(barra, "Conferir espelhos", self.ao_conferir_espelhos, largura=150)
         self.bt_relatorio = self._botao(barra, "Relatório", self.ao_relatorio, largura=110)
-        self.bt_gerenciar_espelhos = self._botao(barra, "Espelhos...", self.ao_gerenciar_espelhos, largura=120)
         self.bt_parar_jf = self._botao(barra, "Parar", self.ao_parar, "perigo", largura=100)
-        for b in (self.bt_previa, self.bt_organizar, self.bt_legendas, self.bt_desfazer, self.bt_conferir_espelhos,
-                  self.bt_relatorio, self.bt_gerenciar_espelhos):
+        for b in (self.bt_previa, self.bt_organizar, self.bt_legendas, self.bt_desfazer, self.bt_relatorio):
             b.pack(side="left", padx=(0, 10))
         self.bt_parar_jf.pack(side="right")
 
@@ -5132,6 +5195,9 @@ class JanelaModerna(ctk.CTk):
     def definir_estado_conferencia(self, texto: str, ok: bool | None = None) -> None:
         cor = {True: Tema.SUCESSO, False: Tema.PERIGO}.get(ok, Tema.TEXTO_FRACO)
         self.lb_estado_conferencia.configure(text=texto, text_color=cor)
+        painel = getattr(self, "janela_espelhos", None)        # a mesma linha na aba Jellyfin Espelhos
+        if painel is not None and painel.winfo_exists():
+            painel.lb_estado.configure(text=texto, text_color=cor)
 
     def definir_estado_vigia(self, texto: str, ligada: bool) -> None:
         self.lb_estado_vigia.configure(text=texto, text_color=Tema.SUCESSO if ligada else Tema.TEXTO_FRACO)
@@ -5478,11 +5544,15 @@ class JanelaModerna(ctk.CTk):
         for b in (self.bt_buscar, self.bt_baixar_sel, self.bt_baixar_todos, self.bt_login,
                   self.bt_previa, self.bt_legendas, self.bt_desfazer, self.bt_testar_jellyfin,
                   self.bt_testar_avisos, self.bt_testar_tmdb, self.bt_espelhar, self.bt_testar_legendas,
-                  self.bt_conferir_espelhos, self.bt_relatorio, self.bt_gerenciar_espelhos, self.bt_traduzir_legendas,
+                  self.bt_relatorio, self.bt_traduzir_legendas,
                   self.bt_legendar_audio, self.bt_dublar, self.bt_sincronizar, self.bt_testar_claude,
                   self.bt_av_olhar, self.bt_av_adicionar, self.bt_av_processar, self.bt_av_limpar, self.bt_av_testar,
                   self.bt_av_roteiro, self.bt_testar_jf, self.bt_roteiro_jf):
             b.configure(state=estado)
+        painel = getattr(self, "janela_espelhos", None)        # a aba Jellyfin Espelhos (montada na 1ª vez)
+        if painel is not None and painel.winfo_exists():
+            for b in painel.botoes_de_trabalho:
+                b.configure(state=estado)
         self.bt_organizar.configure(state="normal" if self._organizar_liberado and not ocupado else "disabled")
         for parar in (self.bt_parar, self.bt_parar_jf, self.bt_parar_av):
             parar.configure(state="normal" if ocupado else "disabled",
@@ -5722,6 +5792,10 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_gerenciar_espelhos(self) -> None:
+        """Os espelhos agora são a aba "Jellyfin Espelhos" (antes, a janela "Espelhos...")."""
+        self.mostrar_aba("Jellyfin Espelhos")
+
+    def ao_abrir_aba_espelhos(self) -> None:            # o app faz: monta o painel e lê os .strm das bibliotecas
         pass
 
     def ao_abrir_relatorio(self) -> None:
