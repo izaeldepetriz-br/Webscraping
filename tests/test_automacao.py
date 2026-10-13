@@ -541,7 +541,7 @@ def test_emocao_da_cena_so_com_a_voz_do_gemini(casa, tmp_path, monkeypatch):
     o.emocao_da_cena = False                                                    # sem a emoção: ainda ouve o gênero
     from jellyfin_tools import tom
     monkeypatch.setattr(automacao, "localizar_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(automacao.voz_gemini, "_cliente", lambda chave: None)
+    monkeypatch.setattr(automacao.voz_gemini, "_cliente", lambda chave, avisar=None: None)
     monkeypatch.setattr(tom, "ouvir_falas", lambda *a, **k: {0: tom.Ouvida("animada", "f", "Uma aula.")})
     ouvidas = automacao.ouvinte_de_tons(o, "f.mkv", GeminiFalso())([], [0], tmp_path, None)
     assert ouvidas == {0: tom.Ouvida(genero="f")} and ouvidas[0].nota() == ""

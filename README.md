@@ -249,7 +249,10 @@ primeira falha (antes esperava o tempo limite em cada filme).
 - **Limite por minuto da chave grátis**: o Google diz quanto esperar ("Please retry in 39s"); o Maestro espera esse
   tempo (até 90 s) e avisa no log, em vez de tentar cedo demais e desistir. O **limite do dia** não fica tentando à
   toa: para na hora, com a mensagem, e o que ficou pronto é guardado.
-- No modo Flex, o log avisa no começo que cada pedido pode levar até ~15 min.
+- **Modo Flex conferido com a biblioteca do Google**: o pedido vai no nível "flex" (voz e escuta), o painel anota
+  metade do preço, o log avisa no começo que cada pedido pode levar até ~15 min e, enquanto o Google não responde,
+  avisa a cada minuto. Se o Google recusar o Flex, o log agora diz que voltou ao preço normal (antes voltava calado)
+  e o painel passa a anotar o preço cheio; sem capacidade no Flex (erro 503), o Maestro espera e tenta de novo.
 - **Sem repetições escondidas**: a biblioteca do Google repetia SOZINHA (e calada) o pedido que recebia limite ou
   erro do servidor, até 4 vezes; somado às 6 tentativas do Maestro, um pedido virava até 24, sem nada no log. Agora
   só o Maestro repete, e cada espera aparece no log. Se o limite por minuto não passar depois das 6 tentativas, a

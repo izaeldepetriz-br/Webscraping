@@ -590,3 +590,27 @@ def test_google_demorando_avisa_que_esta_esperando(tmp_path):
     assert (tmp_path / "1.wav").exists()
     espera = [a for a in avisos if "esperando a resposta do Google" in a]
     assert espera and "1 pedido(s) em andamento" in espera[0] and "até 5 min" in espera[0] and "Parar" in espera[0]
+
+
+def test_flex_recusado_aparece_no_log_da_voz(monkeypatch, tmp_path):
+    """O motor cria a conexão com o mesmo aviso do log: se o Google recusar o Flex, o log diz que voltou ao preço
+    normal (antes voltava calado e o painel de gastos contava metade do preço só até ali)."""
+    from types import SimpleNamespace as NS
+    criados = []
+
+    class Recusa(GeminiFalso):
+        def create(self, **k):
+            if "service_tier" in k:
+                raise type("ClientError", (Exception,), {"code": 400})("service_tier flex is not supported")
+            return super().create(**k)
+
+    def cliente(chave, avisar=None):
+        criados.append(avisar)
+        return voz_gemini.ClienteFlex(NS(interactions=Recusa(), models=None), avisar)
+    monkeypatch.setattr(voz_gemini, "_cliente", cliente)
+    avisos = []
+    motor = voz_gemini.MotorGemini("x", "Kore", esperar=lambda s: None, avisar=avisos.append)
+    motor.sintetizar([("Olá, tudo bem?", tmp_path / "1.wav")])
+    assert criados == [avisos.append] and (tmp_path / "1.wav").exists()
+    assert avisos[0].startswith("Gemini no modo Flex") and any("preço normal" in a for a in avisos)
+    assert voz_gemini.fator_de_preco(motor.cliente) == 1.0

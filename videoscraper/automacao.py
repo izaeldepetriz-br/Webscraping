@@ -330,9 +330,9 @@ def ouvinte_de_tons(o: OpcoesJellyfin, video: str | Path, motor, log: logging.Lo
         if log:
             log.info("Dublagem: o Gemini está ouvindo %d falas no original (quem fala: homem ou mulher%s)",
                      len(ids), "; e a emoção da cena" if emocao else "")
-        ouvidas = tom.ouvir_falas(video, falas, ids, voz_gemini._cliente(chave_gemini(o)), ffmpeg,
-                                  Path(pasta) / "tons.json", parar=parar,
-                                  avisar=(lambda texto: log.warning("Dublagem: %s", texto)) if log else None)
+        aviso = (lambda texto: log.warning("Dublagem: %s", texto)) if log else None
+        ouvidas = tom.ouvir_falas(video, falas, ids, voz_gemini._cliente(chave_gemini(o), aviso), ffmpeg,
+                                  Path(pasta) / "tons.json", parar=parar, avisar=aviso)
         if not emocao:                                # emoção desligada: só o gênero (a voz certa)
             ouvidas = {k: tom.Ouvida(genero=x.genero) for k, x in ouvidas.items()}
         if log:

@@ -484,7 +484,7 @@ class MotorGemini:
         if not self.conhece(voz):
             raise ErroDublagem(self._desconhecida([voz]))
         self.voz, self.modelo, self.estilo = voz, modelo or MODELO_PADRAO, estilo
-        self.cliente = cliente or _cliente(chave)
+        self.cliente = cliente or _cliente(chave, avisar)     # avisar: o Flex recusado aparece no log
         self.simultaneos, self._esperar, self.bloco = max(1, simultaneos), esperar, max(1, bloco)
         self.falas_geradas = self.pedidos = self.blocos_refeitos = 0
         self.AVISO_ESPERA = AVISO_ESPERA
@@ -559,12 +559,12 @@ class MotorGemini:
         inicio, mostrado = self.falas_geradas, -1
         refeitos, gasto = self.blocos_refeitos, self.gasto_refeito
         # sem "with": no Parar (ou num erro), não espera os pedidos que ainda estão no Google
+        flex = getattr(self.cliente, "flex", False) is True
+        if flex and self.avisar and itens:              # antes dos pedidos: uma recusa do Flex vem depois deste aviso
+            self.avisar("Gemini no modo Flex (metade do preço): cada pedido pode levar até ~15 min")
         grupo = ThreadPoolExecutor(max_workers=self.simultaneos)
         pendentes = {grupo.submit(self._falar_bloco, g, parar) for g in grupos}
-        flex = getattr(self.cliente, "flex", False) is True
-        if flex and self.avisar and itens:
-            self.avisar("Gemini no modo Flex (metade do preço): cada pedido pode levar até ~15 min")
-        limite = (TEMPO_LIMITE_FLEX if flex else TEMPO_LIMITE) // 60
+        limite = "~15 min (modo Flex)" if flex else f"{TEMPO_LIMITE // 60} min"
         desde = time.monotonic()                    # a última resposta do Google
         proximo_aviso = desde + self.AVISO_ESPERA
         try:
@@ -575,7 +575,7 @@ class MotorGemini:
                     desde, proximo_aviso = agora, agora + self.AVISO_ESPERA
                 elif self.avisar and agora >= proximo_aviso:     # sem resposta há um tempo: diz que está esperando
                     self.avisar(f"Gemini: esperando a resposta do Google há {max(1, round((agora - desde) / 60))} "
-                                f"min ({len(pendentes)} pedido(s) em andamento; cada um pode levar até {limite} min; "
+                                f"min ({len(pendentes)} pedido(s) em andamento; cada um pode levar até {limite}; "
                                 "o botão Parar interrompe e o que já ficou pronto é guardado)")
                     proximo_aviso += self.AVISO_ESPERA
                 for futuro in prontos:
