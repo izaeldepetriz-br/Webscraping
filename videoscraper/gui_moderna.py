@@ -2891,16 +2891,22 @@ class JanelaModerna(ctk.CTk):
         self.lb_cotas.pack(anchor="w", pady=(0, 8), **p)
         self._rotulo(lateral, "A sua chave do Gemini:").pack(anchor="w", **p)
         self.var_jf_plano_gemini = tk.StringVar(self, value=self.PLANOS_GEMINI[0])
-        menu_plano = self._menu_opcoes(lateral, self.var_jf_plano_gemini, self.PLANOS_GEMINI)
-        menu_plano.configure(width=420)
-        menu_plano.pack(anchor="w", pady=(2, 2), **p)
-        self._rotulo(lateral, "Sem cartão cadastrado no AI Studio a chave é grátis: o Gemini não cobra e, quando o "
-                              "limite do dia acaba, para até o dia seguinte. Com faturamento ativo, tudo é pago (não "
-                              "há cota grátis).", fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(0, 6),
-                                                                                             **p)
+        self.menu_plano_gemini = self._menu_opcoes(lateral, self.var_jf_plano_gemini, self.PLANOS_GEMINI)
+        self.menu_plano_gemini.configure(width=420, command=self.ao_escolher_plano_gemini)
+        self.menu_plano_gemini.pack(anchor="w", pady=(2, 2), **p)
+        self.lb_plano_gemini = self._rotulo(lateral, self.TEXTOS_PLANO["?"], fonte=ctk.CTkFont(Tema.FAMILIA, 11))
+        self.lb_plano_gemini.configure(wraplength=620, justify="left")
+        self.lb_plano_gemini.pack(anchor="w", **p)
+        self.link_faturamento_gemini = ctk.CTkLabel(
+            lateral, text="Cadastrar o cartão no AI Studio (ativar o faturamento da chave) ↗",
+            font=ctk.CTkFont(Tema.FAMILIA, 11, underline=True), text_color=Tema.PRIMARIA, anchor="w", cursor="hand2")
+        self.link_faturamento_gemini.pack(anchor="w", pady=(2, 6), **p)
+        self.link_faturamento_gemini.bind("<Button-1>", lambda _e: self.ao_ativar_faturamento_gemini())
         self.var_jf_gemini_flex = tk.BooleanVar(self, value=False)
-        self._checkbox(lateral, "Modo econômico do Gemini (Flex): metade do preço, mais lento (cada pedido pode "
-                                "levar até ~15 min; bom para dublar o vídeo inteiro à noite)", self.var_jf_gemini_flex)
+        self.cx_gemini_flex = self._checkbox(lateral, "Modo econômico do Gemini (Flex): metade do preço, mais lento "
+                                                      "(cada pedido pode levar até ~15 min; bom para dublar o vídeo "
+                                                      "inteiro à noite)", self.var_jf_gemini_flex)
+        self.var_jf_plano_gemini.trace_add("write", lambda *_: self._mostrar_plano_gemini())
         self._rotulo(lateral, "Mostrar em:").pack(anchor="w", **p)
         self.var_jf_moeda_gastos = tk.StringVar(value=self.MOEDAS_GASTOS[0])
         menu = self._menu_opcoes(lateral, self.var_jf_moeda_gastos, self.MOEDAS_GASTOS)
@@ -3424,6 +3430,27 @@ class JanelaModerna(ctk.CTk):
     PLANOS_GEMINI = ("Não sei (conta como paga)", "Grátis (sem cartão: para no limite do dia, não cobra)",
                      "Paga (com faturamento ativo no Google)")
     _CHAVES_PLANO = ("?", "gratis", "pago")
+    TEXTOS_PLANO = {
+        "?": "Escolha acima se a sua chave tem cartão cadastrado. Enquanto não escolher, o uso do Gemini conta como "
+             "pago (assim o teto do mês protege).",
+        "gratis": "Sem cartão: o Gemini não cobra e, quando o limite do dia acaba, para até o dia seguinte (o que ficou "
+                  "pronto é guardado). O modo Flex não vale aqui: não há o que economizar. Cadastrou o cartão? Troque "
+                  "para \"Paga\".",
+        "pago": "Com cartão: tudo é pago desde o 1º pedido (não há cota grátis), com limites bem maiores, e conta para "
+                "o teto do mês. Dica: ligue o modo Flex (metade do preço) e defina um teto abaixo."}
+
+    def plano_gemini_escolhido(self) -> str:
+        """"?", "gratis" ou "pago" (o que está no menu da chave do Gemini)."""
+        valor = self.var_jf_plano_gemini.get()
+        return self._CHAVES_PLANO[self.PLANOS_GEMINI.index(valor)] if valor in self.PLANOS_GEMINI else "?"
+
+    def _mostrar_plano_gemini(self) -> None:
+        """O texto do plano escolhido e o Flex: na chave grátis ele fica desligado (não há o que economizar)."""
+        plano = self.plano_gemini_escolhido()
+        self.lb_plano_gemini.configure(text=self.TEXTOS_PLANO[plano])
+        if plano == "gratis":
+            self.var_jf_gemini_flex.set(False)
+        self.cx_gemini_flex.configure(state="disabled" if plano == "gratis" else "normal")
 
     # ---- Vozes clonadas: a lista vem do app (vozes_clonadas.json); aqui só o que aparece na tela
     _vozes_clonadas: tuple = ()
@@ -4101,8 +4128,7 @@ class JanelaModerna(ctk.CTk):
             teto_gastos=float(self.campo_teto_gastos.get()), pasta_avulsos=self.var_jf_pasta_avulsos.get().strip(),
             moeda_gastos=self.var_jf_moeda_gastos.get().split()[0],
             gemini_flex=self.var_jf_gemini_flex.get(), manter_sons=self.var_jf_manter_sons.get(),
-            plano_gemini=self._CHAVES_PLANO[self.PLANOS_GEMINI.index(self.var_jf_plano_gemini.get())]
-            if self.var_jf_plano_gemini.get() in self.PLANOS_GEMINI else "?",
+            plano_gemini=self.plano_gemini_escolhido(),
             motor_traducao=self.var_jf_motor_traducao.get().split()[0],
             tipo_cloud=self.tipo_cloud_escolhido(), voz_cloud=self.var_jf_voz_cloud.get().split()[0],
             chave_cloud_tts=self.var_jf_chave_cloud.get().strip(), cotacao_dolar=float(self.campo_cotacao_dolar.get()),
@@ -4974,6 +5000,12 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_abrir_site_da_chave(self, chave: str) -> None:
+        pass
+
+    def ao_escolher_plano_gemini(self, valor: str) -> None:
+        pass
+
+    def ao_ativar_faturamento_gemini(self) -> None:
         pass
 
     def ao_simular_vigia(self) -> None:

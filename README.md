@@ -254,6 +254,11 @@ primeira falha (antes esperava o tempo limite em cada filme).
   grátis (Whisper, Piper, tradução local). O painel de saúde avisa quando uma cota acaba, e a mensagem do teste também.
 - **Chave grátis do Gemini não vira gasto**: escolhendo "Grátis (sem cartão)", o uso do Gemini aparece como grátis e
   não conta para o teto do mês.
+- **Da chave grátis para a paga sem susto**: embaixo de "A sua chave do Gemini", um texto explica o plano escolhido e
+  o link "Cadastrar o cartão no AI Studio" abre a página do faturamento. Na chave grátis o modo Flex fica desligado
+  (não há o que economizar); escolhendo "Paga", vale na hora. Se a chave estiver marcada como paga, mas o Google ainda
+  responder como chave grátis (o erro de limite diz "free tier"), o painel de saúde avisa que o faturamento ainda não
+  está ativo.
 - A duração na previsão de custo agora é arredondada ("29 min", "1 h 40 min"; antes "28,9932 min").
 - **Bocejo, risada, suspiro e choro não somem mais**: tirando as vozes originais, os sons SEM palavras saíam junto
   (o bocejo no fim de um teste ficava mudo). A escuta do original (a mesma da emoção e do gênero, sem custo a mais)

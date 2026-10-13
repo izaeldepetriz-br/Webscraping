@@ -241,12 +241,22 @@ def _explicar(erro: Exception) -> str:
         return "a chave do Google AI Studio foi recusada (confira em aistudio.google.com > Get API key)"
     if codigo == 404:
         return f"modelo do Gemini não encontrado ({texto[:80]})"
+    if _camada_gratis(erro):
+        return ("limite do dia da chave GRÁTIS do Gemini atingido (sem faturamento ativo no Google); o que já ficou "
+                "pronto está guardado e a próxima dublagem continua de onde parou")
     if codigo == 429 or "RESOURCE_EXHAUSTED" in texto:
         return ("limite de uso do Gemini atingido (a camada grátis tem limites baixos por dia); o que já ficou pronto "
                 "está guardado e a próxima dublagem continua de onde parou")
     if type(erro).__name__ in ("ConnectError", "ConnectTimeout", "ReadTimeout"):
         return "sem conexão com o Gemini"
     return f"{type(erro).__name__}: {texto}"[:300]
+
+
+def _camada_gratis(erro: Exception) -> bool:
+    """O erro de limite (429) diz que a chave está na camada grátis ("generate_content_free_tier_requests",
+    quotaId "...-FreeTier"); numa chave com faturamento ativo o limite é outro e o texto não fala nisso."""
+    texto = str(erro).lower()
+    return (_codigo(erro) == 429 or "resource_exhausted" in texto) and ("free_tier" in texto or "freetier" in texto)
 
 
 def _limite(erro: Exception) -> bool:
@@ -355,6 +365,8 @@ def _com_tentativas(chamar, esperar=time.sleep):
         except ErroDublagem:
             raise
         except Exception as erro:
+            if _camada_gratis(erro):                    # o Google disse qual é a camada da chave: confere o plano
+                gastos.anotar_gemini_gratis()
             if _limite(erro) and tentativa < TENTATIVAS - 1:
                 esperar(min(60, 2 ** (tentativa + 1)))
                 continue

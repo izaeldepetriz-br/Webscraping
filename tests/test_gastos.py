@@ -137,3 +137,37 @@ def test_creditos_do_claude_acabaram(tmp_path):
     erro = type("BadRequestError", (Exception,), {})("Your credit balance is too low to access the Anthropic API.")
     assert "créditos da API da Anthropic acabaram" in traducao._explicar(erro)
     assert g.cotas()["Claude"]["situacao"] == "créditos acabaram"
+
+
+def test_google_diz_que_a_chave_e_gratis_e_o_plano_marcado_e_pago(tmp_path):
+    """O erro de limite do Google fala da camada grátis: com "Paga" marcado, o faturamento ainda não vale (aviso);
+    com "Não sei", sugere "Grátis". Só vale no mesmo dia; escolher "Paga" de novo esquece."""
+    agora = [datetime(2026, 10, 13, 15, 0)]
+    g = gastos.configurar(tmp_path / "gastos.json", plano_gemini="pago")
+    g._agora = lambda: agora[0]
+    erro = type("ClientError", (Exception,), {"code": 429})(
+        "429 RESOURCE_EXHAUSTED. Quota exceeded for metric: generativelanguage.googleapis.com/"
+        "generate_content_free_tier_requests, limit: 15 (quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier)")
+    pago = type("ClientError", (Exception,), {"code": 429})("429 RESOURCE_EXHAUSTED. Quota exceeded (Tier 1)")
+
+    def falha(e):
+        def chamar():
+            raise e
+        return chamar
+    with pytest.raises(ErroDublagem, match="chave GRÁTIS do Gemini"):
+        voz_gemini._com_tentativas(falha(erro), esperar=lambda s: None)
+    assert "faturamento ainda não está ativo" in g.aviso_do_plano()
+    assert any("faturamento ainda não está ativo" in l for l in g.situacao_das_cotas())
+    g.plano_gemini = "?"
+    assert "escolha \"Grátis\"" in g.aviso_do_plano()
+    g.plano_gemini = "gratis"
+    assert g.aviso_do_plano() == ""
+    g.plano_gemini = "pago"
+    g.esquecer_gemini_gratis()                                       # escolheu "Paga" agora: começa do zero
+    assert g.aviso_do_plano() == ""
+    with pytest.raises(ErroDublagem, match="limite de uso do Gemini"):
+        voz_gemini._com_tentativas(falha(pago), esperar=lambda s: None)     # chave paga: o texto não fala em grátis
+    assert g.aviso_do_plano() == ""
+    g.anotar_gemini_gratis()
+    agora[0] = datetime(2026, 10, 14, 9, 0)                           # no dia seguinte, a resposta de ontem não vale
+    assert g.aviso_do_plano() == ""

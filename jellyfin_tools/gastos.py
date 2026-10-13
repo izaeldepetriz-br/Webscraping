@@ -128,6 +128,36 @@ class Gastos:
             self._gravar(dados)
             return True
 
+    def anotar_gemini_gratis(self) -> bool:
+        """O Google respondeu, num erro de limite, que a chave está na camada GRÁTIS: anota o dia e a hora (uma vez
+        por dia). Com "Paga" escolhido, isso quer dizer que o faturamento ainda não vale para essa chave."""
+        with self._trava:
+            dados = self._ler()
+            if str(dados.get("gemini_gratis_em", "")).startswith(f"{self._agora():%Y-%m-%d}"):
+                return False
+            dados["gemini_gratis_em"] = self._agora().isoformat(timespec="minutes")
+            self._gravar(dados)
+            return True
+
+    def esquecer_gemini_gratis(self) -> None:
+        """Escolheu "Paga" agora (acabou de cadastrar o cartão): o que o Google respondeu antes não vale mais."""
+        with self._trava:
+            dados = self._ler()
+            if dados.pop("gemini_gratis_em", None) is not None:
+                self._gravar(dados)
+
+    def aviso_do_plano(self) -> str:
+        """O plano do Gemini escolhido não bate com o que o Google respondeu HOJE ('' quando bate)."""
+        if not str(self._ler().get("gemini_gratis_em", "")).startswith(f"{self._agora():%Y-%m-%d}"):
+            return ""
+        if self.plano_gemini == "pago":
+            return ("Gemini: a chave está marcada como PAGA, mas hoje o Google respondeu como chave GRÁTIS (limite da "
+                    "camada grátis): o faturamento ainda não está ativo no projeto dessa chave (confira em "
+                    "aistudio.google.com/apikey; pode levar alguns minutos depois de cadastrar o cartão)")
+        if self.plano_gemini == "?":
+            return "Gemini: hoje o Google respondeu como chave GRÁTIS: escolha \"Grátis\" abaixo"
+        return ""
+
     def cotas(self, mes: str | None = None) -> dict:
         cotas = self._ler().get("cotas", {}).get(mes or self.mes(), {})
         return dict(cotas) if isinstance(cotas, dict) else {}
@@ -148,6 +178,8 @@ class Gastos:
             elif cota:
                 linhas.append(f"Google Cloud TTS ({tipo}): {usados // 1000} mil de {cota // 1000} mil caracteres "
                               f"grátis do mês ({usados * 100 // cota}%)")
+        if aviso := self.aviso_do_plano():
+            linhas.append(aviso)
         if self.plano_gemini == "gratis":
             linhas.append("Gemini: chave GRÁTIS (sem faturamento): não cobra; quando o limite do dia acaba, para até o "
                           "dia seguinte" + (f" (o de hoje acabou às {quando('Gemini')[-5:]})"
@@ -232,6 +264,16 @@ def marcar_cota(api: str, situacao: str) -> bool:
     if _atual is not None:
         try:
             return _atual.marcar_cota(api, situacao)
+        except OSError:
+            pass
+    return False
+
+
+def anotar_gemini_gratis() -> bool:
+    """O erro de limite do Google falou da camada grátis: anota (para conferir com o plano escolhido)."""
+    if _atual is not None:
+        try:
+            return _atual.anotar_gemini_gratis()
         except OSError:
             pass
     return False

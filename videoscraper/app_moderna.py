@@ -3278,6 +3278,23 @@ class AppModerna(TVAoVivo, JanelaModerna):
             site = servidor + site
         webbrowser.open(site)
 
+    def ao_escolher_plano_gemini(self, _valor: str = "") -> None:
+        """Mudou o plano da chave do Gemini (ex.: acabou de cadastrar o cartão): vale já, sem esperar salvar. Ao
+        escolher "Paga", o que o Google respondeu antes (camada grátis) é esquecido."""
+        if self.plano_gemini_escolhido() == "pago" and (atual := gastos.atual()) is not None:
+            atual.esquecer_gemini_gratis()
+        self._configurar_gastos()
+        self.definir_saude(self.itens_saude())
+
+    def ao_ativar_faturamento_gemini(self) -> None:
+        """Link "Cadastrar o cartão no AI Studio": a página das chaves, onde fica o faturamento de cada projeto."""
+        webbrowser.open("https://aistudio.google.com/apikey")
+        self.mostrar_mensagem("Cartão no Gemini", "No site que abriu, na linha do projeto da sua chave, clique em "
+                              "\"Set up billing\" (Configurar faturamento) e cadastre o cartão. Pode levar alguns "
+                              "minutos para valer.\n\nDepois, aqui, escolha \"Paga\" em \"A sua chave do Gemini\": "
+                              "o uso passa a contar para o teto do mês. Dica: ligue o modo Flex (metade do preço) e "
+                              "defina um teto. Se o Google ainda responder como chave grátis, o Maestro avisa.", "info")
+
     def ao_criar_chave_gemini(self) -> None:
         """Abre a página do Google AI Studio onde se cria a chave (entra com a conta Google)."""
         webbrowser.open("https://aistudio.google.com/apikey")
@@ -4640,6 +4657,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
         atual = gastos.atual()
         if atual is None:
             return None
+        if atual.aviso_do_plano() and atual.plano_gemini == "pago":     # marcou "Paga", mas o Google diz grátis
+            return ("Gemini: marcada como paga, mas o Google ainda trata a chave como grátis (veja em "
+                    "Configurações > Gastos)", False)
         total = atual.total()
         acabadas = atual.cotas_acabadas()
         if acabadas:                                     # a cota grátis (ou o crédito) acabou: agora é pago

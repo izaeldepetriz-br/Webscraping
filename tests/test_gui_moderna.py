@@ -3733,6 +3733,30 @@ def test_testar_chave_da_anthropic_e_painel_de_saude(app, monkeypatch):
     assert any(t.startswith("Whisper (baixa na 1ª vez) · Piper (baixa na 1ª vez)") for t, _ in app.itens_saude())
 
 
+def test_cadastrou_o_cartao_do_gemini_vale_na_hora_e_avisa_se_o_google_ainda_diz_gratis(app, monkeypatch, tmp_path):
+    """Configurações > Gastos: escolher "Paga" vale na hora (sem salvar) e esquece a resposta antiga do Google; se o
+    Google responder de novo como chave grátis, o painel de saúde avisa. O link abre a página do faturamento."""
+    from jellyfin_tools import gastos
+    abertos = []
+    monkeypatch.setattr(app_moderna.webbrowser, "open", abertos.append)
+    monkeypatch.setattr(app_moderna.automacao, "arquivo_gastos", lambda: tmp_path / "gastos.json")
+    app.var_jf_plano_gemini.set(app.PLANOS_GEMINI[1])
+    app.ao_escolher_plano_gemini(app.PLANOS_GEMINI[1])
+    assert gastos.atual().plano_gemini == "gratis"
+    gastos.anotar_gemini_gratis()                                       # o limite da camada grátis, hoje
+    assert not gastos.atual().aviso_do_plano()                          # grátis com grátis: bate
+    app.var_jf_plano_gemini.set(app.PLANOS_GEMINI[2])
+    app.ao_escolher_plano_gemini(app.PLANOS_GEMINI[2])                  # acabou de cadastrar o cartão
+    assert gastos.atual().plano_gemini == "pago" and not gastos.atual().aviso_do_plano()
+    gastos.anotar_gemini_gratis()                                       # mas o Google ainda responde como grátis
+    item = app.item_saude_gastos()
+    assert item[1] is False and "ainda trata a chave como grátis" in item[0]
+    app.atualizar_gastos()
+    assert "faturamento ainda não está ativo" in app.lb_cotas.cget("text")
+    app.ao_ativar_faturamento_gemini()
+    assert abertos == ["https://aistudio.google.com/apikey"] and "Set up billing" in app.caixas[-1][2]
+
+
 def test_link_embaixo_de_cada_chave_abre_o_site_certo(app, monkeypatch):
     """Configurações > Chaves de API: cada nome tem, embaixo, o link do site onde se cria a chave; o do Jellyfin abre
     a página das chaves no servidor do campo (e pede o endereço se estiver vazio)."""
@@ -4818,15 +4842,24 @@ def test_gastos_mostra_as_cotas_e_guarda_plano_e_flex(app, tmp_path):
     modo Flex (metade do preço)."""
     from jellyfin_tools import gastos, voz_gemini
     from videoscraper import automacao
-    app.var_jf_plano_gemini.set(app.PLANOS_GEMINI[1])
     app.var_jf_gemini_flex.set(True)
+    app.var_jf_plano_gemini.set(app.PLANOS_GEMINI[1])                   # grátis: o Flex desliga (nada a economizar)
+    assert app.var_jf_gemini_flex.get() is False and app.cx_gemini_flex.cget("state") == "disabled"
+    assert "Troque para \"Paga\"" in app.lb_plano_gemini.cget("text")
     o = app.obter_opcoes_jellyfin()
-    assert (o.plano_gemini, o.gemini_flex) == ("gratis", True)
+    assert (o.plano_gemini, o.gemini_flex) == ("gratis", False)
     automacao.configurar_gastos(o, consultar=False)
-    assert voz_gemini._flex["ligado"] is True and gastos.atual().plano_gemini == "gratis"
+    assert voz_gemini._flex["ligado"] is False and gastos.atual().plano_gemini == "gratis"
     gastos.marcar_cota("Claude", "créditos acabaram")
     app.atualizar_gastos()
     texto = app.lb_cotas.cget("text")
     assert "Gemini: chave GRÁTIS" in texto and "créditos ACABARAM" in texto
+    app.var_jf_plano_gemini.set(app.PLANOS_GEMINI[2])                   # cadastrou o cartão: paga, Flex à escolha
+    assert app.cx_gemini_flex.cget("state") == "normal" and "teto" in app.lb_plano_gemini.cget("text")
+    app.var_jf_gemini_flex.set(True)
+    o = app.obter_opcoes_jellyfin()
+    assert (o.plano_gemini, o.gemini_flex) == ("pago", True)
+    automacao.configurar_gastos(o, consultar=False)
+    assert voz_gemini._flex["ligado"] is True and gastos.atual().plano_gemini == "pago"
     assert "Claude" in app.item_saude_gastos()[0] and app.item_saude_gastos()[1] is False
     voz_gemini.usar_flex(False)
