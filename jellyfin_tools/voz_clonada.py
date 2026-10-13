@@ -31,10 +31,13 @@ FRASE_CONSENTIMENTO = ("I am the owner of this voice and I consent to Google usi
                        "synthetic voice model.")
 FRASE_TRADUCAO = ("Eu sou o dono desta voz e autorizo o Google a usar esta voz para criar um modelo de voz "
                   "sintética.")
-# Para a gravação de referência: um texto em português com perguntas, exclamação e números (~20 s lido com calma).
-TEXTO_REFERENCIA = ("Hoje o dia começou nublado, mas à tarde o sol apareceu. Fui até a padaria, comprei dois pães e "
-                    "um café. Você acredita que encontrei um amigo que não via há dez anos? Conversamos bastante, "
-                    "rimos das histórias antigas e combinamos de nos ver de novo no sábado. Que surpresa boa!")
+# Para a gravação de referência: frases curtas e do dia a dia, com uma pergunta e uma exclamação (~10 s lido com
+# calma). Só serve para o Google conhecer o jeito de falar: não precisa ser longo nem difícil.
+TEXTO_REFERENCIA = "Olá! Hoje o dia está bonito. Vou fazer um café e ver um filme. Você quer vir junto? Vai ser ótimo!"
+# A frase de consentimento NÃO muda: o Google exige estas palavras exatas (e é ela que garante que só o dono da voz
+# autoriza). Na tela, vai em pedaços curtos, mais fáceis de ler em voz alta.
+CONSENTIMENTO_EM_PARTES = ("I am the owner of this voice", "and I consent to Google using this voice",
+                           "to create a synthetic voice model.")
 TAXA = 24000                 # o Google recomenda WAV 24 kHz, mono, 16 bits
 MINIMO_REFERENCIA = 6.0      # segundos (menos que isso o Google recusa ou a voz fica pobre)
 MAXIMO_REFERENCIA = 60.0

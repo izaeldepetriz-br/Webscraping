@@ -240,6 +240,13 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.18.8
+
+- **Clonagem de voz com um texto curto**: a gravação de referência agora é só "Olá! Hoje o dia está bonito. Vou fazer
+  um café e ver um filme. Você quer vir junto? Vai ser ótimo!" (~10 s; serve só para o Google conhecer o seu jeito de
+  falar). A frase de consentimento em inglês continua a mesma, porque o Google exige essas palavras exatas, mas
+  aparece em 3 pedaços curtos, mais fáceis de ler em voz alta.
+
 ### Novidades da v2.18.7
 
 - **A atualização não fica mais presa em "esperando o programa fechar"**: depois de fechar a janela, uma tarefa

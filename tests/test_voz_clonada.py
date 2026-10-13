@@ -224,3 +224,10 @@ def test_tocar_o_wav(tmp_path, monkeypatch):
     monkeypatch.setattr(microfone, "_biblioteca", lambda: None)       # sem sounddevice: a janela diz onde está
     with pytest.raises(OSError):
         microfone.tocar(arquivo, plataforma="linux")
+
+
+def test_texto_de_referencia_curto_e_consentimento_igual_em_partes():
+    """O texto de referência é curto e simples (~10 s); a frase de consentimento continua EXATAMENTE a do Google,
+    só mostrada em 3 pedaços para ler."""
+    assert len(voz_clonada.TEXTO_REFERENCIA.split()) <= 25
+    assert " ".join(voz_clonada.CONSENTIMENTO_EM_PARTES) == voz_clonada.FRASE_CONSENTIMENTO

@@ -1157,10 +1157,11 @@ class DialogoClonarVoz(ctk.CTkToplevel):
         self.status: dict[str, ctk.CTkLabel] = {}
         self.bt_gravar: dict[str, ctk.CTkButton] = {}
         for chave, titulo, texto, extra in (
-                ("referencia", "1. Gravação de referência (de 10 a 30 s)", "Leia em voz alta, com calma e do seu "
-                 "jeito de falar:", voz_clonada.TEXTO_REFERENCIA),
-                ("consentimento", "2. Frase de consentimento (em inglês, exatamente assim)",
-                 f"Tradução: \"{voz_clonada.FRASE_TRADUCAO}\"", f"\"{voz_clonada.FRASE_CONSENTIMENTO}\"")):
+                ("referencia", "1. Gravação de referência (uns 10 s)", "Leia em voz alta, com calma e do seu "
+                 "jeito de falar (se acabar em menos de 10 s, leia de novo):", voz_clonada.TEXTO_REFERENCIA),
+                ("consentimento", "2. Frase de consentimento (em inglês: o Google exige estas palavras exatas)",
+                 f"Leia os 3 pedaços seguidos, sem pressa. Tradução: \"{voz_clonada.FRASE_TRADUCAO}\"",
+                 "\n".join(voz_clonada.CONSENTIMENTO_EM_PARTES))):
             ctk.CTkLabel(corpo, text=titulo, font=master.f_secao, text_color=Tema.TEXTO, anchor="w").pack(
                 fill="x", pady=(14, 2))
             caixa = ctk.CTkFrame(corpo, fg_color=Tema.CAMPO, corner_radius=10)
