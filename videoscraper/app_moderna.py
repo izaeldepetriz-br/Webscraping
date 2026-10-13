@@ -4599,7 +4599,18 @@ def main(minimizado: bool | None = None) -> int:
     if minimizado if minimizado is not None else "--minimizado" in sys.argv:
         app.after(300, app.esconder_na_bandeja)
     app.mainloop()
+    sair_do_processo()
     return 0
+
+
+def sair_do_processo(congelado: bool | None = None, sair=os._exit) -> None:
+    """Fechou a janela: no .exe, o processo sai NA HORA. Antes, uma tarefa pendurada (um pedido ao Gemini esperando
+    o tempo-limite, uma etapa abandonada pelo Parar) segurava o processo vivo, invisível, por minutos: a atualização
+    ficava em "esperando o programa fechar" e o .exe não podia ser trocado."""
+    if not (getattr(sys, "frozen", False) if congelado is None else congelado):
+        return                                          # rodando pelo Python (e nos testes): sai do jeito normal
+    logging.shutdown()                                  # o log fica completo no disco
+    sair(0)
 
 
 if __name__ == "__main__":

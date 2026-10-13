@@ -143,6 +143,9 @@ def pasta_do_programa() -> Path:
     return Path(sys.executable).resolve().parent
 
 
+ESPERA_FECHAR = 30            # segundos que a atualização espera o programa fechar sozinho (depois, fecha à força)
+
+
 def script_de_instalacao(zip_: Path, pasta: Path, pid: int, executavel: str = "") -> str:
     """O script do PowerShell (texto). executavel vazio = não reabre o programa no fim."""
     def aspas(texto) -> str:
@@ -153,6 +156,18 @@ $zip = {aspas(zip_)}
 $pasta = {aspas(pasta)}
 $log = Join-Path $env:TEMP 'videoscraper-atualizacao.log'
 "Atualizando $pasta com $zip" | Out-File $log
+# Uma atualização de cada vez: a mais nova fecha a anterior (que ainda esperava um Maestro que não fechou e deixava
+# duas janelinhas "esperando o programa fechar" na tela).
+$marca = Join-Path $env:TEMP 'videoscraper-atualizar.pid'
+try {{
+    $anterior = [int](Get-Content $marca -ErrorAction Stop | Select-Object -First 1)
+    $velho = Get-Process -Id $anterior -ErrorAction SilentlyContinue
+    if ($velho -and $anterior -ne $PID -and $velho.ProcessName -like 'powershell*') {{
+        "Fechando a atualização anterior (processo $anterior)" | Out-File $log -Append
+        Stop-Process -Id $anterior -Force -ErrorAction SilentlyContinue
+    }}
+}} catch {{ }}
+try {{ $PID | Out-File $marca -Encoding ascii }} catch {{ }}
 # Janelinha "Atualizando o Maestro..." com a porcentagem (antes nada aparecia e parecia travado). Se o Windows não
 # deixar mostrar, a atualização segue igual, sem ela.
 $janela = $null
@@ -217,7 +232,19 @@ function Descompactar($origem, $destino) {{
         $arquivo.Dispose()
     }}
 }}
-while (Get-Process -Id {int(pid)} -ErrorAction SilentlyContinue) {{                 # espera o programa fechar
+# Espera o programa fechar, mas não para sempre: um pedido pendurado (ex.: o Gemini sem responder) segurava o
+# processo vivo depois de a janela sumir, e a atualização nunca começava. Passou do prazo: fecha à força.
+$inicio = Get-Date
+while (Get-Process -Id {int(pid)} -ErrorAction SilentlyContinue) {{
+    $passou = [int]((Get-Date) - $inicio).TotalSeconds
+    if ($passou -ge {ESPERA_FECHAR}) {{
+        "O programa (processo {int(pid)}) não fechou em {ESPERA_FECHAR} s: fechando à força" | Out-File $log -Append
+        Avisar 'Atualizando o Maestro: fechando o Maestro que ficou aberto...' 3
+        Stop-Process -Id {int(pid)} -Force -ErrorAction SilentlyContinue
+        Esperar 1
+        break
+    }}
+    Avisar "Atualizando o Maestro: esperando o programa fechar ($passou s)..." 1
     try {{ Wait-Process -Id {int(pid)} -Timeout 1 -ErrorAction SilentlyContinue }} catch {{ }}
     Esperar 0.1
 }}
@@ -225,7 +252,10 @@ while (Get-Process -Id {int(pid)} -ErrorAction SilentlyContinue) {{             
 # deixa trocá-lo, e só a pasta _internal mudaria. Espera até 30 s e depois fecha as que sobraram.
 $prefixo = $pasta.TrimEnd('\\') + '\\'
 function Abertos {{ @(Get-Process -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -and $_.Path.StartsWith($prefixo, [StringComparison]::OrdinalIgnoreCase) }}) }}
-for ($i = 0; $i -lt 30 -and (Abertos).Count -gt 0; $i++) {{ Esperar 1 }}
+for ($i = 0; $i -lt 30 -and (Abertos).Count -gt 0; $i++) {{
+    Avisar "Atualizando o Maestro: esperando outra janela do Maestro fechar ($i s)..." 2
+    Esperar 1
+}}
 foreach ($p in Abertos) {{
     "Fechando $($p.Path) (processo $($p.Id))" | Out-File $log -Append
     Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
@@ -262,6 +292,7 @@ try {{
 if ($deu_certo) {{ Avisar 'Pronto! Abrindo o Maestro...' 100 }}
 {reabrir}
 if ($janela) {{ Esperar 1; try {{ $janela.Close() }} catch {{ }} }}
+try {{ if ([int](Get-Content $marca -ErrorAction Stop | Select-Object -First 1) -eq $PID) {{ Remove-Item $marca -Force }} }} catch {{ }}
 """
 
 

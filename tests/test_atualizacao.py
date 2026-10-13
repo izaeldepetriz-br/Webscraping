@@ -191,3 +191,28 @@ def test_script_mostra_o_progresso_e_descompacta_rapido_com_seguranca():
     assert texto.index("Descompactar $zip $tmp") < texto.index("Expand-Archive -Path")   # o Expand-Archive é reserva
     assert '"OK" | Out-File $log -Append' in texto                   # o autoteste do .exe espera esta linha
     assert texto.index("Start-Process -FilePath") < texto.index("$janela.Close()")
+
+
+def test_atualizacao_nao_espera_para_sempre_e_so_uma_de_cada_vez():
+    """O Maestro que não fechava (uma tarefa pendurada segurando o processo) deixava a atualização em "esperando o
+    programa fechar" para sempre, e fechar de novo abria uma 2ª janelinha. Agora: prazo, depois fecha à força; e a
+    atualização mais nova fecha a anterior."""
+    from pathlib import Path
+    texto = atualizacao.script_de_instalacao(Path("a.zip"), Path(r"C:\p"), 4321, r"C:\p\Maestro.exe")
+    espera = texto.index("while (Get-Process -Id 4321")
+    assert f"if ($passou -ge {atualizacao.ESPERA_FECHAR})" in texto and "Stop-Process -Id 4321 -Force" in texto
+    assert texto.index("Stop-Process -Id 4321 -Force") > espera                # só depois do prazo
+    assert "esperando o programa fechar ($passou s)" in texto                  # a janelinha mostra o tempo
+    assert "videoscraper-atualizar.pid" in texto and "Stop-Process -Id $anterior" in texto
+    assert texto.index("Stop-Process -Id $anterior") < espera                  # a anterior sai antes de esperar
+    assert "$velho.ProcessName -like 'powershell*'" in texto                   # só fecha um PowerShell (o pid
+    # guardado pode ter sido reaproveitado por outro programa)
+
+
+def test_ao_fechar_o_exe_sai_na_hora():
+    from videoscraper import app_moderna
+    saidas = []
+    app_moderna.sair_do_processo(congelado=True, sair=saidas.append)
+    assert saidas == [0]
+    app_moderna.sair_do_processo(congelado=False, sair=saidas.append)            # pelo Python: não força
+    assert saidas == [0]

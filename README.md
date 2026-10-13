@@ -240,6 +240,15 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.18.7
+
+- **A atualização não fica mais presa em "esperando o programa fechar"**: depois de fechar a janela, uma tarefa
+  pendurada (um pedido ao Gemini esperando o tempo-limite, por exemplo) segurava o processo do Maestro vivo e
+  invisível, e a troca dos arquivos nunca começava. Agora o Maestro.exe sai na hora ao fechar; e, se mesmo assim
+  ele não fechar em 30 s, a atualização o fecha à força e segue (a janelinha mostra os segundos de espera).
+- **Uma atualização de cada vez**: fechar o programa de novo abria uma 2ª janelinha "esperando o programa fechar".
+  A atualização mais nova agora fecha a anterior.
+
 ### Novidades da v2.18.6
 
 - **Voz do Gemini mais rápida no teste e no vídeo inteiro**: quando o corte de um bloco não batia com as pausas
