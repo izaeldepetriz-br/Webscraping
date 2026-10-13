@@ -240,6 +240,17 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.18.10
+
+- **O teste não parece mais travado quando o Gemini demora**: enquanto o Google não responde, o log avisa a cada
+  minuto ("esperando a resposta do Google há 2 min; cada pedido pode levar até 5 min; o botão Parar interrompe").
+  Antes a barra parava sem explicação (ex.: logo depois de "o corte de 10 falas não bateu... pedindo de novo em
+  duas metades").
+- **Limite por minuto da chave grátis**: o Google diz quanto esperar ("Please retry in 39s"); o Maestro espera esse
+  tempo (até 90 s) e avisa no log, em vez de tentar cedo demais e desistir. O **limite do dia** não fica tentando à
+  toa: para na hora, com a mensagem, e o que ficou pronto é guardado.
+- No modo Flex, o log avisa no começo que cada pedido pode levar até ~15 min.
+
 ### Novidades da v2.18.9
 
 - **Custos separados por API**: no fim do teste, quanto custou cada uma (Claude, Gemini voz, Gemini ouvindo o

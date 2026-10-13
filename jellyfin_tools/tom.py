@@ -158,7 +158,7 @@ def ouvir_falas(video: str | Path, falas: list, ids: list[int], cliente, ffmpeg:
         pergunta = _PERGUNTA.format(inicio=_hms(inicio), fim=_hms(fim), falas=linhas)
         try:
             mp3 = extrair(ffmpeg, video, inicio, fim - inicio)
-            kwargs = {"esperar": esperar} if esperar else {}
+            kwargs = ({"esperar": esperar} if esperar else {}) | {"avisar": avisar}
             dados = ler_json(perguntar_sobre_audio(cliente, pergunta, mp3, **kwargs))
         except Exception as erro:
             if (parar and parar()) or not any(ouvidas.get(k) for k in ids):
@@ -204,7 +204,7 @@ def _ouvir_so_os_sons(video, falas, ids, cliente, ffmpeg, arquivo, parar, extrai
             raise ErroDublagem("interrompido (botão Parar)")
         try:
             mp3 = extrair(ffmpeg, video, inicio, fim - inicio)
-            kwargs = {"esperar": esperar} if esperar else {}
+            kwargs = ({"esperar": esperar} if esperar else {}) | {"avisar": avisar}
             dados = ler_json(perguntar_sobre_audio(cliente, _PERGUNTA_SONS.format(inicio=_hms(inicio), fim=_hms(fim)),
                                                    mp3, **kwargs))
         except Exception as erro:

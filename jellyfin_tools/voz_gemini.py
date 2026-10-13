@@ -62,6 +62,8 @@ TEMPO_LIMITE_FLEX = 1200      # no modo Flex, o Google pode demorar de 1 a 15 mi
 DESCONTO_FLEX = 0.5           # o Flex custa metade do preço normal
 _flex = {"ligado": False}     # Configurações > Gastos > "Modo econômico do Gemini (Flex)" (usar_flex)
 TENTATIVAS = 6
+ESPERA_MAXIMA = 90            # no limite por minuto, espera o que o Google pedir ("retry in 39s"), até 90 s
+AVISO_ESPERA = 60             # sem resposta do Google há tanto tempo: avisa no log (para não parecer travado)
 BLOCO = 10                    # falas por pedido (com 30, uma pausa no lugar errado jogava palavras na fala seguinte)
 LETRAS_POR_BLOCO = 700
 PAUSA = " <long pause>"       # marca de pausa do Gemini TTS entre uma fala e a próxima do bloco
@@ -357,8 +359,20 @@ def custo_da_fala(segundos: float) -> float:
     return segundos * TOKENS_POR_SEGUNDO * PRECO_SAIDA[1] / 1_000_000
 
 
-def _com_tentativas(chamar, esperar=time.sleep):
-    """Chama a API; no limite por minuto (429) ou instabilidade (5xx) espera 2, 4, 8, 16, 32 s e tenta de novo."""
+def _espera_pedida(erro: Exception) -> float:
+    """Os segundos que o Google pediu para esperar no erro de limite ("Please retry in 39.9s", retryDelay '39s')."""
+    achado = re.search(r"retry in ([\d.]+)\s*s|retryDelay['\"]?\s*:\s*['\"]([\d.]+)s", str(erro), re.IGNORECASE)
+    return float(achado.group(1) or achado.group(2)) if achado else 0.0
+
+
+def _limite_do_dia(erro: Exception) -> bool:
+    """O limite que acabou é o do DIA (quotaId "...PerDay..."): esperar segundos não adianta, só amanhã."""
+    return "perday" in str(erro).lower().replace("_", "")
+
+
+def _com_tentativas(chamar, esperar=time.sleep, avisar=None):
+    """Chama a API; no limite por minuto (429) ou instabilidade (5xx) espera e tenta de novo: 2, 4, 8, 16, 32 s ou
+    o que o Google pedir (até 90 s), avisando no log. O limite do DIA não espera: avisa e para na hora."""
     for tentativa in range(TENTATIVAS):
         try:
             return chamar()
@@ -367,8 +381,15 @@ def _com_tentativas(chamar, esperar=time.sleep):
         except Exception as erro:
             if _camada_gratis(erro):                    # o Google disse qual é a camada da chave: confere o plano
                 gastos.anotar_gemini_gratis()
-            if _limite(erro) and tentativa < TENTATIVAS - 1:
-                esperar(min(60, 2 ** (tentativa + 1)))
+            if _limite(erro) and not _limite_do_dia(erro) and tentativa < TENTATIVAS - 1:
+                espera = min(ESPERA_MAXIMA, max(2 ** (tentativa + 1), _espera_pedida(erro)))
+                if avisar:
+                    motivo = ("limite de pedidos por minuto" + (" da chave grátis" if _camada_gratis(erro) else "")
+                              if _codigo(erro) == 429 or "RESOURCE_EXHAUSTED" in str(erro)
+                              else "o Google está instável")
+                    avisar(f"Gemini: {motivo}; tentando de novo em {espera:.0f} s ({tentativa + 2}ª de "
+                           f"{TENTATIVAS} tentativas)")
+                esperar(espera)
                 continue
             if _codigo(erro) == 429 or "RESOURCE_EXHAUSTED" in str(erro):     # o limite (do dia, na chave grátis)
                 gastos.marcar_cota("Gemini", "limite do dia")
@@ -396,12 +417,13 @@ def ler_json(texto: str) -> dict:
         raise ErroDublagem("o Gemini não respondeu no formato esperado") from erro
 
 
-def perguntar_sobre_audio(cliente, pergunta: str, mp3: bytes, modelo: str = MODELO_OUVIR, esperar=time.sleep) -> str:
+def perguntar_sobre_audio(cliente, pergunta: str, mp3: bytes, modelo: str = MODELO_OUVIR, esperar=time.sleep,
+                          avisar=None) -> str:
     """Manda um trecho de áudio (mp3) e uma pergunta ao Gemini; devolve o texto da resposta."""
     entrada = [{"type": "text", "text": pergunta},
                {"type": "audio", "data": base64.b64encode(mp3).decode(), "mime_type": "audio/mp3"}]
     _conferir_teto()
-    resposta = _com_tentativas(lambda: cliente.interactions.create(model=modelo, input=entrada), esperar)
+    resposta = _com_tentativas(lambda: cliente.interactions.create(model=modelo, input=entrada), esperar, avisar)
     segundos = len(mp3) * 8 / (KBPS_OUVIR * 1000)
     gastos.registrar("Gemini (escuta)", segundos * TOKENS_POR_SEGUNDO * PRECO_OUVIR / 1_000_000 * fator_de_preco(cliente))
     return texto_da_resposta(resposta)
@@ -442,6 +464,7 @@ class MotorGemini:
         self.cliente = cliente or _cliente(chave)
         self.simultaneos, self._esperar, self.bloco = max(1, simultaneos), esperar, max(1, bloco)
         self.falas_geradas = self.pedidos = self.blocos_refeitos = 0
+        self.AVISO_ESPERA = AVISO_ESPERA
 
     def _pedir(self, itens: list) -> tuple[array, int]:
         """Um pedido com as falas do bloco (diálogo, se houver 2 vozes). Devolve o áudio inteiro."""
@@ -464,7 +487,7 @@ class MotorGemini:
             return self.cliente.interactions.create(model=self.modelo, input=entrada, response_format={"type": "audio"},
                                                     generation_config={"speech_config": config})
         _conferir_teto()
-        resposta = _com_tentativas(chamar, self._esperar)
+        resposta = _com_tentativas(chamar, self._esperar, self.avisar)
         self.pedidos += 1
         audio = getattr(resposta, "output_audio", None)
         if audio is None or not getattr(audio, "data", None):
@@ -515,9 +538,23 @@ class MotorGemini:
         # sem "with": no Parar (ou num erro), não espera os pedidos que ainda estão no Google
         grupo = ThreadPoolExecutor(max_workers=self.simultaneos)
         pendentes = {grupo.submit(self._falar_bloco, g, parar) for g in grupos}
+        flex = getattr(self.cliente, "flex", False) is True
+        if flex and self.avisar and itens:
+            self.avisar("Gemini no modo Flex (metade do preço): cada pedido pode levar até ~15 min")
+        limite = (TEMPO_LIMITE_FLEX if flex else TEMPO_LIMITE) // 60
+        desde = time.monotonic()                    # a última resposta do Google
+        proximo_aviso = desde + self.AVISO_ESPERA
         try:
             while pendentes:                        # confere o Parar enquanto espera o Google responder
                 prontos, pendentes = wait(pendentes, timeout=0.5, return_when=FIRST_COMPLETED)
+                agora = time.monotonic()
+                if prontos:
+                    desde, proximo_aviso = agora, agora + self.AVISO_ESPERA
+                elif self.avisar and agora >= proximo_aviso:     # sem resposta há um tempo: diz que está esperando
+                    self.avisar(f"Gemini: esperando a resposta do Google há {max(1, round((agora - desde) / 60))} "
+                                f"min ({len(pendentes)} pedido(s) em andamento; cada um pode levar até {limite} min; "
+                                "o botão Parar interrompe e o que já ficou pronto é guardado)")
+                    proximo_aviso += self.AVISO_ESPERA
                 for futuro in prontos:
                     metades = futuro.result()       # o corte não bateu: as metades entram na fila
                     if metades and self.avisar:

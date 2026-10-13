@@ -531,3 +531,52 @@ def test_a_escuta_anota_os_sons_sem_fala(tmp_path):
     assert json.loads((tmp_path / "sons.json").read_text(encoding="utf-8"))["sons"] == [[61.4, 63.9, "bocejo"]]
     tom.ouvir_falas("f.mkv", falas, [0], Ouvinte(), "ffmpeg", guardado, extrair=lambda *a: b"mp3")
     assert len(perguntas) == 2                                            # tudo guardado: não pergunta de novo
+
+
+def test_limite_por_minuto_espera_o_que_o_google_pede_e_avisa_e_o_do_dia_para_na_hora():
+    """O 429 do Google diz quanto esperar ("Please retry in 39.9s"): o Maestro espera isso (até 90 s) e avisa no log
+    (antes ficava calado e parecia travado). O limite do DIA (quotaId ...PerDay...) não espera à toa: para na hora."""
+    Limite = type("ClientError", (Exception,), {"code": 429})
+    por_minuto = Limite("429 RESOURCE_EXHAUSTED. Quota exceeded for metric: generativelanguage.googleapis.com/"
+                        "generate_content_free_tier_requests, limit: 3. Please retry in 39.9s. [{'quotaId': "
+                        "'GenerateRequestsPerMinutePerProjectPerModel-FreeTier'}, {'retryDelay': '39s'}]")
+    por_dia = Limite("429 RESOURCE_EXHAUSTED. Quota exceeded for metric: generativelanguage.googleapis.com/"
+                     "generate_content_free_tier_requests, limit: 15. Please retry in 7.2s. [{'quotaId': "
+                     "'GenerateRequestsPerDayPerProjectPerModel-FreeTier'}]")
+    falhas, esperas, avisos = [por_minuto, por_minuto], [], []
+
+    def chamar():
+        if falhas:
+            raise falhas.pop(0)
+        return "ok"
+    assert voz_gemini._com_tentativas(chamar, esperas.append, avisos.append) == "ok"
+    assert esperas == [39.9, 39.9]
+    assert "limite de pedidos por minuto da chave grátis; tentando de novo em 40 s (2ª de 6" in avisos[0]
+    assert voz_gemini._espera_pedida(Limite("RESOURCE_EXHAUSTED")) == 0.0
+    falhas[:] = [Limite("429 RESOURCE_EXHAUSTED. Please retry in 600s.")] * 2
+    esperas.clear()
+    voz_gemini._com_tentativas(chamar, esperas.append)
+    assert esperas == [voz_gemini.ESPERA_MAXIMA, voz_gemini.ESPERA_MAXIMA]          # nunca mais que 90 s
+    falhas[:] = [por_dia] * 6
+    esperas.clear()
+    with pytest.raises(ErroDublagem, match="chave GRÁTIS"):
+        voz_gemini._com_tentativas(chamar, esperas.append)
+    assert esperas == [] and len(falhas) == 5                                       # 1 pedido só, sem esperar
+
+
+def test_google_demorando_avisa_que_esta_esperando(tmp_path):
+    """Sem resposta do Google há um tempo, o log diz que está esperando (e que o Parar funciona), em vez de parar
+    de andar sem explicação."""
+    import time as relogio
+
+    class Lento(GeminiFalso):
+        def create(self, **k):
+            relogio.sleep(1.3)
+            return super().create(**k)
+    avisos = []
+    motor = voz_gemini.MotorGemini("x", "Kore", cliente=Lento(), esperar=lambda s: None, avisar=avisos.append)
+    motor.AVISO_ESPERA = 0.5
+    motor.sintetizar([("Olá, tudo bem?", tmp_path / "1.wav")])
+    assert (tmp_path / "1.wav").exists()
+    espera = [a for a in avisos if "esperando a resposta do Google" in a]
+    assert espera and "1 pedido(s) em andamento" in espera[0] and "até 5 min" in espera[0] and "Parar" in espera[0]
