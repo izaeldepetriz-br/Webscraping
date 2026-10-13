@@ -800,7 +800,7 @@ def test_fala_de_mulher_sai_com_voz_feminina(tmp_path):
     assert r.status == "dublado" and gemini.vozes == ["Kore", "Charon"]
     assert gemini.tons == ["Cena: Uma aula. Nesta fala: animada. Ritmo: cerca de 1,0 s no original.",
                            "Cena: Uma aula. Nesta fala: calmo. Ritmo: a fala tem só 0,5 s no original; fale bem "
-                           "rápido, sem pausas."]
+                           "rápido."]
     assert dublagem.ritmo_da_fala("Você deve estar cansada da longa viagem.", 3.0) == \
         "Ritmo: cerca de 3,0 s no original."
     assert "sem pressa" in dublagem.ritmo_da_fala("Oi.", 2.0) and dublagem.ritmo_da_fala("Oi.", 0.1) == ""

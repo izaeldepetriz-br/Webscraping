@@ -109,8 +109,10 @@ LETRAS_POR_SEGUNDO = (2.5, 28)  # fala de verdade: entre 2,5 (dramática, lenta)
 
 
 def separar_por_pausas(amostras: array, taxa: int, pesos: list[int]) -> list[tuple[int, int]] | None:
-    """Corta o áudio de um bloco em len(pesos) pedaços nas PAUSAS mais longas. pesos: letras de cada fala (o
-    pedaço de uma fala longa tem que ser mais longo). Devolve [(início, fim)] em amostras, ou None se não der para
+    """Corta o áudio de um bloco em len(pesos) pedaços nas PAUSAS entre as falas. pesos: letras de cada fala (o
+    pedaço de uma fala longa tem que ser mais longo). Cada corte é a pausa mais longa PERTO de onde aquela fala
+    deveria terminar pelas letras (_melhores_pausas): uma pausa dramática no meio de uma frase ("Espelho... espelho
+    meu") não vira corte só por ser comprida. Devolve [(início, fim)] em amostras, ou None se não der para
     confiar no corte (menos pausas que o preciso, ou um pedaço com tamanho incoerente com o texto)."""
     n = len(pesos)
     passo = max(1, int(taxa * JANELA))
@@ -134,7 +136,7 @@ def separar_por_pausas(amostras: array, taxa: int, pesos: list[int]) -> list[tup
             inicio = None
     if len(pausas) < n - 1:
         return None
-    escolhidas = sorted(sorted(pausas, reverse=True)[:n - 1], key=lambda p: p[1])
+    escolhidas = _melhores_pausas(pausas, pesos, primeiro, ultimo)
     folga = int(FOLGA_CORTE / JANELA)
     limites = [primeiro] + [x for _, a, b in escolhidas for x in (a, b)] + [ultimo + 1]
     pedacos = [(max(0, limites[2 * i] - folga) * passo, min(len(nivel), limites[2 * i + 1] + folga) * passo)
@@ -147,6 +149,48 @@ def separar_por_pausas(amostras: array, taxa: int, pesos: list[int]) -> list[tup
         if p >= 8 and not LETRAS_POR_SEGUNDO[0] <= p / max(1e-3, (fim - ini) / taxa) <= LETRAS_POR_SEGUNDO[1]:
             return None
     return [(ini, min(fim, len(amostras))) for ini, fim in pedacos]
+
+
+PESO_DISTANCIA = 0.8          # quanto custa, em janelas de pausa, cada janela de distância do ponto esperado
+
+
+def _melhores_pausas(pausas: list[tuple[int, int, int]], pesos: list[int], primeiro: int,
+                     ultimo: int) -> list[tuple[int, int, int]]:
+    """As len(pesos)-1 pausas (em ordem) que melhor separam as falas: pausa longa E perto do ponto esperado (onde a
+    fala terminaria se o tempo fosse proporcional às letras). Programação dinâmica: melhor[j][i] = a melhor soma
+    usando a pausa i como o j-ésimo corte."""
+    # o tempo do bloco = falas (proporcionais às letras) + as pausas entre elas (do tamanho das mais longas)
+    cortes = len(pesos) - 1
+    pausa = sorted((t for t, _, _ in pausas), reverse=True)[:cortes]
+    pausa_media = sorted(pausa)[(len(pausa) - 1) // 2] if pausa else 0     # a do meio (com 2, a menor: a outra
+    # pode ser uma pausa dramática)
+    fala = max(1, (ultimo - primeiro) - cortes * pausa_media)
+    total, acumulado, esperados = sum(pesos), 0, []
+    for j, p in enumerate(pesos[:-1]):
+        acumulado += p
+        esperados.append(primeiro + fala * acumulado / total + (j + 0.5) * pausa_media)
+
+    def nota(i: int, j: int) -> float:
+        tamanho, a, b = pausas[i]
+        return tamanho - PESO_DISTANCIA * abs((a + b) / 2 - esperados[j])
+    k, m = len(esperados), len(pausas)
+    melhor = [[float("-inf")] * m for _ in range(k)]
+    veio = [[-1] * m for _ in range(k)]
+    for i in range(m):
+        melhor[0][i] = nota(i, 0)
+    for j in range(1, k):
+        topo, onde = float("-inf"), -1
+        for i in range(j, m):                       # o j-ésimo corte vem depois do (j-1)-ésimo
+            if melhor[j - 1][i - 1] > topo:
+                topo, onde = melhor[j - 1][i - 1], i - 1
+            melhor[j][i] = topo + nota(i, j)
+            veio[j][i] = onde
+    i = max(range(k - 1, m), key=lambda x: melhor[k - 1][x])
+    escolhidas = []
+    for j in range(k - 1, -1, -1):
+        escolhidas.append(pausas[i])
+        i = veio[j][i]
+    return escolhidas[::-1]
 
 
 def _ler_audio(dados) -> tuple[array, int]:

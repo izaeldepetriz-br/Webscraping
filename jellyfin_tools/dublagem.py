@@ -934,17 +934,18 @@ LETRAS_NATURAIS = 14.0        # letras por segundo de uma fala em ritmo de conve
 
 def ritmo_da_fala(texto: str, segundos: float) -> str:
     """A nota de RITMO para a voz que interpreta: quanto tempo a fala tem no original. Sem isso, a voz lia no ritmo
-    dela e a fala era acelerada depois para caber (soava fora de ritmo, "dublagem amadora")."""
+    dela e a fala era acelerada depois para caber (soava fora de ritmo, "dublagem amadora"). Não fala de PAUSAS:
+    "sem pausas" fazia o Gemini encurtar também a pausa entre as falas do bloco, e o corte errava."""
     if segundos <= 0.2:
         return ""
     taxa = len("".join(texto.split())) / segundos
     tempo = f"{segundos:.1f}".replace(".", ",")
     if taxa > LETRAS_NATURAIS * 1.4:
-        return f"Ritmo: a fala tem só {tempo} s no original; fale bem rápido, sem pausas."
+        return f"Ritmo: a fala tem só {tempo} s no original; fale bem rápido."
     if taxa > LETRAS_NATURAIS * 1.1:
         return f"Ritmo: a fala tem {tempo} s no original; fale um pouco rápido."
     if taxa < LETRAS_NATURAIS * 0.5 and segundos >= 1.5:
-        return f"Ritmo: a fala tem {tempo} s no original; fale sem pressa, com as pausas do original."
+        return f"Ritmo: a fala tem {tempo} s no original; fale sem pressa."
     return f"Ritmo: cerca de {tempo} s no original."
 
 

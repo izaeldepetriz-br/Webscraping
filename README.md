@@ -248,6 +248,11 @@ primeira falha (antes esperava o tempo limite em cada filme).
   ele não fechar em 30 s, a atualização o fecha à força e segue (a janelinha mostra os segundos de espera).
 - **Uma atualização de cada vez**: fechar o programa de novo abria uma 2ª janelinha "esperando o programa fechar".
   A atualização mais nova agora fecha a anterior.
+- **Menos blocos do Gemini pedidos de novo (mais rápido e mais barato)**: o corte do áudio em falas escolhia as
+  pausas MAIS LONGAS, e numa conversa com emoção as pausas dramáticas dentro de uma frase ("Espelho... espelho meu")
+  são mais longas que a troca de quem fala; o corte errava e o bloco era pedido (e pago) de novo. Agora cada corte é a
+  pausa mais longa PERTO de onde aquela fala deveria terminar, pelas letras. E a nota de ritmo não pede mais "sem
+  pausas" (o Gemini encurtava também a pausa entre as falas).
 
 ### Novidades da v2.18.6
 

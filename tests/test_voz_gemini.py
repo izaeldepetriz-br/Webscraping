@@ -87,6 +87,14 @@ def test_corte_nas_pausas_confere_o_tamanho_de_cada_fala():
     # para 30 letras, 100 letras por segundo: impossível)
     meio = fala_sintetica(0.9) + silencio(0.6) + fala_sintetica(1.6) + silencio(0.3) + fala_sintetica(0.3)
     assert voz_gemini.separar_por_pausas(meio, TAXA, [40, 30]) is None
+    # pausa dramática DENTRO da 1ª fala (0,9 s) mais longa que a pausa ENTRE as falas (0,5 s): o corte fica na que
+    # está perto de onde a 1ª fala termina pelas letras, não na mais comprida
+    drama = (fala_sintetica(0.5) + silencio(0.9) + fala_sintetica(1.0) + silencio(0.5) + fala_sintetica(1.5)
+             + silencio(0.5) + fala_sintetica(0.6))
+    cortes = voz_gemini.separar_por_pausas(drama, TAXA, [25, 24, 10])   # "Espelho... espelho meu." etc.
+    assert cortes is not None
+    esperado = [0.5 + 0.9 + 1.0, 1.5, 0.6]                              # a 1ª inteira, com a pausa dramática
+    assert all(abs((b - a) / TAXA - e) < 0.15 for (a, b), e in zip(cortes, esperado))
 
 
 def test_motor_pede_em_blocos_e_corta_cada_fala(tmp_path):
@@ -433,3 +441,24 @@ def test_metades_vao_em_paralelo_e_a_barra_anda_por_fala(tmp_path):
     assert max(ao_mesmo_tempo) >= 2                                       # as metades foram juntas
     assert len(avisos) == 3 and "duas metades" in avisos[0]
     assert barra[-1] == 1.0 and len(set(barra)) >= 3                      # 0,25... 0,5... 1,0
+
+
+def test_corte_de_um_dialogo_longo_com_pausas_dramaticas():
+    """10 falas (como um bloco de diálogo): pausas de 0,45 s entre as falas e, em 3 delas, uma pausa dramática de
+    0,8 s no meio. O corte acha as 9 pausas certas (antes pegava as dramáticas e o bloco era pedido de novo)."""
+    letras = [18, 30, 12, 25, 40, 15, 22, 35, 10, 28]
+    dramaticas = {1, 4, 7}
+    audio, esperado = array("h"), []
+    for i, n in enumerate(letras):
+        dur = 0.065 * n
+        if i in dramaticas:
+            audio += fala_sintetica(dur / 2) + silencio(0.8) + fala_sintetica(dur / 2)
+            esperado.append(dur + 0.8)
+        else:
+            audio += fala_sintetica(dur)
+            esperado.append(dur)
+        if i < len(letras) - 1:
+            audio += silencio(0.45)
+    cortes = voz_gemini.separar_por_pausas(audio, TAXA, letras)
+    assert cortes is not None
+    assert all(abs((b - a) / TAXA - e) < 0.15 for (a, b), e in zip(cortes, esperado))
