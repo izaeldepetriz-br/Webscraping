@@ -81,6 +81,23 @@ def trechos(falas: list, tamanho: float = TRECHO) -> list[tuple[float, float, li
     return [(n * tamanho, (n + 1) * tamanho, ids) for n, ids in sorted(grupos.items())]
 
 
+FOLGA = 1.0                   # segundos a mais antes da 1ª e depois da última fala de um pedaço (pedacos)
+
+
+def pedacos(falas: list, ids: list[int], tamanho: float = TRECHO) -> list[tuple[float, float, list[int]]]:
+    """[(início, fim, números)] só EM VOLTA das falas pedidas (a amostra de 1 minuto manda ~1 minuto de áudio, não
+    os 15 minutos do trecho inteiro)."""
+    grupos: dict[int, list[int]] = {}
+    for k in ids:
+        grupos.setdefault(int(horarios(falas[k][0].tempo)[0] // tamanho), []).append(k)
+    saida = []
+    for _, grupo in sorted(grupos.items()):
+        inicio = max(0.0, min(horarios(falas[k][0].tempo)[0] for k in grupo) - FOLGA)
+        fim = max(horarios(falas[k][0].tempo)[1] for k in grupo) + FOLGA
+        saida.append((inicio, fim, grupo))
+    return saida
+
+
 def _carregar(arquivo: Path | None) -> dict:
     try:
         return json.loads(arquivo.read_text(encoding="utf-8")) if arquivo else {}
@@ -91,12 +108,13 @@ def _carregar(arquivo: Path | None) -> dict:
 def identificar(video: str | Path, falas: list, cliente, ffmpeg: str, arquivo: str | Path | None = None,
                 ao_progresso=None, parar=None, extrair=audio_do_trecho, tamanho: float = TRECHO,
                 esperar=None, elenco: list[dict] | None = None,
-                sabidas: dict[int, str] | None = None) -> list[Personagem]:
+                sabidas: dict[int, str] | None = None, ids: list[int] | None = None) -> list[Personagem]:
     """Quem fala cada fala. falas: [(Fala, texto)] (dublagem.falas_da_legenda). arquivo: onde guardar o progresso
     (um trecho já ouvido não é pedido de novo). elenco: quem já foi identificado nos OUTROS episódios da série
     ([{rotulo, genero, descricao}]): o Gemini reusa os mesmos rótulos, e cada um continua com a mesma voz.
     sabidas: {número da fala: personagem} já sabidas pelo ROTEIRO (roteiro.py): valem mais que o que o Gemini
-    disser, e o trecho com quase todas sabidas (trecho_coberto) nem é mandado para ouvir (não gasta)."""
+    disser, e o trecho com quase todas sabidas (trecho_coberto) nem é mandado para ouvir (não gasta).
+    ids: só essas falas (o TESTE de alguns minutos): vai só o áudio em volta delas, e só elas ganham dono."""
     video = Path(video)
     arquivo = Path(arquivo) if arquivo else None
     progresso = _carregar(arquivo)
@@ -108,11 +126,12 @@ def identificar(video: str | Path, falas: list, cliente, ffmpeg: str, arquivo: s
     de_quem.update(sabidas)
     for rotulo in set(sabidas.values()):
         pessoas.setdefault(rotulo, {"rotulo": rotulo, "genero": "?", "descricao": "do roteiro"})
-    partes = trechos(falas, tamanho)
+    so_estas = ids is not None
+    partes = pedacos(falas, [k for k in ids if k not in de_quem], tamanho) if so_estas else trechos(falas, tamanho)
     for n, (inicio, fim, ids) in enumerate(partes):
         if parar and parar():
             raise ErroDublagem("interrompido (botão Parar)")
-        if inicio in feitos or trecho_coberto(ids, sabidas):
+        if (inicio in feitos and not so_estas) or trecho_coberto(ids, sabidas):
             if ao_progresso:
                 ao_progresso((n + 1) / len(partes))
             continue
@@ -140,7 +159,8 @@ def identificar(video: str | Path, falas: list, cliente, ffmpeg: str, arquivo: s
             if k in validos and rotulo and rotulo != "?" and k not in sabidas:     # o roteiro vale mais
                 de_quem[k] = rotulo
                 pessoas.setdefault(rotulo, {"rotulo": rotulo, "genero": "?", "descricao": ""})
-        feitos.add(inicio)
+        if not so_estas:                              # o pedaço do teste não é o trecho inteiro: não conta como feito
+            feitos.add(inicio)
         if arquivo:
             arquivo.parent.mkdir(parents=True, exist_ok=True)
             arquivo.write_text(json.dumps({"trechos": sorted(feitos), "pessoas": list(pessoas.values()),
@@ -182,10 +202,11 @@ def distribuir_vozes(personagens: list[Personagem], voz_principal: str = VOZ_PAD
             mapa[p.rotulo] = voz_de_figurante(figurante, p.genero, figurantes[p.genero])
             figurantes[p.genero] += 1
             continue
-        if len(p.falas) < MINIMO_FALAS:
-            mapa[p.rotulo] = principal
-            continue
         grupo = {"m": VOZES_MASCULINAS, "f": VOZES_FEMININAS}.get(p.genero, VOZES_MASCULINAS + VOZES_FEMININAS)
+        if len(p.falas) < MINIMO_FALAS:                # fala pouco: a principal, se for do mesmo gênero; senão uma
+            mapa[p.rotulo] = (principal if principal in grupo or clonada else   # do gênero dele já em uso
+                              next((v for v in grupo if usadas[v]), grupo[0]))
+            continue
         if not usadas and (principal in grupo or clonada):
             voz = principal
         else:

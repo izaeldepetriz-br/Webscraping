@@ -199,9 +199,16 @@ def _limite(erro: Exception) -> bool:
     return _codigo(erro) in (429, 500, 503) or "RESOURCE_EXHAUSTED" in str(erro)
 
 
+DIRECAO = ("Siga as notas de direção abaixo, que descrevem o áudio original: repita a mesma emoção, intensidade, "
+           "ritmo e volume, sem suavizar (se o original é exagerado ou teatral, a dublagem também é).")
+
+
 def estilo_da_fala(estilo: str, tom: str) -> str:
-    """O estilo geral + COMO esta fala é dita no original (tom.py): a voz repete a emoção da cena."""
-    return f"{estilo} Nesta fala, a interpretação do original: {tom}." if tom else estilo
+    """O estilo geral + as notas de direção desta fala (tom.py: a cena e COMO ela é dita no original)."""
+    if not tom:
+        return estilo
+    nota = tom if tom.startswith(("Cena:", "Nesta fala:")) else f"Nesta fala: {tom}."
+    return f"{estilo} {DIRECAO} {nota}"
 
 
 def _cliente(chave: str):

@@ -41,6 +41,7 @@ import re
 import sys
 import time
 import traceback
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -311,22 +312,47 @@ def preparar_motor(o: OpcoesJellyfin, progresso_piper=None, progresso_voz=None):
 
 
 def ouvinte_de_tons(o: OpcoesJellyfin, video: str | Path, motor, log: logging.Logger | None = None):
-    """Quem ouve o original e diz o TOM de cada fala (tom.py), para a voz do Gemini repetir a emoção da cena; ou
-    None: opção desligada, sem a chave do Gemini ou a voz não é do Gemini (o Piper não interpreta)."""
-    if not getattr(o, "emocao_da_cena", True) or not chave_gemini(o) or not motor_expressivo(motor):
+    """Quem ouve o original (tom.py) e diz, de cada fala, se quem fala é homem ou mulher (SEMPRE, nas abas Jellyfin e
+    Avulsos, no teste e no vídeo inteiro: a voz segue o gênero) e, com a "Emoção da cena" ligada, o tom e a cena,
+    para a voz repetir a interpretação. None: sem a chave do Gemini ou a voz não é do Gemini (o Piper não interpreta)."""
+    if not chave_gemini(o) or not motor_expressivo(motor):
         return None
     video = Path(video)
+    emocao = getattr(o, "emocao_da_cena", True)
 
     def ouvir(falas, ids, pasta, parar):
         ffmpeg = localizar_ffmpeg()
         if not ffmpeg:
             raise ErroDublagem("falta o ffmpeg (pip install imageio-ffmpeg)")
         if log:
-            log.info("Dublagem: o Gemini está ouvindo o tom de %d falas no original (emoção da cena)", len(ids))
-        return tom.ouvir_tons(video, falas, ids, voz_gemini._cliente(chave_gemini(o)), ffmpeg,
-                              Path(pasta) / "tons.json", parar=parar,
-                              avisar=(lambda texto: log.warning("Dublagem: %s", texto)) if log else None)
+            log.info("Dublagem: o Gemini está ouvindo %d falas no original (quem fala: homem ou mulher%s)",
+                     len(ids), "; e a emoção da cena" if emocao else "")
+        ouvidas = tom.ouvir_falas(video, falas, ids, voz_gemini._cliente(chave_gemini(o)), ffmpeg,
+                                  Path(pasta) / "tons.json", parar=parar,
+                                  avisar=(lambda texto: log.warning("Dublagem: %s", texto)) if log else None)
+        if not emocao:                                # emoção desligada: só o gênero (a voz certa)
+            ouvidas = {k: tom.Ouvida(genero=x.genero) for k, x in ouvidas.items()}
+        if log:
+            generos = Counter(x.genero for x in ouvidas.values())
+            log.info("Dublagem: ouvidas %d falas (%d de mulher, %d de homem, %d sem saber)", len(ouvidas),
+                     generos["f"], generos["m"], generos["?"])
+        return ouvidas
     return ouvir
+
+
+def vozes_por_genero(o: OpcoesJellyfin, motor) -> dict | None:
+    """{"m": voz, "f": voz}: a voz escolhida fica com o gênero dela, e o outro gênero ganha uma voz pronta do Gemini
+    (a fala de mulher não sai com voz de homem). None: sem a escuta do original ou com uma voz clonada (é a SUA voz,
+    escolhida para tudo)."""
+    if not chave_gemini(o) or not motor_expressivo(motor):
+        return None
+    voz = o.voz_gemini if o.voz_gemini in voz_gemini.VOZES else ("" if o.voz_gemini.startswith("clone:")
+                                                                  else voz_gemini.VOZ_PADRAO)
+    if not voz:
+        return None
+    if voz_gemini.VOZES[voz].startswith("masculina"):
+        return {"m": voz, "f": voz_gemini.VOZES_FEMININAS[0]}
+    return {"f": voz, "m": voz_gemini.VOZES_MASCULINAS[0]}
 
 
 def pasta_dublagem() -> Path:
@@ -335,21 +361,21 @@ def pasta_dublagem() -> Path:
 
 
 def ouvir_personagens(o: OpcoesJellyfin, video: Path, falas: list, cliente=None, ao_progresso=None, parar=None,
-                      serie: str = ""):
+                      serie: str = "", arquivo: Path | None = None, ids: list[int] | None = None):
     """O Gemini ouve o filme e diz quem fala cada fala (ver personagens.py). O que já ouviu fica guardado.
     serie: episódio; o elenco dos outros episódios vai junto, para os mesmos personagens terem os mesmos rótulos."""
     ffmpeg = localizar_ffmpeg()
     if not ffmpeg:
         raise ErroDublagem("falta o ffmpeg (pip install imageio-ffmpeg)")
     cliente = cliente or voz_gemini._cliente(chave_gemini(o))
-    arquivo = pasta_do_filme(pasta_dublagem(), video) / "personagens.json"
+    arquivo = arquivo or pasta_do_filme(pasta_dublagem(), video) / "personagens.json"
     elenco = personagens.carregar_elenco(arquivo_elenco(serie))["pessoas"] if serie else []
     achado = pelo_roteiro(o, video, falas)
     sabidas = achado.falas if achado else None
     if achado:                                    # o elenco do roteiro primeiro: o que a série já sabe vale mais
         elenco = [{"rotulo": n, "genero": g, "descricao": "do roteiro"} for n, g in achado.generos.items()] + elenco
     return personagens.identificar(video, falas, cliente, ffmpeg, arquivo, ao_progresso=ao_progresso, parar=parar,
-                                   elenco=elenco or None, sabidas=sabidas)
+                                   elenco=elenco or None, sabidas=sabidas, ids=ids)
 
 
 def pelo_roteiro(o: OpcoesJellyfin, video: Path, falas: list):
@@ -840,6 +866,32 @@ def vozes_automaticas(o: OpcoesJellyfin, item, log: logging.Logger) -> dict | No
         return None
 
 
+def vozes_do_teste(o: OpcoesJellyfin, video: Path, legenda: Path, trecho: tuple[float, float],
+                   log: logging.Logger) -> dict | None:
+    """O TESTE com a voz por personagem ligada: o Gemini ouve só o trecho do teste e cada pessoa ganha uma voz do
+    gênero dela, como na dublagem do vídeo inteiro (antes o teste saía sempre com uma voz só). Sem figurantes no Piper:
+    em poucos minutos todo mundo fala pouco."""
+    if not (usa_gemini(o) and o.voz_por_personagem and chave_gemini(o)):
+        return None
+    try:
+        falas = falas_da_legenda(legenda)
+        ids = [k for k, (f, _) in enumerate(falas) if trecho[0] <= horarios(f.tempo)[0] < trecho[1]]
+        if not ids:
+            return None
+        arquivo = pasta_do_filme(pasta_dublagem(), video) / "teste-personagens.json"
+        arquivo.unlink(missing_ok=True)                  # o trecho (ou a legenda) do teste pode ter mudado
+        log.info("Teste: o Gemini está ouvindo quem fala as %d falas do trecho (voz por personagem)", len(ids))
+        lista = ouvir_personagens(o, video, falas, arquivo=arquivo, ids=ids)
+        mapa = personagens.distribuir_vozes(lista, o.voz_gemini)
+        for p in lista:
+            log.info("Teste: %s (%s, %d falas) -> %s", p.rotulo, personagens.GENEROS.get(p.genero, "?"),
+                     len(p.falas), voz_gemini.texto_da_voz(mapa.get(p.rotulo, o.voz_gemini)))
+        return personagens.vozes_por_fala(lista, mapa)
+    except (ErroDublagem, OSError, ErroLegenda) as erro:
+        log.warning("Teste: voz por personagem: %s (segue com a voz pelo gênero)", erro)
+        return None
+
+
 def pasta_separar_vozes() -> Path:
     """O modelo que separa as vozes do fundo (baixado na 1ª vez, ~67 MB)."""
     return config.ARQUIVO.parent / "separar_vozes"
@@ -968,7 +1020,7 @@ def dublar_item(o: OpcoesJellyfin, item, motor, log: logging.Logger, parar=None,
                      pasta_cache=pasta_dublagem(), destino=item.destino, parar=parar, ao_progresso=ao_progresso,
                      separar=separar, no_original=o.dublagem_no_original, legenda_no_video=legenda_no_video,
                      previa=previa, ambientar=getattr(o, "ambientar_voz", True),
-                     tons=ouvinte_de_tons(o, item.video, motor, log))
+                     tons=ouvinte_de_tons(o, item.video, motor, log), por_genero=vozes_por_genero(o, motor))
     if r.status == "previa":
         registrar_previa(item.video, r.destino, item.legenda if legenda_no_video else None)
     return r
@@ -1466,7 +1518,8 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
             # a barra só anda para a frente: o Whisper e a tradução ficaram com até 45%
             r_dub = dublar_video(video, legenda_teste, motor, parar=parar, trecho=r.trecho, destino=destino,
                                  adaptar=adaptador(o, video.stem), pasta_cache=pasta_dublagem(), separar=separar,
-                                 tons=ouvinte_de_tons(o, video, motor, log),
+                                 tons=ouvinte_de_tons(o, video, motor, log), por_genero=vozes_por_genero(o, motor),
+                                 vozes=vozes_do_teste(o, video, legenda_teste, r.trecho, log),
                                  ambientar=getattr(o, "ambientar_voz", True), legenda_no_video=o.avulsos_legendar,
                                  avisar=lambda texto: log.warning("Teste: %s", texto),
                                  ao_progresso=lambda f: andamento(0.45 + 0.55 * f,

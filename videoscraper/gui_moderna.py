@@ -3275,8 +3275,10 @@ class JanelaModerna(ctk.CTk):
         self.var_jf_emocao_da_cena = tk.BooleanVar(value=True)
         self._checkbox(lateral, "Emoção da cena: o Gemini ouve o áudio original e cada fala é dita com a mesma emoção "
                                 "(raiva, alegria, sussurro...)", self.var_jf_emocao_da_cena)
-        self._rotulo(lateral, "Só com a voz do Gemini. Custo pequeno: ~US$ 0,12 por hora de vídeo (ele só ouve); o "
-                              "que já foi ouvido fica guardado, e o teste não paga de novo no vídeo inteiro.",
+        self._rotulo(lateral, "Só com a voz do Gemini. Ele ouve o original SEMPRE (marcado ou não) para saber se quem "
+                              "fala é homem ou mulher: a fala de mulher sai com voz feminina e a de homem, masculina. "
+                              "Custo pequeno: ~US$ 0,12 por hora de vídeo; o que já foi ouvido fica guardado, e o "
+                              "teste não paga de novo no vídeo inteiro.",
                      fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(0, 4), **p)
 
         self._rotulo(lateral, "Texto da fala", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)

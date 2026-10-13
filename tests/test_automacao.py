@@ -285,8 +285,8 @@ def test_dublar_pelo_robo_com_voz_por_personagem(casa, tmp_path, monkeypatch):
     casa(destino_filmes=str(filmes), motor_voz="Gemini (premium, Google AI Studio)", chave_gemini="AIza",
          voz_gemini="Kore", voz_por_personagem=True, encurtar_falas=False, dublagem_previa=False)
     assert automacao.main(["--dublar"]) == automacao.OK
-    # quem fala menos de 3 falas fica com a voz principal (Kore)
-    assert set(vozes.values()) == {"Kore"} and len(vozes) == 3
+    # quem fala menos de 3 falas fica com a voz principal (Kore) se for do mesmo gênero; o homem, com uma masculina
+    assert sorted(vozes.values()) == ["Charon", "Charon", "Kore"] and len(vozes) == 3
     assert len([l for l in faixas(filmes / "A (2001)" / "A (2001).mkv") if "Audio" in l]) == 2
     assert [a.name for a in (tmp_path / "config" / "dublagem").iterdir()] == ["frases"]   # terminou: o progresso
     # foi apagado; fica só o banco das frases curtas (para os próximos filmes)
@@ -532,14 +532,46 @@ def test_teste_a_partir_do_minuto_escolhido():
         automacao.trecho_do_teste(NS(inicio_teste="meio"), falas, 60)
 
 
-def test_emocao_da_cena_so_com_a_voz_do_gemini(casa):
+def test_emocao_da_cena_so_com_a_voz_do_gemini(casa, tmp_path, monkeypatch):
     from test_dublagem import GeminiFalso, VozComVoz
     casa(chave_gemini="chave", emocao_da_cena=True)
     o, _ = automacao.opcoes_salvas()
     assert automacao.ouvinte_de_tons(o, "f.mkv", GeminiFalso()) is not None
     assert automacao.ouvinte_de_tons(o, "f.mkv", VozComVoz()) is None          # o Piper não interpreta
-    o.emocao_da_cena = False
-    assert automacao.ouvinte_de_tons(o, "f.mkv", GeminiFalso()) is None
+    o.emocao_da_cena = False                                                    # sem a emoção: ainda ouve o gênero
+    from jellyfin_tools import tom
+    monkeypatch.setattr(automacao, "localizar_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(automacao.voz_gemini, "_cliente", lambda chave: None)
+    monkeypatch.setattr(tom, "ouvir_falas", lambda *a, **k: {0: tom.Ouvida("animada", "f", "Uma aula.")})
+    ouvidas = automacao.ouvinte_de_tons(o, "f.mkv", GeminiFalso())([], [0], tmp_path, None)
+    assert ouvidas == {0: tom.Ouvida(genero="f")} and ouvidas[0].nota() == ""
+    assert automacao.vozes_por_genero(o, GeminiFalso()) is not None
+
+
+def test_voz_pelo_genero_e_voz_por_personagem_no_teste(casa, tmp_path, monkeypatch):
+    from jellyfin_tools import personagens
+    from test_dublagem import GeminiFalso, VozComVoz
+    casa(chave_gemini="chave", voz_gemini="Charon", motor_voz="Gemini (premium, Google AI Studio)")
+    o, _ = automacao.opcoes_salvas()
+    assert automacao.vozes_por_genero(o, GeminiFalso()) == {"m": "Charon", "f": "Kore"}
+    assert automacao.vozes_por_genero(o, VozComVoz()) is None                # Piper: não ouve o original
+    o.voz_gemini = "Aoede"
+    assert automacao.vozes_por_genero(o, GeminiFalso()) == {"f": "Aoede", "m": "Charon"}
+    o.voz_gemini = "clone:Izael"
+    assert automacao.vozes_por_genero(o, GeminiFalso()) is None              # a SUA voz: vale para tudo
+    # o teste com a voz por personagem: só as falas do trecho, cada pessoa com uma voz do gênero dela
+    legenda = tmp_path / "A.pt-BR.srt"
+    legenda.write_text("".join(f"{k + 1}\n00:00:{2 * k:02d},000 --> 00:00:{2 * k + 1:02d},000\nFala {k}.\n\n"
+                               for k in range(8)), encoding="utf-8")
+    pedidos = []
+    monkeypatch.setattr(automacao, "ouvir_personagens", lambda o, video, falas, **k: pedidos.append(k["ids"]) or [
+        personagens.Personagem("Agatha", "f", falas=[2, 4, 5]), personagens.Personagem("Elena", "f", falas=[3, 6, 7])])
+    o.voz_gemini, o.voz_por_personagem = "Charon", True
+    vozes = automacao.vozes_do_teste(o, tmp_path / "A.mkv", legenda, (4.0, 16.0), logging.getLogger("t"))
+    assert pedidos == [[2, 3, 4, 5, 6, 7]]
+    assert {vozes[2], vozes[3]} <= set(automacao.voz_gemini.VOZES_FEMININAS) and vozes[2] != vozes[3]
+    o.voz_por_personagem = False
+    assert automacao.vozes_do_teste(o, tmp_path / "A.mkv", legenda, (4.0, 16.0), logging.getLogger("t")) is None
 
 
 def dublagem_faixas(arquivo):

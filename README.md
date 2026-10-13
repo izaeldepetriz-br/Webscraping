@@ -240,6 +240,20 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.18.5
+
+- **Fala de mulher com voz de mulher, sempre** (abas Jellyfin e Avulsos, no teste e no vídeo inteiro): com a voz do
+  Gemini, ele ouve o original e diz se quem fala cada fala é homem ou mulher. A voz escolhida nas Configurações fica
+  com o gênero dela, e o outro gênero ganha uma voz pronta do Gemini (Charon escolhida: as mulheres saem com Kore). Antes,
+  o vídeo com duas mulheres saía inteiro com a voz masculina. Com uma voz clonada, ela continua valendo para tudo.
+- **O "🧪 Testar" faz a voz por personagem** (se ela estiver ligada): o Gemini ouve só o trecho do teste e cada pessoa
+  ganha uma voz do gênero dela, como na dublagem do vídeo inteiro (antes o teste saía sempre com uma voz só).
+- **Quem fala pouco ganha voz do próprio gênero**: na voz por personagem, quem tinha menos de 3 falas ficava com a
+  voz principal, mesmo sendo do outro gênero.
+- **Mais emoção**: o Gemini agora descreve também a CENA (quem são as pessoas, o clima) e, em cada fala, a emoção, a
+  intensidade e o ritmo ("muito animada, quase cantando, rápido"). Isso vai como notas de direção no pedido da voz,
+  com a instrução de não suavizar a interpretação.
+
 ### Novidades da v2.18.4
 
 - **A voz não troca mais no meio da dublagem**: as falas já geradas ficavam guardadas só pelo texto. Depois de trocar

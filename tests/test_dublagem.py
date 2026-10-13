@@ -727,6 +727,7 @@ class GeminiFalso(VozComVoz):
 
     def sintetizar(self, pedidos, parar=None, ao_progresso=None):
         self.tons += [p[3] if len(p) > 3 else "" for p in pedidos]
+        self.vozes = getattr(self, "vozes", []) + [p[2] if len(p) > 2 else "" for p in pedidos]
         super().sintetizar(pedidos, parar, ao_progresso)
 
 
@@ -778,3 +779,24 @@ def test_trocar_a_voz_nao_mistura_as_falas_da_voz_antiga(tmp_path):
     r = dublar_video(video, legenda, voz, pasta_cache=cache, trecho=(0, 8), destino=amostra, avisar=avisos.append,
                      tons=lambda *a: (_ for _ in ()).throw(RuntimeError("sem internet")))
     assert r.status == "dublado" and "sem a emoção da cena" in avisos[0]  # sem o tom, a dublagem segue
+
+
+@pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
+def test_fala_de_mulher_sai_com_voz_feminina(tmp_path):
+    """A escuta do original diz o gênero de quem fala: a fala sem voz própria fica com a voz desse gênero (antes, a
+    professora era dublada com a voz masculina escolhida nas Configurações). A voz por personagem vale mais."""
+    from jellyfin_tools.tom import Ouvida
+    pasta = tmp_path / "Aula"
+    pasta.mkdir()
+    video = video_de_teste(pasta / "Aula.mkv", segundos=8)
+    legenda = pasta / "Aula.pt-BR.srt"
+    legenda.write_text(SRT, encoding="utf-8")
+    gemini = GeminiFalso()
+    ouvidas = {0: Ouvida("animada", "f", "Uma aula."), 1: Ouvida("calmo", "m", "Uma aula.")}
+    r = dublar_video(video, legenda, gemini, pasta_cache=tmp_path / "cache", trecho=(0, 8),
+                     destino=tmp_path / "amostra.mkv", tons=lambda *a: ouvidas,
+                     por_genero={"m": "Charon", "f": "Kore"})
+    assert r.status == "dublado" and gemini.vozes == ["Kore", "Charon"]
+    assert gemini.tons == ["Cena: Uma aula. Nesta fala: animada.", "Cena: Uma aula. Nesta fala: calmo."]
+    assert dublagem.vozes_com_genero({1: "Puck"}, {0: "f", 1: "f"}, {"f": "Kore"}, [0, 1]) == {0: "Kore", 1: "Puck"}
+    assert dublagem.vozes_com_genero({}, {0: "f"}, None, [0]) == {}               # sem a escuta: nada muda

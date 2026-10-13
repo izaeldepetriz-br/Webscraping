@@ -911,16 +911,32 @@ def _guardar_no_banco(banco: Path, guardar: list[tuple[str, Path]]) -> None:
         pass                                              # o banco é só economia: sem ele, segue igual
 
 
-def _ouvir_tons(tons, falas, indices, pasta, parar, avisar) -> dict:
-    """{número da fala: tom} ou {} (sem quem ouça, ou se falhar: a dublagem segue, só sem a emoção da cena)."""
+def _ouvir_tons(tons, falas, indices, pasta, parar, avisar) -> tuple[dict, dict]:
+    """({número da fala: nota de direção}, {número da fala: gênero de quem fala}), ou ({}, {}) sem quem ouça ou se
+    falhar (a dublagem segue, só sem a emoção da cena). tons devolve {número: texto} ou {número: tom.Ouvida}."""
     if tons is None:
-        return {}
+        return {}, {}
     try:
-        return dict(tons(falas, indices, pasta, parar) or {})
+        ouvidas = dict(tons(falas, indices, pasta, parar) or {})
     except Exception as erro:                             # sem crédito, sem internet...: segue sem o tom
         if avisar and not (parar and parar()):
             avisar(f"o tom das falas não foi ouvido ({str(erro)[:150]}): a voz segue sem a emoção da cena")
-        return {}
+        return {}, {}
+    notas = {k: (o.nota() if hasattr(o, "nota") else str(o)) for k, o in ouvidas.items()}
+    generos = {k: o.genero for k, o in ouvidas.items() if getattr(o, "genero", "?") in ("m", "f")}
+    return {k: n for k, n in notas.items() if n}, generos
+
+
+def vozes_com_genero(vozes: dict, generos: dict, por_genero: dict | None, indices) -> dict:
+    """As falas SEM voz própria (sem voz por personagem, ou de quem não foi identificado) ficam com a voz do gênero
+    de quem fala (por_genero = {"m": "Charon", "f": "Kore"}): a mulher não é mais dublada com voz de homem."""
+    if not por_genero:
+        return vozes
+    novas = dict(vozes)
+    for k in indices:
+        if not novas.get(k) and generos.get(k) in por_genero:
+            novas[k] = por_genero[generos[k]]
+    return novas
 
 
 def _sintetizar(motor, pedidos, parar, ao_progresso=None, banco: Path | None = None) -> int:
@@ -1006,7 +1022,7 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
                  pasta_cache: str | Path | None = None, trecho: tuple[float, float] | None = None,
                  destino: str | Path | None = None, separar=None, no_original: bool = False,
                  legenda_no_video: bool = False, previa: str | Path | None = None,
-                 ambientar: bool = False, tons=None) -> ResultadoDublagem:
+                 ambientar: bool = False, tons=None, por_genero: dict | None = None) -> ResultadoDublagem:
     """Lê a legenda com a voz, monta a trilha e grava 'Nome - Dublado IA.mkv' (o original não é tocado) ou, com
     no_original, acrescenta a faixa 'Português (dublagem IA)' no PRÓPRIO arquivo (a cópia é conferida antes de trocar).
     separar(vídeo, destino.flac, trecho, duração, parar, ao_progresso): tira as vozes originais (separar_vozes) e a
@@ -1021,6 +1037,7 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
     vozes: {número da fala: voz} (uma voz por personagem; ver personagens.py).
     tons(falas, números, pasta, parar) -> {número da fala: tom}: COMO cada fala é dita no original ("animada,
     explicando"; ver tom.py). Vai junto no pedido da voz que interpreta (Gemini). Se falhar, segue sem o tom.
+    por_genero {"m": voz, "f": voz}: com o que tons ouviu, a fala sem voz própria fica com a voz do gênero de quem fala.
     pasta_cache: guarda as falas já geradas (e as reescritas) por filme. Se parar no meio (limite do Gemini, sem
     internet, botão Parar), a próxima vez continua de onde parou, sem pedir (nem pagar) de novo.
     trecho (início, fim) + destino: só as falas desse pedaço, num vídeo curto (a AMOSTRA). As falas ficam no mesmo
@@ -1071,7 +1088,8 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
     with lugar as pasta:
         pasta = Path(pasta)
         pasta.mkdir(parents=True, exist_ok=True)
-        tom_de = _ouvir_tons(tons, falas, indices, pasta, parar, avisar)
+        tom_de, generos = _ouvir_tons(tons, falas, indices, pasta, parar, avisar)
+        vozes = vozes_com_genero(vozes, generos, por_genero, indices)
         pedidos = [_pedido_da_fala(pasta, k, falas[k][1], vozes.get(k, ""), motor, tom_de.get(k, ""))
                    for k in indices]
         _sem_versoes_velhas(w for _, w, _, _ in pedidos)
