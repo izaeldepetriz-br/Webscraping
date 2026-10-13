@@ -27,6 +27,7 @@ import base64
 import io
 import json
 import re
+import threading
 import time
 import wave
 from array import array
@@ -104,7 +105,7 @@ JANELA = 0.01                 # 10 ms
 PAUSA_MINIMA = 0.12           # silêncio mais curto que isso não conta como pausa
 FOLGA_CORTE = 0.04            # silêncio que fica antes e depois de cada fala cortada
 FOLGA_TAXA = 2.2              # um pedaço pode ser até 2,2x mais lento/rápido que a mediana do bloco (era 3x)
-LETRAS_POR_SEGUNDO = (4, 28)  # fala de verdade: entre 4 e 28 letras por segundo (fora disso, o corte está errado)
+LETRAS_POR_SEGUNDO = (2.5, 28)  # fala de verdade: entre 2,5 (dramática, lenta) e 28 letras por segundo
 
 
 def separar_por_pausas(amostras: array, taxa: int, pesos: list[int]) -> list[tuple[int, int]] | None:
@@ -325,8 +326,9 @@ class MotorGemini:
 
     def __init__(self, chave: str, voz: str = VOZ_PADRAO, modelo: str = MODELO_PADRAO, estilo: str = ESTILO,
                  cliente=None, simultaneos: int = SIMULTANEOS, esperar=time.sleep, bloco: int = BLOCO,
-                 vozes_clonadas: dict | None = None):
+                 vozes_clonadas: dict | None = None, avisar=None):
         self.clonadas = dict(vozes_clonadas or {})
+        self.avisar, self._trava = avisar, threading.Lock()
         if not self.conhece(voz):
             raise ErroDublagem(self._desconhecida([voz]))
         self.voz, self.modelo, self.estilo = voz, modelo or MODELO_PADRAO, estilo
@@ -375,20 +377,24 @@ class MotorGemini:
                     "Configurações > Dublagem ou escolha outra voz")
         return f"voz do Gemini desconhecida: {', '.join(vozes)}"
 
-    def _falar_bloco(self, itens: list, parar=None) -> None:
+    def _falar_bloco(self, itens: list, parar=None) -> list[list]:
+        """Pede o bloco e grava cada fala. Se o corte não bater, devolve as duas metades para pedir de novo (a voz e
+        o ritmo continuam de conversa, não de falas soltas); quem chama as pede AO MESMO TEMPO que os outros blocos
+        (antes eram pedidas uma depois da outra, e um bloco de 10 falas podia virar 19 pedidos em fila)."""
         if parar and parar():
             raise ErroDublagem("interrompido (botão Parar)")
         amostras, taxa = self._pedir(itens)
         cortes = separar_por_pausas(amostras, taxa, [max(1, len(t)) for t, _, _, _ in itens])
-        if cortes is None and len(itens) > 1:          # o corte não bateu: refaz em duas metades (a voz e o ritmo
-            self.blocos_refeitos += 1                  # continuam de conversa, não de falas soltas)
+        if cortes is None and len(itens) > 1:
+            with self._trava:
+                self.blocos_refeitos += 1
             meio = len(itens) // 2
-            self._falar_bloco(itens[:meio], parar)
-            self._falar_bloco(itens[meio:], parar)
-            return
+            return [itens[:meio], itens[meio:]]
         for (ini, fim), (_, wav, _, _) in zip(cortes or [(0, len(amostras))], itens):
             _gravar_wav(amostras[ini:fim], taxa, Path(wav))
-            self.falas_geradas += 1
+            with self._trava:
+                self.falas_geradas += 1
+        return []
 
     def sintetizar(self, pedidos: list, parar=None, ao_progresso=None) -> None:
         """pedidos: [(texto, .wav)], [(texto, .wav, voz)] ou [(texto, .wav, voz, tom)]. Em blocos, alguns ao mesmo tempo; para no Parar. Se um
@@ -396,19 +402,24 @@ class MotorGemini:
         itens = [(p[0], Path(p[1]), p[2] if len(p) > 2 and p[2] else self.voz, p[3] if len(p) > 3 else "")
                  for p in pedidos]
         grupos = blocos(itens, self.bloco)
-        feitos = 0
+        inicio, mostrado = self.falas_geradas, -1
         # sem "with": no Parar (ou num erro), não espera os pedidos que ainda estão no Google
         grupo = ThreadPoolExecutor(max_workers=self.simultaneos)
-        futuros = {grupo.submit(self._falar_bloco, g, parar): len(g) for g in grupos}
-        pendentes = set(futuros)
+        pendentes = {grupo.submit(self._falar_bloco, g, parar) for g in grupos}
         try:
             while pendentes:                        # confere o Parar enquanto espera o Google responder
                 prontos, pendentes = wait(pendentes, timeout=0.5, return_when=FIRST_COMPLETED)
                 for futuro in prontos:
-                    futuro.result()
-                    feitos += futuros[futuro]
-                    if ao_progresso:
-                        ao_progresso(feitos / len(itens))
+                    metades = futuro.result()       # o corte não bateu: as metades entram na fila
+                    if metades and self.avisar:
+                        self.avisar(f"Gemini: o corte de {sum(map(len, metades))} falas não bateu com as pausas; "
+                                    "pedindo de novo em duas metades")
+                    for metade in metades:
+                        pendentes.add(grupo.submit(self._falar_bloco, metade, parar))
+                feitas = self.falas_geradas - inicio      # a barra anda a cada fala pronta, não a cada bloco
+                if ao_progresso and itens and feitas != mostrado:
+                    mostrado = feitas
+                    ao_progresso(min(1.0, feitas / len(itens)))
                 if pendentes and parar and parar():
                     raise ErroDublagem("interrompido (botão Parar)")
         except BaseException:

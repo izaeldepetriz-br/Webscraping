@@ -240,6 +240,16 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.18.6
+
+- **Voz do Gemini mais rápida no teste e no vídeo inteiro**: quando o corte de um bloco não batia com as pausas
+  (comum com duas pessoas conversando), as metades eram pedidas uma depois da outra, e um bloco de 10 falas podia
+  virar 19 pedidos em fila. Agora as metades voltam para a fila e são pedidas ao mesmo tempo que os outros blocos
+  (4 de cada vez). Uma fala lenta e dramática ("Espelho... espelho meu") não é mais confundida com um corte errado.
+- **A barra anda a cada fala pronta** ("lendo as falas 35%"): antes ficava em 0% até o bloco inteiro terminar e
+  parecia travada. O log avisa quando um bloco é pedido de novo em metades.
+- (A placa de vídeo não muda essa etapa: a voz do Gemini é gerada nos servidores do Google.)
+
 ### Novidades da v2.18.5
 
 - **Fala de mulher com voz de mulher, sempre** (abas Jellyfin e Avulsos, no teste e no vídeo inteiro): com a voz do

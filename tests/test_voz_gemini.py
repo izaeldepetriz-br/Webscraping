@@ -405,3 +405,31 @@ def test_identificar_so_as_falas_do_teste(tmp_path):
     mapa = personagens.distribuir_vozes(lista, "Charon")                    # duas mulheres, voz principal de homem
     assert set(mapa.values()) <= set(voz_gemini.VOZES_FEMININAS) and mapa["Pessoa 1"] != mapa["Elena"] or \
         len(lista[1].falas) < personagens.MINIMO_FALAS
+
+
+def test_metades_vao_em_paralelo_e_a_barra_anda_por_fala(tmp_path):
+    """O corte que não bate não prende o bloco numa fila: as metades voltam para a fila e são pedidas junto com os
+    outros pedidos; a barra anda a cada fala pronta (antes ficava em 0% até o bloco inteiro terminar)."""
+    import threading
+    import time as relogio
+    ao_mesmo_tempo, agora = [], [0]
+    trava = threading.Lock()
+
+    class Lento(GeminiFalso):
+        def create(self, **k):
+            with trava:
+                agora[0] += 1
+                ao_mesmo_tempo.append(agora[0])
+            relogio.sleep(0.05)
+            try:
+                return super().create(**k)
+            finally:
+                with trava:
+                    agora[0] -= 1
+    gemini, avisos, barra = Lento(juntar=True), [], []
+    motor = voz_gemini.MotorGemini("chave", cliente=gemini, simultaneos=4, avisar=avisos.append)
+    motor.sintetizar([(f"Fala número {i} aqui.", tmp_path / f"{i}.wav") for i in range(4)], ao_progresso=barra.append)
+    assert motor.falas_geradas == 4 and len(gemini.pedidos) == 7         # 1 de 4, 2 de 2, 4 de 1
+    assert max(ao_mesmo_tempo) >= 2                                       # as metades foram juntas
+    assert len(avisos) == 3 and "duas metades" in avisos[0]
+    assert barra[-1] == 1.0 and len(set(barra)) >= 3                      # 0,25... 0,5... 1,0

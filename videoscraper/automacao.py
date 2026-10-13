@@ -302,7 +302,8 @@ def preparar_motor(o: OpcoesJellyfin, progresso_piper=None, progresso_voz=None):
         clonadas = vozes_clonadas()
         conferir_voz_clonada(o.voz_gemini, clonadas)
         gemini = voz_gemini.MotorGemini(chave_gemini(o), o.voz_gemini,
-                                        vozes_clonadas=voz_clonada.chaves([v for v in clonadas if not v.vencida()]))
+                                        vozes_clonadas=voz_clonada.chaves([v for v in clonadas if not v.vencida()]),
+                                        avisar=lambda texto: obter_logger().info("Dublagem: %s", texto))
         if not o.figurantes_piper:
             return gemini
         return MotorMisto(gemini, lambda voz: motor_piper(o, voz),
