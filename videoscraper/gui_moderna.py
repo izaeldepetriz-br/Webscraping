@@ -161,6 +161,7 @@ class OpcoesJellyfin:
     usar_roteiro: bool = True        # voz por personagem: o roteiro ao lado do vídeo diz quem fala (Gemini ouve menos)
     vozes_sem_tabela: bool = False   # voz por personagem: escolhe as vozes sozinho (sem abrir a tabela de conferir)
     emocao_da_cena: bool = True      # Gemini: ouve o original e cada fala é dita com a mesma emoção (custo pequeno)
+    pronuncias: str = ""             # "Johnson = Djônson; Madrid = Madri": como a voz diz cada nome
     figurantes_cloud: bool = False   # mista: figurantes no Google Cloud enquanto a cota grátis do mês der (depois Piper)
     perguntar_filmes: bool = True    # Gemini com vários filmes: perguntar quais vão com o Gemini (o resto, Piper)
     robo_so_piper: bool = False      # robôs agendados (--dublar): só o Piper, sem custo
@@ -1872,12 +1873,13 @@ class JanelaPrevias(ctk.CTkToplevel):
 
 class JanelaTestes(ctk.CTkToplevel):
     """"Testes feitos": os vídeos de teste (alguns minutos dublados/legendados) para abrir de novo. Se o player der
-    problema, "Abrir a pasta" mostra o arquivo para abrir com outro. itens(): [{video, amostra, trecho, feito}];
-    abrir/pasta(item); apagar(item) -> True se apagou."""
+    problema, "Abrir a pasta" mostra o arquivo para abrir com outro. itens(): [{video, amostra, trecho, feito, custo}];
+    abrir/pasta(item); apagar(item) -> True se apagou; ajustar(item): "Ajustar falas" (refazer só uma fala)."""
 
-    def __init__(self, master, itens, abrir, pasta, apagar):
+    def __init__(self, master, itens, abrir, pasta, apagar, ajustar=None):
         super().__init__(master, fg_color=Tema.CARTAO)
-        self.itens_de, self.abrir, self.pasta, self.apagar = itens, abrir, pasta, apagar
+        self.itens_de, self.abrir, self.pasta, self.apagar, self.ajustar = itens, abrir, pasta, apagar, ajustar
+        self._dinheiro = getattr(master, "_dinheiro", lambda d: f"US$ {d:.2f}")
         self.title("Testes feitos")
         self.geometry("860x400")
         self.minsize(640, 300)
@@ -1890,10 +1892,10 @@ class JanelaTestes(ctk.CTkToplevel):
                      wraplength=800).pack(fill="x", padx=24, pady=(0, 10))
         quadro = ctk.CTkFrame(self, fg_color=Tema.CARTAO)
         quadro.pack(fill="both", expand=True, padx=24)
-        self.tabela = ttk.Treeview(quadro, columns=("video", "trecho", "feito"), show="headings",
+        self.tabela = ttk.Treeview(quadro, columns=("video", "trecho", "custo", "feito"), show="headings",
                                    selectmode="browse", style="Moderno.Treeview", height=6)
-        for chave, texto, largura, estica in (("video", "Vídeo", 420, True), ("trecho", "Trecho", 150, False),
-                                              ("feito", "Feito em", 150, False)):
+        for chave, texto, largura, estica in (("video", "Vídeo", 380, True), ("trecho", "Trecho", 130, False),
+                                              ("custo", "Custou", 110, False), ("feito", "Feito em", 140, False)):
             self.tabela.heading(chave, text=texto, anchor="w")
             self.tabela.column(chave, width=largura, stretch=estica, anchor="w")
         self.tabela.pack(fill="both", expand=True)
@@ -1903,8 +1905,11 @@ class JanelaTestes(ctk.CTkToplevel):
         self.bt_abrir = master._botao(botoes, "▶  Abrir", self._abrir, "primario", largura=120)
         self.bt_pasta = master._botao(botoes, "📂  Abrir a pasta", self._pasta, largura=160)
         self.bt_apagar = master._botao(botoes, "✕  Apagar", self._apagar, "perigo", largura=120)
-        for b in (self.bt_abrir, self.bt_pasta, self.bt_apagar):
+        self.bt_ajustar = master._botao(botoes, "✏  Ajustar falas", self._ajustar, largura=150)
+        for b in (self.bt_abrir, self.bt_ajustar, self.bt_pasta, self.bt_apagar):
             b.pack(side="left", padx=(0, 10))
+        if ajustar is None:
+            self.bt_ajustar.pack_forget()
         master._botao(botoes, "Fechar", self.destroy, "fantasma", largura=90).pack(side="right")
         self.recarregar()
 
@@ -1918,12 +1923,14 @@ class JanelaTestes(ctk.CTkToplevel):
         self.tabela.delete(*self.tabela.get_children())
         for i, item in enumerate(self._itens):
             inicio, fim = (item.get("trecho") or [0, 0])[:2]
+            custo = item.get("custo")
             self.tabela.insert("", "end", iid=str(i), values=(
                 Path(item["video"]).name, f"{self._minuto(inicio)} a {self._minuto(fim)}",
+                "-" if custo is None else ("grátis" if not custo else self._dinheiro(float(custo))),
                 str(item.get("feito", "")).replace("T", " ")))
         if self._itens:
             self.tabela.selection_set("0")
-        for b in (self.bt_abrir, self.bt_pasta, self.bt_apagar):
+        for b in (self.bt_abrir, self.bt_ajustar, self.bt_pasta, self.bt_apagar):
             b.configure(state="normal" if self._itens else "disabled")
 
     def escolhido(self) -> dict | None:
@@ -1941,6 +1948,97 @@ class JanelaTestes(ctk.CTkToplevel):
     def _apagar(self) -> None:
         if (item := self.escolhido()) and self.apagar(item):
             self.recarregar()
+
+    def _ajustar(self) -> None:
+        if (item := self.escolhido()) and self.ajustar:
+            self.ajustar(item)
+
+
+class DialogoAjustarFalas(ctk.CTkToplevel):
+    """"Ajustar falas" de um teste: escolhe UMA fala e, se quiser, troca o texto que a voz lê, a voz ou o tom; o
+    Maestro refaz só ela (paga só essa fala). linhas: [(número, horário, texto, voz, tom)]. resultado:
+    (número, texto, voz, tom) — vazio = automático — ou None (Cancelar)."""
+    AUTOMATICA = "(automática)"
+
+    def __init__(self, master, nome: str, linhas: list, vozes: list):
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.linhas, self.resultado = list(linhas), None
+        self.title("Ajustar falas")
+        self.geometry("900x560")
+        self.minsize(700, 440)
+        self.transient(master)
+        ctk.CTkLabel(self, text=f"Ajustar falas — {nome}", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
+                     text_color=Tema.TEXTO, anchor="w").pack(fill="x", padx=24, pady=(18, 2))
+        ctk.CTkLabel(self, text="Escolha a fala que ficou ruim. Pode trocar o texto que a voz lê (a legenda não muda), a "
+                     "voz ou o tom, ou só clicar em \"Refazer esta fala\" para uma tomada nova. Só ela é gerada de novo, "
+                     "e o ajuste vale também quando o vídeo inteiro for dublado.", font=master.f_rotulo,
+                     text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left", wraplength=840).pack(fill="x", padx=24,
+                                                                                                 pady=(0, 8))
+        quadro = ctk.CTkFrame(self, fg_color=Tema.CARTAO)
+        quadro.pack(fill="both", expand=True, padx=24)
+        self.tabela = ttk.Treeview(quadro, columns=("quando", "fala", "voz", "tom"), show="headings",
+                                   selectmode="browse", style="Moderno.Treeview", height=8)
+        for chave, texto, largura, estica in (("quando", "Quando", 90, False), ("fala", "Fala", 430, True),
+                                              ("voz", "Voz", 140, False), ("tom", "Tom", 160, False)):
+            self.tabela.heading(chave, text=texto, anchor="w")
+            self.tabela.column(chave, width=largura, stretch=estica, anchor="w")
+        for i, (_, quando, texto, voz, tom) in enumerate(self.linhas):
+            self.tabela.insert("", "end", iid=str(i), values=(quando, texto, voz or "automática",
+                                                              tom or "o do original"))
+        self.tabela.pack(fill="both", expand=True)
+        self.tabela.bind("<<TreeviewSelect>>", lambda e: self._preencher())
+        campos = ctk.CTkFrame(self, fg_color="transparent")
+        campos.pack(fill="x", padx=24, pady=(10, 0))
+        campos.grid_columnconfigure(1, weight=1)
+        self.var_texto, self.var_voz, self.var_tom = tk.StringVar(), tk.StringVar(value=self.AUTOMATICA), tk.StringVar()
+        ctk.CTkLabel(campos, text="Texto que a voz lê", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE).grid(
+            row=0, column=0, sticky="w", padx=(0, 10), pady=3)
+        self.campo_texto = ctk.CTkEntry(campos, textvariable=self.var_texto)
+        self.campo_texto.grid(row=0, column=1, sticky="ew", pady=3)
+        ctk.CTkLabel(campos, text="Voz", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE).grid(
+            row=1, column=0, sticky="w", padx=(0, 10), pady=3)
+        self.menu_voz = ctk.CTkOptionMenu(campos, values=[self.AUTOMATICA] + list(vozes), variable=self.var_voz,
+                                          width=280)
+        self.menu_voz.grid(row=1, column=1, sticky="w", pady=3)
+        if not vozes:                                    # Piper/Google Cloud: a voz é a das Configurações
+            self.menu_voz.configure(state="disabled")
+        ctk.CTkLabel(campos, text="Tom (ex.: com raiva, gritando)", font=master.f_rotulo,
+                     text_color=Tema.TEXTO_SUAVE).grid(row=2, column=0, sticky="w", padx=(0, 10), pady=3)
+        ctk.CTkEntry(campos, textvariable=self.var_tom, placeholder_text="vazio = o do original").grid(
+            row=2, column=1, sticky="ew", pady=3)
+        botoes = ctk.CTkFrame(self, fg_color="transparent")
+        botoes.pack(fill="x", padx=24, pady=14)
+        self.bt_refazer = master._botao(botoes, "🔁  Refazer esta fala", self.confirmar, "primario", largura=190)
+        self.bt_refazer.pack(side="left")
+        master._botao(botoes, "Cancelar", self.destroy, "fantasma", largura=100).pack(side="right")
+        self.vozes = list(vozes)
+        if self.linhas:
+            self.tabela.selection_set("0")
+            self._preencher()
+
+    def _escolhida(self) -> int | None:
+        selecao = self.tabela.selection()
+        return int(selecao[0]) if selecao else None
+
+    def _preencher(self) -> None:
+        i = self._escolhida()
+        if i is None:
+            return
+        _, _, texto, voz, tom = self.linhas[i]
+        self.var_texto.set(texto)
+        self.var_tom.set(tom)
+        menu = next((v for v in self.vozes if valor_da_voz(v) == voz), self.AUTOMATICA) if voz else self.AUTOMATICA
+        self.var_voz.set(menu)
+
+    def confirmar(self) -> None:
+        i = self._escolhida()
+        if i is None:
+            return
+        k, _, texto_antes, _, _ = self.linhas[i]
+        texto = self.var_texto.get().strip()
+        voz = "" if self.var_voz.get() == self.AUTOMATICA else valor_da_voz(self.var_voz.get())
+        self.resultado = (k, texto if texto and texto != texto_antes else "", voz, self.var_tom.get().strip())
+        self.destroy()
 
 
 def tamanho_inicial(largura_tela: int, altura_tela: int, escala: float = 1.0
@@ -3283,6 +3381,11 @@ class JanelaModerna(ctk.CTk):
                      fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(0, 4), **p)
 
         self._rotulo(lateral, "Texto da fala", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
+        self._rotulo(lateral, "Pronúncia de nomes (a voz lê assim; a legenda não muda). Um por linha ou separados por "
+                              "\";\", ex.: Johnson = Djônson; Madrid = Madri").pack(anchor="w", pady=(0, 2), **p)
+        self.var_jf_pronuncias = tk.StringVar(self, value="")
+        ctk.CTkEntry(lateral, textvariable=self.var_jf_pronuncias,
+                     placeholder_text="Johnson = Djônson; Madrid = Madri").pack(fill="x", pady=(0, 8), **p)
         self.var_jf_encurtar_falas = tk.BooleanVar(value=True)
         self._checkbox(lateral, "Falas longas: o Claude reescreve mais curtas e naturais (em vez de acelerar). A "
                                 "legenda não muda: só o que a voz lê.", self.var_jf_encurtar_falas)
@@ -3947,6 +4050,7 @@ class JanelaModerna(ctk.CTk):
             voz_dublagem=self.var_jf_voz_dublagem.get(), motor_voz=self.var_jf_motor_voz.get(),
             voz_gemini=valor_da_voz(self.var_jf_voz_gemini.get()), chave_gemini=self.var_jf_chave_gemini.get().strip(),
             encurtar_falas=self.var_jf_encurtar_falas.get(), emocao_da_cena=self.var_jf_emocao_da_cena.get(),
+            pronuncias=self.var_jf_pronuncias.get().strip(),
             voz_por_personagem=self.var_jf_voz_por_personagem.get(),
             figurantes_piper=self.var_jf_figurantes_piper.get(),
             figurantes_cloud=self.var_jf_figurantes_cloud.get(),
@@ -4068,7 +4172,7 @@ class JanelaModerna(ctk.CTk):
                   "jellyfin_api_key": self.var_jf_chave_jellyfin, "discord_webhook": self.var_jf_discord,
                   "telegram_token": self.var_jf_telegram_token, "telegram_chat_id": self.var_jf_telegram_chat,
                   "pasta_avulsos": self.var_jf_pasta_avulsos, "chave_cloud_tts": self.var_jf_chave_cloud,
-                  "inicio_teste": self.var_inicio_teste()}
+                  "inicio_teste": self.var_inicio_teste(), "pronuncias": self.var_jf_pronuncias}
         marcas = {"tmdb": self.var_jf_tmdb, "incluir_tmdbid": self.var_jf_tmdbid,
                   "exigir_catalogo": self.var_jf_exigir, "legendas": self.var_jf_legendas,
                   "limpar_lixo": self.var_jf_lixo, "imagens_tmdb": self.var_jf_imagens,
@@ -4676,6 +4780,12 @@ class JanelaModerna(ctk.CTk):
                        botao: str = "Continuar") -> list[int] | None:
         """Caixas de marcar (ver DialogoMarcar): os índices marcados, ou None (Cancelar)."""
         dialogo = DialogoMarcar(self, titulo, mensagem, itens, marcados, botao)
+        self.wait_window(dialogo)
+        return dialogo.resultado
+
+    def pedir_ajuste_de_fala(self, nome: str, linhas: list, vozes: list) -> tuple | None:
+        """Janela "Ajustar falas" (ver DialogoAjustarFalas): (número, texto, voz, tom) ou None."""
+        dialogo = DialogoAjustarFalas(self, nome, linhas, vozes)
         self.wait_window(dialogo)
         return dialogo.resultado
 

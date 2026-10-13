@@ -23,6 +23,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -33,6 +34,7 @@ import tempfile
 import time
 import wave
 import zipfile
+from array import array
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -318,12 +320,56 @@ class MotorMisto:
             ao_progresso(1.0)
 
 
+VOLUME_ALVO = 3300            # nível (RMS, de 32767) de cada fala na trilha: todas no MESMO volume
+GANHO_NIVELAR = (0.5, 2.5)    # quanto uma fala pode ser abaixada/aumentada para chegar lá
+SEM_SOM = 120                 # RMS abaixo disso: a fala saiu muda (relatório de qualidade)
+ACELERADA_DEMAIS = 1.3        # acelerada acima disso já se nota (relatório de qualidade)
+
+
+def nivelar(amostras: bytes, largura: int = 2) -> tuple[bytes, float]:
+    """(a fala no VOLUME_ALVO, o volume que ela tinha). Mede só os trechos com voz (o silêncio não puxa a média
+    para baixo) e não deixa estourar. Blocos diferentes do Gemini e o Piper/Google Cloud saíam com volumes
+    diferentes, e a troca de volume de uma fala para a outra denunciava a dublagem."""
+    if largura != 2 or not amostras:
+        return amostras, 0.0
+    try:                                               # com o numpy (vem com o separar vozes): bem mais rápido
+        import numpy as np
+        x = np.frombuffer(amostras[:len(amostras) // 2 * 2], dtype="<i2").astype(np.float64)
+        pico = float(np.abs(x).max()) if x.size else 0.0
+        if pico == 0:
+            return amostras, 0.0
+        voz = x[np.abs(x) > pico * 0.05]
+        rms = float(np.sqrt(np.mean(voz * voz))) if voz.size else 0.0
+        if rms < SEM_SOM:
+            return amostras, rms
+        ganho = min(max(VOLUME_ALVO / rms, GANHO_NIVELAR[0]), GANHO_NIVELAR[1], 32000 / pico)
+        if abs(ganho - 1) < 0.05:
+            return amostras, rms
+        return (x * ganho).astype("<i2").tobytes(), rms
+    except ImportError:
+        pass
+    dados = array("h")
+    dados.frombytes(amostras[:len(amostras) // 2 * 2])
+    pico = max((abs(x) for x in dados), default=0)
+    if pico == 0:
+        return amostras, 0.0
+    com_voz = [x for x in dados if abs(x) > pico * 0.05]
+    rms = math.sqrt(sum(x * x for x in com_voz) / len(com_voz)) if com_voz else 0.0
+    if rms < SEM_SOM:
+        return amostras, rms
+    ganho = min(max(VOLUME_ALVO / rms, GANHO_NIVELAR[0]), GANHO_NIVELAR[1], 32000 / pico)
+    if abs(ganho - 1) < 0.05:
+        return amostras, rms
+    return array("h", (int(x * ganho) for x in dados)).tobytes(), rms
+
+
 def montar_trilha(clipes: list[tuple[float, float, Path]], duracao: float, destino: Path, acelerar=None,
-                  reamostrar=None) -> dict:
+                  reamostrar=None, nivelar_volume: bool = True) -> dict:
     """clipes: [(início, fim da fala na legenda, .wav)] em ordem. Grava 'destino' (mono, 16 bits) do tamanho do
-    vídeo, com cada fala no horário. Devolve {"aceleradas": n, "cortadas": n}. reamostrar(wav, taxa): converte a
-    fala que vier noutra taxa (dublagem mista); sem ele, taxas diferentes são erro."""
-    contas = {"aceleradas": 0, "cortadas": 0}
+    vídeo, com cada fala no horário e todas no mesmo volume (nivelar). Devolve {"aceleradas": n, "cortadas": n,
+    "problemas": [(posição do clipe, "acelerada" | "cortada" | "sem som", fator)]} (o relatório de qualidade).
+    reamostrar(wav, taxa): converte a fala que vier noutra taxa (dublagem mista); sem ele, taxas diferentes são erro."""
+    contas = {"aceleradas": 0, "cortadas": 0, "problemas": []}
     if not clipes:
         raise ErroDublagem("nenhuma fala para montar a trilha")
     with wave.open(str(clipes[0][2]), "rb") as primeiro:
@@ -358,15 +404,22 @@ def montar_trilha(clipes: list[tuple[float, float, Path]], duracao: float, desti
                 if fator > 1.02:
                     wav = acelerar(Path(wav), fator)
                     contas["aceleradas"] += 1
+                    if fator >= ACELERADA_DEMAIS:
+                        contas["problemas"].append((k, "acelerada", fator))
             with wave.open(str(wav), "rb") as w:
                 if w.getframerate() != taxa or w.getnchannels() != 1:
                     raise ErroDublagem("as falas vieram em formatos diferentes")
                 amostras = w.readframes(w.getnframes())
+            if nivelar_volume:
+                amostras, volume = nivelar(amostras, largura)
+                if volume < SEM_SOM:
+                    contas["problemas"].append((k, "sem som", 0.0))
             comeco = max(int(inicio * taxa), cursor)
             limite = int((proximo + FOLGA) * taxa) - comeco
             if len(amostras) // largura > limite > 0:
                 amostras = amostras[:limite * largura]
                 contas["cortadas"] += 1
+                contas["problemas"].append((k, "cortada", 0.0))
             silencio(comeco - cursor)
             saida.writeframes(amostras)
             cursor = comeco + len(amostras) // largura
@@ -398,7 +451,12 @@ FILTRO_SEM_VOZES = ("[2:a]aresample=48000,aformat=channel_layouts=stereo[fundo];
 TITULO_LEGENDA = "Português"
 
 
-def filtro_mixagem(fundo: bool, ambiente: dict | None = None, indice_sala: int | None = None) -> str:
+AR_DE_SALA = 0.003            # amplitude do "ar de sala" (ruído rosa abafado, quase inaudível: ~-50 dB)
+FUNDO_MUDO = -50.0            # dB: o fundo sem as vozes mais baixo que isso é "silêncio digital" (pede o ar de sala)
+
+
+def filtro_mixagem(fundo: bool, ambiente: dict | None = None, indice_sala: int | None = None,
+                   ar_de_sala: bool = False) -> str:
     """O filter_complex da dublagem. ambiente (separar_vozes.ambiente): a voz dublada ganha o tom e o volume das vozes
     originais e, se a sala ecoa (indice_sala = a entrada com a "resposta da sala"), um eco por convolução.
     Sem ambiente, é exatamente o FILTRO_SEM_VOZES / FILTRO_VOICE_OVER de antes."""
@@ -411,6 +469,11 @@ def filtro_mixagem(fundo: bool, ambiente: dict | None = None, indice_sala: int |
                 f"[seco][molhado]amix=inputs=2:weights='1 {molhado}':normalize=0:duration=first")
     voz += ",asplit=2[voz][chave]"
     if fundo:
+        if ar_de_sala:                                  # o vídeo sem música: um "ar de sala" no lugar do silêncio
+            return ("[2:a]aresample=48000,aformat=channel_layouts=stereo[fundo];" + voz + ";"
+                    f"anoisesrc=c=pink:r=48000:a={AR_DE_SALA},lowpass=f=3000,aformat=channel_layouts=stereo[ar];"
+                    "[fundo][chave]sidechaincompress=threshold=0.05:ratio=3:attack=20:release=300[abaixado];"
+                    "[abaixado][voz][ar]amix=inputs=3:duration=first:normalize=0[dub]")
         return ("[2:a]aresample=48000,aformat=channel_layouts=stereo[fundo];" + voz + ";"
                 "[fundo][chave]sidechaincompress=threshold=0.05:ratio=3:attack=20:release=300[abaixado];"
                 "[abaixado][voz]amix=inputs=2:duration=first:normalize=0[dub]")
@@ -422,7 +485,7 @@ def filtro_mixagem(fundo: bool, ambiente: dict | None = None, indice_sala: int |
 def comando_mixar(ffmpeg: str, video: Path, trilha: Path, saida: Path, faixas: int, legendas: bool,
                   trecho: tuple[float, float] | None = None, fundo: Path | None = None,
                   legenda_nova: Path | None = None, formato: str = "matroska", ambiente: dict | None = None,
-                  sala: Path | None = None) -> list[str]:
+                  sala: Path | None = None, ar_de_sala: bool = False) -> list[str]:
     """O comando do ffmpeg: vídeo copiado, a dublagem como 1ª faixa (padrão) e as originais depois.
     trecho (início, fim): só esse pedaço (a AMOSTRA); aí o vídeo é recodificado, para começar no ponto exato e a voz
     não ficar adiantada (copiando, o corte cai no quadro-chave anterior, até alguns segundos antes).
@@ -441,7 +504,7 @@ def comando_mixar(ffmpeg: str, video: Path, trilha: Path, saida: Path, faixas: i
     indice_legenda = proxima
     if legenda_nova:                                         # na amostra, a legenda já vem com os tempos do trecho
         comando += ["-i", str(legenda_nova)]
-    comando += ["-filter_complex", filtro_mixagem(bool(fundo), ambiente, indice_sala),
+    comando += ["-filter_complex", filtro_mixagem(bool(fundo), ambiente, indice_sala, ar_de_sala and bool(fundo)),
                 "-map", "0:v:0?" if trecho else "0:v?", "-map", "[dub]", "-map", "0:a"]
     if legenda_nova:
         comando += ["-map", f"{indice_legenda}:0"]           # a nova antes das outras: é a legenda nº 0 do arquivo
@@ -461,6 +524,16 @@ def comando_mixar(ffmpeg: str, video: Path, trilha: Path, saida: Path, faixas: i
         comando += ["-metadata:s:s:0", "language=por", "-metadata:s:s:0", f"title={TITULO_LEGENDA}",
                     "-disposition:s:0", "default" if trecho else "0"]   # na amostra, liga para você conferir
     return comando + ["-progress", "pipe:1", "-nostats", "-f", formato, str(saida)]
+
+
+def volume_medio(ffmpeg: str, arquivo: Path) -> float | None:
+    """O volume médio (dB) de um áudio, pelo volumedetect do ffmpeg; None se não der para medir."""
+    r = subprocess.run([ffmpeg, "-hide_banner", "-nostats", "-i", str(arquivo), "-af", "volumedetect", "-f", "null",
+                        "-"], capture_output=True, text=True, encoding="utf-8", errors="replace", **SEM_JANELA)
+    achado = re.search(r"mean_volume:\s*(-?[\d.]+|-inf) dB", r.stderr or "")
+    if not achado:
+        return None
+    return -120.0 if achado[1] == "-inf" else float(achado[1])
 
 
 def _rodar_ffmpeg(comando: list[str], duracao: float | None, parar=None, ao_progresso=None,
@@ -490,11 +563,11 @@ def _rodar_ffmpeg(comando: list[str], duracao: float | None, parar=None, ao_prog
 def mixar(ffmpeg: str, video: Path, trilha: Path, destino: Path, duracao: float, faixas: int = 1,
           parar=None, ao_progresso=None, trecho: tuple[float, float] | None = None, fundo: Path | None = None,
           legenda_nova: Path | None = None, formato: str = "matroska", ambiente: dict | None = None,
-          sala: Path | None = None) -> None:
+          sala: Path | None = None, ar_de_sala: bool = False) -> None:
     parcial = destino.with_name(destino.name + ".part")
     copiar = video.suffix.lower() == ".mkv" or (formato == "mp4" and video.suffix.lower() in MESMO_MP4)
     comando = comando_mixar(ffmpeg, video, trilha, parcial, max(faixas, 1), copiar, trecho, fundo, legenda_nova,
-                            formato, ambiente, sala)
+                            formato, ambiente, sala, ar_de_sala)
     try:
         _rodar_ffmpeg(comando, duracao, parar, ao_progresso)
         if not parcial.is_file():
@@ -813,6 +886,23 @@ class ResultadoDublagem:
     retomadas: int = 0             # falas que já estavam prontas de uma vez anterior (não pediu de novo)
     ambiente: dict | None = None   # ambientação da voz usada: {ganho_db, eq, eco} (None: sem)
     reaproveitadas: int = 0        # falas repetidas (mesma frase, mesma voz): copiadas, sem pedir de novo
+    problemas: list = field(default_factory=list)   # relatório de qualidade: ["0:26 \"Sou Agatha...\": acelerada 1,6x"]
+
+
+def relatorio_de_qualidade(problemas: list, falas: list, indices: list) -> list[str]:
+    """["0:26 \"Sou Agatha, Agatha...\": acelerada 1,6x"]: as falas para conferir, com o minuto no vídeo."""
+    linhas = []
+    for pos, tipo, fator in problemas:
+        if pos >= len(indices):
+            continue
+        k = indices[pos]
+        inicio = int(horarios(falas[k][0].tempo)[0])
+        texto = falas[k][1] if len(falas[k][1]) <= 30 else falas[k][1][:28].rstrip() + "..."
+        detalhe = f"{tipo} {fator:.1f}x".replace(".", ",") if tipo == "acelerada" else tipo
+        quando = f"{inicio // 3600}:{inicio % 3600 // 60:02d}:{inicio % 60:02d}" if inicio >= 3600 \
+            else f"{inicio // 60}:{inicio % 60:02d}"
+        linhas.append(f"{quando} \"{texto}\": {detalhe}")
+    return linhas
 
 
 def falas_da_legenda(legenda: str | Path) -> list:
@@ -929,6 +1019,57 @@ def _ouvir_tons(tons, falas, indices, pasta, parar, avisar) -> tuple[dict, dict]
     generos = {k: o.genero + (f":{o.idade}" if getattr(o, "idade", "") else "") for k, o in ouvidas.items()
                if getattr(o, "genero", "?") in ("m", "f")}
     return {k: n for k, n in notas.items() if n}, generos
+
+
+def aplicar_pronuncias(texto: str, pronuncias: dict) -> str:
+    """Troca cada nome pela pronúncia (palavra inteira, sem ligar para maiúsculas): "Johnson" -> "Djônson"."""
+    for nome, como in pronuncias.items():
+        if nome and como:
+            texto = re.sub(rf"(?<!\w){re.escape(nome)}(?!\w)", como, texto, flags=re.IGNORECASE)
+    return texto
+
+
+def ler_pronuncias(texto: str) -> dict:
+    """"Johnson = Djônson" (uma por linha, ou separadas por ";") -> {"Johnson": "Djônson"}."""
+    pares = {}
+    for linha in re.split(r"[\n;]", texto or ""):
+        if "=" in linha:
+            nome, como = (x.strip() for x in linha.split("=", 1))
+            if nome and como:
+                pares[nome] = como
+    return pares
+
+
+def chave_da_fala(fala) -> str:
+    """O horário de início da fala na legenda ("00:00:26,040"): identifica a mesma fala no teste e no vídeo inteiro."""
+    return fala.tempo.split("-->")[0].strip()
+
+
+def ler_ajustes(pasta: Path) -> dict:
+    """{horário: {"texto", "voz", "tom"}} trocados à mão ("Refazer esta fala" nos Testes feitos)."""
+    try:
+        dados = json.loads((Path(pasta) / "ajustes.json").read_text(encoding="utf-8"))
+        return {str(k): dict(v) for k, v in dados.items() if isinstance(v, dict)}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def salvar_ajuste(pasta: Path, chave: str, texto: str = "", voz: str = "", tom: str = "") -> None:
+    """Guarda o ajuste de uma fala (vazio = automático). Vale no teste e, depois, no vídeo inteiro."""
+    ajustes = ler_ajustes(pasta)
+    ajuste = {c: v.strip() for c, v in (("texto", texto), ("voz", voz), ("tom", tom)) if v and v.strip()}
+    if ajuste:
+        ajustes[chave] = ajuste
+    else:
+        ajustes.pop(chave, None)
+    Path(pasta).mkdir(parents=True, exist_ok=True)
+    (Path(pasta) / "ajustes.json").write_text(json.dumps(ajustes, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def esquecer_fala(pasta: Path, k: int) -> None:
+    """Apaga o áudio já gerado da fala k (e a versão encurtada): a próxima dublagem faz uma tomada nova dela."""
+    for wav in list(Path(pasta).glob(f"{k:05d}-*.wav")):
+        wav.unlink(missing_ok=True)
 
 
 LETRAS_NATURAIS = 14.0        # letras por segundo de uma fala em ritmo de conversa (português)
@@ -1065,7 +1206,8 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
                  pasta_cache: str | Path | None = None, trecho: tuple[float, float] | None = None,
                  destino: str | Path | None = None, separar=None, no_original: bool = False,
                  legenda_no_video: bool = False, previa: str | Path | None = None,
-                 ambientar: bool = False, tons=None, por_genero: dict | None = None) -> ResultadoDublagem:
+                 ambientar: bool = False, tons=None, por_genero: dict | None = None, pronuncias: dict | None = None,
+                 ar_de_sala: bool = True) -> ResultadoDublagem:
     """Lê a legenda com a voz, monta a trilha e grava 'Nome - Dublado IA.mkv' (o original não é tocado) ou, com
     no_original, acrescenta a faixa 'Português (dublagem IA)' no PRÓPRIO arquivo (a cópia é conferida antes de trocar).
     separar(vídeo, destino.flac, trecho, duração, parar, ao_progresso): tira as vozes originais (separar_vozes) e a
@@ -1081,6 +1223,10 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
     tons(falas, números, pasta, parar) -> {número da fala: tom}: COMO cada fala é dita no original ("animada,
     explicando"; ver tom.py). Vai junto no pedido da voz que interpreta (Gemini). Se falhar, segue sem o tom.
     por_genero {"m": voz, "f": voz}: com o que tons ouviu, a fala sem voz própria fica com a voz do gênero de quem fala.
+    pronuncias {"Johnson": "Djônson"}: como a voz deve dizer cada nome (a legenda não muda).
+    ar_de_sala: com o fundo sem as vozes quase mudo (vídeo sem música), entra um ruído de sala bem baixo.
+    Os AJUSTES de fala (ajustes.json no progresso, ver salvar_ajuste: texto, voz ou tom trocados numa fala do teste)
+    valem aqui e no vídeo inteiro.
     pasta_cache: guarda as falas já geradas (e as reescritas) por filme. Se parar no meio (limite do Gemini, sem
     internet, botão Parar), a próxima vez continua de onde parou, sem pedir (nem pagar) de novo.
     trecho (início, fim) + destino: só as falas desse pedaço, num vídeo curto (a AMOSTRA). As falas ficam no mesmo
@@ -1110,6 +1256,11 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
         return ResultadoDublagem(video, "erro", f"não deu para ler a legenda: {erro}")
     if not falas:
         return ResultadoDublagem(video, "erro", "a legenda não tem nenhuma fala")
+    if pronuncias:                                    # só o que a voz lê; a legenda continua como está
+        falas = [(f, aplicar_pronuncias(t, pronuncias)) for f, t in falas]
+    ajustes = ler_ajustes(pasta_do_filme(pasta_cache, video)) if pasta_cache else {}
+    if ajustes:                                       # o texto trocado numa fala do teste ("Refazer esta fala")
+        falas = [(f, ajustes.get(chave_da_fala(f), {}).get("texto") or t) for f, t in falas]
     duracao, idiomas = sondar(video)
     if not idiomas:
         return ResultadoDublagem(video, "erro", "o vídeo não tem áudio")
@@ -1133,6 +1284,12 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
         pasta.mkdir(parents=True, exist_ok=True)
         tom_de, generos = _ouvir_tons(tons, falas, indices, pasta, parar, avisar)
         vozes = vozes_com_genero(vozes, generos, por_genero, indices)
+        for k in indices:                             # a voz e o tom trocados à mão valem mais que os automáticos
+            ajuste = ajustes.get(chave_da_fala(falas[k][0]), {})
+            if ajuste.get("voz"):
+                vozes = {**vozes, k: ajuste["voz"]}
+            if ajuste.get("tom"):
+                tom_de[k] = f"Nesta fala: {ajuste['tom'].strip().rstrip('.')}."
         ritmo_de = ritmos(falas, indices, motor, vozes)
         tom_de = juntar_notas(tom_de, ritmo_de)
         pedidos = [_pedido_da_fala(pasta, k, falas[k][1], vozes.get(k, ""), motor, tom_de.get(k, ""),
@@ -1184,8 +1341,15 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
                 if texto:
                     nova = pasta / f"legenda-{int(trecho[0])}-{int(trecho[1])}.srt"
                     nova.write_text(texto, encoding="utf-8")
+            ar = False
+            if fundo and ar_de_sala:                     # sem música no vídeo: o fundo é silêncio digital
+                medido = volume_medio(ffmpeg, Path(fundo))
+                ar = medido is not None and medido < FUNDO_MUDO
+                if ar and avisar:
+                    avisar(f"o fundo sem as vozes é quase silêncio ({medido:.0f} dB): entra um ar de sala bem baixo")
             mixar(ffmpeg, video, pasta / "trilha.wav", destino, duracao, len(idiomas), parar,
-                  lambda f: andamento(fatias[3] + (1 - fatias[3]) * f), trecho, fundo, nova, formato, ambiente, sala)
+                  lambda f: andamento(fatias[3] + (1 - fatias[3]) * f), trecho, fundo, nova, formato, ambiente, sala,
+                  ar)
             if no_original:
                 copiou = video.suffix.lower() == ".mkv" or (formato == "mp4" and video.suffix.lower() in MESMO_MP4)
                 destino = trocar_original(ffmpeg, video, destino, final, 1,
@@ -1210,7 +1374,7 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
     andamento(1.0)
     return ResultadoDublagem(video, "previa" if eh_previa else "dublado", "", destino, len(indices),
                              contas["aceleradas"], contas["cortadas"], adaptadas, retomadas, ambiente,
-                             reaproveitadas)
+                             reaproveitadas, relatorio_de_qualidade(contas.get("problemas", []), falas, indices))
 
 
 def etapas_da_dublagem(separar: bool = False) -> list[tuple[float, float, str]]:

@@ -65,8 +65,8 @@ from jellyfin_tools import traducao_lote
 from jellyfin_tools.sincronia import Conferidas, legendas_para_sincronizar, sincronizar
 from jellyfin_tools.transcricao import Transcritor, legendar_pelo_audio, videos_sem_legenda
 from jellyfin_tools.dublagem import (PREFIXO_CLOUD, PREFIXO_PIPER, ErroDublagem, MotorMisto, MotorPiper, dublar_video,
-                                     episodios_para_dublar, falas_da_legenda, horarios, localizar_ffmpeg,
-                                     motor_expressivo, pasta_do_filme,
+                                     chave_da_fala, episodios_para_dublar, esquecer_fala, falas_da_legenda, horarios,
+                                     ler_pronuncias, localizar_ffmpeg, motor_expressivo, pasta_do_filme, salvar_ajuste,
                                      preparar_piper, preparar_voz, videos_para_dublar)
 from jellyfin_tools.legendas import ErroLegenda
 from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, ClienteTV, carregar_canais, carregar_historico,
@@ -358,6 +358,43 @@ def vozes_por_genero(o: OpcoesJellyfin, motor) -> dict | None:
     for (genero, idade), opcoes in personagens.VOZES_POR_IDADE.items():    # criança, jovem e idoso: a voz da idade
         base[f"{genero}:{idade}"] = opcoes[0]
     return base
+
+
+def pronuncias_de(o: OpcoesJellyfin) -> dict:
+    """Configurações > Dublagem > Pronúncia: {"Johnson": "Djônson"} (a voz lê assim; a legenda não muda)."""
+    return ler_pronuncias(getattr(o, "pronuncias", ""))
+
+
+def registrar_qualidade(log: logging.Logger, r, onde: str = "Dublagem") -> None:
+    """O relatório de qualidade no log: as falas para conferir (aceleradas demais, cortadas, sem som)."""
+    problemas = getattr(r, "problemas", None) or []
+    if not problemas:
+        return
+    log.warning("%s: %d fala(s) para conferir em %s:", onde, len(problemas), Path(r.video).name)
+    for linha in problemas[:40]:
+        log.warning("  %s", linha)
+    if len(problemas) > 40:
+        log.warning("  ... e mais %d", len(problemas) - 40)
+
+
+def gasto_ate_agora() -> float:
+    """US$ gastos no mês (Claude + Gemini), para medir quanto custou um teste."""
+    atual = gastos.atual()
+    return atual.total() if atual is not None else 0.0
+
+
+def previsao_pelo_teste(video: str | Path, duracao: float | None) -> str:
+    """"Pelo teste deste vídeo (US$ 0.03 em 2 min), o vídeo inteiro (98 min) deve custar ~US$ 1.47." — a conta com o
+    custo REAL do teste (escuta, voz, blocos refeitos, tradução); vazio se não houver teste com custo."""
+    teste = next((t for t in _ler_testes() if _chave(t.get("video", "")) == _chave(video)), None)
+    if not teste or not duracao or not teste.get("custo") or not teste.get("minutos"):
+        return ""
+    minutos, custo = float(teste["minutos"]), float(teste["custo"])
+    total = custo / minutos * duracao / 60
+    atual = gastos.atual()
+    valor = atual.valor if atual is not None else (lambda d: f"US$ {d:.2f}")
+    return (f"Pelo teste deste vídeo ({valor(custo)} em {_duracao(minutos * 60)}), o vídeo inteiro "
+            f"({_duracao(duracao)}) deve custar ~{valor(total)}.")
 
 
 def pasta_dublagem() -> Path:
@@ -1041,7 +1078,9 @@ def dublar_item(o: OpcoesJellyfin, item, motor, log: logging.Logger, parar=None,
                      pasta_cache=pasta_dublagem(), destino=item.destino, parar=parar, ao_progresso=ao_progresso,
                      separar=separar, no_original=o.dublagem_no_original, legenda_no_video=legenda_no_video,
                      previa=previa, ambientar=getattr(o, "ambientar_voz", True),
-                     tons=ouvinte_de_tons(o, item.video, motor, log), por_genero=vozes_por_genero(o, motor))
+                     tons=ouvinte_de_tons(o, item.video, motor, log), por_genero=vozes_por_genero(o, motor),
+                     pronuncias=pronuncias_de(o))
+    registrar_qualidade(log, r)
     if r.status == "previa":
         registrar_previa(item.video, r.destino, item.legenda if legenda_no_video else None)
     return r
@@ -1309,6 +1348,8 @@ class ResultadoTeste:
     falas: int = 0
     passos: list = field(default_factory=list)    # o que foi feito (para a mensagem)
     erro: str = ""
+    problemas: list = field(default_factory=list)  # relatório de qualidade (falas para conferir)
+    custo: float = 0.0                             # US$ gastos no teste (para prever o vídeo inteiro)
 
 
 def _duracao(segundos: float) -> str:
@@ -1328,11 +1369,21 @@ def _ler_testes() -> list:
         return []
 
 
-def registrar_teste(video: str | Path, amostra: str | Path, trecho: tuple[float, float]) -> None:
-    """Guarda o teste na lista "Testes feitos" (o mais novo de cada vídeo; o vídeo de teste fica em 'testes')."""
+def registrar_teste(video: str | Path, amostra: str | Path, trecho: tuple[float, float], legenda=None,
+                    vozes: dict | None = None, custo: float | None = None, legendar: bool = False) -> None:
+    """Guarda o teste na lista "Testes feitos" (o mais novo de cada vídeo; o vídeo de teste fica em 'testes').
+    legenda e vozes: para "Ajustar falas" refazer só uma fala do teste; custo (US$): para prever o vídeo inteiro."""
     lista = [t for t in _ler_testes() if _chave(t.get("video", "")) != _chave(video)]
-    lista.insert(0, {"video": str(video), "amostra": str(amostra), "trecho": [round(trecho[0], 1), round(trecho[1], 1)],
-                     "feito": datetime.now().isoformat(timespec="minutes")})
+    registro = {"video": str(video), "amostra": str(amostra), "trecho": [round(trecho[0], 1), round(trecho[1], 1)],
+                "feito": datetime.now().isoformat(timespec="minutes"), "minutos": round((trecho[1] - trecho[0]) / 60, 2),
+                "legendar": bool(legendar)}
+    if legenda:
+        registro["legenda"] = str(legenda)
+    if vozes:
+        registro["vozes"] = {str(k): v for k, v in vozes.items()}
+    if custo is not None:
+        registro["custo"] = round(max(0.0, custo), 4)
+    lista.insert(0, registro)
     try:
         arquivo_testes().parent.mkdir(parents=True, exist_ok=True)
         arquivo_testes().write_text(json.dumps(lista, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1352,6 +1403,58 @@ def apagar_teste(teste: dict) -> None:
         arquivo_testes().write_text(json.dumps(lista, ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         pass
+
+
+def refazer_fala(o: OpcoesJellyfin, teste: dict, k: int, log: logging.Logger, texto: str = "", voz: str = "",
+                 tom: str = "", separar=None, parar=None, ao_progresso=None):
+    """"Ajustar falas" > "Refazer esta fala": guarda o ajuste (texto que a voz lê, voz ou tom; vazio = automático),
+    apaga só o áudio dessa fala e monta o vídeo de teste de novo. As outras falas, a escuta e o fundo já estão
+    guardados: paga só essa fala. O ajuste vale também quando o vídeo inteiro for dublado."""
+    video, legenda = Path(teste["video"]), Path(teste.get("legenda", ""))
+    if not teste.get("legenda") or not legenda.is_file():
+        raise FaltaConfiguracao("este teste é de uma versão anterior (ou a legenda dele sumiu): faça o teste de novo "
+                                "para poder ajustar as falas")
+    falas = falas_da_legenda(legenda)
+    if not 0 <= k < len(falas):
+        raise ErroDublagem("essa fala não está mais na legenda do teste")
+    pasta = pasta_do_filme(pasta_dublagem(), video)
+    salvar_ajuste(pasta, chave_da_fala(falas[k][0]), texto, voz, tom)
+    esquecer_fala(pasta, k)
+    motor = preparar_motor(o)
+    vozes = {int(n): v for n, v in dict(teste.get("vozes") or {}).items()}
+    log.info("Ajustar falas: refazendo a fala %s de %s%s%s%s", chave_da_fala(falas[k][0]), video.name,
+             f" (texto: \"{texto}\")" if texto else "", f" (voz: {voz})" if voz else "", f" (tom: {tom})" if tom else "")
+    antes = gasto_ate_agora()
+    r = dublar_video(video, legenda, motor, trecho=tuple(teste["trecho"]), destino=Path(teste["amostra"]),
+                     pasta_cache=pasta_dublagem(), separar=separar, ambientar=getattr(o, "ambientar_voz", True),
+                     legenda_no_video=bool(teste.get("legendar")), adaptar=adaptador(o, video.stem), vozes=vozes,
+                     tons=ouvinte_de_tons(o, video, motor, log), por_genero=vozes_por_genero(o, motor),
+                     pronuncias=pronuncias_de(o), parar=parar, ao_progresso=ao_progresso,
+                     avisar=lambda aviso: log.warning("Ajustar falas: %s", aviso))
+    if r.status != "dublado":
+        raise ErroDublagem(r.detalhe)
+    log.info("Ajustar falas: pronto (custou ~US$ %.4f)", max(0.0, gasto_ate_agora() - antes))
+    registrar_qualidade(log, r, "Teste")
+    return r
+
+
+def falas_do_teste(teste: dict) -> list[tuple[int, str, str, str, str]]:
+    """[(número, horário, texto que a voz lê, voz, tom)] das falas do teste, para a janela "Ajustar falas"."""
+    legenda = Path(teste.get("legenda", ""))
+    if not teste.get("legenda") or not legenda.is_file():
+        return []
+    from jellyfin_tools.dublagem import ler_ajustes
+    falas = falas_da_legenda(legenda)
+    ajustes = ler_ajustes(pasta_do_filme(pasta_dublagem(), Path(teste["video"])))
+    vozes = dict(teste.get("vozes") or {})
+    inicio, fim = teste["trecho"][:2]
+    saida = []
+    for k, (f, texto) in enumerate(falas):
+        if inicio <= horarios(f.tempo)[0] < fim:
+            ajuste = ajustes.get(chave_da_fala(f), {})
+            saida.append((k, chave_da_fala(f)[:8], ajuste.get("texto") or texto, ajuste.get("voz") or vozes.get(str(k), ""),
+                          ajuste.get("tom", "")))
+    return saida
 
 
 def localizar_vlc() -> str | None:
@@ -1458,6 +1561,8 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
     from jellyfin_tools.legendas import extrair_srt
     andamento = andamento or (lambda fracao, texto: None)
     video = Path(video)
+    gasto_antes = gasto_ate_agora()
+    vozes_teste = None
     idioma = o.idioma.split(",")[0].strip() or "pt-BR"
     segundos = minutos_de_teste(o) * 60
     ffmpeg = localizar_ffmpeg()
@@ -1537,17 +1642,19 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
             motor = motor or preparar_motor(o)
             relogio_dub = RelogioDaDublagem(bool(separar))
             # a barra só anda para a frente: o Whisper e a tradução ficaram com até 45%
+            vozes_teste = vozes_do_teste(o, video, legenda_teste, r.trecho, log)
             r_dub = dublar_video(video, legenda_teste, motor, parar=parar, trecho=r.trecho, destino=destino,
                                  adaptar=adaptador(o, video.stem), pasta_cache=pasta_dublagem(), separar=separar,
                                  tons=ouvinte_de_tons(o, video, motor, log), por_genero=vozes_por_genero(o, motor),
-                                 vozes=vozes_do_teste(o, video, legenda_teste, r.trecho, log),
+                                 vozes=vozes_teste, pronuncias=pronuncias_de(o),
                                  ambientar=getattr(o, "ambientar_voz", True), legenda_no_video=o.avulsos_legendar,
                                  avisar=lambda texto: log.warning("Teste: %s", texto),
                                  ao_progresso=lambda f: andamento(0.45 + 0.55 * f,
                                                                   f"Teste: {relogio_dub.texto(f)} ({voz})"))
             if r_dub.status != "dublado":
                 raise ErroDublagem(r_dub.detalhe)
-            r.falas = r_dub.falas
+            r.falas, r.problemas = r_dub.falas, list(r_dub.problemas)
+            registrar_qualidade(log, r_dub, "Teste")
             r.passos.append(f"dublou só as {r_dub.falas} falas do trecho")
         else:
             texto = srt_do_trecho(ler_srt(legenda_teste.read_text(encoding="utf-8")), r.trecho)
@@ -1558,7 +1665,9 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
             r.falas = texto.count(" --> ")
             r.passos.append("só a legenda (sem dublar)")
         r.amostra = destino
-        registrar_teste(video, destino, r.trecho)
+        r.custo = max(0.0, gasto_ate_agora() - gasto_antes)
+        registrar_teste(video, destino, r.trecho, legenda_teste if o.avulsos_dublar else None, vozes_teste, r.custo,
+                        o.avulsos_legendar)
         log.info("Teste de %s (%s a %s): %s", video.name, tempo_srt(r.trecho[0])[:8], tempo_srt(r.trecho[1])[:8],
                  "; ".join(r.passos))
     except (ErroDublagem, OSError, ErroLegenda, subprocess.CalledProcessError, FaltaConfiguracao) as erro:

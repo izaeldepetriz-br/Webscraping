@@ -585,6 +585,55 @@ def test_voz_pelo_genero_e_voz_por_personagem_no_teste(casa, tmp_path, monkeypat
     assert automacao.vozes_do_teste(o, tmp_path / "A.mkv", legenda, (4.0, 16.0), logging.getLogger("t")) is None
 
 
+def test_custo_do_teste_preve_o_video_inteiro_e_ajustar_uma_fala(casa, tmp_path, monkeypatch):
+    """O teste guarda quanto custou: a confirmação do vídeo inteiro mostra a previsão com esse custo REAL. "Ajustar
+    falas" refaz só a fala escolhida (com o texto, a voz e o tom trocados) e monta o vídeo de teste de novo."""
+    from jellyfin_tools import dublagem
+    from test_dublagem import FFMPEG, SRT, GeminiFalso, video_de_teste
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    casa(pronuncias="Johnson = Djônson")
+    o, _ = automacao.opcoes_salvas()
+    assert automacao.pronuncias_de(o) == {"Johnson": "Djônson"}
+    pasta = tmp_path / "Filme"
+    pasta.mkdir()
+    video = video_de_teste(pasta / "Filme.mkv", segundos=8)
+    legenda = pasta / "Filme.pt-BR.srt"
+    legenda.write_text(SRT, encoding="utf-8")
+    amostra = tmp_path / "teste.mkv"
+    gemini = GeminiFalso()
+    r = automacao.dublar_video(video, legenda, gemini, pasta_cache=automacao.pasta_dublagem(), trecho=(0, 8),
+                               destino=amostra)
+    assert r.status == "dublado"
+    automacao.registrar_teste(video, amostra, (0, 120), legenda, {1: "Kore"}, 0.06)
+    teste = automacao.testes_feitos()[0]
+    assert teste["custo"] == 0.06 and teste["minutos"] == 2.0 and teste["vozes"] == {"1": "Kore"}
+    assert automacao.previsao_pelo_teste(video, 100 * 60) == \
+        "Pelo teste deste vídeo (US$ 0.06 em 2 min), o vídeo inteiro (100 min) deve custar ~US$ 3.00."
+    assert automacao.previsao_pelo_teste(tmp_path / "outro.mkv", 600) == ""
+    teste["trecho"] = [0, 8]
+    linhas = automacao.falas_do_teste(teste)
+    assert [(k, voz) for k, _, _, voz, _ in linhas] == [(0, ""), (1, "Kore")]
+    monkeypatch.setattr(automacao, "preparar_motor", lambda o: gemini)
+    antes = len(gemini.textos)
+    r = automacao.refazer_fala(o, teste, 1, logging.getLogger("t"), texto="Agora mais curta.", tom="com raiva")
+    assert r.status == "dublado" and gemini.textos[antes:] == ["Agora mais curta."]   # só essa fala
+    assert gemini.vozes[-1] == "Kore" and gemini.tons[-1].startswith("Nesta fala: com raiva.")
+    assert automacao.falas_do_teste(teste)[1][2:] == ("Agora mais curta.", "Kore", "com raiva")
+    with pytest.raises(automacao.FaltaConfiguracao, match="versão anterior"):
+        automacao.refazer_fala(o, {"video": str(video), "trecho": [0, 8], "amostra": str(amostra)}, 0,
+                               logging.getLogger("t"))
+
+
+def test_relatorio_de_qualidade_no_log(caplog):
+    from types import SimpleNamespace as NS
+    with caplog.at_level(logging.WARNING):
+        automacao.registrar_qualidade(logging.getLogger("t"), NS(video="A.mkv", problemas=['0:05 "Oi.": cortada']))
+        automacao.registrar_qualidade(logging.getLogger("t"), NS(video="B.mkv", problemas=[]))
+    assert "1 fala(s) para conferir em A.mkv" in caplog.text and '0:05 "Oi.": cortada' in caplog.text
+    assert "B.mkv" not in caplog.text
+
+
 def dublagem_faixas(arquivo):
     from test_dublagem import faixas
     return faixas(arquivo)

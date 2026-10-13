@@ -242,6 +242,21 @@ primeira falha (antes esperava o tempo limite em cada filme).
 
 ### Novidades da v2.18.8
 
+- **Refazer só uma fala** ("🧪 Testes feitos" > "✏ Ajustar falas"): a lista das falas do teste com a voz e o tom de
+  cada uma; escolha a que ficou ruim e troque o texto que a voz lê (a legenda não muda), a voz ou o tom ("com raiva,
+  gritando"), ou só peça uma tomada nova. Só essa fala é gerada (e paga) de novo, e o vídeo de teste é montado outra
+  vez. O ajuste vale também quando o vídeo inteiro for dublado.
+- **Todas as falas no mesmo volume**: cada fala é nivelada antes de entrar na trilha (blocos diferentes do Gemini, e o
+  Piper ou o Google Cloud nos figurantes, saíam com volumes diferentes).
+- **Ar de sala no lugar do silêncio**: num vídeo sem música, o fundo sem as vozes originais era silêncio absoluto entre
+  as falas; agora entra um ruído de sala bem baixo (quase inaudível), como numa gravação de verdade.
+- **Pronúncia de nomes** (Configurações > Dublagem > Texto da fala): "Johnson = Djônson; Madrid = Madri". A voz lê
+  assim; a legenda continua como está.
+- **Relatório de qualidade**: no fim do teste e da dublagem, as falas para conferir (aceleradas demais, cortadas ou sem
+  som), com o minuto de cada uma, no log e na mensagem do teste.
+- **Previsão de custo pelo teste**: o teste guarda quanto custou de verdade (escuta, voz, blocos refeitos, tradução);
+  a mensagem do teste e a confirmação do "Dublar" mostram quanto o vídeo inteiro deve custar por essa conta, e
+  "Testes feitos" mostra o custo de cada teste.
 - **Clonagem de voz com um texto curto**: a gravação de referência agora é só "Olá! Hoje o dia está bonito. Vou fazer
   um café e ver um filme. Você quer vir junto? Vai ser ótimo!" (~10 s; serve só para o Google conhecer o seu jeito de
   falar). A frase de consentimento em inglês continua a mesma, porque o Google exige essas palavras exatas, mas

@@ -4745,6 +4745,38 @@ def test_testes_feitos_ficam_para_abrir_de_novo(app, tmp_path, monkeypatch):
     janela.bt_abrir.invoke()
     janela.bt_pasta.invoke()
     assert abertos == [str(amostra)] and pastas == [str(amostra.parent)]
+    assert janela.tabela.item("0", "values")[2] == "-"                    # teste antigo: sem o custo
+    app.caixas.clear()
+    janela.bt_ajustar.invoke()                                           # teste antigo: não dá para ajustar
+    assert app.caixas and "versão anterior" in app.caixas[-1][2]
     janela.bt_apagar.invoke()
     assert not amostra.exists() and automacao.testes_feitos() == [] and not janela.tabela.get_children()
     janela.destroy()
+
+
+def test_ajustar_falas_escolhe_a_fala_e_o_que_trocar(app, monkeypatch):
+    """A janela "Ajustar falas": a fala escolhida, o texto (só se mudou), a voz e o tom; o app refaz só ela."""
+    from videoscraper import automacao
+    from videoscraper.gui_moderna import DialogoAjustarFalas
+    linhas = [(3, "00:00:26", "Sou Agatha.", "Kore", ""), (4, "00:00:29", "Prazer, Sra. Johnson.", "", "")]
+    vozes = list(app.vozes_gemini_do_menu())
+    d = DialogoAjustarFalas(app, "Filme", linhas, vozes)
+    assert d.var_texto.get() == "Sou Agatha." and d.var_voz.get().startswith("Kore")   # a 1ª já escolhida
+    d.tabela.selection_set("1")
+    d._preencher()
+    d.var_texto.set("Prazer em conhecer, senhora.")
+    d.var_voz.set(next(v for v in vozes if v.startswith("Leda")))
+    d.var_tom.set("tímida, baixo")
+    d.bt_refazer.invoke()
+    assert d.resultado == (4, "Prazer em conhecer, senhora.", "Leda", "tímida, baixo")
+    d2 = DialogoAjustarFalas(app, "Filme", linhas, [])                     # Piper: sem escolher a voz
+    assert d2.menu_voz.cget("state") == "disabled"
+    d2.bt_refazer.invoke()
+    assert d2.resultado == (3, "", "", "")                                # nada mudou: só uma tomada nova
+    pedidos = []
+    teste = {"video": "/v/Filme.mkv", "amostra": "/t/Filme.mkv", "trecho": [20, 80], "legenda": "/v/Filme.srt"}
+    monkeypatch.setattr(automacao, "falas_do_teste", lambda t: linhas)
+    monkeypatch.setattr(app, "pedir_ajuste_de_fala", lambda nome, l, v: (4, "", "", "com raiva"))
+    monkeypatch.setattr(app, "_rodar", lambda texto, tarefa: pedidos.append(texto))
+    app._ajustar_teste(teste)
+    assert pedidos == ["Refazendo 1 fala do teste..."]

@@ -90,7 +90,8 @@ def test_trilha_poe_cada_fala_no_horario_acelera_e_corta(tmp_path):
         return saida
     contas = montar_trilha([(1.0, 2.0, curta), (2.5, 3.0, longa), (4.0, 5.0, ultima)], 6.0, tmp_path / "t.wav",
                            acelerar)
-    assert acelerados == [ACELERAR_MAX] and contas == {"aceleradas": 1, "cortadas": 1}
+    assert acelerados == [ACELERAR_MAX] and (contas["aceleradas"], contas["cortadas"]) == (1, 1)
+    assert contas["problemas"] == [(1, "acelerada", ACELERAR_MAX), (1, "cortada", 0.0)]    # o relatório
     with wave.open(str(tmp_path / "t.wav"), "rb") as w:
         assert w.getframerate() == TAXA and w.getnframes() == 6 * TAXA          # do tamanho do vídeo
         amostras = struct.unpack(f"<{w.getnframes()}h", w.readframes(w.getnframes()))
@@ -806,3 +807,85 @@ def test_fala_de_mulher_sai_com_voz_feminina(tmp_path):
     assert "sem pressa" in dublagem.ritmo_da_fala("Oi.", 2.0) and dublagem.ritmo_da_fala("Oi.", 0.1) == ""
     assert dublagem.vozes_com_genero({1: "Puck"}, {0: "f", 1: "f"}, {"f": "Kore"}, [0, 1]) == {0: "Kore", 1: "Puck"}
     assert dublagem.vozes_com_genero({}, {0: "f"}, None, [0]) == {}               # sem a escuta: nada muda
+
+
+def _rms_do_trecho(arquivo: Path, inicio: float, fim: float) -> float:
+    with wave.open(str(arquivo), "rb") as w:
+        taxa = w.getframerate()
+        w.setpos(int(inicio * taxa))
+        dados = struct.unpack(f"<{int((fim - inicio) * taxa)}h", w.readframes(int((fim - inicio) * taxa)))
+    return math.sqrt(sum(x * x for x in dados) / len(dados))
+
+
+def test_todas_as_falas_no_mesmo_volume_e_relatorio(tmp_path):
+    """Uma fala baixa e uma alta (blocos diferentes do Gemini, ou Piper e Gemini) saem no mesmo volume; a fala muda
+    e a acelerada demais entram no relatório de qualidade, com o minuto."""
+    from jellyfin_tools.traducao import Fala
+    baixa, alta, muda = tmp_path / "b.wav", tmp_path / "a.wav", tmp_path / "m.wav"
+    for wav, amplitude in ((baixa, 3000), (alta, 9000), (muda, 0)):
+        with wave.open(str(wav), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(TAXA)
+            w.writeframes(b"".join(struct.pack("<h", int(amplitude * math.sin(n / 8))) for n in range(TAXA)))
+    trilha = tmp_path / "trilha.wav"
+    contas = dublagem.montar_trilha([(0.0, 1.0, baixa), (2.0, 3.0, alta), (4.0, 5.0, muda)], 6.0, trilha)
+    v1, v2 = _rms_do_trecho(trilha, 0.1, 0.9), _rms_do_trecho(trilha, 2.1, 2.9)
+    assert abs(v1 - v2) / v2 < 0.1                                      # antes: 3 vezes mais alta
+    assert contas["problemas"] == [(2, "sem som", 0.0)]
+    falas = [(Fala(f"00:0{m}:{s:02d},000 --> 00:0{m}:{s + 1:02d},000", t), t) for m, s, t in
+             [(0, 5, "Oi."), (1, 26, "Sou Agatha, Agatha Johnson, muito prazer em conhecer.")]]
+    assert dublagem.relatorio_de_qualidade([(0, "acelerada", 1.58), (1, "sem som", 0.0)], falas, [0, 1]) == [
+        '0:05 "Oi.": acelerada 1,6x', '1:26 "Sou Agatha, Agatha Johnson,...": sem som']
+
+
+def test_ar_de_sala_e_pronuncias():
+    filtro = dublagem.filtro_mixagem(True, ar_de_sala=True)
+    assert "anoisesrc=c=pink" in filtro and "amix=inputs=3" in filtro
+    assert "anoisesrc" not in dublagem.filtro_mixagem(True) and "anoisesrc" not in dublagem.filtro_mixagem(False)
+    pron = dublagem.ler_pronuncias("Johnson = Djônson; Madrid=Madri\nlinha errada")
+    assert pron == {"Johnson": "Djônson", "Madrid": "Madri"}
+    assert dublagem.aplicar_pronuncias("Sra. JOHNSON veio de Madrid; Johnsons não.", pron) == \
+        "Sra. Djônson veio de Madri; Johnsons não."                      # palavra inteira, sem ligar p/ maiúsculas
+
+
+@pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
+def test_volume_medio_do_fundo(tmp_path):
+    mudo = tmp_path / "mudo.wav"
+    with wave.open(str(mudo), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(TAXA)
+        w.writeframes(b"\0\0" * TAXA)
+    tom = tmp_path / "tom.wav"
+    gravar_tom(tom, 1.0)
+    assert dublagem.volume_medio(FFMPEG, mudo) < dublagem.FUNDO_MUDO < dublagem.volume_medio(FFMPEG, tom)
+
+
+@pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
+def test_ajuste_de_uma_fala_refaz_so_ela_e_vale_no_video_inteiro(tmp_path):
+    """"Ajustar falas": o texto, a voz e o tom trocados numa fala do teste; só ela é gerada de novo, e o ajuste vale
+    também quando o vídeo inteiro for dublado. Pronúncia: a voz lê "Djônson" (a legenda não muda)."""
+    pasta = tmp_path / "Filme (2003)"
+    pasta.mkdir()
+    video = video_de_teste(pasta / "Filme (2003).mkv", segundos=8)
+    legenda = pasta / "Filme (2003).pt-BR.srt"
+    legenda.write_text(SRT.replace("Olá!", "Olá, Johnson!"), encoding="utf-8")
+    cache, gemini = tmp_path / "cache", GeminiFalso()
+    amostra = tmp_path / "amostra.mkv"
+    r = dublar_video(video, legenda, gemini, pasta_cache=cache, trecho=(0, 8), destino=amostra,
+                     pronuncias={"Johnson": "Djônson"})
+    assert r.status == "dublado" and gemini.textos[0] == "Olá, Djônson!"
+    pasta_filme = dublagem.pasta_do_filme(cache, video)
+    falas = falas_da_legenda(legenda)
+    dublagem.salvar_ajuste(pasta_filme, dublagem.chave_da_fala(falas[1][0]), texto="Fala longa demais.", voz="Puck",
+                           tom="sussurrando")
+    dublagem.esquecer_fala(pasta_filme, 1)
+    antes = len(gemini.textos)
+    r = dublar_video(video, legenda, gemini, pasta_cache=cache, trecho=(0, 8), destino=amostra,
+                     pronuncias={"Johnson": "Djônson"})
+    assert r.status == "dublado" and r.retomadas == 1                    # a 1ª fala não foi pedida de novo
+    assert gemini.textos[antes:] == ["Fala longa demais."] and gemini.vozes[-1] == "Puck"
+    assert gemini.tons[-1].startswith("Nesta fala: sussurrando.")
+    dublagem.salvar_ajuste(pasta_filme, dublagem.chave_da_fala(falas[1][0]))     # tudo vazio: volta ao automático
+    assert dublagem.ler_ajustes(pasta_filme) == {}

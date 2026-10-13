@@ -2587,6 +2587,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
                    f"{self._dinheiro(maximo)} para ~{int(fala // 60)} min de fala; confira o preço atual no AI Studio). São "
                    f"~{pedidos} pedido(s) de voz (até {voz_gemini.BLOCO} falas em cada): na camada GRÁTIS o limite por "
                    "dia é baixo; se acabar, o que ficou pronto é guardado e a próxima dublagem continua de onde parou")
+            previsoes = [p for i in itens if (p := automacao.previsao_pelo_teste(i.video, i.duracao))]
+            if previsoes:                                      # a conta com o custo REAL do teste de cada um
+                voz += ".\n\n" + "\n".join(previsoes[:3]) + (f"\n... e mais {len(previsoes) - 3}" if len(previsoes) > 3
+                                                               else "")
             download = ""
         elif automacao.usa_cloud(o):
             if not automacao.chave_cloud(o):
@@ -2681,7 +2685,41 @@ class AppModerna(TVAoVivo, JanelaModerna):
     def ao_testes_feitos(self) -> None:
         """"🧪 Testes feitos": abrir de novo (no player escolhido), abrir a pasta (para usar outro player) ou apagar."""
         from .gui_moderna import JanelaTestes
-        JanelaTestes(self, automacao.testes_feitos, self._abrir_teste, self._pasta_do_teste, self._apagar_teste)
+        JanelaTestes(self, automacao.testes_feitos, self._abrir_teste, self._pasta_do_teste, self._apagar_teste,
+                     self._ajustar_teste)
+
+    def _ajustar_teste(self, teste: dict) -> None:
+        """"Ajustar falas": escolhe UMA fala do teste, troca (se quiser) o texto que a voz lê, a voz ou o tom, e refaz
+        só ela (paga só essa fala). O ajuste vale também quando o vídeo inteiro for dublado."""
+        linhas = automacao.falas_do_teste(teste)
+        if not linhas:
+            self.mostrar_mensagem("Ajustar falas", "Este teste é de uma versão anterior, só tem a legenda, ou a legenda "
+                                  "dele sumiu: faça o teste de novo (botão \"🧪 Testar\") para poder ajustar as falas.",
+                                  "info")
+            return
+        o = self.obter_opcoes_jellyfin()
+        vozes = list(self.vozes_gemini_do_menu()) if automacao.usa_gemini(o) else []
+        escolha = self.pedir_ajuste_de_fala(Path(teste["video"]).stem, linhas, vozes)
+        if escolha is None:
+            return
+        k, texto, voz, tom = escolha
+        inicio = int(teste["trecho"][0])
+        minuto = f"{inicio // 60}:{inicio % 60:02d}"
+
+        def tarefa():
+            try:
+                separar = automacao.separador_de_vozes(o, self._log)
+                r = automacao.refazer_fala(o, teste, k, self._log, texto, voz, tom, separar,
+                                           parar=self.evento_parar.is_set,
+                                           ao_progresso=lambda f: self.fila.put(("jf_analise", (
+                                               f, f"Refazendo a fala ({int(f * 100)}%)"))))
+            except (ErroDublagem, OSError, ErroLegenda, automacao.FaltaConfiguracao) as erro:
+                self.fila.put(("msg", ("Ajustar falas", f"Não deu para refazer a fala: {erro}", "erro")))
+                return
+            self.fila.put(("abrir_amostra", (Path(teste["amostra"]), Path(teste["video"]).stem, minuto, r.falas,
+                                              self.texto_do_teste(r.problemas, 0.0, teste["video"]))))
+
+        self._rodar("Refazendo 1 fala do teste...", tarefa)
 
     def _abrir_teste(self, teste: dict) -> None:
         try:
@@ -2791,7 +2829,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 self.fila.put(("msg", ("Testar", f"Não deu para fazer o teste de {video.name}: {r.erro}", "erro")))
                 return
             minuto = f"{int(r.trecho[0]) // 60}:{int(r.trecho[0]) % 60:02d}"
-            self.fila.put(("abrir_amostra", (r.amostra, video.stem, minuto, r.falas)))
+            self.fila.put(("abrir_amostra", (r.amostra, video.stem, minuto, r.falas,
+                                              self.texto_do_teste(r.problemas, r.custo, video))))
 
         self._rodar(f"Testando {minutos} de {video.stem} (só esse trecho)...", tarefa)
 
@@ -2939,6 +2978,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
         item = itens[escolha]
 
         def tarefa():
+            gasto_antes = automacao.gasto_ate_agora()
             try:
                 motor = automacao.preparar_motor(o)
                 trecho = automacao.trecho_do_teste(o, falas_da_legenda(item.legenda), minutos * 60)
@@ -2946,6 +2986,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
             except (ErroDublagem, OSError, ErroLegenda, automacao.FaltaConfiguracao) as erro:
                 self.fila.put(("msg", ("Amostra da dublagem", f"Não deu para fazer a amostra: {erro}", "erro")))
                 return
+            vozes = automacao.vozes_do_teste(o, item.video, item.legenda, trecho, self._log)
             destino = caminho_amostra(automacao.pasta_dublagem(), item.video)
             relogio = RelogioDaDublagem(bool(separar))
             r = dublar_video(item.video, item.legenda, motor, parar=self.evento_parar.is_set,
@@ -2955,21 +2996,43 @@ class AppModerna(TVAoVivo, JanelaModerna):
                              pasta_cache=automacao.pasta_dublagem(), trecho=trecho, destino=destino,
                              separar=separar, ambientar=o.ambientar_voz,
                              tons=automacao.ouvinte_de_tons(o, item.video, motor, self._log),
-                             por_genero=automacao.vozes_por_genero(o, motor),
-                             vozes=automacao.vozes_do_teste(o, item.video, item.legenda, trecho, self._log))
+                             por_genero=automacao.vozes_por_genero(o, motor), vozes=vozes,
+                             pronuncias=automacao.pronuncias_de(o))
             if r.status != "dublado":
                 self._log.error("Amostra de %s: %s", item.video.name, r.detalhe)
                 self.fila.put(("msg", ("Amostra da dublagem", f"Não deu para fazer a amostra: {r.detalhe}", "erro")))
                 return
             minuto = f"{int(trecho[0]) // 60}:{int(trecho[0]) % 60:02d}"
-            automacao.registrar_teste(item.video, destino, trecho)          # fica em "Testes feitos"
+            custo = max(0.0, automacao.gasto_ate_agora() - gasto_antes)
+            automacao.registrar_teste(item.video, destino, trecho, item.legenda, vozes, custo)   # "Testes feitos"
+            automacao.registrar_qualidade(self._log, r, "Teste")
             self._log.info("Amostra de %s (a partir de %s, %d falas): %s", item.video.name, minuto, r.falas, destino)
-            self.fila.put(("abrir_amostra", (destino, item.video.stem, minuto, r.falas)))
+            self.fila.put(("abrir_amostra", (destino, item.video.stem, minuto, r.falas,
+                                              self.texto_do_teste(r.problemas, custo, item.video, item.duracao))))
 
         self._rodar(f"Fazendo o teste de {self.texto_minutos_teste()}{self.texto_inicio_teste()} de "
                     f"{item.video.stem}...", tarefa)
 
-    def _mostrar_amostra(self, destino: Path, nome: str, minuto: str, falas: int) -> None:
+    def texto_do_teste(self, problemas: list, custo: float, video, duracao: float | None = None) -> str:
+        """O fim da mensagem do teste: o custo (e a previsão do vídeo inteiro) e as falas para conferir."""
+        partes = []
+        if custo > 0:
+            if duracao is None:
+                try:
+                    from jellyfin_tools.dublagem import inspecionar
+                    ffmpeg = localizar_ffmpeg()
+                    duracao = inspecionar(ffmpeg, Path(video)).duracao if ffmpeg else None
+                except OSError:
+                    duracao = None
+            previsao = automacao.previsao_pelo_teste(video, duracao)
+            partes.append(previsao or f"O teste custou ~{self._dinheiro(custo)}.")
+        if problemas:
+            partes.append(f"Confira {len(problemas)} fala(s) (em \"🧪 Testes feitos\" > \"Ajustar falas\" dá para "
+                          "refazer só elas):\n" + "\n".join(f"• {p}" for p in problemas[:8])
+                          + (f"\n... e mais {len(problemas) - 8}" if len(problemas) > 8 else ""))
+        return "\n\n".join(partes)
+
+    def _mostrar_amostra(self, destino: Path, nome: str, minuto: str, falas: int, extra: str = "") -> None:
         try:
             self.abrir_video(str(destino))
             abriu = "Ela abriu no seu player de vídeo."
@@ -2978,8 +3041,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
             abriu = "Abra no seu player de vídeo:"
         self.mostrar_mensagem("Teste da dublagem", f"O teste de {nome} ({self.texto_minutos_teste()} a partir de "
                               f"{minuto}, {falas} falas) está pronto. {abriu}\n{destino}\n\nGostou? Faça o vídeo inteiro: "
-                              "as falas do teste são reaproveitadas (não paga de novo por elas). Não gostou? Troque a "
-                              "voz em Configurações > Dublagem e teste de novo. O original não foi alterado.", "sucesso")
+                              "as falas do teste são reaproveitadas (não paga de novo por elas). Não gostou de uma "
+                              "fala? \"🧪 Testes feitos\" > \"Ajustar falas\" refaz só ela. O original não foi alterado."
+                              + (f"\n\n{extra}" if extra else ""), "sucesso")
 
     def _ouvir_personagens(self, itens: list, o, premium: set | None = None) -> None:
         """Voz por personagem, 1ª parte (numa tarefa): o Gemini ouve cada filme e diz quem fala cada fala. Depois,
@@ -3088,7 +3152,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                  destino=item.destino, separar=separar, no_original=o.dublagem_no_original,
                                  previa=previa, ambientar=o.ambientar_voz,
                                  tons=automacao.ouvinte_de_tons(o, item.video, deste, self._log),
-                                 por_genero=automacao.vozes_por_genero(o, deste))
+                                 por_genero=automacao.vozes_por_genero(o, deste), pronuncias=automacao.pronuncias_de(o))
+                automacao.registrar_qualidade(self._log, r)
                 if r.status == "previa":
                     automacao.registrar_previa(item.video, r.destino, None)
                 resultados.append(r)
