@@ -595,6 +595,28 @@ def itens_para_dublar(pastas: dict, idioma: str = "pt-BR", sondar=None, no_origi
     return [i for i in itens if _chave(i.video) not in esperando]
 
 
+def videos_da_biblioteca(pastas: dict) -> list[tuple[Path, str, bool]]:
+    """Os filmes e os episódios das bibliotecas (sem as versões dubladas), para escolher o vídeo do "📜 Roteiro" na
+    aba Jellyfin: [(vídeo, onde: 'Filmes' ou 'Séries · Nome da série', já tem roteiro?)], na ordem das pastas."""
+    from jellyfin_tools.dublagem import MARCA_DUBLADO
+    from jellyfin_tools.nomes import eh_video
+    from jellyfin_tools.roteiro import caminho_roteiro
+    saida, vistos = [], set()
+    for tipo in ("Filmes", "Séries"):
+        raiz = Path(pastas.get(tipo) or "")
+        if not pastas.get(tipo) or not raiz.is_dir():
+            continue
+        for video in sorted(raiz.rglob("*"), key=lambda v: str(v).lower()):
+            if ".organizador" in video.parts or not video.is_file() or not eh_video(video) \
+                    or video.stem.endswith(MARCA_DUBLADO) or (k := _chave(video)) in vistos:
+                continue
+            vistos.add(k)
+            partes = video.relative_to(raiz).parts
+            onde = f"Séries · {partes[0]}" if tipo == "Séries" and len(partes) > 1 else tipo
+            saida.append((video, onde, caminho_roteiro(video) is not None))
+    return saida
+
+
 def usa_traducao_local(o: OpcoesJellyfin) -> bool:
     return (o.motor_traducao or "Claude").startswith("Local")
 
@@ -1622,17 +1644,54 @@ def _ler_testes() -> list:
         return []
 
 
+ABAS_DOS_TESTES = {"jellyfin": "Jellyfin", "avulsos": "Avulsos", "audio": "Áudio"}
+
+
+def aba_do_teste(teste: dict) -> str:
+    """Onde o teste foi feito: 'jellyfin', 'avulsos' ou 'audio' (a aba Áudio). Os de antes da v2.18.12 não
+    guardavam: o dos Avulsos tem a legenda no progresso do Maestro (ou nenhuma: só legendar); o do Jellyfin usa a
+    legenda que fica ao lado do vídeo."""
+    if teste.get("aba") in ABAS_DOS_TESTES:
+        return teste["aba"]
+    if not teste.get("legenda"):
+        return "avulsos"
+    try:
+        Path(teste["legenda"]).resolve().relative_to(pasta_dublagem().resolve())
+        return "avulsos"
+    except (ValueError, OSError):
+        return "jellyfin"
+
+
+def _legenda_do_teste(legenda: Path, amostra: Path) -> Path:
+    """A legenda de um teste dos Avulsos ('teste.pt-BR.srt', no progresso do vídeo) é refeita a cada teste: uma
+    cópia fica junto do teste, para "Ajustar falas" de um teste antigo usar as falas DELE. Fica em 'legendas' (ao
+    lado do vídeo, o player a abriria por cima da legenda do próprio teste)."""
+    try:
+        legenda.resolve().relative_to(pasta_dublagem().resolve())
+    except (ValueError, OSError):
+        return legenda                                   # a do Jellyfin (ao lado do filme) não muda a cada teste
+    copia = amostra.parent / "legendas" / f"{amostra.stem}{''.join(legenda.suffixes[-2:])}"
+    try:
+        copia.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(legenda, copia)
+        return copia
+    except OSError:
+        return legenda
+
+
 def registrar_teste(video: str | Path, amostra: str | Path, trecho: tuple[float, float], legenda=None,
                     vozes: dict | None = None, custo: float | None = None, legendar: bool = False,
-                    custos: dict | None = None) -> None:
-    """Guarda o teste na lista "Testes feitos" (o mais novo de cada vídeo; o vídeo de teste fica em 'testes').
-    legenda e vozes: para "Ajustar falas" refazer só uma fala do teste; custo (US$): para prever o vídeo inteiro."""
-    lista = [t for t in _ler_testes() if _chave(t.get("video", "")) != _chave(video)]
+                    custos: dict | None = None, aba: str = "jellyfin") -> None:
+    """Guarda o teste na lista "Testes feitos" (o vídeo de teste fica em 'testes'). Cada teste fica guardado, até
+    vários do mesmo vídeo (antes, o novo apagava o anterior), até você apagar. aba: 'jellyfin', 'avulsos' ou
+    'audio' (de onde veio; a janela abre mostrando os da aba). legenda e vozes: para "Ajustar falas" refazer só uma
+    fala do teste; custo (US$): para prever o vídeo inteiro."""
+    lista = [t for t in _ler_testes() if t.get("amostra") != str(amostra)]
     registro = {"video": str(video), "amostra": str(amostra), "trecho": [round(trecho[0], 1), round(trecho[1], 1)],
-                "feito": datetime.now().isoformat(timespec="minutes"), "minutos": round((trecho[1] - trecho[0]) / 60, 2),
-                "legendar": bool(legendar)}
+                "feito": datetime.now().isoformat(timespec="seconds"), "minutos": round((trecho[1] - trecho[0]) / 60, 2),
+                "legendar": bool(legendar), "aba": aba if aba in ABAS_DOS_TESTES else "jellyfin"}
     if legenda:
-        registro["legenda"] = str(legenda)
+        registro["legenda"] = str(_legenda_do_teste(Path(legenda), Path(amostra)))
     if vozes:
         registro["vozes"] = {str(k): v for k, v in vozes.items()}
     if custo is not None:
@@ -1640,6 +1699,10 @@ def registrar_teste(video: str | Path, amostra: str | Path, trecho: tuple[float,
     if custos:
         registro["custos"] = {api: [round(usd, 5), bool(gratis)] for api, (usd, gratis) in custos.items()}
     lista.insert(0, registro)
+    _gravar_testes(lista)
+
+
+def _gravar_testes(lista: list) -> None:
     try:
         arquivo_testes().parent.mkdir(parents=True, exist_ok=True)
         arquivo_testes().write_text(json.dumps(lista, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1648,17 +1711,38 @@ def registrar_teste(video: str | Path, amostra: str | Path, trecho: tuple[float,
 
 
 def testes_feitos() -> list:
-    """Os testes cujo vídeo de teste ainda existe, do mais novo para o mais velho."""
-    return [t for t in _ler_testes() if Path(t["amostra"]).is_file()]
+    """Os testes cujo vídeo de teste ainda existe, do mais novo para o mais velho (com a 'aba' de onde vieram,
+    também nos antigos)."""
+    return [{**t, "aba": aba_do_teste(t)} for t in _ler_testes() if Path(t["amostra"]).is_file()]
+
+
+def tamanho_dos_testes(testes: list) -> int:
+    """Bytes ocupados pelos vídeos de teste (para a janela mostrar quanto apagar libera)."""
+    total = 0
+    for t in testes:
+        try:
+            total += Path(t["amostra"]).stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+def apagar_testes(testes: list) -> int:
+    """Apaga os vídeos de teste (e a cópia da legenda de cada um) e tira da lista. O vídeo original e as falas já
+    geradas continuam. Devolve quantos foram apagados."""
+    amostras = {str(t.get("amostra")) for t in testes if t.get("amostra")}
+    pasta_testes = pasta_dublagem() / "testes"
+    for t in testes:
+        Path(t["amostra"]).unlink(missing_ok=True)
+        legenda = Path(t.get("legenda") or "")
+        if t.get("legenda") and legenda.parent == pasta_testes / "legendas":
+            legenda.unlink(missing_ok=True)
+    _gravar_testes([t for t in _ler_testes() if t.get("amostra") not in amostras])
+    return len(amostras)
 
 
 def apagar_teste(teste: dict) -> None:
-    Path(teste["amostra"]).unlink(missing_ok=True)
-    lista = [t for t in _ler_testes() if t.get("amostra") != teste.get("amostra")]
-    try:
-        arquivo_testes().write_text(json.dumps(lista, ensure_ascii=False, indent=2), encoding="utf-8")
-    except OSError:
-        pass
+    apagar_testes([teste])
 
 
 def refazer_fala(o: OpcoesJellyfin, teste: dict, k: int, log: logging.Logger, texto: str = "", voz: str = "",
@@ -1926,7 +2010,7 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
         r.custo = max(0.0, gasto_ate_agora() - gasto_antes)
         r.custos = custos_por_api(foto_antes)
         registrar_teste(video, destino, r.trecho, legenda_teste if o.avulsos_dublar else None, vozes_teste, r.custo,
-                        o.avulsos_legendar, r.custos)
+                        o.avulsos_legendar, r.custos, aba="avulsos")
         log.info("Teste de %s (%s a %s): %s", video.name, tempo_srt(r.trecho[0])[:8], tempo_srt(r.trecho[1])[:8],
                  "; ".join(r.passos))
     except (ErroDublagem, OSError, ErroLegenda, subprocess.CalledProcessError, FaltaConfiguracao) as erro:

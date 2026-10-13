@@ -240,6 +240,41 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.18.12
+
+- **Testes feitos que ficam guardados**: cada teste ganha a data e a hora no nome
+  ('Filme-1a2b3c4d - 2026-10-13 14h54m10s.mkv'), então um teste novo do mesmo vídeo não apaga mais o anterior. O
+  teste dos Avulsos guarda também a própria legenda: "Ajustar falas" de um teste antigo usa as falas DELE.
+- **Janela "Testes feitos" com seleção**: ☐/☑ na coluna "#" (um clique marca/desmarca; o título "☐ #" marca todos),
+  linha "Seleção:" (Todos, Nenhum, Inverter, "Marcar: 1-5, 8 ou nome"), filtro por coluna (Aba, Vídeo, Custou,
+  Feito em, como no Excel), "✕ Apagar marcados (N)" e "🗑 Apagar todos (N)" (os da lista à vista), com uma pergunta
+  só e quanto espaço libera. Vale para os testes das abas Jellyfin e Avulsos (e da aba Áudio, quando ela chegar): a
+  coluna "Aba" mostra de onde veio cada um, e a janela abre mostrando os da aba em que você está ("Tirar os filtros"
+  mostra todos).
+- **📜 Roteiro na aba Jellyfin igual ao dos Avulsos**: a mesma janela do link/arquivo do roteiro, agora com a lista dos
+  filmes e episódios da biblioteca (com busca: "duna", "s01e03") para escolher o vídeo ali mesmo. "✓ já tem roteiro"
+  aparece ao lado de quem já tem; "Outro vídeo..." escolhe um de fora da lista. Antes, o botão abria primeiro a janela
+  do Windows pedindo o arquivo de vídeo.
+- **Seleção e filtros na lista dos Avulsos**: ☐/☑ na coluna "#", filtro por coluna (Vídeo, Legenda, O que falta, Pasta)
+  e a linha "Seleção:" com "Só os que falta algo". "Processar 2 marcados" faz só os marcados (com um filtro e nada
+  marcado: os à vista; sem nada marcado: todos) e "🧪 Testar o marcado" testa o clicado por último. A lista inteira
+  continua na tela depois.
+- **🤖 Automático (abas Jellyfin e Avulsos)**: um painel com o que é feito sozinho, quem faz (Whisper, Claude, Piper,
+  Gemini, o seu PC), o custo (com a cota grátis que resta hoje) e a situação. As caixas são as MESMAS opções de
+  Configurações (ligar ali liga lá). Com o Piper ou o Google Cloud, o que é só do Gemini (emoção da cena, voz pelo
+  gênero, voz por personagem, camada de emoção) fica apagado, com o motivo; a escuta dos sons sem fala continua com o
+  Gemini, se a chave estiver lá. Na aba Jellyfin, também a vigia, os robôs "só com o Piper" e a continuação depois do
+  limite do dia.
+- **Aba "Jellyfin TV"** (entre Jellyfin e Avulsos): a TV ao vivo saiu da janela "TV ao vivo..." e ganhou uma aba,
+  com tudo o que ela precisa num lugar só: a lista de canais (à esquerda, com a altura toda, também em tela de
+  notebook) e, ao lado, as configurações da TV: o servidor do Jellyfin (endereço e chave: os MESMOS de
+  Configurações > Jellyfin), onde salvar o canais.m3u e como o servidor enxerga o arquivo, a antena HDHomeRun, o guia
+  (XMLTV), "Programação dos canais...", "Conferir programação", "Diagnóstico do Jellyfin", a velocidade da
+  conferência e "Conferir sozinho toda semana". O botão "TV ao vivo..." saiu da aba Jellyfin. O botão do topo
+  "Verificar atualizações" virou "⟳ Atualizações" (com 5 abas, ele ficava cortado).
+- "Legendar", na aba Avulsos, já cria a legenda quando falta (traduz a que existe ou ouve o áudio com o Whisper) e a
+  põe dentro do vídeo: é o "Criar legenda" dos Avulsos.
+
 ### Novidades da v2.18.11
 
 - **Camada de emoção**: nas falas gritadas, choradas, gemidas (de dor ou de prazer) ou ditas rindo, um pouco da voz
@@ -1092,7 +1127,7 @@ primeira falha (antes esperava o tempo limite em cada filme).
 
 ### Novidades da v1.6
 
-- **Verificar atualizações** (no topo): consulta na hora, sem fechar o programa; **Baixar agora** em segundo
+- **⟳ Atualizações** (no topo; antes "Verificar atualizações"): consulta na hora, sem fechar o programa; **Baixar agora** em segundo
   plano; para instalar, avisa que o programa **precisa fechar** e faz a troca sozinho (detalhes em "Aviso de
   versão nova", abaixo).
 - **TV ao vivo**: filtro em cada coluna (clique no título: um ou vários valores), "Remover todos",
@@ -1120,7 +1155,7 @@ primeira falha (antes esperava o tempo limite em cada filme).
   entra nelas (nem organiza, nem apaga, nem põe legenda), nem pela vigia. No script: `PASTAS_PROTEGIDAS`.
 - **Aviso de versão nova**: ao abrir (e a cada 6 horas, com o programa aberto) consulta a página Releases e
   avisa uma vez cada versão nova. A versão aparece no título da janela. Dá para desligar em "Automático".
-  **Verificar atualizações** (no topo, ao lado de Vídeos/Jellyfin) consulta na hora, sem fechar nada.
+  **⟳ Atualizações** (no topo, ao lado das abas) consulta na hora, sem fechar nada.
   **Baixar agora** baixa o `.zip` em segundo plano (Downloads); dá para continuar usando. Para **instalar**, o
   programa precisa fechar (o Windows não deixa trocar um programa aberto) e ele avisa isso:
   **Fechar e atualizar agora** (fecha, troca os arquivos sozinho e abre de novo), **Atualizar quando eu fechar**
@@ -1130,7 +1165,7 @@ primeira falha (antes esperava o tempo limite em cada filme).
   conferência funcionando sem a janela aberta. Clique no ícone para abrir; "Sair" no menu dele fecha de
   verdade. "Ao fechar (X), continuar rodando perto do relógio" faz o X só esconder a janela. Fica na lista do
   Gerenciador de Tarefas > Inicializar (dá para desligar por lá também). Opção de linha de comando: `--minimizado`.
-- **TV ao vivo...** (barra de cima): canais ao vivo no Jellyfin (Painel > TV ao vivo), sem outro programa:
+- **Aba Jellyfin TV** (antes, o botão "TV ao vivo..."): canais ao vivo no Jellyfin (Painel > TV ao vivo), sem outro programa:
   1. adicione canais (nome + link do sinal `.m3u8`) ou importe uma lista `.m3u` (arquivo ou endereço);
   2. **Conferir**: só os canais **selecionados** (sem seleção, todos): no ar / fora do ar / pede login / link
      temporário (com token, que expira).

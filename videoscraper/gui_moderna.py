@@ -652,6 +652,253 @@ def numeros_do_texto(texto: str) -> set[int] | None:
     return numeros or None
 
 
+def tamanho_legivel(total: int) -> str:
+    """1288490188 -> '1,2 GB'; 52428800 -> '50 MB'."""
+    if total >= 1024 ** 3:
+        return f"{total / 1024 ** 3:.1f} GB".replace(".", ",")
+    return f"{max(total, 0) / 1024 ** 2:.0f} MB"
+
+
+class SeletorDeTabela:
+    """Caixas de marcar e filtro por coluna numa tabela (Treeview), do jeito da lista de vídeos: a coluna "#" mostra
+    ☐/☑ e o número da linha; um clique marca/desmarca a linha SEM perder as outras (Ctrl e Shift continuam como
+    antes); o título "☐ #" marca todos à vista (se já estão, desmarca); o título de uma coluna com ▾ abre o filtro
+    (digitar e/ou marcar valores, como no Excel; ▼ = filtrando). Os marcados são a seleção da tabela; o que o filtro
+    esconde fica desmarcado. Serve aos "Testes feitos", à lista dos Avulsos e à aba Áudio.
+    titulos: {coluna: título} das colunas com filtro; valor(coluna, iid) -> o valor usado no filtro (padrão: o texto
+    da célula); ao_mudar(): quando a marcação ou o filtro mudam (para os botões "Apagar marcados (3)"...)."""
+    CAIXA = {False: "☐", True: "☑"}       # ☐ ☑
+
+    def __init__(self, tabela, app, titulos: dict, valor=None, ao_mudar=None, coluna_n: str = "n",
+                 coluna_nome: str = ""):
+        self.tabela, self.app, self.titulos, self.coluna_n = tabela, app, dict(titulos), coluna_n
+        self.coluna_nome = coluna_nome or next(iter(self.titulos), "")
+        self._valor, self.ao_mudar = valor, ao_mudar or (lambda: None)
+        self.ordem: list[str] = []                  # todas as linhas, na ordem (à vista ou escondidas pelo filtro)
+        self.ocultos: set[str] = set()
+        self.filtros: dict[str, set[str]] = {}
+        self._marcados: set[str] = set()            # linhas com ☑ (para trocar só as que mudaram)
+        self._janela_filtro = None
+        self.filtro_aberto = None                   # (texto, marcados, aplicar) da janela de filtro (testes)
+        self.lb_selecao = self.campo = None
+        tabela.configure(selectmode="extended")
+        tabela.heading(coluna_n, text=f"{self.CAIXA[False]} #", anchor="w", command=self.alternar_todos)
+        tabela.bind("<Button-1>", self._ao_clicar, add="+")
+        tabela.bind("<<TreeviewSelect>>", lambda e: self._atualizar(), add="+")
+        tabela.bind("<Control-a>", lambda e: (self.marcar_todos(), "break")[1])
+        tabela.bind("<Control-A>", lambda e: (self.marcar_todos(), "break")[1])
+        self._titulos()
+
+    # ---- as linhas
+    def preencher(self, linhas, marcar=()) -> None:
+        """linhas: [(iid, valores SEM a coluna "#", tags)]. A coluna "#" ganha ☐ e o número (1, 2, 3...). Os
+        filtros continuam valendo; marcar: os iids que já vêm marcados."""
+        t = self.tabela
+        velhas = set(t.get_children()) | {i for i in self.ordem if t.exists(i)}    # + as escondidas pelo filtro
+        if velhas:
+            t.delete(*velhas)
+        self.ordem, self.ocultos, self._marcados = [], set(), set()
+        posicao = list(t["columns"]).index(self.coluna_n)
+        for numero, (iid, valores, tags) in enumerate(linhas, 1):
+            valores = list(valores)
+            valores.insert(posicao, f"{self.CAIXA[False]} {numero}")
+            t.insert("", "end", iid=iid, values=valores, tags=tuple(tags or ()))
+            self.ordem.append(iid)
+        self.aplicar_filtro()
+        self.marcar([i for i in marcar if i in self.ordem], somar=False)
+
+    def numero(self, iid: str) -> int:
+        try:
+            return int(str(self.tabela.set(iid, self.coluna_n)).split()[-1])
+        except (ValueError, IndexError):
+            return -1
+
+    def visiveis(self) -> list[str]:
+        return [i for i in self.ordem if i not in self.ocultos]
+
+    def marcados(self) -> list[str]:
+        """Os marcados à vista, na ordem da lista."""
+        selecao = set(self.tabela.selection())
+        return [i for i in self.ordem if i in selecao and i not in self.ocultos]
+
+    def em_foco(self) -> str | None:
+        """A linha clicada por último, se marcada; senão, a 1ª marcada (para "Abrir", "Testar o marcado"...)."""
+        marcados = self.marcados()
+        foco = self.tabela.focus()
+        return foco if foco in marcados else (marcados[0] if marcados else None)
+
+    # ---- marcar
+    def marcar(self, iids, somar: bool = True) -> None:
+        iids = [i for i in iids if i in self.ordem and i not in self.ocultos]
+        if somar:
+            if iids:
+                self.tabela.selection_add(iids)
+        else:
+            self.tabela.selection_set(iids)
+        self._atualizar()
+
+    def marcar_todos(self) -> None:
+        self.marcar(self.visiveis(), somar=False)
+
+    def desmarcar_todos(self) -> None:
+        self.marcar([], somar=False)
+
+    def inverter(self) -> None:
+        selecao = set(self.tabela.selection())
+        self.marcar([i for i in self.visiveis() if i not in selecao], somar=False)
+
+    def alternar_todos(self) -> None:
+        """Clique no título "☐ #": marca todos à vista; se já estão todos marcados, desmarca."""
+        visiveis = self.visiveis()
+        if visiveis and len(self.marcados()) == len(visiveis):
+            self.desmarcar_todos()
+        else:
+            self.marcar_todos()
+
+    def marcar_por_texto(self, texto: str | None = None) -> int:
+        """Marca (somando ao que já está) pelos números da coluna # ("1-5, 8") ou por parte do nome. Devolve
+        quantas linhas foram marcadas."""
+        texto = (self.campo.get() if texto is None and self.campo is not None else texto or "").strip()
+        if not texto:
+            return 0
+        numeros = numeros_do_texto(texto)
+        if numeros is not None:
+            escolhidas = [i for i in self.visiveis() if self.numero(i) in numeros]
+        else:
+            procura = _sem_acentos(texto)
+            escolhidas = [i for i in self.visiveis()
+                          if procura in _sem_acentos(str(self.tabela.set(i, self.coluna_nome)))]
+        if escolhidas:
+            self.marcar(escolhidas)
+            self.tabela.see(escolhidas[0])
+            if self.campo is not None and self.campo.get():
+                self.campo.delete(0, "end")
+                self.tabela.focus_set()                   # devolve o texto cinza de exemplo
+        elif self.lb_selecao is not None:
+            self.lb_selecao.configure(text=f"Nada com \"{texto}\"", text_color=Tema.AVISO)
+        return len(escolhidas)
+
+    def _ao_clicar(self, evento):
+        if evento.state & 0x0005:                         # Shift (0x1) ou Ctrl (0x4): comportamento normal
+            return None
+        if self.tabela.identify_region(evento.x, evento.y) not in ("cell", "tree"):
+            return None                                   # título da coluna, borda: deixa o Treeview cuidar
+        iid = self.tabela.identify_row(evento.y)
+        if not iid:
+            return None
+        if iid in self.tabela.selection():
+            self.tabela.selection_remove(iid)
+        else:
+            self.tabela.selection_add(iid)
+        self.tabela.focus(iid)
+        self.tabela.focus_set()
+        return "break"
+
+    def _atualizar(self) -> None:
+        t = self.tabela
+        selecao = {i for i in t.selection() if i not in self.ocultos}
+        for iid in selecao ^ self._marcados:              # troca ☐/☑ só nas linhas que mudaram (listas grandes)
+            if t.exists(iid):
+                t.set(iid, self.coluna_n, f"{self.CAIXA[iid in selecao]} {self.numero(iid)}")
+        self._marcados = selecao
+        visiveis = self.visiveis()
+        t.heading(self.coluna_n, text=f"{self.CAIXA[bool(visiveis) and len(selecao) == len(visiveis)]} #")
+        if self.lb_selecao is not None:
+            escondidos = f" · {len(self.ocultos)} escondido(s) pelo filtro" if self.ocultos else ""
+            self.lb_selecao.configure(text=f"{len(selecao)} de {len(visiveis)} marcado(s){escondidos}",
+                                      text_color=Tema.TEXTO if selecao else Tema.TEXTO_FRACO)
+        self.ao_mudar()
+
+    # ---- filtro por coluna
+    def valor(self, coluna: str, iid: str) -> str:
+        if self._valor is not None:
+            return self._valor(coluna, iid)
+        valor = str(self.tabela.set(iid, coluna)).strip()
+        return valor if valor and valor not in ("—", "-") else "(vazio)"
+
+    def valores(self, coluna: str) -> list[tuple[str, int]]:
+        contagem: dict[str, int] = {}
+        for iid in self.ordem:
+            valor = self.valor(coluna, iid)
+            contagem[valor] = contagem.get(valor, 0) + 1
+        return sorted(contagem.items(), key=lambda vq: _sem_acentos(vq[0]))
+
+    def filtrar(self, coluna: str, escolhidos) -> None:
+        """Liga o filtro direto (ex.: ao abrir "Testes feitos" pela aba Avulsos, só os dos Avulsos)."""
+        self.filtros[coluna] = set(escolhidos)
+        self.aplicar_filtro()
+
+    def aplicar_filtro(self, coluna: str | None = None, escolhidos=None) -> None:
+        """Mostra só as linhas com um dos valores escolhidos (todos ou nenhum = sem filtro nessa coluna)."""
+        if coluna is not None:
+            escolhidos = set(escolhidos or ())
+            if not escolhidos or escolhidos >= {v for v, _ in self.valores(coluna)}:
+                self.filtros.pop(coluna, None)
+            else:
+                self.filtros[coluna] = escolhidos
+        t = self.tabela
+        if self.ordem:
+            t.detach(*self.ordem)
+        self.ocultos = set()
+        for iid in self.ordem:
+            if all(self.valor(c, iid) in valores for c, valores in self.filtros.items()):
+                t.move(iid, "", "end")
+            else:
+                self.ocultos.add(iid)
+        escondidos = [i for i in t.selection() if i in self.ocultos]
+        if escondidos:                                  # escondido não fica marcado (nem é apagado/processado)
+            t.selection_remove(*escondidos)
+        self._titulos()
+        self._atualizar()
+
+    def abrir_filtro(self, coluna: str) -> None:
+        if self._janela_filtro is not None and self._janela_filtro.winfo_exists():
+            self._janela_filtro.destroy()
+        self._janela_filtro, self.filtro_aberto = janela_de_filtro(
+            self.tabela.winfo_toplevel(), self.app, self.titulos[coluna], self.valores(coluna),
+            self.filtros.get(coluna), lambda escolhidos: self.aplicar_filtro(coluna, escolhidos), botao="Mostrar")
+
+    def tirar_filtros(self) -> None:
+        self.filtros.clear()
+        self.aplicar_filtro()
+
+    def _titulos(self) -> None:
+        for coluna, texto in self.titulos.items():
+            marca = " ▼" if coluna in self.filtros else " ▾"
+            self.tabela.heading(coluna, text=texto + marca, anchor="w",
+                                command=lambda c=coluna: self.abrir_filtro(c))
+
+    # ---- a linha "Seleção:"
+    def montar_barra(self, pai, extras=(), campo: bool = True, contador: bool = True):
+        """A linha "Seleção: Todos · Nenhum · Inverter · (extras) · [Marcar: 1-5, 8 ou nome] · Tirar os filtros" e o
+        "2 de 5 marcado(s)". extras: [(texto, comando)] (ex.: "Só os que falta algo"). Devolve o quadro."""
+        barra = ctk.CTkFrame(pai, fg_color="transparent")
+        estilo = dict(height=26, corner_radius=6, fg_color="transparent", hover_color=Tema.SECUNDARIA_HOVER,
+                      text_color=Tema.PRIMARIA, font=ctk.CTkFont(Tema.FAMILIA, 12))
+        ctk.CTkLabel(barra, text="Seleção:", font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO_SUAVE
+                     ).pack(side="left", padx=(0, 2))
+        self.botoes_selecao = {}
+        for texto, comando in (("Todos", self.marcar_todos), ("Nenhum", self.desmarcar_todos),
+                               ("Inverter", self.inverter), *extras, ("Tirar os filtros", self.tirar_filtros)):
+            botao = ctk.CTkButton(barra, text=texto, command=comando, width=20, **estilo)
+            botao.pack(side="left", padx=(2, 0))
+            self.botoes_selecao[texto] = botao
+        if campo:
+            self.campo = ctk.CTkEntry(barra, width=150, height=26, placeholder_text="Marcar: 1-5, 8 ou nome",
+                                      fg_color=Tema.CAMPO, border_color=Tema.CAMPO_BORDA, text_color=Tema.TEXTO)
+            self.campo.bind("<Return>", lambda e: self.marcar_por_texto())
+            self.campo.pack(side="left", padx=(8, 0))
+            botao = ctk.CTkButton(barra, text="Marcar", command=self.marcar_por_texto, width=20, **estilo)
+            botao.pack(side="left", padx=(2, 0))
+            self.botoes_selecao["Marcar"] = botao
+        if contador:
+            self.lb_selecao = ctk.CTkLabel(barra, text="", font=ctk.CTkFont(Tema.FAMILIA, 12),
+                                           text_color=Tema.TEXTO_FRACO)
+            self.lb_selecao.pack(side="left", padx=(10, 0))
+        self._atualizar()
+        return barra
+
+
 def dividir_pastas(texto: str) -> list[str]:
     return [p.strip().strip('"') for p in _RE_SEPARA_PASTAS.split(texto or "") if p.strip().strip('"')]
 
@@ -1069,11 +1316,19 @@ class DialogoVozes(ctk.CTkToplevel):
 
 class DialogoRoteiro(ctk.CTkToplevel):
     """"Roteiro do vídeo": cola o link da página do roteiro ou escolhe o arquivo (.txt, .html, .pdf com texto).
-    `resultado`: o link, o caminho do arquivo ou None (Cancelar)."""
+    Com `videos` (aba Jellyfin): a lista dos filmes e episódios da biblioteca, com busca, para escolher o vídeo na
+    mesma janela (antes abria primeiro a janela do Windows pedindo o vídeo). videos: [(vídeo, onde, tem roteiro?)];
+    outro_video() -> caminhos (a janela do Windows, para um vídeo fora da lista).
+    `resultado`: o link, o caminho do arquivo ou None (Cancelar); `video`: o vídeo escolhido."""
+    TEXTO = ("Cole o link da página do roteiro (o nome de quem fala em MAIÚSCULAS e a fala embaixo) ou escolha o "
+             "arquivo. Ele fica ao lado do vídeo como 'roteiro.txt' e serve para a voz por personagem: quem fala cada "
+             "fala sai do roteiro, sem custo, e o Gemini só ouve o que faltar.")
 
-    def __init__(self, master, video: Path, ja_tem: Path | None = None):
+    def __init__(self, master, video: Path | None, ja_tem: Path | None = None, videos=None, outro_video=None):
         super().__init__(master, fg_color=Tema.CARTAO)
-        self.resultado = None
+        self.resultado, self.video, self.outro_video = None, video, outro_video
+        self.videos = [(Path(v), onde, bool(tem)) for v, onde, tem in (videos or [])]
+        self._visiveis: list[int] = []
         self.title("Roteiro do vídeo")
         self.resizable(False, False)
         self.transient(master)
@@ -1081,13 +1336,18 @@ class DialogoRoteiro(ctk.CTkToplevel):
         corpo.pack(fill="both", expand=True, padx=26, pady=(20, 6))
         ctk.CTkLabel(corpo, text="Roteiro do vídeo", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
                      text_color=Tema.TEXTO, anchor="w").pack(fill="x")
-        texto = (f"{video.name}\n\nCole o link da página do roteiro (o nome de quem fala em MAIÚSCULAS e a fala "
-                 "embaixo) ou escolha o arquivo. Ele fica ao lado do vídeo como 'roteiro.txt' e serve para a voz por "
-                 "personagem: quem fala cada fala sai do roteiro, sem custo, e o Gemini só ouve o que faltar.")
-        if ja_tem:
-            texto += f"\n\nEste vídeo já tem roteiro ({ja_tem.name}): o novo fica no lugar dele."
-        ctk.CTkLabel(corpo, text=texto, font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w",
-                     justify="left", wraplength=560).pack(fill="x", pady=(2, 10))
+        if videos is None:
+            texto = f"{video.name}\n\n{self.TEXTO}"
+            if ja_tem:
+                texto += f"\n\nEste vídeo já tem roteiro ({ja_tem.name}): o novo fica no lugar dele."
+            ctk.CTkLabel(corpo, text=texto, font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w",
+                         justify="left", wraplength=560).pack(fill="x", pady=(2, 10))
+        else:
+            self._montar_lista(master, corpo)
+            ctk.CTkLabel(corpo, text="2. O roteiro", font=master.f_secao, text_color=Tema.TEXTO,
+                         anchor="w").pack(fill="x", pady=(12, 0))
+            ctk.CTkLabel(corpo, text=self.TEXTO, font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w",
+                         justify="left", wraplength=560).pack(fill="x", pady=(2, 8))
         self.var_link = tk.StringVar()
         self.campo_link = master._entrada(corpo, self.var_link, "https://...", width=560)
         self.campo_link.pack(fill="x")
@@ -1099,7 +1359,9 @@ class DialogoRoteiro(ctk.CTkToplevel):
         self.bt_ok = master._botao(botoes, "Usar este link", self._ok, "primario")
         self.bt_ok.pack(side="right")
         self.bind("<Escape>", lambda e: self.destroy())
-        self.bind("<Return>", lambda e: self._ok())
+        self.campo_link.bind("<Return>", lambda e: self._ok())
+        if videos is None:
+            self.bind("<Return>", lambda e: self._ok())
         self.update_idletasks()
         x = master.winfo_rootx() + (master.winfo_width() - self.winfo_reqwidth()) // 2
         y = master.winfo_rooty() + (master.winfo_height() - self.winfo_reqheight()) // 3
@@ -1109,7 +1371,112 @@ class DialogoRoteiro(ctk.CTkToplevel):
         except tk.TclError:
             pass
 
+    # ---- a lista dos filmes e episódios (aba Jellyfin)
+    def _montar_lista(self, master, corpo) -> None:
+        ctk.CTkLabel(corpo, text="1. O filme ou episódio", font=master.f_secao, text_color=Tema.TEXTO,
+                     anchor="w").pack(fill="x", pady=(8, 4))
+        linha = ctk.CTkFrame(corpo, fg_color="transparent")
+        linha.pack(fill="x")
+        ctk.CTkLabel(linha, text="Procurar:", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE).pack(
+            side="left", padx=(0, 8))
+        self.var_busca = tk.StringVar()
+        self.campo_busca = master._entrada(linha, self.var_busca, "Digite parte do nome (ex.: duna, s01e03)",
+                                           altura=32)
+        self.campo_busca.pack(side="left", fill="x", expand=True)
+        self.bt_outro = master._botao(linha, "Outro vídeo...", self._outro, "fantasma", largura=120)
+        self.bt_outro.pack(side="left", padx=(8, 0))
+        quadro = ctk.CTkFrame(corpo, fg_color=Tema.CAMPO, corner_radius=8)
+        quadro.pack(fill="x", pady=(6, 0))
+        self.lista = tk.Listbox(quadro, activestyle="none", selectmode="browse", exportselection=False, height=8,
+                                width=70, borderwidth=0, highlightthickness=0, bg=Tema.CAMPO, fg=Tema.TEXTO,
+                                selectbackground=Tema.PRIMARIA, selectforeground="#ffffff", font=(Tema.FAMILIA, 11))
+        rolagem = ctk.CTkScrollbar(quadro, command=self.lista.yview, button_color=Tema.CARTAO_BORDA)
+        self.lista.configure(yscrollcommand=rolagem.set)
+        rolagem.pack(side="right", fill="y", pady=4)
+        self.lista.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=6)
+        self.lista.bind("<<ListboxSelect>>", lambda e: self._ao_escolher())
+        self.lb_video = ctk.CTkLabel(corpo, text="", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w",
+                                     justify="left", wraplength=560)
+        self.lb_video.pack(fill="x", pady=(4, 0))
+        espera = [None]
+
+        def ao_digitar(*_):                     # espera a pessoa parar de digitar (não refaz a cada letra)
+            if espera[0]:
+                self.after_cancel(espera[0])
+            espera[0] = self.after(150, self.mostrar)
+        self.var_busca.trace_add("write", ao_digitar)
+        self.mostrar()
+
+    @staticmethod
+    def _linha(video: Path, onde: str, tem: bool) -> str:
+        return f"{video.name}   ·   {onde}" + ("   ·   ✓ já tem roteiro" if tem else "")
+
+    def mostrar(self) -> None:
+        """A lista com o que contém o texto digitado (sem diferença de acento e maiúscula)."""
+        if not self.winfo_exists():                       # a busca atrasada chegou depois de fechar
+            return
+        procura = _sem_acentos(self.var_busca.get().strip())
+        self._visiveis = [i for i, (v, onde, _) in enumerate(self.videos)
+                          if procura in _sem_acentos(f"{v.name} {onde}")]
+        self.lista.delete(0, "end")
+        if self._visiveis:
+            self.lista.insert("end", *[self._linha(*self.videos[i]) for i in self._visiveis])
+        if self.video is not None and (atual := self._indice(self.video)) in self._visiveis:
+            posicao = self._visiveis.index(atual)
+            self.lista.selection_set(posicao)
+            self.lista.see(posicao)
+        elif len(self._visiveis) == 1:                   # a busca achou um só: já fica escolhido
+            self.lista.selection_set(0)
+            self._ao_escolher()
+        self._mostrar_escolhido()
+
+    def _indice(self, video: Path) -> int:
+        return next((i for i, (v, _, _) in enumerate(self.videos) if v == video), -1)
+
+    def _ao_escolher(self) -> None:
+        selecao = self.lista.curselection()
+        if selecao and selecao[0] < len(self._visiveis):
+            self.video = self.videos[self._visiveis[selecao[0]]][0]
+        self._mostrar_escolhido()
+
+    def _mostrar_escolhido(self) -> None:
+        if not self.videos and self.video is None:
+            texto, cor = ("Nenhum filme ou episódio nas bibliotecas (aba Jellyfin). Clique em \"Outro vídeo...\" "
+                          "para escolher em qualquer pasta."), Tema.AVISO
+        elif self.video is None:
+            texto = (f"{len(self._visiveis)} de {len(self.videos)} vídeo(s) na lista. Clique no filme ou episódio do "
+                     "roteiro." if self._visiveis else "Nada com esse nome: confira o texto ou use \"Outro vídeo...\".")
+            cor = Tema.TEXTO_SUAVE if self._visiveis else Tema.AVISO
+        else:
+            i = self._indice(self.video)
+            tem = self.videos[i][2] if i >= 0 else False
+            texto = f"Escolhido: {self.video.name}" + (" (já tem roteiro: o novo fica no lugar dele)" if tem else "")
+            cor = Tema.TEXTO
+        self.lb_video.configure(text=texto, text_color=cor)
+
+    def _outro(self) -> None:
+        """Um vídeo fora da lista (a janela do Windows): entra no topo da lista, já escolhido."""
+        escolhidos = self.outro_video() if self.outro_video else ()
+        if not escolhidos:
+            return
+        from jellyfin_tools.roteiro import caminho_roteiro
+        video = Path(escolhidos[0])
+        if self._indice(video) < 0:
+            self.videos.insert(0, (video, str(video.parent), caminho_roteiro(video) is not None))
+        self.video = video
+        self.var_busca.set("")
+        self.mostrar()
+
+    def _sem_video(self) -> bool:
+        if self.video is None:
+            self.lb_video.configure(text="Escolha primeiro o filme ou episódio na lista (ou \"Outro vídeo...\").",
+                                    text_color=Tema.AVISO)
+            return True
+        return False
+
     def _arquivo(self) -> None:
+        if self._sem_video():
+            return
         caminho = filedialog.askopenfilename(parent=self, title="Escolha o roteiro", filetypes=[
             ("Roteiro (*.txt *.html *.htm *.pdf)", "*.txt *.html *.htm *.pdf"), ("Todos", "*.*")])
         if caminho:
@@ -1117,6 +1484,8 @@ class DialogoRoteiro(ctk.CTkToplevel):
             self.destroy()
 
     def _ok(self) -> None:
+        if self._sem_video():
+            return
         if self.var_link.get().strip():
             self.resultado = self.var_link.get().strip()
             self.destroy()
@@ -1331,8 +1700,8 @@ class DialogoCanal(ctk.CTkToplevel):
         self.resultado = None
         self.title(titulo)
         self.resizable(False, False)
-        self.transient(master)
-        app = master.master if not hasattr(master, "_entrada") else master
+        self.transient(master.winfo_toplevel())
+        app = master if hasattr(master, "_entrada") else getattr(master, "app", None) or master.winfo_toplevel()
         corpo = ctk.CTkFrame(self, fg_color="transparent")
         corpo.pack(fill="both", expand=True, padx=24, pady=(18, 6))
         ctk.CTkLabel(corpo, text=titulo, font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"), text_color=Tema.TEXTO,
@@ -1378,8 +1747,8 @@ class DialogoTipos(ctk.CTkToplevel):
         self.resultado = None
         self.title("Tipos no Jellyfin")
         self.geometry("620x600")
-        self.transient(master)
-        app = master.master if not hasattr(master, "_entrada") else master
+        self.transient(master.winfo_toplevel())
+        app = master if hasattr(master, "_entrada") else getattr(master, "app", None) or master.winfo_toplevel()
         ctk.CTkLabel(self, text="Tipo de cada Grupo no Jellyfin", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
                      text_color=Tema.TEXTO, anchor="w").pack(fill="x", padx=24, pady=(18, 4))
         ctk.CTkLabel(self, text="O Jellyfin e os aplicativos (Moonfin, TV, celular) só conhecem 5 tipos: Filmes, Séries, "
@@ -1431,8 +1800,9 @@ class DialogoTipos(ctk.CTkToplevel):
         self.destroy()
 
 
-class JanelaCanais(ctk.CTkToplevel):
-    """TV ao vivo no Jellyfin: a lista de canais (.m3u), o guia (XMLTV) e a antena (HDHomeRun).
+class PainelCanais(ctk.CTkFrame):
+    """Aba "Jellyfin TV": a lista de canais (.m3u), o guia (XMLTV), a antena (HDHomeRun) e o servidor do Jellyfin
+    (endereço e chave: as MESMAS de Configurações > Jellyfin), tudo num lugar só (antes, a janela "TV ao vivo...").
     acoes: {'adicionar', 'importar_arquivo', 'importar_endereco', 'remover', 'remover_todos', 'conferir',
             'publicar', 'editar' (iid), 'editar_selecionados', 'numerar', 'desfazer'}."""
 
@@ -1440,17 +1810,12 @@ class JanelaCanais(ctk.CTkToplevel):
                ("programacao", "Programação", 175), ("agora", "Agora passando", 240), ("situacao", "Situação", 140),
                ("historico", "Últimas", 175), ("url", "Link", 220))
 
-    def __init__(self, master, acoes: dict):
-        super().__init__(master, fg_color=Tema.CARTAO)
-        self.title("TV ao vivo no Jellyfin")
-        self.geometry("1080x760")
-        self.minsize(820, 560)
-        self.transient(master)
-        m = master
+    def __init__(self, pai, app, acoes: dict):
+        super().__init__(pai, fg_color=Tema.CARTAO, corner_radius=Tema.RAIO, border_width=1,
+                         border_color=Tema.CARTAO_BORDA)
+        self.app = m = app
         topo = ctk.CTkFrame(self, fg_color="transparent")
-        topo.pack(fill="x", padx=24, pady=(16, 4))
-        ctk.CTkLabel(topo, text="Canais ao vivo (TV ao vivo do Jellyfin)", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
-                     text_color=Tema.TEXTO, anchor="w").pack(fill="x")
+        topo.pack(fill="x", padx=24, pady=(14, 4))
         ctk.CTkLabel(topo, text="Use só fontes que você tem direito de assistir: o sinal aberto oficial (a transmissão "
                      "que o próprio canal publica), a lista da sua operadora ou uma antena com sintonizador de rede "
                      "(HDHomeRun). Listas \"piratas\" de canais pagos não.", font=m.f_rotulo,
@@ -1473,8 +1838,25 @@ class JanelaCanais(ctk.CTkToplevel):
                    "salva no PC.  Clique no TÍTULO de uma coluna para filtrar: digite e/ou marque um ou vários valores.  Conferir: só os "
                    "canais SELECIONADOS (sem seleção, todos).")
 
-        quadro = ctk.CTkFrame(self, fg_color=Tema.CARTAO)
-        quadro.pack(fill="both", expand=True, padx=24, pady=6)
+        # A lista (à esquerda, com a altura toda) e as configurações da TV (à direita, com rolagem): antes, numa
+        # janela, os campos ficavam embaixo e, numa tela de notebook, a lista sumia.
+        rodape = ctk.CTkFrame(self, fg_color="transparent")
+        rodape.pack(side="bottom", fill="x", padx=24, pady=(4, 14))
+        meio = ctk.CTkFrame(self, fg_color="transparent")
+        meio.pack(fill="both", expand=True, padx=24, pady=(4, 0))
+        meio.grid_columnconfigure(0, weight=1)
+        meio.grid_rowconfigure(0, weight=1)
+        esquerda = ctk.CTkFrame(meio, fg_color="transparent")
+        esquerda.grid(row=0, column=0, sticky="nsew")
+        lateral = ctk.CTkScrollableFrame(meio, fg_color=Tema.CAMPO, corner_radius=Tema.RAIO_CONTROLE, width=320)
+        lateral.grid(row=0, column=1, sticky="ns", padx=(14, 0))
+        self.lateral = lateral
+
+        # Linha 1: o resumo e as formas de SELECIONAR. Linha 2: o que fazer com os selecionados.
+        faixa = ctk.CTkFrame(esquerda, fg_color="transparent")
+        faixa.pack(side="bottom", fill="x")
+        quadro = ctk.CTkFrame(esquerda, fg_color=Tema.CARTAO)
+        quadro.pack(fill="both", expand=True, pady=(2, 6))
         quadro.grid_columnconfigure(0, weight=1)
         quadro.grid_rowconfigure(0, weight=1)
         self.tabela = ttk.Treeview(quadro, columns=[c[0] for c in self.COLUNAS], show="tree headings",
@@ -1499,9 +1881,6 @@ class JanelaCanais(ctk.CTkToplevel):
         self.tabela.configure(yscrollcommand=rolagem.set, xscrollcommand=rolagem_lado.set)
         self.tabela.bind("<Delete>", lambda e: acoes["remover"]())
 
-        # Linha 1: o resumo e as formas de SELECIONAR. Linha 2: o que fazer com os selecionados.
-        faixa = ctk.CTkFrame(self, fg_color="transparent")
-        faixa.pack(fill="x", padx=24)
         selecao = ctk.CTkFrame(faixa, fg_color="transparent")
         selecao.pack(fill="x")
         self.lb_resumo = ctk.CTkLabel(selecao, text="", font=m.f_rotulo, text_color=Tema.TEXTO_SUAVE)
@@ -1518,21 +1897,10 @@ class JanelaCanais(ctk.CTkToplevel):
         self.bt_selecionar_duplicados = ctk.CTkButton(selecao, text="os repetidos",
                                                       command=self.selecionar_duplicados, **estilo)
         self.bt_tirar_filtros = ctk.CTkButton(selecao, text="Tirar os filtros", command=self.limpar_filtros, **estilo)
-        self.bt_diagnostico = ctk.CTkButton(selecao, text="Diagnóstico do Jellyfin",
-                                            command=acoes.get("diagnostico", lambda: None), **estilo)
-        # a programação de verdade (o que passa ao longo do dia), pelo coletor iptv-org/epg no Docker
-        self.bt_programacao = ctk.CTkButton(selecao, text="Programação dos canais...",
-                                            command=acoes.get("programacao", lambda: None), **estilo)
-        # o coletor está funcionando? quais canais já têm a grade? (preenche a coluna Programação)
-        self.bt_conferir_programacao = ctk.CTkButton(selecao, text="Conferir programação",
-                                                     command=acoes.get("conferir_programacao", lambda: None), **estilo)
         for botao in (self.bt_selecionar_todos, self.bt_selecionar_fora, self.bt_selecionar_mortos,
                       self.bt_selecionar_duplicados):
             botao.pack(side="left")
         self.bt_tirar_filtros.pack(side="right")
-        self.bt_diagnostico.pack(side="right", padx=(0, 8))
-        self.bt_programacao.pack(side="right", padx=(0, 8))
-        self.bt_conferir_programacao.pack(side="right", padx=(0, 8))
 
         acoes_linha = ctk.CTkFrame(faixa, fg_color="transparent")
         acoes_linha.pack(fill="x", pady=(4, 0))
@@ -1548,17 +1916,8 @@ class JanelaCanais(ctk.CTkToplevel):
         self.bt_desfazer = m._botao(acoes_linha, "Desfazer remoção", acoes["desfazer"], "secundario")
         self.bt_desfazer.pack(side="left", padx=(6, 0))
         self.bt_conferir = m._botao(acoes_linha, "Conferir todos", acoes["conferir"], "secundario")
-        self.bt_conferir.configure(width=170)
+        self.bt_conferir.configure(width=160)
         self.bt_conferir.pack(side="right")
-        # Leve = 8 consultas ao mesmo tempo, Normal = 16, Rápida = 32 (pode lotar o roteador/Wi-Fi de casa)
-        self.var_velocidade = tk.StringVar(value="Normal")
-        self.menu_velocidade = ctk.CTkOptionMenu(acoes_linha, values=["Leve", "Normal", "Rápida"], width=96,
-                                                 height=32, variable=self.var_velocidade, fg_color=Tema.CAMPO,
-                                                 button_color=Tema.CAMPO_BORDA, button_hover_color=Tema.SECUNDARIA_HOVER,
-                                                 text_color=Tema.TEXTO, font=m.f_rotulo, dropdown_font=m.f_rotulo)
-        self.menu_velocidade.pack(side="right", padx=(0, 6))
-        ctk.CTkLabel(acoes_linha, text="Velocidade:", font=m.f_rotulo, text_color=Tema.TEXTO_FRACO).pack(
-            side="right", padx=(12, 4))
         self.tabela.bind("<<TreeviewSelect>>", lambda e: self._texto_conferir())
         self.bt_remover_todos = m._botao(acoes_linha, "Remover todos", acoes["remover_todos"], "perigo")
         self.bt_remover_todos.pack(side="right", padx=(0, 6))
@@ -1569,53 +1928,85 @@ class JanelaCanais(ctk.CTkToplevel):
         self.tabela.bind("<Double-1>", lambda e: self._ao_duplo_clique(e, acoes["editar"]))
         self.tabela.bind("<F2>", lambda e: acoes.get("editar_selecionados", lambda: None)())
 
-        campos = ctk.CTkFrame(self, fg_color="transparent")
-        campos.pack(fill="x", padx=24, pady=(10, 0))
-        campos.grid_columnconfigure((1, 3), weight=1)
+        # ---- as configurações da TV (o que antes ficava embaixo da janela "TV ao vivo...")
+        pequena = ctk.CTkFont(Tema.FAMILIA, 11)
+
+        def titulo(texto: str, primeiro: bool = False) -> None:
+            ctk.CTkLabel(lateral, text=texto, font=ctk.CTkFont(Tema.FAMILIA, 13, "bold"), text_color=Tema.TEXTO,
+                         anchor="w").pack(fill="x", padx=10, pady=(6 if primeiro else 14, 2))
+
+        def campo(rotulo: str, var, dica: str, explicacao: str = "", **extra):
+            m._rotulo(lateral, rotulo).pack(fill="x", padx=10, pady=(6, 0))
+            entrada = m._entrada(lateral, var, dica, altura=32, **extra)
+            entrada.pack(fill="x", padx=10, pady=(2, 0))
+            if explicacao:
+                ctk.CTkLabel(lateral, text=explicacao, font=pequena, text_color=Tema.TEXTO_FRACO, anchor="w",
+                             justify="left", wraplength=290).pack(fill="x", padx=10)
+            return entrada
+
+        titulo("Servidor do Jellyfin", primeiro=True)
+        # as MESMAS opções de Configurações > Jellyfin (mudar aqui muda lá)
+        self.campo_url_jellyfin = campo("Endereço do Jellyfin:", m.var_jf_url, "ex.: http://192.168.0.10:8096")
+        self.campo_chave_jellyfin = campo("Chave da API do Jellyfin:", m.var_jf_chave_jellyfin,
+                                          "Painel do Jellyfin > Chaves de API",
+                                          "Os mesmos de Configurações > Jellyfin (mudar aqui muda lá). O Jellyfin "
+                                          "recebe a lista, o guia e a antena por eles.", show="•")
+        self.bt_diagnostico = ctk.CTkButton(lateral, text="Diagnóstico do Jellyfin",
+                                            command=acoes.get("diagnostico", lambda: None), **estilo)
+        self.bt_diagnostico.pack(anchor="w", padx=4, pady=(4, 0))
+        titulo("A lista de canais")
         self.var_guia, self.var_antena = tk.StringVar(), tk.StringVar()
         self.var_pasta, self.var_no_servidor = tk.StringVar(), tk.StringVar()
-        for n, (rotulo, var, dica, explicacao) in enumerate((
-                ("Guia de programação (XMLTV, opcional; vários: separe com ;):", self.var_guia,
-                 "link ou arquivo .xml/.xml.gz",
-                 "A grade de horários. Com ou sem ele, o Maestro também gera um guia de CATEGORIAS pelo Grupo (Filmes, "
-                 "Esportes, Notícias, Infantil, Séries), usado nos canais que os guias de verdade não têm."),
-                ("Antena HDHomeRun (IP, opcional):", self.var_antena, "ex.: 192.168.0.50",
-                 "Só se você tem um sintonizador de antena na rede: a TV aberta digital entra no Jellyfin."),
-                ("Salvar a lista (canais.m3u) em:", self.var_pasta, "uma pasta que o servidor do Jellyfin enxergue",
-                 "Onde o programa grava o canais.m3u. O SERVIDOR do Jellyfin precisa conseguir abrir essa pasta."),
-                ("Como o servidor enxerga o arquivo:", self.var_no_servidor, "só se for outro PC, ex.: E:\\TV\\canais.m3u",
-                 "Vazio se o Jellyfin roda NESTE PC. Se roda em outro, o caminho como ELE vê: salvou em "
-                 "\\\\Depetriz\\e\\TV aqui = E:\\TV\\canais.m3u lá."))):
-            linha, coluna = divmod(n, 2)
-            margem = (0 if coluna == 0 else 12, 0)
-            m._rotulo(campos, rotulo).grid(row=linha * 3, column=coluna * 2, columnspan=2, sticky="w", padx=margem)
-            m._entrada(campos, var, dica, altura=32).grid(row=linha * 3 + 1, column=coluna * 2, columnspan=2,
-                                                         sticky="ew", padx=margem, pady=(2, 0))
-            ctk.CTkLabel(campos, text=explicacao, font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_FRACO,
-                         anchor="w", justify="left", wraplength=500).grid(row=linha * 3 + 2, column=coluna * 2,
-                                                                          columnspan=2, sticky="w", padx=margem,
-                                                                          pady=(0, 6))
-        rodape = ctk.CTkFrame(self, fg_color="transparent")
-        rodape.pack(fill="x", padx=24, pady=(4, 16))
+        campo("Salvar a lista (canais.m3u) em:", self.var_pasta, "uma pasta que o servidor do Jellyfin enxergue",
+              "Onde o programa grava o canais.m3u. O SERVIDOR do Jellyfin precisa conseguir abrir essa pasta.")
+        campo("Como o servidor enxerga o arquivo:", self.var_no_servidor, "só se for outro PC, ex.: E:\\TV\\canais.m3u",
+              "Vazio se o Jellyfin roda NESTE PC. Se roda em outro, o caminho como ELE vê: salvou em "
+              "\\\\Depetriz\\e\\TV aqui = E:\\TV\\canais.m3u lá.")
+        campo("Antena HDHomeRun (IP, opcional):", self.var_antena, "ex.: 192.168.0.50",
+              "Só se você tem um sintonizador de antena na rede: a TV aberta digital entra no Jellyfin.")
+        titulo("Programação (guia)")
+        campo("Guia de programação (XMLTV, opcional; vários: separe com ;):", self.var_guia,
+              "link ou arquivo .xml/.xml.gz",
+              "A grade de horários. Com ou sem ele, o Maestro também gera um guia de CATEGORIAS pelo Grupo (Filmes, "
+              "Esportes, Notícias, Infantil, Séries), usado nos canais que os guias de verdade não têm.")
+        # a programação de verdade (o que passa ao longo do dia), pelo coletor iptv-org/epg no Docker
+        self.bt_programacao = ctk.CTkButton(lateral, text="Programação dos canais...",
+                                            command=acoes.get("programacao", lambda: None), **estilo)
+        self.bt_programacao.pack(anchor="w", padx=4, pady=(4, 0))
+        # o coletor está funcionando? quais canais já têm a grade? (preenche a coluna Programação)
+        self.bt_conferir_programacao = ctk.CTkButton(lateral, text="Conferir programação",
+                                                     command=acoes.get("conferir_programacao", lambda: None), **estilo)
+        self.bt_conferir_programacao.pack(anchor="w", padx=4)
+        titulo("Conferir os canais")
+        linha_velocidade = ctk.CTkFrame(lateral, fg_color="transparent")
+        linha_velocidade.pack(fill="x", padx=10, pady=(4, 0))
+        ctk.CTkLabel(linha_velocidade, text="Velocidade:", font=m.f_rotulo, text_color=Tema.TEXTO_SUAVE).pack(
+            side="left", padx=(0, 6))
+        # Leve = 8 consultas ao mesmo tempo, Normal = 16, Rápida = 32 (pode lotar o roteador/Wi-Fi de casa)
+        self.var_velocidade = tk.StringVar(value="Normal")
+        self.menu_velocidade = ctk.CTkOptionMenu(linha_velocidade, values=["Leve", "Normal", "Rápida"], width=110,
+                                                 height=30, variable=self.var_velocidade, fg_color=Tema.CARTAO,
+                                                 button_color=Tema.CAMPO_BORDA, button_hover_color=Tema.SECUNDARIA_HOVER,
+                                                 text_color=Tema.TEXTO, font=m.f_rotulo, dropdown_font=m.f_rotulo)
+        self.menu_velocidade.pack(side="left")
+        ctk.CTkLabel(lateral, text="Leve: 8 canais ao mesmo tempo · Normal: 16 · Rápida: 32 (pode lotar o Wi-Fi de "
+                     "casa).", font=pequena, text_color=Tema.TEXTO_FRACO, anchor="w", justify="left",
+                     wraplength=290).pack(fill="x", padx=10)
         # 1x por semana, em segundo plano e devagar ("Leve"): avisa os canais que falham em todas as conferências
         self.var_semanal = tk.BooleanVar(value=False)
         self.check_semanal = ctk.CTkCheckBox(
-            rodape, text="Conferir sozinho toda semana\n(avisa os que sempre falham)", variable=self.var_semanal,
+            lateral, text="Conferir sozinho toda semana\n(avisa os que sempre falham)", variable=self.var_semanal,
             command=acoes.get("semanal", lambda: None), font=m.f_rotulo, text_color=Tema.TEXTO_SUAVE,
             fg_color=Tema.PRIMARIA, hover_color=Tema.PRIMARIA_HOVER, border_color=Tema.CAMPO_BORDA, checkbox_width=18,
             checkbox_height=18, corner_radius=4, border_width=2)
-        self.check_semanal.pack(side="left", padx=(0, 14))
-        ctk.CTkLabel(rodape, text="O Jellyfin recebe a lista, o guia e a antena pela API (endereço e chave da aba "
-                     "Jellyfin) e os canais aparecem em TV ao vivo.", font=m.f_rotulo, text_color=Tema.TEXTO_FRACO,
-                     anchor="w", justify="left", wraplength=300).pack(side="left")
-        m._botao(rodape, "Fechar", self.destroy, "fantasma", largura=90).pack(side="right")
-        m._botao(rodape, "Salvar e enviar ao Jellyfin", acoes["publicar"], "primario").pack(side="right", padx=(0, 8))
+        self.check_semanal.pack(anchor="w", padx=10, pady=(10, 8))
+
+        m._botao(rodape, "Salvar e enviar ao Jellyfin", acoes["publicar"], "primario").pack(side="right")
         self.bt_exportar = m._botao(rodape, "Exportar (JSON, CSV ou TXT)...", self.ao_exportar, "secundario")
         self.bt_exportar.pack(side="right", padx=(0, 8))
-        # Os botões e os campos ficam presos embaixo; a lista de canais é que encolhe numa tela pequena
-        for parte in (rodape, campos, faixa):
-            parte.pack_configure(side="bottom", before=quadro)
-        self.bind("<Escape>", lambda e: self.destroy())
+        ctk.CTkLabel(rodape, text="As configurações à direita ficam guardadas; o Jellyfin só recebe a lista, o guia e a "
+                     "antena ao clicar em \"Salvar e enviar ao Jellyfin\".", font=pequena, text_color=Tema.TEXTO_FRACO,
+                     anchor="w", justify="left", wraplength=560).pack(side="left")
 
     TITULOS = {"#0": "Canal", "numero": "Nº", "grupo": "Grupo", "idioma": "Idioma", "programacao": "Programação",
                "agora": "Agora passando", "situacao": "Situação", "historico": "Últimas", "url": "Link"}
@@ -1704,7 +2095,7 @@ class JanelaCanais(ctk.CTkToplevel):
         if self._janela_filtro is not None and self._janela_filtro.winfo_exists():
             self._janela_filtro.destroy()
         self._janela_filtro, self._filtro_aberto = janela_de_filtro(
-            self, self.master, self.TITULOS[coluna], self.valores_da_coluna(coluna), self._filtros.get(coluna),
+            self.winfo_toplevel(), self.app, self.TITULOS[coluna], self.valores_da_coluna(coluna), self._filtros.get(coluna),
             lambda escolhidos: self.aplicar_filtro(coluna, escolhidos))
 
     def exportar(self, caminho) -> int:
@@ -1728,10 +2119,10 @@ class JanelaCanais(ctk.CTkToplevel):
         try:
             quantos = self.exportar(caminho)
         except (OSError, ValueError) as erro:
-            self.master.mostrar_mensagem("Exportar", f"Não deu para salvar: {erro}", "erro")
+            self.app.mostrar_mensagem("Exportar", f"Não deu para salvar: {erro}", "erro")
             return
         extra = " (só os do filtro)" if self._filtros else ""
-        self.master.mostrar_mensagem("Exportar", f"{quantos} canal(is){extra} salvos em:\n{caminho}", "info")
+        self.app.mostrar_mensagem("Exportar", f"{quantos} canal(is){extra} salvos em:\n{caminho}", "info")
 
     def selecionados(self) -> list[str]:
         return list(self.tabela.selection())
@@ -1760,7 +2151,7 @@ class JanelaCanais(ctk.CTkToplevel):
         if iids:
             self.tabela.see(iids[0])
         else:
-            self.master.mostrar_mensagem("TV ao vivo", vazio, "info")
+            self.app.mostrar_mensagem("TV ao vivo", vazio, "info")
         self._texto_conferir()
         return len(iids)
 
@@ -1877,45 +2268,63 @@ class JanelaPrevias(ctk.CTkToplevel):
 
 
 class JanelaTestes(ctk.CTkToplevel):
-    """"Testes feitos": os vídeos de teste (alguns minutos dublados/legendados) para abrir de novo. Se o player der
-    problema, "Abrir a pasta" mostra o arquivo para abrir com outro. itens(): [{video, amostra, trecho, feito, custo}];
-    abrir/pasta(item); apagar(item) -> True se apagou; ajustar(item): "Ajustar falas" (refazer só uma fala)."""
+    """"Testes feitos" das abas Jellyfin, Avulsos e Áudio: os vídeos de teste (alguns minutos dublados/legendados)
+    para abrir de novo. Cada teste fica guardado até você apagar (vários do mesmo vídeo também). Abre mostrando os da
+    aba de onde veio (o título "Aba ▼" filtra; "Tirar os filtros" mostra todos). Marque (☐/☑) um ou vários para
+    apagar; "Apagar todos" apaga os da lista à vista. Se o player der problema, "Abrir a pasta" mostra o arquivo.
+    itens(): [{video, amostra, trecho, feito, custo, aba}]; abrir/pasta(item); apagar(itens, todos) -> True se
+    apagou; ajustar(item): "Ajustar falas" (refazer só uma fala); tamanho(itens) -> bytes (opcional)."""
+    ABAS = {"jellyfin": "Jellyfin", "avulsos": "Avulsos", "audio": "Áudio"}
+    COLUNAS = (("n", "#", 64, False), ("aba", "Aba", 96, False), ("video", "Vídeo", 330, True),
+               ("trecho", "Trecho", 120, False), ("custo", "Custou", 100, False), ("feito", "Feito em", 150, False))
+    FILTROS = {"aba": "Aba", "video": "Vídeo", "custo": "Custou", "feito": "Feito em"}
 
-    def __init__(self, master, itens, abrir, pasta, apagar, ajustar=None):
+    def __init__(self, master, itens, abrir, pasta, apagar, ajustar=None, aba: str | None = None, tamanho=None):
         super().__init__(master, fg_color=Tema.CARTAO)
         self.itens_de, self.abrir, self.pasta, self.apagar, self.ajustar = itens, abrir, pasta, apagar, ajustar
+        self.tamanho = tamanho
+        self._itens: list[dict] = []
         self._dinheiro = getattr(master, "_dinheiro", lambda d: f"US$ {d:.2f}")
         self.title("Testes feitos")
-        self.geometry("860x400")
-        self.minsize(640, 300)
+        self.geometry("980x500")
+        self.minsize(720, 360)
         self.transient(master)
         ctk.CTkLabel(self, text="Testes feitos", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
                      text_color=Tema.TEXTO, anchor="w").pack(fill="x", padx=24, pady=(18, 2))
-        ctk.CTkLabel(self, text="Os vídeos curtos dos botões \"🧪 Testar\" ficam guardados aqui. O player não abriu? Use "
-                     "\"Abrir a pasta\" e abra o arquivo com outro (ex.: VLC), ou troque o programa em Configurações > "
-                     "Dublagem.", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left",
-                     wraplength=800).pack(fill="x", padx=24, pady=(0, 10))
+        ctk.CTkLabel(self, text="Os vídeos curtos dos botões \"🧪 Testar\" (Jellyfin, Avulsos e Áudio) ficam guardados "
+                     "aqui até você apagar, mesmo vários do mesmo vídeo. Marque um ou vários (☐) para apagar. O player "
+                     "não abriu? Use \"Abrir a pasta\" e abra o arquivo com outro (ex.: VLC).",
+                     font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left",
+                     wraplength=920).pack(fill="x", padx=24, pady=(0, 6))
         quadro = ctk.CTkFrame(self, fg_color=Tema.CARTAO)
-        quadro.pack(fill="both", expand=True, padx=24)
-        self.tabela = ttk.Treeview(quadro, columns=("video", "trecho", "custo", "feito"), show="headings",
-                                   selectmode="browse", style="Moderno.Treeview", height=6)
-        for chave, texto, largura, estica in (("video", "Vídeo", 380, True), ("trecho", "Trecho", 130, False),
-                                              ("custo", "Custou", 110, False), ("feito", "Feito em", 140, False)):
+        self.tabela = ttk.Treeview(quadro, columns=[c[0] for c in self.COLUNAS], show="headings",
+                                   selectmode="extended", style="Moderno.Treeview", height=7)
+        for chave, texto, largura, estica in self.COLUNAS:
             self.tabela.heading(chave, text=texto, anchor="w")
             self.tabela.column(chave, width=largura, stretch=estica, anchor="w")
         self.tabela.pack(fill="both", expand=True)
-        self.tabela.bind("<Double-1>", lambda e: self._abrir())
+        self.tabela.bind("<Double-1>", self._abrir_clicado)
         botoes = ctk.CTkFrame(self, fg_color="transparent")
-        botoes.pack(fill="x", padx=24, pady=14)
-        self.bt_abrir = master._botao(botoes, "▶  Abrir", self._abrir, "primario", largura=120)
-        self.bt_pasta = master._botao(botoes, "📂  Abrir a pasta", self._pasta, largura=160)
-        self.bt_apagar = master._botao(botoes, "✕  Apagar", self._apagar, "perigo", largura=120)
-        self.bt_ajustar = master._botao(botoes, "✏  Ajustar falas", self._ajustar, largura=150)
-        for b in (self.bt_abrir, self.bt_ajustar, self.bt_pasta, self.bt_apagar):
-            b.pack(side="left", padx=(0, 10))
+        self.bt_abrir = master._botao(botoes, "▶  Abrir", self._abrir, "primario", largura=110)
+        self.bt_ajustar = master._botao(botoes, "✏  Ajustar falas", self._ajustar, largura=140)
+        self.bt_pasta = master._botao(botoes, "📂  Abrir a pasta", self._pasta, largura=150)
+        self.bt_apagar = master._botao(botoes, "✕  Apagar marcados", self._apagar, "perigo", largura=170)
+        self.bt_apagar_todos = master._botao(botoes, "🗑  Apagar todos", self._apagar_todos, "perigo", largura=150)
+        for b in (self.bt_abrir, self.bt_ajustar, self.bt_pasta, self.bt_apagar, self.bt_apagar_todos):
+            b.pack(side="left", padx=(0, 8))
         if ajustar is None:
             self.bt_ajustar.pack_forget()
-        master._botao(botoes, "Fechar", self.destroy, "fantasma", largura=90).pack(side="right")
+        master._botao(botoes, "Fechar", self.destroy, "fantasma", largura=80).pack(side="right")
+        self.seletor = SeletorDeTabela(self.tabela, master, self.FILTROS, valor=self._valor, ao_mudar=self._ao_mudar,
+                                       coluna_nome="video")
+        self.barra = self.seletor.montar_barra(self)
+        self.barra.pack(fill="x", padx=24, pady=(0, 4))
+        self.lb_filtro = ctk.CTkLabel(self, text="", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w")
+        self.lb_filtro.pack(fill="x", padx=24, pady=(0, 4))
+        botoes.pack(side="bottom", fill="x", padx=24, pady=14)      # antes da lista: os botões nunca somem
+        quadro.pack(fill="both", expand=True, padx=24)
+        if aba in self.ABAS:                              # aberta pela aba Avulsos: só os testes dos Avulsos
+            self.seletor.filtros["aba"] = {self.ABAS[aba]}
         self.recarregar()
 
     @staticmethod
@@ -1923,24 +2332,78 @@ class JanelaTestes(ctk.CTkToplevel):
         s = int(segundos)
         return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
 
+    @staticmethod
+    def _quando(feito: str) -> str:
+        """'2026-10-13T14:54:10' -> '13/10/2026 14:54'."""
+        data, _, hora = str(feito or "").partition("T")
+        partes = data.split("-")
+        return (f"{partes[2]}/{partes[1]}/{partes[0]} {hora[:5]}".strip() if len(partes) == 3 else str(feito or ""))
+
+    def _valor(self, coluna: str, iid: str) -> str:
+        """O valor do filtro: a data sem a hora (filtrar por dia) e "(sem custo)" no lugar do "-"."""
+        valor = str(self.tabela.set(iid, coluna)).strip()
+        if coluna == "feito":
+            return valor.split(" ")[0] or "(vazio)"
+        if coluna == "custo" and valor in ("", "-"):
+            return "(sem custo)"
+        return valor or "(vazio)"
+
     def recarregar(self) -> None:
+        """Lê a lista de novo; os filtros e as marcações continuam (o mais novo à vista vem marcado na 1ª vez)."""
+        antes = {self._itens[int(i)]["amostra"] for i in self.seletor.marcados()} if self._itens else None
         self._itens = list(self.itens_de())
-        self.tabela.delete(*self.tabela.get_children())
+        linhas = []
         for i, item in enumerate(self._itens):
             inicio, fim = (item.get("trecho") or [0, 0])[:2]
             custo = item.get("custo")
-            self.tabela.insert("", "end", iid=str(i), values=(
-                Path(item["video"]).name, f"{self._minuto(inicio)} a {self._minuto(fim)}",
+            linhas.append((str(i), (
+                self.ABAS.get(item.get("aba", ""), "—"), Path(item["video"]).name,
+                f"{self._minuto(inicio)} a {self._minuto(fim)}",
                 "-" if custo is None else ("grátis" if not custo else self._dinheiro(float(custo))),
-                str(item.get("feito", "")).replace("T", " ")))
-        if self._itens:
-            self.tabela.selection_set("0")
-        for b in (self.bt_abrir, self.bt_ajustar, self.bt_pasta, self.bt_apagar):
-            b.configure(state="normal" if self._itens else "disabled")
+                self._quando(item.get("feito", ""))), ("par" if i % 2 == 0 else "impar",)))
+        self.seletor.preencher(linhas)
+        if antes is None:
+            marcar = self.seletor.visiveis()[:1]
+        else:
+            marcar = [str(i) for i, item in enumerate(self._itens) if item["amostra"] in antes]
+        self.seletor.marcar(marcar, somar=False)
+
+    def _ao_mudar(self) -> None:
+        if not hasattr(self, "lb_filtro"):
+            return
+        marcados, visiveis = self.seletor.marcados(), self.seletor.visiveis()
+        um = "normal" if marcados else "disabled"
+        for b in (self.bt_abrir, self.bt_ajustar, self.bt_pasta):
+            b.configure(state=um)
+        self.bt_apagar.configure(state=um, text=f"✕  Apagar marcados ({len(marcados)})" if marcados
+                                 else "✕  Apagar marcados")
+        self.bt_apagar_todos.configure(state="normal" if visiveis else "disabled",
+                                       text=f"🗑  Apagar todos ({len(visiveis)})" if visiveis else "🗑  Apagar todos")
+        espaco = ""
+        if self.tamanho is not None and visiveis:
+            espaco = f" · ocupam {tamanho_legivel(self.tamanho([self._itens[int(i)] for i in visiveis]))}"
+        total = len(self.seletor.ordem)
+        if "aba" in self.seletor.filtros and len(self.seletor.filtros) == 1:
+            abas = ", ".join(sorted(self.seletor.filtros["aba"]))
+            texto = (f"Mostrando os testes da aba {abas}: {len(visiveis)} de {total}{espaco}. Para ver os das outras "
+                     "abas, clique em \"Aba ▼\" ou em \"Tirar os filtros\".")
+        elif self.seletor.filtros:
+            texto = f"Filtrando: {len(visiveis)} de {total} teste(s) à vista{espaco}."
+        else:
+            texto = f"{total} teste(s){espaco}." if total else "Nenhum teste guardado ainda."
+        self.lb_filtro.configure(text=texto)
 
     def escolhido(self) -> dict | None:
-        selecao = self.tabela.selection()
-        return self._itens[int(selecao[0])] if selecao else None
+        iid = self.seletor.em_foco()
+        return self._itens[int(iid)] if iid is not None else None
+
+    def marcados(self) -> list[dict]:
+        return [self._itens[int(i)] for i in self.seletor.marcados()]
+
+    def _abrir_clicado(self, evento) -> None:
+        iid = self.tabela.identify_row(evento.y)
+        if iid and self.tabela.identify_region(evento.x, evento.y) in ("cell", "tree"):
+            self.abrir(self._itens[int(iid)])
 
     def _abrir(self) -> None:
         if (item := self.escolhido()):
@@ -1951,12 +2414,112 @@ class JanelaTestes(ctk.CTkToplevel):
             self.pasta(item)
 
     def _apagar(self) -> None:
-        if (item := self.escolhido()) and self.apagar(item):
+        if (itens := self.marcados()) and self.apagar(itens, False):
+            self.recarregar()
+
+    def _apagar_todos(self) -> None:
+        itens = [self._itens[int(i)] for i in self.seletor.visiveis()]
+        if itens and self.apagar(itens, True):
             self.recarregar()
 
     def _ajustar(self) -> None:
         if (item := self.escolhido()) and self.ajustar:
             self.ajustar(item)
+
+
+class PainelAutomatico(ctk.CTkToplevel):
+    """"🤖 Automático" (abas Jellyfin e Avulsos): o que é feito sozinho em cada etapa, quem faz (Piper, Gemini,
+    Claude, Whisper, o seu PC), o custo e a situação. As caixas são AS MESMAS opções de Configurações (ligar aqui liga
+    lá). O que não vale com a voz escolhida (ex.: a emoção da cena com o Piper) fica apagado, com o motivo.
+    dados(aba) -> {"voz": "Piper", "linhas": [{"titulo"} ou {"var", "ativo", "oque", "quem", "custo", "situacao",
+    "gemini"}], "nota": "..."}; "var" é o nome da opção na tela (ex.: "var_jf_separar_vozes") ou None (só mostra)."""
+    TITULOS = {"jellyfin": "aba Jellyfin", "avulsos": "aba Avulsos"}
+
+    def __init__(self, master, aba: str, dados):
+        super().__init__(master, fg_color=Tema.CARTAO)
+        self.app, self.aba, self.dados = master, aba, dados
+        self.caixas: dict[str, ctk.CTkCheckBox] = {}
+        self.title("O que é feito automaticamente")
+        self.geometry("1180x620")
+        self.minsize(860, 420)
+        self.transient(master)
+        self.lb_titulo = ctk.CTkLabel(self, text=f"O que é feito automaticamente ({self.TITULOS.get(aba, aba)})",
+                                      font=master.f_secao, text_color=Tema.TEXTO, anchor="w")
+        self.lb_titulo.pack(fill="x", padx=20, pady=(16, 0))
+        self.lb_voz = ctk.CTkLabel(self, text="", font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_SUAVE,
+                                   anchor="w")
+        self.lb_voz.pack(fill="x", padx=20, pady=(0, 10))
+        rodape = ctk.CTkFrame(self, fg_color="transparent")
+        rodape.pack(side="bottom", fill="x", padx=20, pady=12)
+        self.lb_nota = ctk.CTkLabel(rodape, text="", font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_SUAVE,
+                                    anchor="w", justify="left", wraplength=720)
+        self.lb_nota.pack(side="left")
+        master._botao(rodape, "Fechar", self.fechar, "primario", largura=110).pack(side="right")
+        master._botao(rodape, "Abrir Configurações > Dublagem", self._configuracoes, "fantasma",
+                      largura=250).pack(side="right", padx=(0, 8))
+        self.grade = ctk.CTkScrollableFrame(self, fg_color=Tema.CAMPO, corner_radius=Tema.RAIO_CONTROLE)
+        self.grade.pack(fill="both", expand=True, padx=20)
+        self.protocol("WM_DELETE_WINDOW", self.fechar)
+        self.recarregar()
+
+    def recarregar(self) -> None:
+        """Monta de novo (ligar uma opção pode liberar outra: ex.: a voz por personagem libera o roteiro)."""
+        info = self.dados(self.aba)
+        self.linhas = info["linhas"]
+        self.lb_voz.configure(text=f"Com a voz do {info['voz']}. Liga e desliga aqui ou em Configurações: é a mesma "
+                                   "opção nos dois lugares.")
+        self.lb_nota.configure(text=info.get("nota", ""))
+        for filho in self.grade.winfo_children():
+            filho.destroy()
+        self.caixas.clear()
+        negrito, pequeno = ctk.CTkFont(Tema.FAMILIA, 11, "bold"), ctk.CTkFont(Tema.FAMILIA, 11)
+        for coluna, texto in enumerate(("", "O que", "Quem faz", "Custo", "Situação")):
+            ctk.CTkLabel(self.grade, text=texto, font=negrito, text_color=Tema.TEXTO, anchor="w").grid(
+                row=0, column=coluna, sticky="w", padx=(12, 10), pady=(10, 6))
+        for r, linha in enumerate(self.linhas, start=1):
+            if "titulo" in linha:
+                ctk.CTkLabel(self.grade, text=linha["titulo"], font=ctk.CTkFont(Tema.FAMILIA, 12, "bold"),
+                             text_color=Tema.TEXTO, anchor="w").grid(row=r, column=0, columnspan=5, sticky="w",
+                                                                    padx=(12, 0), pady=(12, 4))
+                continue
+            ativo = linha.get("ativo", True)
+            cor = Tema.TEXTO if ativo else Tema.TEXTO_FRACO
+            var = getattr(self.app, linha["var"], None) if linha.get("var") else None
+            if var is not None and not ativo:            # não vale agora: caixa vazia e apagada (a opção não muda)
+                var = tk.BooleanVar(self, False)
+            if var is None:
+                ctk.CTkLabel(self.grade, text="•", text_color=cor, font=self.app.f_normal).grid(
+                    row=r, column=0, padx=(16, 4))
+            else:
+                caixa = ctk.CTkCheckBox(self.grade, text="", variable=var, width=24, fg_color=Tema.PRIMARIA,
+                                        hover_color=Tema.PRIMARIA_HOVER, border_color=Tema.CAMPO_BORDA,
+                                        checkbox_width=20, checkbox_height=20, corner_radius=6, border_width=2,
+                                        state="normal" if ativo else "disabled",
+                                        command=lambda: self.after_idle(self.recarregar))
+                caixa.grid(row=r, column=0, padx=(16, 4), pady=3)
+                if ativo:
+                    self.caixas[linha["var"]] = caixa
+            destaque = linha.get("gemini") and ativo
+            ctk.CTkLabel(self.grade, text=linha["oque"], text_color=cor, font=self.app.f_normal, anchor="w",
+                         justify="left", wraplength=360).grid(row=r, column=1, sticky="w", padx=(4, 18))
+            ctk.CTkLabel(self.grade, text=linha.get("quem", ""), text_color=Tema.PRIMARIA if destaque else cor,
+                         font=ctk.CTkFont(Tema.FAMILIA, 13, "bold") if destaque else self.app.f_normal,
+                         anchor="w").grid(row=r, column=2, sticky="w", padx=(0, 18))
+            ctk.CTkLabel(self.grade, text=linha.get("custo", ""), text_color=cor, font=self.app.f_normal, anchor="w",
+                         justify="left", wraplength=230).grid(row=r, column=3, sticky="w", padx=(0, 18))
+            ctk.CTkLabel(self.grade, text=linha.get("situacao", ""), text_color=cor, font=pequeno, anchor="w",
+                         justify="left", wraplength=280).grid(row=r, column=4, sticky="w", padx=(0, 12))
+
+    def _configuracoes(self) -> None:
+        self.fechar()
+        self.app.mostrar_aba(self.app.ABA_CONFIG)
+        self.app.mostrar_config("Dublagem")
+
+    def fechar(self) -> None:
+        salvar = getattr(self.app, "_salvar_config", None)
+        if salvar:
+            salvar()                                       # o que mudou aqui fica gravado, como em Configurações
+        self.destroy()
 
 
 class DialogoAjustarFalas(ctk.CTkToplevel):
@@ -2113,13 +2676,15 @@ class JanelaModerna(ctk.CTk):
         # Cada aba é um quadro na MESMA célula da grade; trocar de aba = mostrar um e esconder o outro.
         self.aba_videos = ctk.CTkFrame(self, fg_color="transparent")
         self.aba_jellyfin = ctk.CTkFrame(self, fg_color="transparent")
+        self.aba_tv = ctk.CTkFrame(self, fg_color="transparent")         # "Jellyfin TV" (a TV ao vivo)
         self.aba_avulsos = ctk.CTkFrame(self, fg_color="transparent")
         self.aba_config = ctk.CTkFrame(self, fg_color="transparent")
-        for aba in (self.aba_videos, self.aba_jellyfin, self.aba_avulsos, self.aba_config):
+        for aba in (self.aba_videos, self.aba_jellyfin, self.aba_tv, self.aba_avulsos, self.aba_config):
             aba.grid(row=1, column=0, sticky="nsew")
             aba.grid_columnconfigure(0, weight=1)
         self.aba_videos.grid_rowconfigure(2, weight=1)
         self.aba_jellyfin.grid_rowconfigure(3, weight=1)
+        self.aba_tv.grid_rowconfigure(0, weight=1)        # o painel dos canais entra na 1ª vez que a aba abre
         # ⚙ Configurações primeiro: as outras abas põem as opções delas nas categorias de lá
         self._montar_aba_config(self.aba_config)
         self._montar_endereco(self.aba_videos)
@@ -2172,12 +2737,15 @@ class JanelaModerna(ctk.CTk):
     SUBTITULOS = {
         "Vídeos": "1) Cole o endereço da página    2) Clique em Buscar vídeos    3) Selecione e clique em Baixar",
         "Jellyfin": "1) Escolha as pastas    2) Clique em Pré-visualizar    3) Confira e clique em Organizar",
+        "Jellyfin TV": "1) Adicione ou importe os canais    2) Clique em Conferir    3) Clique em Salvar e enviar ao "
+                       "Jellyfin",
         "Avulsos": "1) Escolha a caixa de entrada ou adicione vídeos    2) Clique em Olhar    3) Confira e clique em "
                    "Processar",
         "⚙ Configurações": "Tudo o que muda o jeito do programa trabalhar fica aqui. Vale na hora e fica salvo.",
     }
     TITULOS = {"Vídeos": "Extrair e baixar vídeos públicos",
                "Jellyfin": "Organizar a biblioteca do Jellyfin",
+               "Jellyfin TV": "TV ao vivo no Jellyfin",
                "Avulsos": "Legendar e dublar vídeos avulsos",
                "⚙ Configurações": "Configurações"}
 
@@ -2202,23 +2770,30 @@ class JanelaModerna(ctk.CTk):
         self.lb_saude = ctk.CTkLabel(textos, text="", font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO_SUAVE,
                                      anchor="w", justify="left", wraplength=760)    # muita coisa: quebra a linha
         self.seletor_aba = ctk.CTkSegmentedButton(
-            topo, values=["Vídeos", "Jellyfin", "Avulsos", "⚙ Configurações"], command=self.mostrar_aba, height=38,
+            topo, values=["Vídeos", "Jellyfin", "Jellyfin TV", "Avulsos", "⚙ Configurações"], command=self.mostrar_aba,
+            height=38,
             corner_radius=Tema.RAIO_CONTROLE, font=self.f_botao, fg_color=Tema.CARTAO,
             selected_color=Tema.PRIMARIA, selected_hover_color=Tema.PRIMARIA_HOVER,
             unselected_color=Tema.CARTAO, unselected_hover_color=Tema.SECUNDARIA_HOVER, text_color=Tema.TEXTO)
-        self.seletor_aba.pack(side="right", pady=(4, 0))
+        self.seletor_aba.pack(side="right", pady=(4, 0), before=textos)     # as abas e o botão têm o espaço antes
         # consulta a página Releases na hora (sem fechar o programa)
         self.bt_atualizacoes = ctk.CTkButton(
-            topo, text="⟳  Verificar atualizações", command=self.ao_verificar_atualizacoes, height=38, width=190,
+            topo, text="⟳  Atualizações", command=self.ao_verificar_atualizacoes, height=38, width=140,
             corner_radius=Tema.RAIO_CONTROLE, font=self.f_normal, fg_color="transparent",
             hover_color=Tema.SECUNDARIA_HOVER, text_color=Tema.TEXTO_SUAVE, border_width=1,
             border_color=Tema.CAMPO_BORDA)
-        self.bt_atualizacoes.pack(side="right", padx=(0, 12), pady=(4, 0))
+        self.bt_atualizacoes.pack(side="right", padx=(0, 12), pady=(4, 0), before=textos)
+
+        def quebrar_saude(_evento=None):              # a linha de saúde quebra no espaço que sobra (5 abas no topo)
+            sobra = topo.winfo_width() - self.seletor_aba.winfo_width() - self.bt_atualizacoes.winfo_width() - 110
+            if sobra > 200:
+                self.lb_saude.configure(wraplength=min(760, sobra))
+        topo.bind("<Configure>", quebrar_saude, add="+")
 
     def mostrar_aba(self, nome: str) -> None:
-        """'Vídeos', 'Jellyfin', 'Avulsos' ou '⚙ Configurações'."""
-        abas = {"Vídeos": self.aba_videos, "Jellyfin": self.aba_jellyfin, "Avulsos": self.aba_avulsos,
-                self.ABA_CONFIG: self.aba_config}
+        """'Vídeos', 'Jellyfin', 'Jellyfin TV', 'Avulsos' ou '⚙ Configurações'."""
+        abas = {"Vídeos": self.aba_videos, "Jellyfin": self.aba_jellyfin, "Jellyfin TV": self.aba_tv,
+                "Avulsos": self.aba_avulsos, self.ABA_CONFIG: self.aba_config}
         saindo_da_config = self.seletor_aba.get() == self.ABA_CONFIG and nome != self.ABA_CONFIG
         for outro, aba in abas.items():
             if outro != nome:
@@ -2233,7 +2808,9 @@ class JanelaModerna(ctk.CTk):
             self.atualizar_resumo_config()
         if nome == "Avulsos":
             self.atualizar_botao_testar()                # os minutos de teste podem ter mudado nas Configurações
-        if nome in ("Jellyfin", self.ABA_CONFIG) and self.lb_saude.cget("text"):
+        if nome == "Jellyfin TV":
+            self.ao_abrir_aba_tv()
+        if nome in ("Jellyfin", "Jellyfin TV", self.ABA_CONFIG) and self.lb_saude.cget("text"):
             self.lb_saude.pack(anchor="w", pady=(2, 0))
         else:
             self.lb_saude.pack_forget()
@@ -2244,7 +2821,7 @@ class JanelaModerna(ctk.CTk):
                                for rotulo, ok in itens)
         self.lb_saude.configure(text=texto, text_color=Tema.AVISO if any(ok is False for _, ok in itens)
                                 else Tema.TEXTO_SUAVE)
-        if self.aba_atual() in ("Jellyfin", self.ABA_CONFIG):
+        if self.aba_atual() in ("Jellyfin", "Jellyfin TV", self.ABA_CONFIG):
             self.lb_saude.pack(anchor="w", pady=(2, 0))
 
     def aba_atual(self) -> str:
@@ -2565,10 +3142,9 @@ class JanelaModerna(ctk.CTk):
         self.bt_conferir_espelhos = self._botao(barra, "Conferir espelhos", self.ao_conferir_espelhos, largura=150)
         self.bt_relatorio = self._botao(barra, "Relatório", self.ao_relatorio, largura=110)
         self.bt_gerenciar_espelhos = self._botao(barra, "Espelhos...", self.ao_gerenciar_espelhos, largura=120)
-        self.bt_tv_ao_vivo = self._botao(barra, "TV ao vivo...", self.ao_tv_ao_vivo, largura=120)
         self.bt_parar_jf = self._botao(barra, "Parar", self.ao_parar, "perigo", largura=100)
         for b in (self.bt_previa, self.bt_organizar, self.bt_legendas, self.bt_desfazer, self.bt_conferir_espelhos,
-                  self.bt_relatorio, self.bt_gerenciar_espelhos, self.bt_tv_ao_vivo):
+                  self.bt_relatorio, self.bt_gerenciar_espelhos):
             b.pack(side="left", padx=(0, 10))
         self.bt_parar_jf.pack(side="right")
 
@@ -2599,7 +3175,11 @@ class JanelaModerna(ctk.CTk):
         # o que está ligado (resumo) e o atalho para mudar
         self.lb_resumo_config = ctk.CTkLabel(contexto, text="", font=ctk.CTkFont(Tema.FAMILIA, 11),
                                              text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left")
-        self.lb_resumo_config.grid(row=1, column=0, columnspan=6, sticky="w", padx=16, pady=(0, 10))
+        self.lb_resumo_config.grid(row=1, column=0, columnspan=5, sticky="w", padx=16, pady=(0, 10))
+        self.bt_automatico_jf = self._botao(contexto, "🤖 Automático", lambda: self.ao_automatico("jellyfin"),
+                                            largura=140)
+        self.bt_automatico_jf.configure(border_color=Tema.PRIMARIA, height=32)
+        self.bt_automatico_jf.grid(row=1, column=5, sticky="e", padx=(6, 0), pady=(0, 8))
         self._botao(contexto, "⚙ Configurações", lambda: self.mostrar_aba(self.ABA_CONFIG), "fantasma",
                     largura=130).grid(row=1, column=6, padx=(6, 16), pady=(0, 8))
 
@@ -2615,7 +3195,7 @@ class JanelaModerna(ctk.CTk):
         self.campo_jf_minutos = self.campo_minutos(voz)
         self.bt_roteiro_jf = self._botao(voz, "📜 Roteiro...", self.ao_roteiro_jellyfin)
         self.bt_previas_jf = self._botao(voz, "🎧 Prévias", self.ao_previas)
-        self.bt_testes_jf = self._botao(voz, "🧪 Testes feitos", self.ao_testes_feitos)
+        self.bt_testes_jf = self._botao(voz, "🧪 Testes feitos", lambda: self.ao_testes_feitos("jellyfin"))
         for b in (self.bt_traduzir_legendas, self.bt_legendar_audio, self.bt_sincronizar, self.bt_dublar,
                   self.bt_testar_jf, self.bt_roteiro_jf, self.bt_previas_jf, self.bt_testes_jf):
             b.configure(height=34)
@@ -3045,10 +3625,15 @@ class JanelaModerna(ctk.CTk):
                                            self.var_jf_avulsos_dublar)
         self.cb_av_dublar.pack_configure(side="left")
         self._botao(baixo, "⚙ Opções", self.mostrar_opcoes_avulsos, "fantasma", largura=100).pack(side="right")
-        self.bt_testes_av = self._botao(baixo, "🧪 Testes feitos", self.ao_testes_feitos, "fantasma", largura=150)
+        self.bt_testes_av = self._botao(baixo, "🧪 Testes feitos", lambda: self.ao_testes_feitos("avulsos"), "fantasma",
+                                        largura=150)
         self.bt_testes_av.pack(side="right", padx=(0, 6))
         self.bt_previas_av = self._botao(baixo, "🎧 Prévias", self.ao_previas, "fantasma", largura=120)
         self.bt_previas_av.pack(side="right", padx=(0, 6))       # aqui em cima: a barra de baixo ficou cheia
+        self.bt_automatico_av = self._botao(baixo, "🤖 Automático", lambda: self.ao_automatico("avulsos"),
+                                            largura=150)
+        self.bt_automatico_av.configure(border_color=Tema.PRIMARIA)
+        self.bt_automatico_av.pack(side="right", padx=(0, 6))
 
         barra = ctk.CTkFrame(aba, fg_color="transparent")
         barra.grid(row=1, column=0, sticky="ew", padx=28, pady=12)
@@ -3072,6 +3657,12 @@ class JanelaModerna(ctk.CTk):
             "Nenhum vídeo ainda. Escolha a caixa de entrada e clique em Olhar, ou clique em Adicionar vídeos.")
         self.lb_contador_av, self.lb_vazio_av = self._extras_tabela[str(self.tabela_av)]
         self.tabela_av.bind("<Double-1>", lambda e: self.ao_abrir_pasta_avulso())
+        # Seleção (☐/☑ na coluna #) e filtro por coluna, como na lista de vídeos: Processar e Testar usam os marcados
+        self.seletor_av = SeletorDeTabela(self.tabela_av, self, {"video": "Vídeo", "legenda": "Legenda em português",
+                                                                 "acao": "O que falta", "pasta": "Pasta"},
+                                          ao_mudar=self._ao_mudar_selecao_av, coluna_nome="video")
+        self.seletor_av.montar_barra(self._topos_tabela[str(self.tabela_av)], extras=[
+            ("Só os que falta algo", self.marcar_avulsos_com_algo_a_fazer)]).pack(side="left", padx=(12, 0))
         self.lb_resumo_av = ctk.CTkLabel(faixa, text="", font=self.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w")
         self.lb_resumo_av.pack(side="left")
         self._botao(faixa, "Abrir a pasta do vídeo", self.ao_abrir_pasta_avulso, "fantasma").pack(side="right")
@@ -3094,12 +3685,14 @@ class JanelaModerna(ctk.CTk):
         self.ao_olhar_avulsos()
 
     def mostrar_avulsos(self, linhas) -> None:
-        """linhas: [(vídeo Path, legenda, o que falta, pronto?)] (automacao.situacao_avulsos)."""
-        self.tabela_av.delete(*self.tabela_av.get_children())
-        for i, (video, legenda, acao, pronto) in enumerate(linhas):
-            tags = ("ok",) if pronto else ("par" if i % 2 == 0 else "impar",)
-            self.tabela_av.insert("", "end", iid=str(i), tags=tags,
-                                  values=(i + 1, video.name, legenda, ("✓ " if pronto else "") + acao, str(video.parent)))
+        """linhas: [(vídeo Path, legenda, o que falta, pronto?)] (automacao.situacao_avulsos). Os marcados e os
+        filtros continuam depois de Olhar de novo."""
+        antes = {str(self._caminho_avulso(i)) for i in self.seletor_av.marcados()}
+        dados = [(str(i), (video.name, legenda, ("✓ " if pronto else "") + acao, str(video.parent)),
+                  ("ok",) if pronto else ("par" if i % 2 == 0 else "impar",))
+                 for i, (video, legenda, acao, pronto) in enumerate(linhas)]
+        self.seletor_av.preencher(dados, marcar=[str(i) for i, (video, *_) in enumerate(linhas)
+                                                  if str(Path(str(video.parent)) / video.name) in antes])
         falta = sum(1 for *_, pronto in linhas if not pronto)
         self.lb_contador_av.configure(text=str(len(linhas)))
         self.lb_resumo_av.configure(text=(f"{falta} com algo a fazer · {len(linhas) - falta} pronto(s)" if linhas
@@ -3114,9 +3707,40 @@ class JanelaModerna(ctk.CTk):
         return [tuple(self.tabela_av.item(i, "values"))[1:] for i in self.tabela_av.get_children()]
 
     def ao_abrir_pasta_avulso(self) -> None:
-        escolhidos = self.tabela_av.selection() or self.tabela_av.get_children()[:1]
-        if escolhidos:
-            self._abrir_pasta_do_sistema(self.tabela_av.item(escolhidos[0], "values")[4])
+        escolhido = self.seletor_av.em_foco() or next(iter(self.seletor_av.visiveis()), None)
+        if escolhido:
+            self._abrir_pasta_do_sistema(self.tabela_av.item(escolhido, "values")[4])
+
+    def _caminho_avulso(self, iid: str) -> Path:
+        valores = self.tabela_av.item(iid, "values")
+        return Path(valores[4]) / valores[1]
+
+    def marcar_avulsos_com_algo_a_fazer(self) -> None:
+        """"Só os que falta algo": marca os que não estão prontos (os à vista)."""
+        self.seletor_av.marcar([i for i in self.seletor_av.visiveis()
+                                if not str(self.tabela_av.set(i, "acao")).startswith("✓")], somar=False)
+
+    def avulsos_para_processar(self) -> list[Path] | None:
+        """Os marcados; sem nenhum marcado e com um filtro ligado, os à vista; None = todos (sem filtro)."""
+        ids = self.seletor_av.marcados()
+        if not ids and self.seletor_av.filtros:
+            ids = self.seletor_av.visiveis()
+        elif not ids:
+            return None
+        return [self._caminho_avulso(i) for i in ids]
+
+    def _ao_mudar_selecao_av(self) -> None:
+        """"Processar 2 marcados" / "Processar os 3 à vista" / "Processar" e "🧪 Testar o marcado"."""
+        marcados = len(self.seletor_av.marcados())
+        if marcados:
+            texto = f"Processar {marcados} marcado{'s' if marcados > 1 else ''}"
+        elif self.seletor_av.filtros:
+            vistos = len(self.seletor_av.visiveis())
+            texto = "Processar o 1 à vista" if vistos == 1 else f"Processar os {vistos} à vista"
+        else:
+            texto = "Processar"
+        self.bt_av_processar.configure(text=texto)
+        self.bt_av_testar.configure(text="🧪 Testar o marcado" if marcados else "🧪 Testar")
 
     def _abrir_pasta_do_sistema(self, pasta: str) -> None:      # o app abre no Explorer
         pass
@@ -3565,8 +4189,18 @@ class JanelaModerna(ctk.CTk):
     def ao_roteiro_jellyfin(self) -> None:              # o app faz: escolhe o filme ou episódio e o roteiro
         pass
 
-    def ao_testes_feitos(self) -> None:                 # o app faz: a janela "Testes feitos"
+    def ao_testes_feitos(self, aba: str | None = None) -> None:   # o app faz: a janela "Testes feitos" (da aba)
         pass
+
+    def ao_automatico(self, aba: str) -> None:
+        """"🤖 Automático": o que é feito sozinho, quem faz e o custo (ver PainelAutomatico)."""
+        aberto = getattr(self, "_painel_automatico", None)
+        if aberto is not None and aberto.winfo_exists():
+            aberto.destroy()
+        self._painel_automatico = PainelAutomatico(self, aba, self.dados_do_automatico)
+
+    def dados_do_automatico(self, aba: str) -> dict:     # o app faz: as linhas conforme a voz e as chaves
+        return {"voz": self.var_jf_motor_voz.get().split(" (")[0], "linhas": [], "nota": ""}
 
     def ao_roteiro_avulso(self) -> None:                # o app faz: o roteiro do vídeo escolhido na lista
         pass
@@ -3579,6 +4213,13 @@ class JanelaModerna(ctk.CTk):
         dialogo = DialogoRoteiro(self, video, ja_tem)
         self.wait_window(dialogo)
         return dialogo.resultado
+
+    def pedir_roteiro_da_lista(self, videos: list, pasta: str = "") -> tuple[Path, str] | None:
+        """Janela "Roteiro" com a lista dos filmes e episódios (aba Jellyfin): (vídeo, link ou arquivo) ou None."""
+        dialogo = DialogoRoteiro(self, None, videos=videos, outro_video=lambda: self._pedir_arquivos_video(
+            pasta, "Escolha o filme ou episódio do roteiro"))
+        self.wait_window(dialogo)
+        return (dialogo.video, dialogo.resultado) if dialogo.resultado and dialogo.video else None
 
     def texto_minutos_teste(self) -> str:
         minutos = float(self.campo_minutos_teste.get())
@@ -3594,14 +4235,13 @@ class JanelaModerna(ctk.CTk):
         self.campo_minutos_teste.set(self.campo_minutos_teste.get())
 
     def video_avulso_escolhido(self) -> Path | None:
-        """O vídeo selecionado na lista da aba Avulsos (ou o 1º com algo a fazer, ou o 1º)."""
-        itens = self.tabela_av.get_children()
+        """O vídeo marcado na lista da aba Avulsos (o clicado por último), ou o 1º com algo a fazer, ou o 1º."""
+        itens = self.seletor_av.visiveis()
         if not itens:
             return None
-        escolhido = (self.tabela_av.selection() or [next((i for i in itens if "✓" not in str(
-            self.tabela_av.item(i, "values")[3])), itens[0])])[0]
-        valores = self.tabela_av.item(escolhido, "values")
-        return Path(valores[4]) / valores[1]
+        escolhido = self.seletor_av.em_foco() or next((i for i in itens if "✓" not in str(
+            self.tabela_av.set(i, "acao"))), itens[0])
+        return self._caminho_avulso(escolhido)
 
     def atualizar_botoes_previas(self, quantas: int) -> None:
         """'🎧 Prévias (2)': destacado quando há prévia esperando você ouvir."""
@@ -5090,6 +5730,10 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_tv_ao_vivo(self) -> None:
+        """A TV ao vivo agora é a aba "Jellyfin TV" (antes, uma janela à parte)."""
+        self.mostrar_aba("Jellyfin TV")
+
+    def ao_abrir_aba_tv(self) -> None:                  # o app faz: monta o painel dos canais e lê a lista
         pass
 
     def ao_verificar_atualizacoes(self) -> None:

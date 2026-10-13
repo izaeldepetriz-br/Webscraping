@@ -27,14 +27,14 @@ from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, Canal, ClienteTV, NaoEhLista
                                        numerar_por_idioma, nome_do_idioma)
 
 from . import config
-from .gui_moderna import DialogoCanal, DialogoTipos, JanelaCanais, LinhaCanal
+from .gui_moderna import DialogoCanal, DialogoTipos, LinhaCanal, PainelCanais
 
 
 class TVAoVivo:
     """Parte "TV ao vivo" da AppModerna (usa self.fila, self._rodar, self.mostrar_mensagem... da janela)."""
 
     def _iniciar_tv_ao_vivo(self) -> None:
-        self.janela_canais = None               # "TV ao vivo..."
+        self.janela_canais = None               # o painel da aba "Jellyfin TV" (montado na 1ª vez)
         self._canais, self._situacao_canais = [], {}
         self._historico_canais = None           # {link: [no ar nas últimas conferências]} (lido na 1ª vez)
         self._saude_tv = None                   # (tudo certo?, texto) da última consulta ao Jellyfin
@@ -77,9 +77,11 @@ class TVAoVivo:
             self._historico_canais = carregar_historico(self.arquivo_historico_canais)
         return self._historico_canais
 
-    def ao_tv_ao_vivo(self) -> None:
+    def ao_abrir_aba_tv(self) -> None:
+        """Aba "Jellyfin TV": na 1ª vez, monta o painel dos canais (antes, a janela "TV ao vivo..."); sempre, lê a
+        lista guardada e confere a programação em segundo plano."""
         if self.janela_canais is None or not self.janela_canais.winfo_exists():
-            self.janela_canais = JanelaCanais(self, {
+            self.janela_canais = PainelCanais(self.aba_tv, self, {
                 "adicionar": self._adicionar_canal, "importar_arquivo": self._importar_canais_arquivo,
                 "importar_endereco": self._importar_canais_endereco, "remover": self._remover_canais,
                 "remover_todos": self._remover_todos_canais, "conferir": self._conferir_canais,
@@ -93,9 +95,9 @@ class TVAoVivo:
             dados.setdefault("pasta", str(config.ARQUIVO.parent / "tv"))
             self.janela_canais.definir_valores(dados)
             self.janela_canais.menu_velocidade.configure(command=lambda _: self._guardar_opcoes_tv())
+            self.janela_canais.grid(row=0, column=0, sticky="nsew", padx=28, pady=(14, 14))
         self._canais = carregar_canais(self.arquivo_canais)
         self._mostrar_canais()
-        self.janela_canais.lift()
         self.ao_conferir_programacao(avisar=False)        # a coluna Programação, em segundo plano
 
     def _mostrar_canais(self, manter_selecao: bool = False) -> None:
@@ -268,7 +270,7 @@ class TVAoVivo:
 
     def _pedir_dados_canal(self, dados: dict, titulo: str = "Editar canal", campos=None,
                            aviso: str = "") -> dict | None:
-        dialogo = DialogoCanal(self.janela_canais or self, dados, titulo, campos, aviso)
+        dialogo = DialogoCanal(self, dados, titulo, campos, aviso)
         self.wait_window(dialogo)
         return dialogo.resultado
 
@@ -468,7 +470,7 @@ class TVAoVivo:
         return dict(config.carregar().get("tv_tipos", {}) or {})
 
     def _pedir_tipos(self, grupos: list, atual: dict) -> dict | None:
-        dialogo = DialogoTipos(self.janela_canais or self, grupos, atual)
+        dialogo = DialogoTipos(self, grupos, atual)
         self.wait_window(dialogo)
         return dialogo.resultado
 

@@ -36,6 +36,7 @@ import wave
 import zipfile
 from array import array
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from .legendas import ErroLegenda, extrair_srt
@@ -986,10 +987,17 @@ def amostra_so_legenda(ffmpeg: str, video: Path, srt_do_trecho_: Path, trecho: t
     return destino
 
 
-def caminho_amostra(pasta_cache: str | Path, video: Path) -> Path:
+def caminho_amostra(pasta_cache: str | Path, video: Path, quando: datetime | None = None) -> Path:
     """O teste (amostra) fica em 'testes', fora da biblioteca (o Jellyfin não o mostra) e fora do progresso do
-    filme: continua lá depois que o filme inteiro é dublado, para abrir de novo em "Testes feitos"."""
-    return Path(pasta_cache) / "testes" / f"{pasta_do_filme(pasta_cache, video).name}.mkv"
+    filme: continua lá depois que o filme inteiro é dublado, para abrir de novo em "Testes feitos". A data e a hora
+    vão no nome ('Filme-1a2b3c4d - 2026-10-13 14h54m10s.mkv'): cada teste fica guardado (antes, o nome era fixo e o
+    teste novo do mesmo vídeo apagava o anterior)."""
+    quando = quando or datetime.now()
+    base = Path(pasta_cache) / "testes" / f"{pasta_do_filme(pasta_cache, video).name} - {quando:%Y-%m-%d %Hh%Mm%Ss}"
+    destino, n = base.with_name(base.name + ".mkv"), 2
+    while destino.exists():                           # dois testes no mesmo segundo: "(2)", "(3)"...
+        destino, n = base.with_name(f"{base.name} ({n}).mkv"), n + 1
+    return destino
 
 
 # ----------------------------------------------------------------- um filme

@@ -1886,7 +1886,7 @@ def test_tv_ao_vivo_pela_janela(app, tmp_path, api_falsa):
     app.mostrar_aba("Jellyfin")
     app.var_jf_url.set(api_falsa.base)
     app.var_jf_chave_jellyfin.set("chave")
-    app.bt_tv_ao_vivo.invoke()
+    app.mostrar_aba("Jellyfin TV")
     janela = app.janela_canais
     janela.var_nome.set("TV Cultura")
     janela.var_link.set(api_falsa.base + "/cultura.m3u8")
@@ -1915,7 +1915,7 @@ def test_tv_ao_vivo_selecionar_fora_do_ar_e_remover_todos(app, api_falsa):
     api_falsa.rotas["/ok.m3u8"] = lambda q: (200, b"#EXTM3U\n", {"Content-Type": "application/x-mpegURL"})
     api_falsa.rotas["/pagina"] = lambda q: (200, b"<!DOCTYPE html><html><head></head></html>", {"Content-Type": "text/html"})
     app.mostrar_aba("Jellyfin")
-    app.bt_tv_ao_vivo.invoke()
+    app.mostrar_aba("Jellyfin TV")
     janela = app.janela_canais
     janela.var_link.set(api_falsa.base + "/pagina")                    # uma página, não uma lista
     app._importar_canais_endereco()
@@ -1990,13 +1990,38 @@ def test_atualizacao_baixada_avisa_que_precisa_fechar(app, monkeypatch, tmp_path
     monkeypatch.setattr(app, "destroy", lambda: destruida.append(True))
     app.fechar()
     assert instalados == [(arquivo, False)] and destruida
+    vars(app).pop("destroy", None)          # no fim do teste o app fecha de verdade (senão fica uma 2ª janela Tk)
+
+
+def test_aba_jellyfin_tv_com_a_tv_ao_vivo_e_o_servidor(app):
+    """A TV ao vivo virou a aba "Jellyfin TV" (entre Jellyfin e Avulsos): a lista de canais, o guia, a antena, a pasta
+    e o servidor do Jellyfin (endereço e chave: as MESMAS opções de Configurações > Jellyfin). O botão "TV ao
+    vivo..." saiu da aba Jellyfin."""
+    assert not hasattr(app, "bt_tv_ao_vivo") and app.janela_canais is None       # monta na 1ª vez que abre
+    app.ao_tv_ao_vivo()                                                # o atalho antigo leva à aba
+    assert app.aba_atual() == "Jellyfin TV" and app.lb_titulo.cget("text") == "TV ao vivo no Jellyfin"
+    painel = app.janela_canais
+    app.update()
+    assert painel.winfo_ismapped() and painel.master is app.aba_tv
+    app.var_jf_url.set("http://192.168.0.10:8096")                        # a mesma opção de Configurações
+    assert painel.campo_url_jellyfin.get() == "http://192.168.0.10:8096"
+    assert str(painel.campo_url_jellyfin.cget("textvariable")) == str(app.var_jf_url)
+    app.var_jf_chave_jellyfin.set("segredo")
+    assert painel.campo_chave_jellyfin.get() == "segredo" and painel.campo_chave_jellyfin.cget("show") == "•"
+    painel.var_antena.set("192.168.0.50")
+    app._guardar_opcoes_tv()
+    from videoscraper import config
+    assert config.carregar()["tv"]["antena"] == "192.168.0.50"
+    app.mostrar_aba("Avulsos")
+    app.mostrar_aba("Jellyfin TV")
+    assert app.janela_canais is painel                                 # o mesmo painel (não monta de novo)
 
 
 def test_tv_ao_vivo_filtro_por_coluna(app):
     """Clique no título da coluna: escolher um ou vários valores (Situação, Grupo, Link pelo site)."""
     from jellyfin_tools.tv_ao_vivo import Canal, Situacao
     app.mostrar_aba("Jellyfin")
-    app.bt_tv_ao_vivo.invoke()
+    app.mostrar_aba("Jellyfin TV")
     janela = app.janela_canais
     app._canais = [Canal("TV Cultura", "https://a.org/1.m3u8", "Abertos"), Canal("TV Brasil", "https://a.org/2.m3u8", "Abertos"),
                    Canal("Rádio", "https://b.net/r.mp3", "Rádios"), Canal("Velho", "https://b.net/v.m3u8", "Abertos"),
@@ -2052,7 +2077,7 @@ def test_parar_a_conferencia_de_canais_e_imediato(app, api_falsa):
         return 200, b"#EXTM3U\n", {"Content-Type": "application/x-mpegURL"}
     api_falsa.rotas["/lento.m3u8"] = devagar
     app.mostrar_aba("Jellyfin")
-    app.bt_tv_ao_vivo.invoke()
+    app.mostrar_aba("Jellyfin TV")
     app._canais = [Canal(f"C{n}", f"{api_falsa.base}/lento.m3u8?n={n}") for n in range(400)]
     app._conferir_canais()
     fim = time.time() + 15                                               # espera a condição (máquina ocupada)
@@ -2095,7 +2120,7 @@ def test_tv_ao_vivo_exportar_o_que_esta_na_tabela(app, tmp_path, monkeypatch):
     import json
     from jellyfin_tools.tv_ao_vivo import Canal, Situacao
     app.mostrar_aba("Jellyfin")
-    app.bt_tv_ao_vivo.invoke()
+    app.mostrar_aba("Jellyfin TV")
     janela = app.janela_canais
     app._canais = [Canal("TV Cultura", "https://a.org/1.m3u8", "Abertos"), Canal("Rádio", "https://b.net/r.mp3", "Rádios")]
     app._situacao_canais = {app._canais[1].url: Situacao(False, "fora do ar (HTTP 404)")}
@@ -2130,7 +2155,7 @@ def test_conferir_so_os_canais_selecionados(app, api_falsa):
     from jellyfin_tools.tv_ao_vivo import Canal, Situacao
     api_falsa.rotas["/ok.m3u8"] = lambda q: (200, b"#EXTM3U\n", {"Content-Type": "text/html"})
     app.mostrar_aba("Jellyfin")
-    app.bt_tv_ao_vivo.invoke()
+    app.mostrar_aba("Jellyfin TV")
     janela = app.janela_canais
     app._canais = [Canal(f"C{n}", f"{api_falsa.base}/ok.m3u8?n={n}") for n in range(10)]
     app._situacao_canais = {app._canais[0].url: Situacao(False, "fora do ar (HTTP 404)")}
@@ -2151,7 +2176,7 @@ def test_conferir_so_os_canais_selecionados(app, api_falsa):
 def test_enviar_lista_vazia_pergunta_e_tira_do_jellyfin(app, tmp_path):
     from jellyfin_tools.tv_ao_vivo import Canal
     app.mostrar_aba("Jellyfin")
-    app.bt_tv_ao_vivo.invoke()
+    app.mostrar_aba("Jellyfin TV")
     janela = app.janela_canais
     janela.var_pasta.set(str(tmp_path / "TV"))
     app._juntar_canais([Canal("TV Cultura", "https://a.org/1.m3u8")])
@@ -2174,7 +2199,7 @@ def test_enviar_lista_vazia_pergunta_e_tira_do_jellyfin(app, tmp_path):
 
 def _abrir_tv(app, canais):
     app.mostrar_aba("Jellyfin")
-    app.bt_tv_ao_vivo.invoke()
+    app.mostrar_aba("Jellyfin TV")
     app._canais = list(canais)
     app._guardar_canais()
     return app.janela_canais
@@ -4252,8 +4277,9 @@ def test_amostra_de_1_minuto_antes_de_dublar(app, tmp_path, monkeypatch):
     app.bt_dublar.invoke()
     esperar(app)
     esperar(app)
-    amostra = dublagem.caminho_amostra(automacao.pasta_dublagem(), video)
-    assert amostra.is_file() and abertos == [str(amostra)]
+    teste = automacao.testes_feitos()[0]
+    amostra = Path(teste["amostra"])
+    assert amostra.is_file() and abertos == [str(amostra)] and teste["aba"] == "jellyfin"
     assert "o teste de" in app.caixas[-1][2].lower() and app.caixas[-1][0] == "sucesso"
     assert not dublagem.caminho_dublado(video).exists()             # a biblioteca não muda
     pedidas = list(voz.textos)
@@ -4300,7 +4326,7 @@ def test_aba_avulsos_olhar_adicionar_e_processar(app, tmp_path, monkeypatch):
     voz = _dublagem_falsa(monkeypatch)
     from videoscraper import automacao
     monkeypatch.setattr(automacao, "videos_para_dublar", app_moderna.videos_para_dublar)
-    assert app.seletor_aba.cget("values") == ["Vídeos", "Jellyfin", "Avulsos", app.ABA_CONFIG]
+    assert app.seletor_aba.cget("values") == ["Vídeos", "Jellyfin", "Jellyfin TV", "Avulsos", app.ABA_CONFIG]
     assert not hasattr(app, "bt_avulsos")                          # saiu da barra da aba Jellyfin
     caixa = tmp_path / "Para Dublar"
     caixa.mkdir()
@@ -4357,6 +4383,98 @@ def test_aba_avulsos_olhar_adicionar_e_processar(app, tmp_path, monkeypatch):
     # ⚙ Opções leva às Configurações > Vídeos avulsos
     app.mostrar_opcoes_avulsos()
     assert app.aba_atual() == app.ABA_CONFIG and app.config_atual() == "Vídeos avulsos"
+
+
+def test_avulsos_selecao_filtro_e_processar_os_marcados(app, tmp_path, monkeypatch):
+    """Lista dos Avulsos: ☐/☑ na coluna #, filtro por coluna, "Só os que falta algo" e o campo "1-3, nome".
+    Processar e Testar usam os marcados (com um filtro e nada marcado: os à vista; sem nada: todos)."""
+    from types import SimpleNamespace
+    from videoscraper import automacao
+    caixa = tmp_path / "Caixa"
+    caixa.mkdir()
+    a, b, c = caixa / "A.mkv", caixa / "B.mkv", tmp_path / "C.mkv"
+    linhas = [(a, "nenhuma", "Criar a legenda pelo áudio → dublar", False),
+              (b, "✓ ao lado (.srt)", "Dublar", False), (c, "✓ dentro do vídeo", "Nada: já está pronto", True)]
+    app.mostrar_aba("Avulsos")
+    app.mostrar_avulsos(linhas)
+    t, sel = app.tabela_av, app.seletor_av
+    assert [t.set(i, "n") for i in t.get_children()] == ["☐ 1", "☐ 2", "☐ 3"] and t.heading("n", "text") == "☐ #"
+    assert app.bt_av_processar.cget("text") == "Processar" and app.bt_av_testar.cget("text") == "🧪 Testar"
+    assert app.video_avulso_escolhido() == a                            # nada marcado: o 1º com algo a fazer
+    sel.botoes_selecao["Só os que falta algo"].invoke()
+    assert sel.marcados() == ["0", "1"] and t.set("0", "n") == "☑ 1" and t.set("2", "n") == "☐ 3"
+    assert app.bt_av_processar.cget("text") == "Processar 2 marcados"
+    assert app.bt_av_testar.cget("text") == "🧪 Testar o marcado"
+    app.mostrar_avulsos(linhas)                                         # Olhar de novo: os marcados continuam
+    assert sel.marcados() == ["0", "1"]
+    planejados = []
+
+    def planejar(o, pasta="", arquivos=(), sondar=None):
+        planejados.append((pasta, tuple(arquivos)))
+        return SimpleNamespace(vazio=True, previas=[], videos=len(arquivos), traduzir=[], pelo_audio=[], dublar=[])
+    monkeypatch.setattr(automacao, "planejar_avulsos", planejar)
+    app.bt_av_processar.invoke()
+    esperar(app)
+    for _ in range(20):                                                 # a pergunta vem 50 ms depois do "fim"
+        app.update()
+        time.sleep(0.02)
+    assert planejados == [("", (str(a), str(b)))]                       # só os marcados
+    assert "Nada a fazer em 2 vídeo(s) marcado(s)" in app.caixas[-1][2]
+    assert len(t.get_children()) == 3                                    # a lista inteira continua na tela
+    # filtro: só os com a legenda ao lado; nada marcado: Processar usa os à vista
+    sel.desmarcar_todos()
+    sel.aplicar_filtro("legenda", {"✓ ao lado (.srt)"})
+    assert t.get_children() == ("1",) and t.heading("legenda", "text") == "Legenda em português ▼"
+    assert app.bt_av_processar.cget("text") == "Processar o 1 à vista" and app.video_avulso_escolhido() == b
+    planejados.clear()
+    app.bt_av_processar.invoke()
+    esperar(app)
+    assert planejados == [("", (str(b),))]
+    sel.tirar_filtros()
+    assert sel.marcar_por_texto("1, 3") == 2 and sel.marcados() == ["0", "2"]
+    assert sel.marcar_por_texto("b.mkv") == 1 and sel.marcados() == ["0", "1", "2"]
+    assert t.heading("n", "text") == "☑ #"
+    sel.inverter()
+    assert sel.marcados() == [] and app.bt_av_processar.cget("text") == "Processar"
+
+
+def test_painel_automatico_mostra_quem_faz_e_liga_as_mesmas_opcoes(app):
+    """"🤖 Automático" (Jellyfin e Avulsos): o que é feito sozinho, quem faz e o custo. Com o Piper, o que é só do
+    Gemini fica apagado (com o motivo); as caixas são as MESMAS opções de Configurações; no Jellyfin, os robôs."""
+    sons = "Ouvir os sons sem fala (bocejo, risada, choro, gemido) e trazer do original"
+    app.var_jf_motor_voz.set(app.MOTORES_VOZ[0])                       # Piper
+    app.var_jf_chave_gemini.set("AIza-teste")
+    app.var_jf_separar_vozes.set(True)
+    app.var_jf_manter_sons.set(True)
+    app.mostrar_aba("Avulsos")
+    app.bt_automatico_av.invoke()
+    painel = app._painel_automatico
+    assert "aba Avulsos" in painel.lb_titulo.cget("text") and "voz do Piper" in painel.lb_voz.cget("text")
+    linhas = {linha["oque"]: linha for linha in painel.linhas if "oque" in linha}
+    emocao = linhas["Emoção da cena (a voz repete a interpretação)"]
+    assert not emocao["ativo"] and "só com a voz do Gemini" in emocao["situacao"]
+    assert "var_jf_emocao_da_cena" not in painel.caixas                  # apagada: não dá para ligar com o Piper
+    assert linhas[sons]["ativo"] and linhas[sons]["quem"] == "Gemini (escuta)"
+    assert linhas["Criar a legenda pelo áudio (vídeo sem nenhuma legenda)"]["quem"] == "Whisper (no seu PC)"
+    assert "Robôs" not in " ".join(linha.get("titulo", "") for linha in painel.linhas)
+    painel.caixas["var_jf_manter_sons"].toggle()                         # a mesma opção de Configurações
+    assert app.var_jf_manter_sons.get() is False
+    app.update()
+    assert painel.caixas["var_jf_manter_sons"].get() == 0                # montado de novo, ainda desligado
+    painel.fechar()
+    app.var_jf_motor_voz.set(app.MOTORES_VOZ[1])                       # Gemini: libera a emoção e os personagens
+    app.mostrar_aba("Jellyfin")
+    app.bt_automatico_jf.invoke()
+    painel = app._painel_automatico
+    assert "aba Jellyfin" in painel.lb_titulo.cget("text")
+    assert {"var_jf_emocao_da_cena", "var_jf_voz_por_personagem", "var_jf_robo_so_piper", "var_jf_vigiar",
+            "var_jf_legendas"} <= set(painel.caixas)
+    assert any(linha.get("titulo", "").startswith("Robôs agendados") for linha in painel.linhas)
+    app.var_jf_chave_gemini.set("")
+    painel.recarregar()
+    assert "var_jf_emocao_da_cena" not in painel.caixas and "Sem a chave do Gemini" in painel.lb_nota.cget("text")
+    painel.fechar()
+    app.var_jf_motor_voz.set(app.MOTORES_VOZ[0])
 
 
 def test_gastos_do_mes_na_tela(app):
@@ -4638,8 +4756,10 @@ def test_testar_alguns_minutos_na_aba_avulsos(app, tmp_path, monkeypatch):
     app.bt_av_testar.invoke()
     esperar(app)
     esperar(app)
-    amostra = dublagem.caminho_amostra(automacao.pasta_dublagem(), video)
-    assert amostra.is_file() and abertos == [str(amostra)] and voz.textos
+    teste = automacao.testes_feitos()[0]
+    amostra = Path(teste["amostra"])
+    assert amostra.is_file() and abertos == [str(amostra)] and voz.textos and teste["aba"] == "avulsos"
+    assert Path(teste["legenda"]).parent == amostra.parent / "legendas"     # a legenda DESTE teste fica guardada
     linhas = faixas(amostra)
     assert len([l for l in linhas if "Audio" in l]) == 2 and [l for l in linhas if "Subtitle" in l]   # + a legenda
     assert video.read_bytes() == antes and legenda.exists() and automacao.previas_pendentes() == []
@@ -4756,10 +4876,46 @@ def test_minutos_do_teste_ao_lado_dos_botoes_e_jellyfin(app, tmp_path, monkeypat
         app.update()
         time.sleep(0.02)
     assert testes == [[item]]
-    pastas = []
-    monkeypatch.setattr(app, "_pedir_arquivos_video", lambda pasta="", titulo="": pastas.append(pasta) or ())
+    from jellyfin_tools.dublagem import MARCA_DUBLADO
+    (filmes / "A.mkv").write_bytes(b"x")
+    (filmes / f"A{MARCA_DUBLADO}.mkv").write_bytes(b"x")                 # a versão dublada não entra na lista
+    listas = []
+    monkeypatch.setattr(app, "_pedir_arquivos_video", lambda *a, **k: pytest.fail("não pede o vídeo pelo Windows"))
+    monkeypatch.setattr(app, "pedir_roteiro_da_lista", lambda videos, pasta="": listas.append((videos, pasta)))
     app.bt_roteiro_jf.invoke()
-    assert pastas == [str(filmes)]
+    esperar(app)
+    for _ in range(20):                                                 # a janela vem 50 ms depois do "fim"
+        app.update()
+        time.sleep(0.02)
+    assert listas == [([(filmes / "A.mkv", "Filmes", False)], str(filmes))]
+
+
+def test_janela_do_roteiro_com_a_lista_da_biblioteca(app, tmp_path):
+    """Aba Jellyfin: a janela do roteiro traz a lista dos filmes e episódios (com busca) e o link/arquivo, como nos
+    Avulsos; "Outro vídeo..." pega um de fora da lista."""
+    from videoscraper.gui_moderna import DialogoRoteiro
+    videos = [(tmp_path / "Duna (2021).mkv", "Filmes", True), (tmp_path / "Show S01E01.mkv", "Séries · Show", False),
+              (tmp_path / "Show S01E02.mkv", "Séries · Show", False)]
+    outro = tmp_path / "outra" / "Aula.mp4"
+    janela = DialogoRoteiro(app, None, videos=videos, outro_video=lambda: (str(outro),))
+    assert janela.lista.size() == 3 and janela.video is None
+    janela.var_link.set("https://exemplo.com/roteiro.html")
+    janela.bt_ok.invoke()
+    assert janela.resultado is None and "Escolha primeiro" in janela.lb_video.cget("text")   # falta o vídeo
+    janela.var_busca.set("duna")
+    janela.mostrar()
+    assert janela.lista.size() == 1 and janela.video == videos[0][0]            # achou um só: já escolhido
+    assert "já tem roteiro" in janela.lb_video.cget("text")
+    janela.var_busca.set("série")                                               # sem acento também acha
+    janela.mostrar()
+    janela.lista.selection_set(1)
+    janela._ao_escolher()
+    assert janela.lista.size() == 2 and janela.video == videos[2][0]
+    janela.bt_outro.invoke()
+    assert janela.video == outro and janela.lista.get(0).startswith("Aula.mp4")
+    janela.bt_ok.invoke()
+    assert janela.resultado == "https://exemplo.com/roteiro.html" and janela.video == outro
+    app.update()
 
 
 def test_parar_libera_a_janela_mesmo_com_uma_etapa_presa(app, monkeypatch):
@@ -4822,35 +4978,97 @@ def test_previas_e_testes_abrem_no_vlc(app, tmp_path, monkeypatch):
 
 
 def test_testes_feitos_ficam_para_abrir_de_novo(app, tmp_path, monkeypatch):
-    """"🧪 Testes feitos": o teste fica guardado (mesmo depois que o filme inteiro é dublado) para abrir de novo,
-    abrir a pasta (outro player) ou apagar."""
+    """"🧪 Testes feitos": cada teste fica guardado (vários do mesmo vídeo também, mesmo depois que o filme inteiro é
+    dublado) para abrir de novo, abrir a pasta (outro player) ou apagar um, vários ou todos. Abre mostrando os testes
+    da aba de onde veio."""
+    from datetime import datetime
     from videoscraper import automacao
     from videoscraper.gui_moderna import JanelaTestes
     from jellyfin_tools import dublagem
     video = tmp_path / "Farol (2020).mkv"
-    amostra = dublagem.caminho_amostra(automacao.pasta_dublagem(), video)
-    assert amostra.parent.name == "testes"                              # fora do progresso do filme
-    amostra.parent.mkdir(parents=True, exist_ok=True)
-    amostra.write_bytes(b"x")
-    automacao.registrar_teste(video, amostra, (75.0, 195.0))
-    abertos, pastas = [], []
+    primeiro = dublagem.caminho_amostra(automacao.pasta_dublagem(), video, datetime(2026, 10, 13, 14, 54, 10))
+    assert primeiro.parent.name == "testes" and primeiro.name.endswith(" - 2026-10-13 14h54m10s.mkv")
+    primeiro.parent.mkdir(parents=True, exist_ok=True)
+    primeiro.write_bytes(b"x")
+    automacao.registrar_teste(video, primeiro, (75.0, 195.0))           # sem legenda: um teste antigo dos Avulsos
+    lista = automacao._ler_testes()
+    del lista[0]["aba"]                                                  # antes da v2.18.12 a aba não era guardada
+    automacao._gravar_testes(lista)
+    segundo = dublagem.caminho_amostra(automacao.pasta_dublagem(), video, datetime(2026, 10, 13, 14, 54, 10))
+    assert segundo != primeiro and segundo.name.endswith("(2).mkv")      # o 2º teste não apaga o 1º
+    segundo.write_bytes(b"yy")
+    automacao.registrar_teste(video, segundo, (300.0, 420.0), custo=0.0, aba="avulsos")
+    filme = tmp_path / "Filmes" / "Duna (2021).mkv"
+    filme.parent.mkdir()
+    legenda = filme.with_name("Duna (2021).pt-BR.srt")
+    legenda.write_text("1\n00:00:01,000 --> 00:00:02,000\nOi\n", encoding="utf-8")
+    do_jellyfin = dublagem.caminho_amostra(automacao.pasta_dublagem(), filme)
+    do_jellyfin.write_bytes(b"zzz")
+    automacao.registrar_teste(filme, do_jellyfin, (0.0, 60.0), legenda, custo=0.05, aba="jellyfin")
+    assert [t["aba"] for t in automacao.testes_feitos()] == ["jellyfin", "avulsos", "avulsos"]
+    assert automacao.testes_feitos()[0]["legenda"] == str(legenda)       # a do Jellyfin fica onde está
+    abertos, pastas, perguntas = [], [], []
     monkeypatch.setattr(app, "abrir_video", lambda caminho: abertos.append(caminho))
     monkeypatch.setattr(app, "_abrir_no_sistema", lambda caminho: pastas.append(caminho))
-    monkeypatch.setattr(app, "perguntar", lambda *a, **k: True)
+    monkeypatch.setattr(app, "perguntar", lambda titulo, texto, *a, **k: (perguntas.append(texto), True)[1])
     app.mostrar_aba("Avulsos")
     app.bt_testes_av.invoke()
     janela = next(w for w in app.winfo_children() if isinstance(w, JanelaTestes))
-    assert janela.tabela.item("0", "values")[:2] == ("Farol (2020).mkv", "1:15 a 3:15")
+    t = janela.tabela
+    assert t.get_children() == ("1", "2") and janela.seletor.ocultos == {"0"}       # só os dos Avulsos
+    assert t.heading("aba", "text") == "Aba ▼" and "aba Avulsos: 2 de 3" in janela.lb_filtro.cget("text")
+    assert t.item("1", "values")[:4] == ("☑ 2", "Avulsos", "Farol (2020).mkv", "5:00 a 7:00")    # o mais novo
+    assert t.item("2", "values")[:4] == ("☐ 3", "Avulsos", "Farol (2020).mkv", "1:15 a 3:15")
+    assert t.item("1", "values")[4] == "grátis" and t.item("2", "values")[4] == "-"              # antigo: sem custo
     janela.bt_abrir.invoke()
     janela.bt_pasta.invoke()
-    assert abertos == [str(amostra)] and pastas == [str(amostra.parent)]
-    assert janela.tabela.item("0", "values")[2] == "-"                    # teste antigo: sem o custo
+    assert abertos == [str(segundo)] and pastas == [str(segundo.parent)]
+    janela.seletor.marcar(["2"], somar=False)                           # o antigo
     app.caixas.clear()
     janela.bt_ajustar.invoke()                                           # teste antigo: não dá para ajustar
     assert app.caixas and "versão anterior" in app.caixas[-1][2]
+    janela.seletor.alternar_todos()                                      # o título "☐ #": marca os 2 à vista
+    assert janela.seletor.marcados() == ["1", "2"] and t.heading("n", "text") == "☑ #"
+    assert janela.bt_apagar.cget("text") == "✕  Apagar marcados (2)"
     janela.bt_apagar.invoke()
-    assert not amostra.exists() and automacao.testes_feitos() == [] and not janela.tabela.get_children()
+    assert "Apagar os 2 testes marcados?" in perguntas[-1]
+    assert not primeiro.exists() and not segundo.exists() and do_jellyfin.exists()
+    assert t.get_children() == () and len(janela.seletor.ordem) == 1                 # o do Jellyfin, escondido
+    janela.seletor.tirar_filtros()
+    assert t.get_children() == ("0",) and t.item("0", "values")[1:3] == ("Jellyfin", "Duna (2021).mkv")
+    janela.seletor.abrir_filtro("video")                                 # o filtro por coluna, como na lista
+    assert janela.seletor.filtro_aberto is not None
+    janela.seletor._janela_filtro.destroy()
+    janela.bt_apagar_todos.invoke()
+    assert "Apagar o teste de Duna (2021).mkv" in perguntas[-1]
+    assert not do_jellyfin.exists() and automacao.testes_feitos() == [] and not t.get_children()
+    assert janela.bt_apagar_todos.cget("state") == "disabled" and janela.bt_abrir.cget("state") == "disabled"
+    assert legenda.exists()                                              # a legenda do filme não é apagada
     janela.destroy()
+
+
+def test_teste_dos_avulsos_guarda_a_propria_legenda(tmp_path):
+    """A legenda do teste dos Avulsos ('teste.pt-BR.srt', no progresso do vídeo) muda a cada teste: uma cópia fica
+    com o teste ("Ajustar falas" de um teste antigo usa as falas DELE) e sai quando o teste é apagado."""
+    from videoscraper import automacao
+    from jellyfin_tools import dublagem
+    video = tmp_path / "Aula.mp4"
+    pasta = dublagem.pasta_do_filme(automacao.pasta_dublagem(), video)
+    pasta.mkdir(parents=True)
+    legenda = pasta / "teste.pt-BR.srt"
+    legenda.write_text("primeiro", encoding="utf-8")
+    amostra = dublagem.caminho_amostra(automacao.pasta_dublagem(), video)
+    amostra.parent.mkdir(parents=True, exist_ok=True)
+    amostra.write_bytes(b"x")
+    automacao.registrar_teste(video, amostra, (0, 60), legenda, aba="avulsos")
+    legenda.write_text("segundo teste", encoding="utf-8")               # o próximo teste reescreve a legenda
+    teste = automacao.testes_feitos()[0]
+    copia = Path(teste["legenda"])
+    assert copia.parent.name == "legendas" and copia.read_text(encoding="utf-8") == "primeiro"
+    assert copia.name == f"{amostra.stem}.pt-BR.srt"
+    assert automacao.tamanho_dos_testes([teste]) == 1
+    assert automacao.apagar_testes([teste]) == 1
+    assert not copia.exists() and not amostra.exists() and legenda.exists()
 
 
 def test_ajustar_falas_escolhe_a_fala_e_o_que_trocar(app, monkeypatch):
