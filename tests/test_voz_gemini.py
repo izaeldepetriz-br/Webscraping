@@ -350,12 +350,14 @@ def test_ouvir_o_tom_so_do_trecho_e_guardar(tmp_path):
         def create(self, model, input):
             perguntas.append(input[0]["text"])
             return SimpleNamespace(output_text=json.dumps({"falas": [
-                {"id": 0, "tom": '"com raiva, gritando".', "genero": "F", "quem": "mãe brava"}, {"id": 1, "tom": "cansado"}, {"id": 7, "tom": "x"}],
+                {"id": 0, "tom": '"com raiva, gritando".', "genero": "F", "quem": "mãe brava",
+                 "idade": "adulta"}, {"id": 1, "tom": "cansado"}, {"id": 7, "tom": "x"}],
                 "cena": "Uma mãe briga com o filho."}))
     guardado = tmp_path / "tons.json"
     extrair = lambda f, v, ini, dur: trechos.append((ini, dur)) or b"mp3"     # noqa: E731
     achados = tom.ouvir_falas("f.mkv", falas, [0, 1], Ouvinte(), "ffmpeg", guardado, extrair=extrair)
     assert {k: (o.tom, o.genero) for k, o in achados.items()} == {0: ("com raiva, gritando", "f"), 1: ("cansado", "?")}
+    assert achados[0].idade == "adulto"
     assert achados[0].nota() == ("Cena: Uma mãe briga com o filho. Quem fala: mãe brava. Nesta fala: com raiva, "
                                  "gritando.")
     assert trechos == [(4.0, 8.0)] and "1 [5.0s] Tá bom." in perguntas[0]      # 0:04 a 0:12, não 15 minutos
@@ -439,7 +441,9 @@ def test_metades_vao_em_paralelo_e_a_barra_anda_por_fala(tmp_path):
     motor.sintetizar([(f"Fala número {i} aqui.", tmp_path / f"{i}.wav") for i in range(4)], ao_progresso=barra.append)
     assert motor.falas_geradas == 4 and len(gemini.pedidos) == 7         # 1 de 4, 2 de 2, 4 de 1
     assert max(ao_mesmo_tempo) >= 2                                       # as metades foram juntas
-    assert len(avisos) == 3 and "duas metades" in avisos[0]
+    assert len(avisos) == 4 and "duas metades" in avisos[0]
+    assert avisos[-1].startswith("Gemini: 3 bloco(s) pedido(s) de novo") and "custo a mais estimado: US$" in avisos[-1]
+    assert motor.gasto_refeito > 0                                        # o áudio jogado fora também foi pago
     assert barra[-1] == 1.0 and len(set(barra)) >= 3                      # 0,25... 0,5... 1,0
 
 
@@ -462,3 +466,39 @@ def test_corte_de_um_dialogo_longo_com_pausas_dramaticas():
     cortes = voz_gemini.separar_por_pausas(audio, TAXA, letras)
     assert cortes is not None
     assert all(abs((b - a) / TAXA - e) < 0.15 for (a, b), e in zip(cortes, esperado))
+
+
+def test_crianca_e_idoso_ganham_voz_da_idade():
+    """As vozes prontas são de adultos: a criança fica com a que soa mais jovem do gênero dela, o idoso com uma mais
+    calma, e a voz principal (adulta) não vai para eles. O tom também diz a idade de cada fala."""
+    from jellyfin_tools import dublagem
+    assert [personagens.idade_de(t) for t in ("criança", "Crianca", "idosa", "jovem", "adulto", "?")] == \
+        ["crianca", "crianca", "idoso", "jovem", "adulto", ""]
+    lista = [personagens.Personagem("Avó", "f", "senhora idosa", list(range(10)), "idoso"),
+             personagens.Personagem("Pai", "m", "", list(range(10, 18)), "adulto"),
+             personagens.Personagem("Menina", "f", "8 anos", list(range(18, 24)), "crianca"),
+             personagens.Personagem("Menino", "m", "", [24], "crianca")]
+    mapa = personagens.distribuir_vozes(lista, "Charon")
+    assert mapa == {"Avó": "Callirrhoe", "Pai": "Charon", "Menina": "Leda", "Menino": "Puck"}
+    por = {"m": "Charon", "f": "Kore", "f:crianca": "Leda"}
+    assert dublagem.vozes_com_genero({}, {0: "f:crianca", 1: "f:idoso", 2: "m"}, por, [0, 1, 2]) == \
+        {0: "Leda", 1: "Kore", 2: "Charon"}                                  # idade sem voz própria: a do gênero
+
+
+def test_identificar_guarda_a_idade(tmp_path):
+    falas = [(Fala("00:00:01,000 --> 00:00:02,000", "Vovó!"), "Vovó!")]
+
+    class Ouvinte:
+        def __init__(self):
+            self.interactions = self
+
+        def create(self, model, input):
+            assert '"idade"' in input[0]["text"]
+            return SimpleNamespace(output_text=json.dumps({
+                "pessoas": [{"rotulo": "Lia", "genero": "f", "idade": "criança"}], "falas": [{"id": 0, "rotulo": "Lia"}]}))
+    lista = personagens.identificar("f.mkv", falas, Ouvinte(), "ffmpeg", tmp_path / "p.json",
+                                    extrair=lambda *a: b"mp3")
+    assert [(p.rotulo, p.idade) for p in lista] == [("Lia", "crianca")]
+    elenco = tmp_path / "elenco.json"
+    personagens.salvar_elenco(elenco, lista, {"Lia": "Leda"})
+    assert personagens.carregar_elenco(elenco)["pessoas"][0]["idade"] == "crianca"

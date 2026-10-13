@@ -553,10 +553,12 @@ def test_voz_pelo_genero_e_voz_por_personagem_no_teste(casa, tmp_path, monkeypat
     from test_dublagem import GeminiFalso, VozComVoz
     casa(chave_gemini="chave", voz_gemini="Charon", motor_voz="Gemini (premium, Google AI Studio)")
     o, _ = automacao.opcoes_salvas()
-    assert automacao.vozes_por_genero(o, GeminiFalso()) == {"m": "Charon", "f": "Kore"}
+    por_genero = automacao.vozes_por_genero(o, GeminiFalso())
+    assert {k: por_genero[k] for k in ("m", "f")} == {"m": "Charon", "f": "Kore"}
+    assert por_genero["f:crianca"] == "Leda" and por_genero["m:idoso"] == "Algieba"   # e a voz de cada idade
     assert automacao.vozes_por_genero(o, VozComVoz()) is None                # Piper: não ouve o original
     o.voz_gemini = "Aoede"
-    assert automacao.vozes_por_genero(o, GeminiFalso()) == {"f": "Aoede", "m": "Charon"}
+    assert {k: automacao.vozes_por_genero(o, GeminiFalso())[k] for k in ("m", "f")} == {"f": "Aoede", "m": "Charon"}
     o.voz_gemini = "clone:Izael"
     assert automacao.vozes_por_genero(o, GeminiFalso()) is None              # a SUA voz: vale para tudo
     # o teste com a voz por personagem: só as falas do trecho, cada pessoa com uma voz do gênero dela
@@ -564,12 +566,21 @@ def test_voz_pelo_genero_e_voz_por_personagem_no_teste(casa, tmp_path, monkeypat
     legenda.write_text("".join(f"{k + 1}\n00:00:{2 * k:02d},000 --> 00:00:{2 * k + 1:02d},000\nFala {k}.\n\n"
                                for k in range(8)), encoding="utf-8")
     pedidos = []
+    ouvir_de_verdade = automacao.ouvir_personagens
     monkeypatch.setattr(automacao, "ouvir_personagens", lambda o, video, falas, **k: pedidos.append(k["ids"]) or [
         personagens.Personagem("Agatha", "f", falas=[2, 4, 5]), personagens.Personagem("Elena", "f", falas=[3, 6, 7])])
     o.voz_gemini, o.voz_por_personagem = "Charon", True
     vozes = automacao.vozes_do_teste(o, tmp_path / "A.mkv", legenda, (4.0, 16.0), logging.getLogger("t"))
     assert pedidos == [[2, 3, 4, 5, 6, 7]]
     assert {vozes[2], vozes[3]} <= set(automacao.voz_gemini.VOZES_FEMININAS) and vozes[2] != vozes[3]
+    # o vídeo inteiro, depois, usa as mesmas pessoas (o elenco vai para o Gemini) e as mesmas vozes do teste
+    assert automacao.vozes_fixas(tmp_path / "A.mkv") == {"Agatha": vozes[2], "Elena": vozes[3]}
+    assert automacao.vozes_fixas(tmp_path / "A.mkv", serie="Outra") == {}       # série: o elenco da série
+    capturado = {}
+    monkeypatch.setattr(automacao, "localizar_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(personagens, "identificar", lambda *a, **k: capturado.update(k) or [])
+    ouvir_de_verdade(o, tmp_path / "A.mkv", [], cliente=object())
+    assert [p["rotulo"] for p in capturado["elenco"]] == ["Agatha", "Elena"]   # o Gemini reusa os rótulos
     o.voz_por_personagem = False
     assert automacao.vozes_do_teste(o, tmp_path / "A.mkv", legenda, (4.0, 16.0), logging.getLogger("t")) is None
 

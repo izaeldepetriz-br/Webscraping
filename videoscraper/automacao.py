@@ -352,8 +352,12 @@ def vozes_por_genero(o: OpcoesJellyfin, motor) -> dict | None:
     if not voz:
         return None
     if voz_gemini.VOZES[voz].startswith("masculina"):
-        return {"m": voz, "f": voz_gemini.VOZES_FEMININAS[0]}
-    return {"f": voz, "m": voz_gemini.VOZES_MASCULINAS[0]}
+        base = {"m": voz, "f": voz_gemini.VOZES_FEMININAS[0]}
+    else:
+        base = {"f": voz, "m": voz_gemini.VOZES_MASCULINAS[0]}
+    for (genero, idade), opcoes in personagens.VOZES_POR_IDADE.items():    # criança, jovem e idoso: a voz da idade
+        base[f"{genero}:{idade}"] = opcoes[0]
+    return base
 
 
 def pasta_dublagem() -> Path:
@@ -371,6 +375,8 @@ def ouvir_personagens(o: OpcoesJellyfin, video: Path, falas: list, cliente=None,
     cliente = cliente or voz_gemini._cliente(chave_gemini(o))
     arquivo = arquivo or pasta_do_filme(pasta_dublagem(), video) / "personagens.json"
     elenco = personagens.carregar_elenco(arquivo_elenco(serie))["pessoas"] if serie else []
+    if ids is None and not serie:                 # o vídeo inteiro depois do teste: as mesmas pessoas do teste
+        elenco = personagens.carregar_elenco(arquivo_elenco_do_teste(video))["pessoas"]
     achado = pelo_roteiro(o, video, falas)
     sabidas = achado.falas if achado else None
     if achado:                                    # o elenco do roteiro primeiro: o que a série já sabe vale mais
@@ -404,6 +410,16 @@ def arquivo_elenco(serie: str) -> Path:
     """O elenco de uma série (quem fala e a voz de cada um), para os próximos episódios."""
     nome = re.sub(r"[^\w() -]", "_", serie).strip()[:80] or "serie"
     return pasta_dublagem() / "series" / f"{nome}.json"
+
+
+def arquivo_elenco_do_teste(video: Path) -> Path:
+    """Quem falou no TESTE e a voz de cada um: o vídeo inteiro, depois, usa as mesmas (as que você ouviu)."""
+    return pasta_do_filme(pasta_dublagem(), video) / "elenco-do-teste.json"
+
+
+def vozes_fixas(video: Path, serie: str = "") -> dict:
+    """{rótulo: voz} que já valem: as dos episódios anteriores (série) ou as do teste deste vídeo (filme)."""
+    return vozes_da_serie(serie) if serie else personagens.carregar_elenco(arquivo_elenco_do_teste(video))["vozes"]
 
 
 def vozes_da_serie(serie: str) -> dict:
@@ -858,7 +874,7 @@ def vozes_automaticas(o: OpcoesJellyfin, item, log: logging.Logger) -> dict | No
     try:
         lista = ouvir_personagens(o, item.video, falas_da_legenda(item.legenda), serie=item.serie)
         mapa = personagens.distribuir_vozes(lista, o.voz_gemini, figurante(o), o.limite_figurante,
-                                            fixas=vozes_da_serie(item.serie))
+                                            fixas=vozes_fixas(item.video, item.serie))
         if item.serie:                                # os próximos episódios usam as mesmas vozes
             personagens.salvar_elenco(arquivo_elenco(item.serie), lista, mapa)
         return personagens.vozes_por_fala(lista, mapa)
@@ -885,8 +901,12 @@ def vozes_do_teste(o: OpcoesJellyfin, video: Path, legenda: Path, trecho: tuple[
         lista = ouvir_personagens(o, video, falas, arquivo=arquivo, ids=ids)
         mapa = personagens.distribuir_vozes(lista, o.voz_gemini)
         for p in lista:
-            log.info("Teste: %s (%s, %d falas) -> %s", p.rotulo, personagens.GENEROS.get(p.genero, "?"),
-                     len(p.falas), voz_gemini.texto_da_voz(mapa.get(p.rotulo, o.voz_gemini)))
+            log.info("Teste: %s (%s%s, %d falas) -> %s", p.rotulo, personagens.GENEROS.get(p.genero, "?"),
+                     f", {personagens.IDADES[p.idade]}" if p.idade in personagens.IDADES else "", len(p.falas),
+                     voz_gemini.texto_da_voz(mapa.get(p.rotulo, o.voz_gemini)))
+        elenco = arquivo_elenco_do_teste(video)          # o vídeo inteiro usa as mesmas pessoas e vozes
+        elenco.unlink(missing_ok=True)
+        personagens.salvar_elenco(elenco, lista, mapa)
         return personagens.vozes_por_fala(lista, mapa)
     except (ErroDublagem, OSError, ErroLegenda) as erro:
         log.warning("Teste: voz por personagem: %s (segue com a voz pelo gênero)", erro)

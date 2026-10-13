@@ -3018,7 +3018,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 itens.append(item)
                 continue
             sugestao = personagens.distribuir_vozes(lista, o.voz_gemini, automacao.figurante(o), o.limite_figurante,
-                                                    fixas=automacao.vozes_da_serie(item.serie))
+                                                    fixas=automacao.vozes_fixas(item.video, item.serie))
             principais = [p for p in lista if len(p.falas) >= personagens.MINIMO_FALAS][:8]
             if not principais:
                 itens.append(item)

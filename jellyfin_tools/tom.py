@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .dublagem import ErroDublagem, horarios
-from .personagens import GENEROS, TRECHO, _carregar, _hms, audio_do_trecho, pedacos
+from .personagens import GENEROS, TRECHO, _carregar, _hms, audio_do_trecho, idade_de, pedacos
 from .voz_gemini import PRECO_OUVIR, TOKENS_POR_SEGUNDO, ler_json, perguntar_sobre_audio
 
 TOM_MAXIMO = 80               # letras do tom de uma fala (uma indicação curta, não uma descrição)
@@ -38,9 +38,10 @@ e hesitante", "sussurrando, com medo", "irônica, devagar"). Não repita o texto
 se o original é exagerado ou teatral, diga.
    - genero: "m" se quem fala tem voz de homem, "f" se de mulher, "?" se não der para saber (criança, robô).
    - quem: QUEM fala, como um perfil para o dublador, em 3 a 8 palavras (idade aproximada, jeito, personalidade; ex.: "senhora idosa, calorosa e teatral", "jovem estrangeira, tímida", "menino de 8 anos, travesso"). Use o mesmo perfil para a mesma pessoa.
+   - idade: "crianca", "jovem", "adulto" ou "idoso", pela voz.
 
 Responda SÓ com JSON, neste formato:
-{{"cena": "...", "falas": [{{"id": 12, "tom": "animada, explicando", "genero": "f", "quem": "professora jovem, paciente"}}]}}
+{{"cena": "...", "falas": [{{"id": 12, "tom": "animada, explicando", "genero": "f", "idade": "adulto", "quem": "professora, paciente"}}]}}
 
 Falas:
 {falas}"""
@@ -53,6 +54,7 @@ class Ouvida:
     genero: str = "?"
     cena: str = ""
     quem: str = ""
+    idade: str = ""          # "crianca", "jovem", "adulto", "idoso" ou "" (escolhe a voz da idade)
 
     def nota(self) -> str:
         """A nota de direção que vai no pedido da voz (vazia se não ouviu nada útil): a cena, o perfil de quem fala
@@ -82,7 +84,7 @@ def _ler_guardado(arquivo: Path | None, falas: list) -> dict[int, Ouvida]:
             if (0 <= k < len(falas) and isinstance(valor, list) and len(valor) >= 4
                     and valor[0] == falas[k][1]):
                 guardado[k] = Ouvida(str(valor[1]), str(valor[2]), str(valor[3]),
-                                     str(valor[4]) if len(valor) > 4 else "")
+                                     str(valor[4]) if len(valor) > 4 else "", str(valor[5]) if len(valor) > 5 else "")
         except (ValueError, IndexError, TypeError):
             continue
     return guardado
@@ -127,12 +129,12 @@ def ouvir_falas(video: str | Path, falas: list, ids: list[int], cliente, ffmpeg:
             if k in validos:
                 genero = str(item.get("genero", "?")).strip().lower()[:1]
                 ouvidas[k] = Ouvida(_limpar(item.get("tom"), TOM_MAXIMO), genero if genero in GENEROS else "?", cena,
-                                    _limpar(item.get("quem"), TOM_MAXIMO))
+                                    _limpar(item.get("quem"), TOM_MAXIMO), idade_de(item.get("idade")))
         for k in grupo:
             ouvidas.setdefault(k, Ouvida(cena=cena))     # sem resposta para ela: não pergunta (nem paga) de novo
         if arquivo:
             arquivo.parent.mkdir(parents=True, exist_ok=True)
-            arquivo.write_text(json.dumps({str(k): [falas[k][1], o.tom, o.genero, o.cena, o.quem]
+            arquivo.write_text(json.dumps({str(k): [falas[k][1], o.tom, o.genero, o.cena, o.quem, o.idade]
                                            for k, o in sorted(ouvidas.items())}, ensure_ascii=False),
                                encoding="utf-8")
         if ao_progresso:

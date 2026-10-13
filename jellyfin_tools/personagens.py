@@ -27,6 +27,22 @@ TRECHO = 15 * 60              # segundos de áudio por pedido (o Gemini separa b
 MINIMO_FALAS = 3              # quem fala menos que isso fica com a voz principal
 FIGURANTE = 20                # dublagem mista: quem tem menos falas que isso é figurante (vai para o Piper)
 GENEROS = {"m": "homem", "f": "mulher", "?": "indefinido"}
+IDADES = {"crianca": "criança", "jovem": "jovem", "adulto": "adulto", "idoso": "idoso"}
+# as vozes prontas do Gemini são de adultos: para criança e jovem, as que soam mais jovens; para idoso, as mais calmas
+# e graves (a nota de direção "Quem fala: menina de 8 anos" faz a voz interpretar a idade)
+VOZES_POR_IDADE = {("f", "crianca"): ("Leda", "Zephyr"), ("m", "crianca"): ("Puck", "Fenrir"),
+                   ("f", "jovem"): ("Leda", "Zephyr", "Aoede"), ("m", "jovem"): ("Puck", "Fenrir", "Iapetus"),
+                   ("f", "idoso"): ("Callirrhoe", "Despina"), ("m", "idoso"): ("Algieba", "Charon")}
+
+
+def idade_de(texto) -> str:
+    """"criança"/"crianca"/"child" -> "crianca"; "idosa"/"idoso" -> "idoso"; o que não reconhecer -> ""."""
+    texto = str(texto or "").strip().lower()
+    for chave, palavras in (("crianca", ("crian", "child", "kid", "menin")), ("idoso", ("idos", "old", "elder")),
+                            ("jovem", ("jovem", "young", "adolesc", "teen")), ("adulto", ("adult",))):
+        if texto.startswith(palavras):
+            return chave
+    return ""
 
 _PERGUNTA = """Você ouve um trecho do áudio de um filme ({inicio} a {fim} do filme). Abaixo estão as falas da \
 legenda deste trecho: o número (id), o horário em segundos CONTADOS DO INÍCIO DESTE TRECHO e o texto (em português; \
@@ -38,12 +54,14 @@ Diga QUEM fala cada fala, pela VOZ:
 - Pessoa nova: "Pessoa N" (o próximo número livre) ou o NOME do personagem, se ele for dito no filme.
 - genero: "m" (voz masculina), "f" (voz feminina) ou "?" (criança, robô, não dá para saber).
 - descricao: poucas palavras sobre a voz (ex.: "homem idoso, voz grave").
+- idade: "crianca", "jovem", "adulto" ou "idoso", pela voz.
 - Falas marcadas com [roteiro: Nome] já têm dono certo (do roteiro do filme): use esse Nome como o rótulo da voz \
 dessa pessoa também nas outras falas dela.
 - Se não der para saber quem fala uma fala, use o rótulo "?".
 
 Responda SÓ com JSON, neste formato:
-{{"pessoas": [{{"rotulo": "Pessoa 1", "genero": "m", "descricao": "..."}}], "falas": [{{"id": 12, "rotulo": "Pessoa 1"}}]}}
+{{"pessoas": [{{"rotulo": "Pessoa 1", "genero": "m", "idade": "adulto", "descricao": "..."}}], \
+"falas": [{{"id": 12, "rotulo": "Pessoa 1"}}]}}
 
 Falas:
 {falas}"""
@@ -55,6 +73,7 @@ class Personagem:
     genero: str = "?"
     descricao: str = ""
     falas: list = field(default_factory=list)      # números das falas (a mesma numeração da dublagem)
+    idade: str = ""                                # "crianca", "jovem", "adulto", "idoso" ou "" (não sabe)
 
 
 def _hms(segundos: float) -> str:
@@ -149,7 +168,8 @@ def identificar(video: str | Path, falas: list, cliente, ffmpeg: str, arquivo: s
                 antes = pessoas.get(rotulo, {})
                 genero = str(p.get("genero", "?")).strip().lower()[:1]
                 pessoas[rotulo] = {"rotulo": rotulo, "genero": genero if genero in GENEROS else antes.get("genero", "?"),
-                                   "descricao": str(p.get("descricao", "") or antes.get("descricao", ""))[:80]}
+                                   "descricao": str(p.get("descricao", "") or antes.get("descricao", ""))[:80],
+                                   "idade": idade_de(p.get("idade")) or antes.get("idade", "")}
         validos = set(ids)
         for item in dados.get("falas", []):
             try:
@@ -172,7 +192,7 @@ def identificar(video: str | Path, falas: list, cliente, ffmpeg: str, arquivo: s
     for rotulo, p in pessoas.items():
         suas = sorted(k for k, r in de_quem.items() if r == rotulo)
         if suas:
-            lista.append(Personagem(rotulo, p.get("genero", "?"), p.get("descricao", ""), suas))
+            lista.append(Personagem(rotulo, p.get("genero", "?"), p.get("descricao", ""), suas, p.get("idade", "")))
     return sorted(lista, key=lambda p: -len(p.falas))
 
 
@@ -203,11 +223,14 @@ def distribuir_vozes(personagens: list[Personagem], voz_principal: str = VOZ_PAD
             figurantes[p.genero] += 1
             continue
         grupo = {"m": VOZES_MASCULINAS, "f": VOZES_FEMININAS}.get(p.genero, VOZES_MASCULINAS + VOZES_FEMININAS)
+        da_idade = VOZES_POR_IDADE.get((p.genero, p.idade), ())
+        grupo = tuple(da_idade) + tuple(v for v in grupo if v not in da_idade)   # criança: as vozes mais jovens antes
+        adulta = p.idade not in ("crianca", "idoso")   # a voz principal (adulta) não vai para criança nem idoso
         if len(p.falas) < MINIMO_FALAS:                # fala pouco: a principal, se for do mesmo gênero; senão uma
-            mapa[p.rotulo] = (principal if principal in grupo or clonada else   # do gênero dele já em uso
-                              next((v for v in grupo if usadas[v]), grupo[0]))
+            mapa[p.rotulo] = (principal if (principal in grupo and adulta) or clonada else   # do gênero dele
+                              next((v for v in grupo if usadas[v] and (adulta or v in da_idade)), grupo[0]))
             continue
-        if not usadas and (principal in grupo or clonada):
+        if not usadas and ((principal in grupo and adulta) or clonada):
             voz = principal
         else:
             voz = min(grupo, key=lambda v: (usadas[v], grupo.index(v)))
@@ -245,7 +268,7 @@ def salvar_elenco(arquivo: str | Path, personagens: list[Personagem], mapa: dict
     elenco = carregar_elenco(arquivo)
     pessoas = {p["rotulo"]: p for p in elenco["pessoas"]}
     for p in personagens:
-        pessoas[p.rotulo] = {"rotulo": p.rotulo, "genero": p.genero, "descricao": p.descricao}
+        pessoas[p.rotulo] = {"rotulo": p.rotulo, "genero": p.genero, "descricao": p.descricao, "idade": p.idade}
     vozes = {**elenco["vozes"], **{r: v for r, v in mapa.items() if v}}
     arquivo = Path(arquivo)
     arquivo.parent.mkdir(parents=True, exist_ok=True)

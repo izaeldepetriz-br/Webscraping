@@ -373,6 +373,7 @@ class MotorGemini:
                  vozes_clonadas: dict | None = None, avisar=None):
         self.clonadas = dict(vozes_clonadas or {})
         self.avisar, self._trava = avisar, threading.Lock()
+        self.gasto_refeito = 0.0          # US$ (estimativa) do áudio dos blocos que tiveram de ser pedidos de novo
         if not self.conhece(voz):
             raise ErroDublagem(self._desconhecida([voz]))
         self.voz, self.modelo, self.estilo = voz, modelo or MODELO_PADRAO, estilo
@@ -432,6 +433,7 @@ class MotorGemini:
         if cortes is None and len(itens) > 1:
             with self._trava:
                 self.blocos_refeitos += 1
+                self.gasto_refeito += custo_da_fala(len(amostras) / taxa)     # este áudio foi pago e jogado fora
             meio = len(itens) // 2
             return [itens[:meio], itens[meio:]]
         for (ini, fim), (_, wav, _, _) in zip(cortes or [(0, len(amostras))], itens):
@@ -447,6 +449,7 @@ class MotorGemini:
                  for p in pedidos]
         grupos = blocos(itens, self.bloco)
         inicio, mostrado = self.falas_geradas, -1
+        refeitos, gasto = self.blocos_refeitos, self.gasto_refeito
         # sem "with": no Parar (ou num erro), não espera os pedidos que ainda estão no Google
         grupo = ThreadPoolExecutor(max_workers=self.simultaneos)
         pendentes = {grupo.submit(self._falar_bloco, g, parar) for g in grupos}
@@ -470,5 +473,8 @@ class MotorGemini:
             grupo.shutdown(wait=False, cancel_futures=True)
             raise
         grupo.shutdown(wait=False)
+        if self.avisar and self.blocos_refeitos > refeitos:     # o que custou a mais (para ver se o corte melhorou)
+            self.avisar(f"Gemini: {self.blocos_refeitos - refeitos} bloco(s) pedido(s) de novo em metades; custo a "
+                        f"mais estimado: US$ {self.gasto_refeito - gasto:.3f}")
         if parar and parar():
             raise ErroDublagem("interrompido (botão Parar)")

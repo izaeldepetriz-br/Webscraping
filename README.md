@@ -253,6 +253,15 @@ primeira falha (antes esperava o tempo limite em cada filme).
   são mais longas que a troca de quem fala; o corte errava e o bloco era pedido (e pago) de novo. Agora cada corte é a
   pausa mais longa PERTO de onde aquela fala deveria terminar, pelas letras. E a nota de ritmo não pede mais "sem
   pausas" (o Gemini encurtava também a pausa entre as falas).
+- **Criança e idoso com a voz da idade**: a escuta do original (e a voz por personagem) agora diz também a faixa
+  etária de quem fala (criança, jovem, adulto, idoso). As vozes prontas do Gemini são de adultos, então a criança fica
+  com a que soa mais jovem do gênero dela (Leda, Puck), o idoso com uma mais calma (Callirrhoe, Algieba), e a voz
+  principal (adulta) não vai mais para eles; a nota de direção ("Quem fala: menina de 8 anos") faz a voz interpretar
+  a idade.
+- **O vídeo inteiro usa as vozes do teste**: quem falou no "🧪 Testar" e a voz de cada um ficam guardados; na dublagem
+  do vídeo inteiro, o Gemini reusa os mesmos nomes (Agatha, Elena) e cada um continua com a voz que você ouviu.
+- **Quanto custou a mais**: no fim da voz do Gemini, o log diz quantos blocos tiveram de ser pedidos de novo e o custo
+  estimado do áudio jogado fora ("2 bloco(s) pedido(s) de novo; custo a mais estimado: US$ 0.004").
 
 ### Novidades da v2.18.6
 

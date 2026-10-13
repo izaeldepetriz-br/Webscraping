@@ -914,8 +914,9 @@ def _guardar_no_banco(banco: Path, guardar: list[tuple[str, Path]]) -> None:
 
 
 def _ouvir_tons(tons, falas, indices, pasta, parar, avisar) -> tuple[dict, dict]:
-    """({número da fala: nota de direção}, {número da fala: gênero de quem fala}), ou ({}, {}) sem quem ouça ou se
-    falhar (a dublagem segue, só sem a emoção da cena). tons devolve {número: texto} ou {número: tom.Ouvida}."""
+    """({número da fala: nota de direção}, {número da fala: "f", "m", "f:crianca", "m:idoso"...}), ou ({}, {}) sem
+    quem ouça ou se falhar (a dublagem segue, só sem a emoção da cena). tons devolve {número: texto} ou
+    {número: tom.Ouvida}."""
     if tons is None:
         return {}, {}
     try:
@@ -925,7 +926,8 @@ def _ouvir_tons(tons, falas, indices, pasta, parar, avisar) -> tuple[dict, dict]
             avisar(f"o tom das falas não foi ouvido ({str(erro)[:150]}): a voz segue sem a emoção da cena")
         return {}, {}
     notas = {k: (o.nota() if hasattr(o, "nota") else str(o)) for k, o in ouvidas.items()}
-    generos = {k: o.genero for k, o in ouvidas.items() if getattr(o, "genero", "?") in ("m", "f")}
+    generos = {k: o.genero + (f":{o.idade}" if getattr(o, "idade", "") else "") for k, o in ouvidas.items()
+               if getattr(o, "genero", "?") in ("m", "f")}
     return {k: n for k, n in notas.items() if n}, generos
 
 
@@ -967,13 +969,16 @@ def juntar_notas(notas: dict, ritmo: dict) -> dict:
 
 def vozes_com_genero(vozes: dict, generos: dict, por_genero: dict | None, indices) -> dict:
     """As falas SEM voz própria (sem voz por personagem, ou de quem não foi identificado) ficam com a voz do gênero
-    de quem fala (por_genero = {"m": "Charon", "f": "Kore"}): a mulher não é mais dublada com voz de homem."""
+    (e da idade) de quem fala: por_genero = {"m": "Charon", "f": "Kore", "f:crianca": "Leda", ...}; generos =
+    {número: "f" ou "f:crianca"}. A mulher não é mais dublada com voz de homem, nem a criança com voz de adulto."""
     if not por_genero:
         return vozes
     novas = dict(vozes)
     for k in indices:
-        if not novas.get(k) and generos.get(k) in por_genero:
-            novas[k] = por_genero[generos[k]]
+        quem = generos.get(k, "")
+        voz = por_genero.get(quem) or por_genero.get(quem.split(":")[0])
+        if not novas.get(k) and voz:
+            novas[k] = voz
     return novas
 
 
