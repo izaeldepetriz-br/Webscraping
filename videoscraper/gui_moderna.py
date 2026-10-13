@@ -2766,9 +2766,12 @@ class JanelaModerna(ctk.CTk):
         self.lb_subtitulo = ctk.CTkLabel(textos, font=self.f_sub, text_color=Tema.TEXTO_SUAVE, anchor="w",
                                          text=self.SUBTITULOS["Vídeos"])
         self.lb_subtitulo.pack(anchor="w", pady=(2, 0))
-        # "painel de saúde" (aba Jellyfin): bibliotecas, Jellyfin, vigia, lugar fixo e versão numa linha só
-        self.lb_saude = ctk.CTkLabel(textos, text="", font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO_SUAVE,
-                                     anchor="w", justify="left", wraplength=760)    # muita coisa: quebra a linha
+        # "painel de saúde" (abas Jellyfin, Jellyfin TV e Configurações): bibliotecas, Jellyfin, vigia, lugar fixo e
+        # versão. Fica embaixo do título E das abas, na largura toda: ao lado do título, com 5 abas, quebrava em 3
+        # linhas e a lista da aba Jellyfin perdia altura
+        self._textos_topo = textos
+        self.lb_saude = ctk.CTkLabel(topo, text="", font=ctk.CTkFont(Tema.FAMILIA, 12), text_color=Tema.TEXTO_SUAVE,
+                                     anchor="w", justify="left", wraplength=1100)   # muita coisa: quebra a linha
         self.seletor_aba = ctk.CTkSegmentedButton(
             topo, values=["Vídeos", "Jellyfin", "Jellyfin TV", "Avulsos", "⚙ Configurações"], command=self.mostrar_aba,
             height=38,
@@ -2784,10 +2787,10 @@ class JanelaModerna(ctk.CTk):
             border_color=Tema.CAMPO_BORDA)
         self.bt_atualizacoes.pack(side="right", padx=(0, 12), pady=(4, 0), before=textos)
 
-        def quebrar_saude(_evento=None):              # a linha de saúde quebra no espaço que sobra (5 abas no topo)
-            sobra = topo.winfo_width() - self.seletor_aba.winfo_width() - self.bt_atualizacoes.winfo_width() - 110
-            if sobra > 200:
-                self.lb_saude.configure(wraplength=min(760, sobra))
+        def quebrar_saude(_evento=None):              # a linha de saúde quebra na largura do topo (menos o ícone)
+            largura = topo.winfo_width() - 90
+            if largura > 300 and abs(largura - int(self.lb_saude.cget("wraplength"))) > 20:
+                self.lb_saude.configure(wraplength=largura)
         topo.bind("<Configure>", quebrar_saude, add="+")
 
     def mostrar_aba(self, nome: str) -> None:
@@ -2811,7 +2814,7 @@ class JanelaModerna(ctk.CTk):
         if nome == "Jellyfin TV":
             self.ao_abrir_aba_tv()
         if nome in ("Jellyfin", "Jellyfin TV", self.ABA_CONFIG) and self.lb_saude.cget("text"):
-            self.lb_saude.pack(anchor="w", pady=(2, 0))
+            self._mostrar_saude()
         else:
             self.lb_saude.pack_forget()
 
@@ -2822,7 +2825,11 @@ class JanelaModerna(ctk.CTk):
         self.lb_saude.configure(text=texto, text_color=Tema.AVISO if any(ok is False for _, ok in itens)
                                 else Tema.TEXTO_SUAVE)
         if self.aba_atual() in ("Jellyfin", "Jellyfin TV", self.ABA_CONFIG):
-            self.lb_saude.pack(anchor="w", pady=(2, 0))
+            self._mostrar_saude()
+
+    def _mostrar_saude(self) -> None:
+        """Embaixo do título e das abas, na largura toda (antes das abas na ordem do pack: pega a faixa de baixo)."""
+        self.lb_saude.pack(side="bottom", anchor="w", pady=(2, 0), before=self.seletor_aba)
 
     def aba_atual(self) -> str:
         return self.seletor_aba.get()

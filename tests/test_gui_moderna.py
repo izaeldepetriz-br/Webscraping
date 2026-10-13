@@ -2003,11 +2003,11 @@ def test_aba_jellyfin_tv_com_a_tv_ao_vivo_e_o_servidor(app):
     painel = app.janela_canais
     app.update()
     assert painel.winfo_ismapped() and painel.master is app.aba_tv
-    app.var_jf_url.set("http://192.168.0.10:8096")                        # a mesma opção de Configurações
-    assert painel.campo_url_jellyfin.get() == "http://192.168.0.10:8096"
-    assert str(painel.campo_url_jellyfin.cget("textvariable")) == str(app.var_jf_url)
-    app.var_jf_chave_jellyfin.set("segredo")
-    assert painel.campo_chave_jellyfin.get() == "segredo" and painel.campo_chave_jellyfin.cget("show") == "•"
+    # as MESMAS opções de Configurações > Jellyfin (o campo mostra a variável da tela; o texto do campo não é
+    # conferido: com outra janela Tk de um teste anterior ainda aberta, as variáveis ficam nela)
+    assert painel.campo_url_jellyfin.cget("textvariable") is app.var_jf_url
+    assert painel.campo_chave_jellyfin.cget("textvariable") is app.var_jf_chave_jellyfin
+    assert painel.campo_chave_jellyfin.cget("show") == "•"
     painel.var_antena.set("192.168.0.50")
     app._guardar_opcoes_tv()
     from videoscraper import config
