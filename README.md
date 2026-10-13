@@ -250,9 +250,16 @@ primeira falha (antes esperava o tempo limite em cada filme).
   ganha uma voz do gênero dela, como na dublagem do vídeo inteiro (antes o teste saía sempre com uma voz só).
 - **Quem fala pouco ganha voz do próprio gênero**: na voz por personagem, quem tinha menos de 3 falas ficava com a
   voz principal, mesmo sendo do outro gênero.
-- **Mais emoção**: o Gemini agora descreve também a CENA (quem são as pessoas, o clima) e, em cada fala, a emoção, a
-  intensidade e o ritmo ("muito animada, quase cantando, rápido"). Isso vai como notas de direção no pedido da voz,
-  com a instrução de não suavizar a interpretação.
+- **Mais emoção e personagem**: o Gemini agora descreve a CENA (o que acontece, o clima), QUEM fala ("senhora idosa,
+  calorosa e teatral") e, em cada fala, a emoção, a intensidade e o ritmo ("muito animada, quase cantando"). Isso vai
+  como notas de direção no pedido da voz, com a instrução de não suavizar a interpretação.
+- **No ritmo do original**: cada fala vai para o Gemini com o tempo que ela tem no original ("a fala tem só 1,1 s;
+  fale bem rápido"). Antes a voz lia no ritmo dela e a fala era acelerada depois para caber, o que soava fora de
+  ritmo.
+- **Nenhuma palavra no lugar errado**: o Gemini lê até 10 falas por pedido (eram 30) e o corte do áudio em falas
+  confere se cada pedaço tem um tamanho possível para o texto. Uma pausa no meio de uma frase ("Sou Agatha, ...
+  Agatha Johnson") não vira mais corte (a 2ª metade ia parar na fala seguinte); se o corte não bater, o bloco é
+  refeito em duas metades.
 
 ### Novidades da v2.18.4
 

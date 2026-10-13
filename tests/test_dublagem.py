@@ -774,7 +774,8 @@ def test_trocar_a_voz_nao_mistura_as_falas_da_voz_antiga(tmp_path):
     dublagem.shutil.rmtree(pasta_filme)                             # do zero: agora o tom vai no pedido
     r = dublar_video(video, legenda, gemini2, pasta_cache=cache, trecho=(0, 8), destino=amostra,
                      tons=lambda falas, ids, p, parar: {ids[0]: "animada"})
-    assert r.status == "dublado" and gemini2.tons == ["animada", ""]
+    assert r.status == "dublado" and gemini2.tons[0].startswith("animada Ritmo:")
+    assert gemini2.tons[1].startswith("Ritmo:")                     # a 2ª: só o ritmo (não foi ouvida)
     avisos = []
     r = dublar_video(video, legenda, voz, pasta_cache=cache, trecho=(0, 8), destino=amostra, avisar=avisos.append,
                      tons=lambda *a: (_ for _ in ()).throw(RuntimeError("sem internet")))
@@ -797,6 +798,11 @@ def test_fala_de_mulher_sai_com_voz_feminina(tmp_path):
                      destino=tmp_path / "amostra.mkv", tons=lambda *a: ouvidas,
                      por_genero={"m": "Charon", "f": "Kore"})
     assert r.status == "dublado" and gemini.vozes == ["Kore", "Charon"]
-    assert gemini.tons == ["Cena: Uma aula. Nesta fala: animada.", "Cena: Uma aula. Nesta fala: calmo."]
+    assert gemini.tons == ["Cena: Uma aula. Nesta fala: animada. Ritmo: cerca de 1,0 s no original.",
+                           "Cena: Uma aula. Nesta fala: calmo. Ritmo: a fala tem só 0,5 s no original; fale bem "
+                           "rápido, sem pausas."]
+    assert dublagem.ritmo_da_fala("Você deve estar cansada da longa viagem.", 3.0) == \
+        "Ritmo: cerca de 3,0 s no original."
+    assert "sem pressa" in dublagem.ritmo_da_fala("Oi.", 2.0) and dublagem.ritmo_da_fala("Oi.", 0.1) == ""
     assert dublagem.vozes_com_genero({1: "Puck"}, {0: "f", 1: "f"}, {"f": "Kore"}, [0, 1]) == {0: "Kore", 1: "Puck"}
     assert dublagem.vozes_com_genero({}, {0: "f"}, None, [0]) == {}               # sem a escuta: nada muda

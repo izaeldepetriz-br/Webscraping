@@ -7,13 +7,14 @@ Vozes PRONTAS (genéricas) do Gemini e, se você criar, vozes CLONADAS ("clone:N
 de quem autorizou e gravou a frase de consentimento, nunca a de atores.
 O motor tem a mesma cara do MotorPiper (sintetizar(pedidos)): cada fala vira um .wav (24 kHz, mono, 16 bits).
 
-BLOCOS (economiza pedidos): em vez de 1 pedido por fala (um filme tem ~1.200), o motor manda até BLOCO falas
-seguidas num pedido só, com uma pausa longa entre elas, e depois corta o áudio nas pausas:
+BLOCOS (economiza pedidos e mantém a voz igual): em vez de 1 pedido por fala (um filme tem ~1.200), o motor manda até
+BLOCO falas seguidas (uma conversa curta) num pedido só, com uma pausa longa entre elas, e depois corta o áudio nas pausas:
 
     "Oi. <long pause> Tudo bem? <long pause> Vamos."  ->  ▁▁███▁▁▁▁▁▁█████▁▁▁▁▁▁███▁▁  ->  3 arquivos .wav
 
-O corte confere se cada pedaço tem um tamanho coerente com o texto; se não bater (o modelo juntou duas falas, por
-exemplo), só aquele bloco é refeito fala por fala. Com vozes diferentes (uma por personagem), cada bloco tem no
+O corte confere se cada pedaço tem um tamanho coerente com o texto; se não bater (o modelo juntou duas falas, ou parou
+no meio de uma frase), só aquele bloco é refeito em duas metades (e assim por diante), em vez de soltar uma palavra
+no lugar da outra. Com vozes diferentes (uma por personagem), cada bloco tem no
 máximo 2 vozes e vai como um DIÁLOGO (o Gemini aceita 2 falantes por pedido).
 
 A chave: aistudio.google.com > "Get API key". O Gemini cobra por token de áudio gerado; a camada grátis tem limites
@@ -57,8 +58,8 @@ KBPS_OUVIR = 32               # o áudio enviado para ouvir vai em mp3 de 32 kbp
 SIMULTANEOS = 4               # blocos pedidos ao mesmo tempo
 TEMPO_LIMITE = 300            # segundos que um pedido pode levar (um bloco de 30 falas leva bem menos)
 TENTATIVAS = 6
-BLOCO = 30                    # falas por pedido
-LETRAS_POR_BLOCO = 2000
+BLOCO = 10                    # falas por pedido (com 30, uma pausa no lugar errado jogava palavras na fala seguinte)
+LETRAS_POR_BLOCO = 700
 PAUSA = " <long pause>"       # marca de pausa do Gemini TTS entre uma fala e a próxima do bloco
 
 
@@ -102,6 +103,8 @@ def pedidos_estimados(falas: int, vozes: list[str] | None = None) -> int:
 JANELA = 0.01                 # 10 ms
 PAUSA_MINIMA = 0.12           # silêncio mais curto que isso não conta como pausa
 FOLGA_CORTE = 0.04            # silêncio que fica antes e depois de cada fala cortada
+FOLGA_TAXA = 2.2              # um pedaço pode ser até 2,2x mais lento/rápido que a mediana do bloco (era 3x)
+LETRAS_POR_SEGUNDO = (4, 28)  # fala de verdade: entre 4 e 28 letras por segundo (fora disso, o corte está errado)
 
 
 def separar_por_pausas(amostras: array, taxa: int, pesos: list[int]) -> list[tuple[int, int]] | None:
@@ -137,8 +140,11 @@ def separar_por_pausas(amostras: array, taxa: int, pesos: list[int]) -> list[tup
                for i in range(n)]
     taxas = sorted((fim - ini) / max(1, p) for (ini, fim), p in zip(pedacos, pesos))
     mediana = taxas[len(taxas) // 2]
-    if mediana <= 0 or taxas[0] < mediana / 3 or taxas[-1] > mediana * 3:
+    if mediana <= 0 or taxas[0] < mediana / FOLGA_TAXA or taxas[-1] > mediana * FOLGA_TAXA:
         return None                                    # um pedaço curto/longo demais para o texto: não confia
+    for (ini, fim), p in zip(pedacos, pesos):          # e nenhuma fala impossível de dizer nesse tempo
+        if p >= 8 and not LETRAS_POR_SEGUNDO[0] <= p / max(1e-3, (fim - ini) / taxa) <= LETRAS_POR_SEGUNDO[1]:
+            return None
     return [(ini, min(fim, len(amostras))) for ini, fim in pedacos]
 
 
@@ -207,7 +213,7 @@ def estilo_da_fala(estilo: str, tom: str) -> str:
     """O estilo geral + as notas de direção desta fala (tom.py: a cena e COMO ela é dita no original)."""
     if not tom:
         return estilo
-    nota = tom if tom.startswith(("Cena:", "Nesta fala:")) else f"Nesta fala: {tom}."
+    nota = tom if tom.startswith(("Cena:", "Quem fala:", "Nesta fala:", "Ritmo:")) else f"Nesta fala: {tom}."
     return f"{estilo} {DIRECAO} {nota}"
 
 
@@ -374,10 +380,11 @@ class MotorGemini:
             raise ErroDublagem("interrompido (botão Parar)")
         amostras, taxa = self._pedir(itens)
         cortes = separar_por_pausas(amostras, taxa, [max(1, len(t)) for t, _, _, _ in itens])
-        if cortes is None and len(itens) > 1:          # o corte não bateu: refaz este bloco fala por fala
-            self.blocos_refeitos += 1
-            for item in itens:
-                self._falar_bloco([item], parar)
+        if cortes is None and len(itens) > 1:          # o corte não bateu: refaz em duas metades (a voz e o ritmo
+            self.blocos_refeitos += 1                  # continuam de conversa, não de falas soltas)
+            meio = len(itens) // 2
+            self._falar_bloco(itens[:meio], parar)
+            self._falar_bloco(itens[meio:], parar)
             return
         for (ini, fim), (_, wav, _, _) in zip(cortes or [(0, len(amostras))], itens):
             _gravar_wav(amostras[ini:fim], taxa, Path(wav))

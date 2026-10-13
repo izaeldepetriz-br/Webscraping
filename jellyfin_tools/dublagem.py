@@ -838,14 +838,16 @@ def _nome_wav(k: int, texto: str, voz: str, sufixo: str = "", motor=None, tom: s
     return f"{k:05d}{sufixo}-{hashlib.sha1(f'{marca}|{texto}'.encode('utf-8')).hexdigest()[:10]}.wav"
 
 
-def _pedido_da_fala(pasta: Path, k: int, texto: str, voz: str, motor, tom: str, sufixo: str = "") -> tuple:
-    """(texto, wav, voz, tom). Se a fala já foi gerada com a MESMA voz, mas sem o tom (a escuta tinha falhado, ou o
-    teste foi antes da emoção da cena), fica a que já existe: não paga a mesma fala duas vezes."""
+def _pedido_da_fala(pasta: Path, k: int, texto: str, voz: str, motor, tom: str, sufixo: str = "",
+                    antes: tuple = ("",)) -> tuple:
+    """(texto, wav, voz, tom). Se a fala já foi gerada com a MESMA voz, mas com uma nota mais simples (só o ritmo,
+    ou nenhuma: a escuta tinha falhado, ou o teste foi de uma versão anterior), fica a que já existe: não paga a
+    mesma fala duas vezes."""
     wav = Path(pasta) / _nome_wav(k, texto, voz, sufixo, motor, tom)
     if tom and not _pronto(wav):
-        sem_tom = Path(pasta) / _nome_wav(k, texto, voz, sufixo, motor)
-        if _pronto(sem_tom):
-            return texto, sem_tom, voz, ""
+        for simples in antes:
+            if simples != tom and _pronto(feita := Path(pasta) / _nome_wav(k, texto, voz, sufixo, motor, simples)):
+                return texto, feita, voz, simples
     return texto, wav, voz, tom
 
 
@@ -925,6 +927,41 @@ def _ouvir_tons(tons, falas, indices, pasta, parar, avisar) -> tuple[dict, dict]
     notas = {k: (o.nota() if hasattr(o, "nota") else str(o)) for k, o in ouvidas.items()}
     generos = {k: o.genero for k, o in ouvidas.items() if getattr(o, "genero", "?") in ("m", "f")}
     return {k: n for k, n in notas.items() if n}, generos
+
+
+LETRAS_NATURAIS = 14.0        # letras por segundo de uma fala em ritmo de conversa (português)
+
+
+def ritmo_da_fala(texto: str, segundos: float) -> str:
+    """A nota de RITMO para a voz que interpreta: quanto tempo a fala tem no original. Sem isso, a voz lia no ritmo
+    dela e a fala era acelerada depois para caber (soava fora de ritmo, "dublagem amadora")."""
+    if segundos <= 0.2:
+        return ""
+    taxa = len("".join(texto.split())) / segundos
+    tempo = f"{segundos:.1f}".replace(".", ",")
+    if taxa > LETRAS_NATURAIS * 1.4:
+        return f"Ritmo: a fala tem só {tempo} s no original; fale bem rápido, sem pausas."
+    if taxa > LETRAS_NATURAIS * 1.1:
+        return f"Ritmo: a fala tem {tempo} s no original; fale um pouco rápido."
+    if taxa < LETRAS_NATURAIS * 0.5 and segundos >= 1.5:
+        return f"Ritmo: a fala tem {tempo} s no original; fale sem pressa, com as pausas do original."
+    return f"Ritmo: cerca de {tempo} s no original."
+
+
+def ritmos(falas: list, indices, motor, vozes: dict) -> dict:
+    """{número: nota de ritmo} das falas que vão para uma voz que interpreta (o Piper não lê notas)."""
+    saida = {}
+    for k in indices:
+        if motor_expressivo(motor, vozes.get(k, "")):
+            inicio, fim = horarios(falas[k][0].tempo)
+            if ritmo := ritmo_da_fala(falas[k][1], fim - inicio):
+                saida[k] = ritmo
+    return saida
+
+
+def juntar_notas(notas: dict, ritmo: dict) -> dict:
+    """As notas de direção (cena, quem fala, tom) + o ritmo de cada fala."""
+    return {k: " ".join(x for x in (notas.get(k, ""), ritmo.get(k, "")) if x) for k in set(notas) | set(ritmo)}
 
 
 def vozes_com_genero(vozes: dict, generos: dict, por_genero: dict | None, indices) -> dict:
@@ -1090,8 +1127,10 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
         pasta.mkdir(parents=True, exist_ok=True)
         tom_de, generos = _ouvir_tons(tons, falas, indices, pasta, parar, avisar)
         vozes = vozes_com_genero(vozes, generos, por_genero, indices)
-        pedidos = [_pedido_da_fala(pasta, k, falas[k][1], vozes.get(k, ""), motor, tom_de.get(k, ""))
-                   for k in indices]
+        ritmo_de = ritmos(falas, indices, motor, vozes)
+        tom_de = juntar_notas(tom_de, ritmo_de)
+        pedidos = [_pedido_da_fala(pasta, k, falas[k][1], vozes.get(k, ""), motor, tom_de.get(k, ""),
+                                   antes=(ritmo_de.get(k, ""), "")) for k in indices]
         _sem_versoes_velhas(w for _, w, _, _ in pedidos)
         retomadas = sum(1 for _, w, _, _ in pedidos if _pronto(w))
         if legenda_no_video and not trecho:              # cópia de trabalho: a que entra no vídeo é ESTA

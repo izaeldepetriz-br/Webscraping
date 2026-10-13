@@ -67,10 +67,10 @@ class GeminiFalso:
 def test_blocos_juntam_falas_seguidas_com_no_maximo_duas_vozes():
     itens = [(f"fala {i}", Path(f"{i}.wav"), v) for i, v in enumerate("AABBCCA")]
     assert [[v for _, _, v in g] for g in voz_gemini.blocos(itens, bloco=10)] == [list("AABB"), list("CCA")]
-    assert [len(g) for g in voz_gemini.blocos([(f"x{i}", None, "A") for i in range(70)])] == [30, 30, 10]
-    longas = [("y" * 900, None, "A")] * 3                               # 2.000 letras por pedido, no máximo
+    assert [len(g) for g in voz_gemini.blocos([(f"x{i}", None, "A") for i in range(25)])] == [10, 10, 5]
+    longas = [("y" * 300, None, "A")] * 3                               # 700 letras por pedido, no máximo
     assert [len(g) for g in voz_gemini.blocos(longas)] == [2, 1]
-    assert voz_gemini.pedidos_estimados(1200) == 40                     # um filme: 40 pedidos em vez de 1.200
+    assert voz_gemini.pedidos_estimados(1200) == 120                    # um filme: 120 pedidos em vez de 1.200
 
 
 def test_corte_nas_pausas_confere_o_tamanho_de_cada_fala():
@@ -83,6 +83,10 @@ def test_corte_nas_pausas_confere_o_tamanho_de_cada_fala():
     assert voz_gemini.separar_por_pausas(audio, TAXA, [10, 20, 7, 5]) is None      # pausas de menos
     assert voz_gemini.separar_por_pausas(audio, TAXA, [100, 2, 100]) is None       # tamanho incoerente com o texto
     assert voz_gemini.separar_por_pausas(silencio(1), TAXA, [3, 3]) is None
+    # "Sou Agatha, ... Agatha Johnson": a pausa no meio da 1ª frase não pode virar o corte (a 2ª ficaria com 0,3 s
+    # para 30 letras, 100 letras por segundo: impossível)
+    meio = fala_sintetica(0.9) + silencio(0.6) + fala_sintetica(1.6) + silencio(0.3) + fala_sintetica(0.3)
+    assert voz_gemini.separar_por_pausas(meio, TAXA, [40, 30]) is None
 
 
 def test_motor_pede_em_blocos_e_corta_cada_fala(tmp_path):
@@ -338,13 +342,14 @@ def test_ouvir_o_tom_so_do_trecho_e_guardar(tmp_path):
         def create(self, model, input):
             perguntas.append(input[0]["text"])
             return SimpleNamespace(output_text=json.dumps({"falas": [
-                {"id": 0, "tom": '"com raiva, gritando".', "genero": "F"}, {"id": 1, "tom": "cansado"}, {"id": 7, "tom": "x"}],
+                {"id": 0, "tom": '"com raiva, gritando".', "genero": "F", "quem": "mãe brava"}, {"id": 1, "tom": "cansado"}, {"id": 7, "tom": "x"}],
                 "cena": "Uma mãe briga com o filho."}))
     guardado = tmp_path / "tons.json"
     extrair = lambda f, v, ini, dur: trechos.append((ini, dur)) or b"mp3"     # noqa: E731
     achados = tom.ouvir_falas("f.mkv", falas, [0, 1], Ouvinte(), "ffmpeg", guardado, extrair=extrair)
     assert {k: (o.tom, o.genero) for k, o in achados.items()} == {0: ("com raiva, gritando", "f"), 1: ("cansado", "?")}
-    assert achados[0].nota() == "Cena: Uma mãe briga com o filho. Nesta fala: com raiva, gritando."
+    assert achados[0].nota() == ("Cena: Uma mãe briga com o filho. Quem fala: mãe brava. Nesta fala: com raiva, "
+                                 "gritando.")
     assert trechos == [(4.0, 8.0)] and "1 [5.0s] Tá bom." in perguntas[0]      # 0:04 a 0:12, não 15 minutos
     assert tom.ouvir_falas("f.mkv", falas, [0, 1], None, "ffmpeg", guardado) == achados  # guardado: não pede
     falas[1] = (falas[1][0], "Está bem.")                                       # a legenda mudou
