@@ -20,7 +20,7 @@ from pathlib import Path
 
 from .dublagem import ErroDublagem, horarios
 from .personagens import GENEROS, TRECHO, _carregar, _hms, audio_do_trecho, idade_de, pedacos
-from .voz_gemini import PRECO_OUVIR, TOKENS_POR_SEGUNDO, ler_json, perguntar_sobre_audio
+from .voz_gemini import PRECO_OUVIR, TOKENS_POR_SEGUNDO, ErroPassageiro, ler_json, perguntar_sobre_audio
 
 TOM_MAXIMO = 80               # letras do tom de uma fala (uma indicação curta, não uma descrição)
 CENA_MAXIMO = 240             # letras da descrição da cena
@@ -143,13 +143,16 @@ def ouvir_falas(video: str | Path, falas: list, ids: list[int], cliente, ffmpeg:
                 tamanho: float = TRECHO, esperar=None, avisar=None) -> dict[int, Ouvida]:
     """{número da fala: Ouvida} das falas `ids`. falas: [(Fala, texto)] (dublagem.falas_da_legenda). arquivo: onde
     guardar o que já foi ouvido; a fala com outro texto é ouvida de novo.
-    Um pedaço que falhar (limite do dia, sem internet) para a escuta: fica o que já foi ouvido, avisar(texto) diz o
-    que houve, e a próxima vez continua de onde parou. Se nada foi ouvido, o erro sobe."""
+    Um pedaço que falhar por um problema da hora (o Google lento ou no limite por minuto: ErroPassageiro) fica sem a
+    emoção e os outros seguem; o limite do dia, o teto ou 2 pedaços seguidos falhando param a escuta. Fica o que já
+    foi ouvido, avisar(texto) diz o que houve, e a próxima vez ouve só o que faltou. Se nada foi ouvido, o erro
+    sobe."""
     video = Path(video)
     arquivo = Path(arquivo) if arquivo else None
     ouvidas = _ler_guardado(arquivo, falas)
     faltam = [k for k in ids if k not in ouvidas]
     partes = pedacos(falas, faltam, tamanho)
+    erro_final, seguidos = None, 0
     for n, (inicio, fim, grupo) in enumerate(partes):
         if parar and parar():
             raise ErroDublagem("interrompido (botão Parar)")
@@ -161,12 +164,18 @@ def ouvir_falas(video: str | Path, falas: list, ids: list[int], cliente, ffmpeg:
             kwargs = ({"esperar": esperar} if esperar else {}) | {"avisar": avisar}
             dados = ler_json(perguntar_sobre_audio(cliente, pergunta, mp3, **kwargs))
         except Exception as erro:
-            if (parar and parar()) or not any(ouvidas.get(k) for k in ids):
+            if parar and parar():
                 raise
+            erro_final, seguidos = erro, seguidos + 1
             if avisar:
-                avisar(f"parte das falas não foi ouvida no original ({str(erro)[:150]}): elas seguem sem a emoção "
-                       "da cena")
-            break
+                avisar(f"um pedaço do original não foi ouvido ({str(erro)[:150]}): {len(grupo)} fala(s) seguem sem a "
+                       "emoção da cena")
+            # passageiro (Google lento, limite por minuto): os outros pedaços seguem; 2 seguidos ou o limite do
+            # dia / o teto: para (os outros também falhariam). A próxima vez ouve só o que faltou.
+            if not isinstance(erro, ErroPassageiro) or seguidos >= 2:
+                break
+            continue
+        seguidos = 0
         _anotar_sons(arquivo_sons(arquivo) if arquivo else None, inicio, fim, dados)
         cena = _limpar(dados.get("cena"), CENA_MAXIMO)
         validos = set(grupo)
@@ -188,6 +197,8 @@ def ouvir_falas(video: str | Path, falas: list, ids: list[int], cliente, ffmpeg:
                                encoding="utf-8")
         if ao_progresso:
             ao_progresso((n + 1) / len(partes))
+    if erro_final is not None and not any(ouvidas.get(k) for k in ids):
+        raise erro_final                                # nada foi ouvido: o erro sobe (como antes)
     if arquivo:                                         # falas ouvidas antes (sem os sons): só os sons, pedido curto
         ouvidos = _ler_sons(arquivo_sons(arquivo))["ouvidos"]
         _ouvir_so_os_sons(video, falas, [k for k in ids if not _coberta(falas, k, ouvidos)],

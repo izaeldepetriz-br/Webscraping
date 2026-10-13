@@ -254,8 +254,9 @@ def _explicar(erro: Exception) -> str:
         return ("limite de uso do Gemini atingido (a camada grátis tem limites baixos por dia); o que já ficou pronto "
                 "está guardado e a próxima dublagem continua de onde parou")
     if type(erro).__name__ in ("APITimeoutError", "ReadTimeout", "TimeoutException"):
-        return (f"o Gemini não respondeu em {(TEMPO_LIMITE_FLEX if _flex['ligado'] else TEMPO_LIMITE) // 60} min "
-                "(o Google está lento agora); o que já ficou pronto está guardado: tente de novo daqui a pouco")
+        return (f"o Gemini não respondeu em {(TEMPO_LIMITE_FLEX if _flex['ligado'] else TEMPO_LIMITE) // 60} min, "
+                "duas vezes (o Google está lento agora); o que já ficou pronto está guardado: tente de novo daqui a "
+                "pouco")
     if type(erro).__name__ in ("ConnectError", "ConnectTimeout", "APIConnectionError"):
         return "sem conexão com o Gemini"
     return f"{type(erro).__name__}: {texto}"[:300]
@@ -388,6 +389,15 @@ def _limite_do_dia(erro: Exception) -> bool:
     return "perday" in str(erro).lower().replace("_", "")
 
 
+class ErroPassageiro(ErroDublagem):
+    """Um problema da hora (o Google lento, instável ou no limite por minuto; uma resposta fora do formato): o pedaço
+    seguinte pode dar certo. O limite do dia, o teto e a chave recusada não são passageiros."""
+
+
+def _tempo_esgotado(erro: Exception) -> bool:
+    return type(erro).__name__ in ("APITimeoutError", "ReadTimeout", "WriteTimeout", "PoolTimeout", "TimeoutException")
+
+
 def _limite_por_minuto(erro: Exception) -> bool:
     """O limite que acabou é o POR MINUTO (quotaId "...PerMinute..."): passa sozinho em instantes."""
     return "perminute" in str(erro).lower().replace("_", "")
@@ -395,7 +405,9 @@ def _limite_por_minuto(erro: Exception) -> bool:
 
 def _com_tentativas(chamar, esperar=time.sleep, avisar=None):
     """Chama a API; no limite por minuto (429) ou instabilidade (5xx) espera e tenta de novo: 2, 4, 8, 16, 32 s ou
-    o que o Google pedir (até 90 s), avisando no log. O limite do DIA não espera: avisa e para na hora."""
+    o que o Google pedir (até 90 s), avisando no log. O limite do DIA não espera: avisa e para na hora. Sem resposta
+    no tempo-limite, tenta de novo UMA vez (o Google às vezes perde um pedido; o 2º costuma vir na hora)."""
+    esgotados = 0
     for tentativa in range(TENTATIVAS):
         try:
             return chamar()
@@ -404,6 +416,11 @@ def _com_tentativas(chamar, esperar=time.sleep, avisar=None):
         except Exception as erro:
             if _camada_gratis(erro):                    # o Google disse qual é a camada da chave: confere o plano
                 gastos.anotar_gemini_gratis()
+            if _tempo_esgotado(erro) and not esgotados:
+                esgotados += 1
+                if avisar:
+                    avisar("Gemini: o Google não respondeu no tempo-limite; tentando de novo (uma vez)")
+                continue
             if _limite(erro) and not _limite_do_dia(erro) and tentativa < TENTATIVAS - 1:
                 espera = min(ESPERA_MAXIMA, max(2 ** (tentativa + 1), _espera_pedida(erro)))
                 if avisar:
@@ -416,7 +433,9 @@ def _com_tentativas(chamar, esperar=time.sleep, avisar=None):
                 continue
             if (_codigo(erro) == 429 or "RESOURCE_EXHAUSTED" in str(erro)) and not _limite_por_minuto(erro):
                 gastos.marcar_cota("Gemini", "limite do dia")             # o limite do dia (na chave grátis)
-            raise ErroDublagem(_explicar(erro)) from erro
+            passageiro = (_tempo_esgotado(erro) or _limite_por_minuto(erro)
+                          or (_limite(erro) and not (_codigo(erro) == 429 or "RESOURCE_EXHAUSTED" in str(erro))))
+            raise (ErroPassageiro if passageiro else ErroDublagem)(_explicar(erro)) from erro
 
 
 def texto_da_resposta(resposta) -> str:
@@ -433,11 +452,34 @@ def ler_json(texto: str) -> dict:
     """O JSON da resposta (tira ```json ... ``` e o que vier antes/depois)."""
     achado = re.search(r"\{.*\}", texto or "", re.S)
     if not achado:
-        raise ErroDublagem("o Gemini não respondeu no formato esperado")
+        raise ErroPassageiro("o Gemini não respondeu no formato esperado")
     try:
         return json.loads(achado.group(0))
     except ValueError as erro:
-        raise ErroDublagem("o Gemini não respondeu no formato esperado") from erro
+        raise ErroPassageiro("o Gemini não respondeu no formato esperado") from erro
+
+
+def _com_aviso_de_espera(chamar, avisar, o_que: str):
+    """Chama e, enquanto o Google não responde, avisa no log a cada AVISO_ESPERA s (para não parecer travado)."""
+    if not avisar:
+        return chamar()
+    resultado, feito = {}, threading.Event()
+
+    def rodar():
+        try:
+            resultado["ok"] = chamar()
+        except BaseException as erro:              # o erro volta para quem chamou (e para as tentativas)
+            resultado["erro"] = erro
+        finally:
+            feito.set()
+    threading.Thread(target=rodar, daemon=True).start()
+    inicio = time.monotonic()
+    while not feito.wait(AVISO_ESPERA):
+        avisar(f"Gemini: esperando a resposta do Google há {max(1, round((time.monotonic() - inicio) / 60))} min "
+               f"({o_que})")
+    if "erro" in resultado:
+        raise resultado["erro"]
+    return resultado["ok"]
 
 
 def perguntar_sobre_audio(cliente, pergunta: str, mp3: bytes, modelo: str = MODELO_OUVIR, esperar=time.sleep,
@@ -446,7 +488,8 @@ def perguntar_sobre_audio(cliente, pergunta: str, mp3: bytes, modelo: str = MODE
     entrada = [{"type": "text", "text": pergunta},
                {"type": "audio", "data": base64.b64encode(mp3).decode(), "mime_type": "audio/mp3"}]
     _conferir_teto()
-    resposta = _com_tentativas(lambda: cliente.interactions.create(model=modelo, input=entrada), esperar, avisar)
+    resposta = _com_tentativas(lambda: _com_aviso_de_espera(
+        lambda: cliente.interactions.create(model=modelo, input=entrada), avisar, "ouvindo o original"), esperar, avisar)
     segundos = len(mp3) * 8 / (KBPS_OUVIR * 1000)
     gastos.registrar("Gemini (escuta)", segundos * TOKENS_POR_SEGUNDO * PRECO_OUVIR / 1_000_000 * fator_de_preco(cliente))
     return texto_da_resposta(resposta)

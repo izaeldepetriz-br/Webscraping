@@ -327,7 +327,7 @@ def test_cliente_do_gemini_tem_tempo_limite(monkeypatch):
     genai.Client = lambda **k: object()                                  # outra versão da biblioteca: não quebra
     voz_gemini._cliente("chave")
     demorou = type("APITimeoutError", (Exception,), {})("Request timed out.")
-    assert "não respondeu em 5 min" in voz_gemini._explicar(demorou)
+    assert "não respondeu em 5 min, duas vezes" in voz_gemini._explicar(demorou)
 
 
 def test_tom_de_cada_fala_vai_no_pedido_da_voz(tmp_path):
@@ -391,7 +391,7 @@ def test_escuta_que_falha_no_meio_fica_com_o_que_ouviu(tmp_path):
     avisos = []
     achados = tom.ouvir_falas("f.mkv", falas, [0, 1], Ouvinte(), "ffmpeg", tmp_path / "t.json",
                               extrair=lambda *a: b"mp3", avisar=avisos.append)
-    assert {k: o.tom for k, o in achados.items()} == {0: "animado"} and "parte das falas" in avisos[0]
+    assert {k: o.tom for k, o in achados.items()} == {0: "animado"} and "não foi ouvido" in avisos[0]
     sem_credito = Ouvinte()
     sem_credito.vezes = 1                                                    # já no 1º pedido: sem crédito
     with pytest.raises(ErroDublagem):                                       # nada ouvido: o erro sobe
@@ -614,3 +614,59 @@ def test_flex_recusado_aparece_no_log_da_voz(monkeypatch, tmp_path):
     assert criados == [avisos.append] and (tmp_path / "1.wav").exists()
     assert avisos[0].startswith("Gemini no modo Flex") and any("preço normal" in a for a in avisos)
     assert voz_gemini.fator_de_preco(motor.cliente) == 1.0
+
+
+def test_tempo_esgotado_tenta_de_novo_uma_vez_e_vira_erro_passageiro():
+    """O Google às vezes perde um pedido: sem resposta no tempo-limite, o Maestro tenta de novo UMA vez (avisando);
+    na 2ª vez sem resposta, o erro é "passageiro" (a escuta segue com os outros pedaços)."""
+    Esgotado = type("APITimeoutError", (Exception,), {})
+    falhas, avisos = [Esgotado("Request timed out.")], []
+
+    def chamar():
+        if falhas:
+            raise falhas.pop(0)
+        return "ok"
+    assert voz_gemini._com_tentativas(chamar, lambda s: None, avisos.append) == "ok"
+    assert avisos == ["Gemini: o Google não respondeu no tempo-limite; tentando de novo (uma vez)"]
+    falhas[:] = [Esgotado("Request timed out.")] * 3
+    with pytest.raises(voz_gemini.ErroPassageiro, match="duas vezes"):
+        voz_gemini._com_tentativas(chamar, lambda s: None)
+    assert len(falhas) == 1                                                      # 2 pedidos, não 6
+    falhas[:] = [type("ClientError", (Exception,), {"code": 403})("PERMISSION_DENIED API_KEY")]
+    with pytest.raises(ErroDublagem) as erro:                                    # a chave recusada não é passageira
+        voz_gemini._com_tentativas(chamar, lambda s: None)
+    assert not isinstance(erro.value, voz_gemini.ErroPassageiro)
+
+
+def test_escuta_segue_depois_de_um_pedaco_lento_e_avisa_enquanto_espera(tmp_path, monkeypatch):
+    """Um pedaço que o Google não respondeu fica sem a emoção, mas os pedaços seguintes são ouvidos (antes a escuta
+    parava ali); enquanto espera, o log avisa. 2 pedaços seguidos falhando param a escuta."""
+    import time as relogio
+    from jellyfin_tools import tom
+    monkeypatch.setattr(voz_gemini, "AVISO_ESPERA", 0.2)
+    falas = [(Fala(f"00:{m:02d}:00,000 --> 00:{m:02d}:02,000", f"Fala {m}."), f"Fala {m}.") for m in (0, 20, 40)]
+    Esgotado = type("APITimeoutError", (Exception,), {})
+
+    class Ouvinte:
+        def __init__(self, lentos):
+            self.interactions, self.lentos, self.vezes = self, lentos, 0
+
+        def create(self, model, input):
+            self.vezes += 1
+            if self.vezes in self.lentos:
+                raise Esgotado("Request timed out.")
+            if self.vezes == 1:
+                relogio.sleep(0.5)                                               # demora: o log avisa
+            ids = [int(l.split(" ")[0]) for l in input[0]["text"].splitlines() if l[:1].isdigit() and " [" in l]
+            return SimpleNamespace(output_text=json.dumps({"falas": [{"id": k, "tom": "calmo"} for k in ids]}))
+    avisos = []
+    achados = tom.ouvir_falas("f.mkv", falas, [0, 1, 2], Ouvinte(lentos={2, 3}), "ffmpeg", tmp_path / "a.json",
+                              extrair=lambda *a: b"mp3", avisar=avisos.append, esperar=lambda s: None)
+    assert sorted(k for k, o in achados.items() if o.tom) == [0, 2]               # o do meio sem emoção; o 3º ouvido
+    assert any("esperando a resposta do Google" in a and "ouvindo o original" in a for a in avisos)
+    assert any("um pedaço do original não foi ouvido" in a and "duas vezes" in a for a in avisos)
+    ouvinte = Ouvinte(lentos={1, 2, 3, 4})
+    with pytest.raises(voz_gemini.ErroPassageiro):                               # nada ouvido: o erro sobe
+        tom.ouvir_falas("f.mkv", falas, [0, 1, 2], ouvinte, "ffmpeg", tmp_path / "b.json", extrair=lambda *a: b"mp3",
+                        esperar=lambda s: None)
+    assert ouvinte.vezes == 4                                                    # 2 pedaços seguidos: parou
