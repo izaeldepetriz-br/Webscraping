@@ -3778,6 +3778,22 @@ def test_quanto_resta_hoje_do_gemini_gratis_em_gastos_e_no_painel(app, monkeypat
     assert "Chave grátis do Gemini hoje:" in app.texto_do_teste([], 0.0, "/v/Filme.mkv")
 
 
+def test_pergunta_antes_do_teste_quando_o_saldo_do_gemini_nao_da(app, monkeypatch, tmp_path):
+    """Chave grátis com o limite do dia acabado: antes do teste a janela avisa e pergunta; "não" = não começa."""
+    from jellyfin_tools import gastos
+    monkeypatch.setattr(app_moderna.automacao, "arquivo_gastos", lambda: tmp_path / "gastos.json")
+    app.var_jf_motor_voz.set(app.MOTORES_VOZ[1])
+    app.var_jf_plano_gemini.set(app.PLANOS_GEMINI[1])
+    app.ao_escolher_plano_gemini(app.PLANOS_GEMINI[1])
+    o = app.obter_opcoes_jellyfin()
+    perguntas = []
+    app.perguntar = lambda titulo, texto: perguntas.append(texto) or False
+    assert app._saldo_do_gemini_da(o, 30, "Fazer o teste mesmo assim?") is True and not perguntas   # sem limite
+    gastos.anotar_limite_gemini("voz", por_dia=15, esgotou=True)
+    assert app._saldo_do_gemini_da(o, 30, "Fazer o teste mesmo assim?") is False
+    assert "já acabou hoje" in perguntas[0] and perguntas[0].endswith("Fazer o teste mesmo assim?")
+
+
 def test_link_embaixo_de_cada_chave_abre_o_site_certo(app, monkeypatch):
     """Configurações > Chaves de API: cada nome tem, embaixo, o link do site onde se cria a chave; o do Jellyfin abre
     a página das chaves no servidor do campo (e pede o endereço se estiver vazio)."""

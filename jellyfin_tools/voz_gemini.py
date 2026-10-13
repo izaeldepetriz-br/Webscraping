@@ -66,6 +66,11 @@ ESPERA_MAXIMA = 90            # no limite por minuto, espera o que o Google pedi
 AVISO_ESPERA = 60             # sem resposta do Google há tanto tempo: avisa no log (para não parecer travado)
 BLOCO = 10                    # falas por pedido (com 30, uma pausa no lugar errado jogava palavras na fala seguinte)
 LETRAS_POR_BLOCO = 700
+# chave GRÁTIS: o limite conta PEDIDOS (não tamanho): blocos maiores e 1 pedido por vez rendem mais falas por dia e
+# não esbarram no limite por minuto (que é baixo); se o corte não bater, o bloco refeito em metades é maior
+BLOCO_GRATIS = 20
+LETRAS_GRATIS = 1400
+SIMULTANEOS_GRATIS = 1
 PAUSA = " <long pause>"       # marca de pausa do Gemini TTS entre uma fala e a próxima do bloco
 
 
@@ -541,7 +546,7 @@ class MotorGemini:
 
     def __init__(self, chave: str, voz: str = VOZ_PADRAO, modelo: str = MODELO_PADRAO, estilo: str = ESTILO,
                  cliente=None, simultaneos: int = SIMULTANEOS, esperar=time.sleep, bloco: int = BLOCO,
-                 vozes_clonadas: dict | None = None, avisar=None):
+                 vozes_clonadas: dict | None = None, avisar=None, letras: int = LETRAS_POR_BLOCO):
         self.clonadas = dict(vozes_clonadas or {})
         self.avisar, self._trava = avisar, threading.Lock()
         self.gasto_refeito = 0.0          # US$ (estimativa) do áudio dos blocos que tiveram de ser pedidos de novo
@@ -550,6 +555,7 @@ class MotorGemini:
         self.voz, self.modelo, self.estilo = voz, modelo or MODELO_PADRAO, estilo
         self.cliente = cliente or _cliente(chave, avisar)     # avisar: o Flex recusado aparece no log
         self.simultaneos, self._esperar, self.bloco = max(1, simultaneos), esperar, max(1, bloco)
+        self.letras = max(1, letras)
         self.falas_geradas = self.pedidos = self.blocos_refeitos = 0
         self.AVISO_ESPERA = AVISO_ESPERA
 
@@ -620,7 +626,7 @@ class MotorGemini:
         bloco falhar (limite do dia, sem internet), os que já terminaram ficam gravados."""
         itens = [(p[0], Path(p[1]), p[2] if len(p) > 2 and p[2] else self.voz, p[3] if len(p) > 3 else "")
                  for p in pedidos]
-        grupos = blocos(itens, self.bloco)
+        grupos = blocos(itens, self.bloco, self.letras)
         inicio, mostrado = self.falas_geradas, -1
         refeitos, gasto = self.blocos_refeitos, self.gasto_refeito
         # sem "with": no Parar (ou num erro), não espera os pedidos que ainda estão no Google

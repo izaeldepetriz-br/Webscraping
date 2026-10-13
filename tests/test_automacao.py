@@ -707,3 +707,82 @@ def test_ouvir_personagens_usa_o_roteiro_ao_lado_do_video(casa, tmp_path, monkey
     o.usar_roteiro = False
     automacao.ouvir_personagens(o, video, falas, cliente=object())
     assert pedidos["sabidas"] is None and pedidos["elenco"] is None
+
+
+def test_chave_gratis_do_gemini_um_pedido_por_vez_e_blocos_maiores():
+    """Na chave grátis o limite conta PEDIDOS: 1 por vez (o limite por minuto é baixo) e, com a opção ligada
+    (padrão), 20 falas por pedido. Na chave paga (ou "não sei"), como sempre."""
+    from jellyfin_tools import voz_gemini
+    o = SimpleNamespace(plano_gemini="gratis")
+    assert automacao.jeito_do_gemini(o) == (1, 20, 1400)
+    o.gemini_blocos_maiores = False
+    assert automacao.jeito_do_gemini(o) == (1, voz_gemini.BLOCO, voz_gemini.LETRAS_POR_BLOCO)
+    for plano in ("pago", "?"):
+        assert automacao.jeito_do_gemini(SimpleNamespace(plano_gemini=plano)) == (
+            voz_gemini.SIMULTANEOS, voz_gemini.BLOCO, voz_gemini.LETRAS_POR_BLOCO)
+    itens = [(f"Fala número {i}.", None, "Kore") for i in range(25)]
+    assert [len(g) for g in voz_gemini.blocos(itens, 20, 1400)] == [20, 5]          # 2 pedidos em vez de 3
+
+
+def test_aviso_antes_de_comecar_quando_o_saldo_do_dia_nao_da(tmp_path):
+    """Chave grátis: com o limite do dia conhecido, o Maestro avisa ANTES se os pedidos de voz do trabalho não
+    cabem no que resta hoje (ou se o do dia já acabou). Sem saber o limite, ou na chave paga, não avisa."""
+    from jellyfin_tools import gastos
+    o = SimpleNamespace(motor_voz="Gemini (premium, Google AI Studio)", plano_gemini="gratis")
+    g = gastos.configurar(tmp_path / "gastos.json", plano_gemini="gratis")
+    assert automacao.aviso_do_saldo_gemini(o, 100) == ""                  # o Google ainda não disse o limite
+    g.anotar_limite_gemini("voz", por_dia=15)
+    for _ in range(13):
+        g.contar_pedido_gemini("voz")
+    assert automacao.pedidos_de_voz_estimados(o, 30) == 2                 # 20 falas por pedido na chave grátis
+    assert automacao.aviso_do_saldo_gemini(o, 30) == ""                   # 2 pedidos, restam 2: cabe
+    aviso = automacao.aviso_do_saldo_gemini(o, 41)
+    assert "~3 pedido(s) de voz" in aviso and "restam ~2" in aviso and "pode parar no meio" in aviso
+    g.anotar_limite_gemini("voz", esgotou=True)
+    assert "já acabou hoje: volta às" in automacao.aviso_do_saldo_gemini(o)
+    o.plano_gemini = "pago"
+    assert automacao.aviso_do_saldo_gemini(o, 1000) == ""
+    assert automacao.aviso_do_saldo_gemini(SimpleNamespace(motor_voz="Piper (grátis, no PC)",
+                                                           plano_gemini="gratis"), 1000) == ""
+    gastos.configurar(None)
+
+
+def test_dublagem_que_parou_no_limite_do_dia_continua_sozinha_com_as_mesmas_vozes(casa, monkeypatch, tmp_path):
+    """Chave grátis: a dublagem que parou no limite do dia fica guardada (com as vozes usadas, para não mudarem no
+    meio do filme) e o robô --continuar-dublagem é agendado para 10 min depois da virada do dia do Google. O robô
+    retoma SÓ esses vídeos (não pega outros filmes) e, sem nada para continuar, tira a própria tarefa."""
+    o = SimpleNamespace(plano_gemini="gratis")
+    video = tmp_path / "Filme (2020).mkv"
+    agendados, removidos = [], []
+    parou = SimpleNamespace(status="erro", detalhe="limite do dia da chave GRÁTIS do Gemini atingido (...)")
+    automacao.anotar_continuacao(o, video, "jellyfin", parou, {3: "Kore", 7: "Puck"},
+                                 agendar=lambda *a: agendados.append(a))
+    assert agendados == [("--continuar-dublagem", "Todo dia", automacao.hora_de_continuar())]
+    guardado = automacao.ler_continuacoes()[automacao._chave(video)]
+    assert guardado["tipo"] == "jellyfin" and guardado["vozes"] == {"3": "Kore", "7": "Puck"}
+    automacao.anotar_continuacao(SimpleNamespace(plano_gemini="pago"), tmp_path / "Outro.mkv", "jellyfin", parou,
+                                 None, agendar=lambda *a: agendados.append(a))
+    assert len(automacao.ler_continuacoes()) == 1 and len(agendados) == 1    # chave paga: não guarda
+    # o robô: só o filme guardado, com as mesmas vozes
+    item = SimpleNamespace(video=video, legenda=tmp_path / "Filme.pt-BR.srt", destino=None, serie="")
+    outro = SimpleNamespace(video=tmp_path / "Outro filme.mkv", legenda=None, destino=None, serie="")
+    monkeypatch.setattr(automacao, "opcoes_salvas", lambda: (SimpleNamespace(
+        plano_gemini="gratis", idioma="pt-BR", dublagem_no_original=True, pasta_avulsos=""), {}))
+    monkeypatch.setattr(automacao, "preparar_motor", lambda o: "motor")
+    monkeypatch.setattr(automacao, "itens_para_dublar", lambda *a, **k: [outro, item])
+    monkeypatch.setattr(automacao, "separador_de_vozes", lambda o, log: None)
+    dublados = []
+
+    def dublar_item(o, item, motor, log, separar=None, vozes=None, tipo="jellyfin"):
+        dublados.append((item.video.name, vozes))
+        r = SimpleNamespace(status="dublado", detalhe="")
+        automacao.anotar_continuacao(o, item.video, tipo, r, vozes)     # como o dublar_item de verdade
+        return r
+    monkeypatch.setattr(automacao, "dublar_item", dublar_item)
+    r = automacao.continuar_dublagem(logging.getLogger("teste"), remover=removidos.append)
+    assert dublados == [("Filme (2020).mkv", {3: "Kore", 7: "Puck"})]      # só ele, com as vozes de antes
+    assert r.codigo == automacao.OK and "1 dublagem(ns) continuada(s)" in r.resumo
+    assert automacao.ler_continuacoes() == {} and removidos == ["--continuar-dublagem"]
+    r = automacao.continuar_dublagem(logging.getLogger("teste"), remover=removidos.append)
+    assert "Nada para continuar" in r.resumo and removidos == ["--continuar-dublagem"] * 2
+    assert "--continuar-dublagem" in automacao.COMANDOS and "--continuar-dublagem" in automacao.agendador.COMANDOS

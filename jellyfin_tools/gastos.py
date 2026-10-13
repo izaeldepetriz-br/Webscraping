@@ -219,6 +219,18 @@ class Gastos:
                 self._pedidos_de_hoje(dados)[f"{tipo}_esgotou"] = self._agora().isoformat(timespec="minutes")
             self._gravar(dados)
 
+    def restam_hoje(self, tipo: str) -> int | None:
+        """Pedidos grátis que restam hoje ("voz" ou "escuta"): 0 se o do dia acabou; None se o Google ainda não
+        disse o tamanho do limite (ou na chave paga)."""
+        if self.plano_gemini == "pago":
+            return None
+        dados = self._ler()
+        hoje = dados.get("pedidos_gemini", {}).get(self.dia_do_google(), {})
+        if hoje.get(f"{tipo}_esgotou"):
+            return 0
+        limite = (dados.get("limites_gemini", {}).get(tipo) or {}).get("dia")
+        return max(0, int(limite) - int(hoje.get(tipo, 0) or 0)) if limite else None
+
     def uso_do_dia_gemini(self) -> list[str]:
         """Chave grátis do Gemini: quantos pedidos foram feitos HOJE e quantos restam (o Google não diz quanto
         resta: o Maestro conta os pedidos dele e o limite vem da 1ª mensagem de limite do Google). Vazio na chave

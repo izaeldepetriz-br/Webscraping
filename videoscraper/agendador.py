@@ -25,7 +25,8 @@ COMANDOS = {"--organizar": "Organizar o que terminou de baixar",
             "--legendar-audio": "Criar legenda pelo áudio (Whisper)",
             "--sincronizar-legendas": "Sincronizar legendas adiantadas/atrasadas",
             "--dublar": "Dublar filmes e episódios (voz sintética)",
-            "--avulsos": "Vídeos avulsos: legendar, traduzir e dublar a caixa de entrada"}
+            "--avulsos": "Vídeos avulsos: legendar, traduzir e dublar a caixa de entrada",
+            "--continuar-dublagem": "Continuar as dublagens que pararam no limite do dia (Gemini grátis)"}
 FREQUENCIAS = ("Todo dia", "Toda semana (segunda)", "A cada 6 horas", "A cada hora")
 SEM_JANELA = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
 

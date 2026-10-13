@@ -163,6 +163,7 @@ class OpcoesJellyfin:
     emocao_da_cena: bool = True      # Gemini: ouve o original e cada fala é dita com a mesma emoção (custo pequeno)
     pronuncias: str = ""             # "Johnson = Djônson; Madrid = Madri": como a voz diz cada nome
     gemini_flex: bool = False        # Gemini no nível Flex: metade do preço, mais lento (até ~15 min por pedido)
+    gemini_blocos_maiores: bool = True   # chave grátis: até 20 falas por pedido (menos pedidos por dia)
     manter_sons: bool = True         # tirando as vozes: bocejo, risada, suspiro do original voltam (não se traduzem)
     plano_gemini: str = "?"          # a chave do Gemini: "gratis" (sem faturamento), "pago" ou "?" (não sei)
     figurantes_cloud: bool = False   # mista: figurantes no Google Cloud enquanto a cota grátis do mês der (depois Piper)
@@ -2917,7 +2918,12 @@ class JanelaModerna(ctk.CTk):
         self.cx_gemini_flex = self._checkbox(lateral, "Modo econômico do Gemini (Flex): metade do preço, mais lento "
                                                       "(cada pedido pode levar até ~15 min; bom para dublar o vídeo "
                                                       "inteiro à noite)", self.var_jf_gemini_flex)
+        self.var_jf_gemini_blocos_maiores = tk.BooleanVar(self, value=True)
+        self.cx_gemini_blocos_maiores = self._checkbox(
+            lateral, "Chave grátis: juntar até 20 falas por pedido (menos pedidos por dia; se o corte não bater, o "
+                     "bloco refeito é maior). Na chave grátis, a voz vai 1 pedido por vez", self.var_jf_gemini_blocos_maiores)
         self.var_jf_plano_gemini.trace_add("write", lambda *_: self._mostrar_plano_gemini())
+        self._mostrar_plano_gemini()                     # o estado inicial ("Não sei") das caixas
         self._rotulo(lateral, "Mostrar em:").pack(anchor="w", **p)
         self.var_jf_moeda_gastos = tk.StringVar(value=self.MOEDAS_GASTOS[0])
         menu = self._menu_opcoes(lateral, self.var_jf_moeda_gastos, self.MOEDAS_GASTOS)
@@ -3462,6 +3468,7 @@ class JanelaModerna(ctk.CTk):
         if plano == "gratis":
             self.var_jf_gemini_flex.set(False)
         self.cx_gemini_flex.configure(state="disabled" if plano == "gratis" else "normal")
+        self.cx_gemini_blocos_maiores.configure(state="normal" if plano == "gratis" else "disabled")
 
     # ---- Vozes clonadas: a lista vem do app (vozes_clonadas.json); aqui só o que aparece na tela
     _vozes_clonadas: tuple = ()
@@ -4139,6 +4146,7 @@ class JanelaModerna(ctk.CTk):
             teto_gastos=float(self.campo_teto_gastos.get()), pasta_avulsos=self.var_jf_pasta_avulsos.get().strip(),
             moeda_gastos=self.var_jf_moeda_gastos.get().split()[0],
             gemini_flex=self.var_jf_gemini_flex.get(), manter_sons=self.var_jf_manter_sons.get(),
+            gemini_blocos_maiores=self.var_jf_gemini_blocos_maiores.get(),
             plano_gemini=self.plano_gemini_escolhido(),
             motor_traducao=self.var_jf_motor_traducao.get().split()[0],
             tipo_cloud=self.tipo_cloud_escolhido(), voz_cloud=self.var_jf_voz_cloud.get().split()[0],
@@ -4267,6 +4275,7 @@ class JanelaModerna(ctk.CTk):
                   "whisper_gpu": self.var_jf_whisper_gpu, "resumo_diario": self.var_jf_resumo_diario,
                   "encurtar_falas": self.var_jf_encurtar_falas, "emocao_da_cena": self.var_jf_emocao_da_cena,
                   "gemini_flex": self.var_jf_gemini_flex, "manter_sons": self.var_jf_manter_sons,
+                  "gemini_blocos_maiores": self.var_jf_gemini_blocos_maiores,
                   "voz_por_personagem": self.var_jf_voz_por_personagem,
                   "figurantes_piper": self.var_jf_figurantes_piper,
                   "figurantes_cloud": self.var_jf_figurantes_cloud,

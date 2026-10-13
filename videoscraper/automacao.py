@@ -76,12 +76,12 @@ from jellyfin_tools import cotacao, gastos, personagens, tom, vigia, voz_clonada
 from jellyfin_tools.adaptacao import Adaptador
 from jellyfin_tools.vigia import filtro_prontos
 
-from . import config
+from . import agendador, config
 from .gui_moderna import JanelaModerna, OpcoesJellyfin
 
 # Ordem em que rodam quando vêm juntos (organizar primeiro: as legendas novas já entram na tradução)
 COMANDOS = ("--organizar", "--conferir-espelhos", "--conferir-canais", "--enviar-tv", "--traduzir-legendas",
-            "--legendar-audio", "--sincronizar-legendas", "--dublar", "--avulsos")
+            "--legendar-audio", "--sincronizar-legendas", "--dublar", "--avulsos", "--continuar-dublagem")
 OK, PROBLEMA, FALTA_CONFIGURACAO, ERRO_INESPERADO = 0, 1, 2, 3
 
 # Chave não lembrada no config.json? Vem destas variáveis de ambiente (as mesmas que a janela usa).
@@ -292,6 +292,46 @@ def figurante(o: OpcoesJellyfin) -> str | None:
     return f"{PREFIXO_PIPER}{o.voz_dublagem}"
 
 
+def jeito_do_gemini(o: OpcoesJellyfin) -> tuple[int, int, int]:
+    """(pedidos ao mesmo tempo, falas por pedido, letras por pedido) da voz do Gemini. Na chave GRÁTIS o limite conta
+    pedidos: 1 por vez (o limite por minuto é baixo) e, com a opção ligada, blocos de 20 falas (menos pedidos)."""
+    if getattr(o, "plano_gemini", "?") != "gratis":
+        return voz_gemini.SIMULTANEOS, voz_gemini.BLOCO, voz_gemini.LETRAS_POR_BLOCO
+    if getattr(o, "gemini_blocos_maiores", True):
+        return voz_gemini.SIMULTANEOS_GRATIS, voz_gemini.BLOCO_GRATIS, voz_gemini.LETRAS_GRATIS
+    return voz_gemini.SIMULTANEOS_GRATIS, voz_gemini.BLOCO, voz_gemini.LETRAS_POR_BLOCO
+
+
+FALAS_POR_MINUTO = 15         # para estimar o teste antes do Whisper (um diálogo comum tem de 10 a 20 por minuto)
+
+
+def pedidos_de_voz_estimados(o: OpcoesJellyfin, falas: int) -> int:
+    """Quantos pedidos de voz ao Gemini para `falas` falas (com o tamanho de bloco da chave)."""
+    _, bloco, _ = jeito_do_gemini(o)
+    return max(1, -(-int(falas) // bloco))
+
+
+def aviso_do_saldo_gemini(o: OpcoesJellyfin, falas: int | None = None) -> str:
+    """Chave grátis, ANTES de começar: o limite do dia já acabou, ou os pedidos de voz deste trabalho não cabem no
+    que resta hoje? ('' quando cabe, quando o limite ainda é desconhecido ou fora da chave grátis.) falas=None:
+    avisa só se já acabou."""
+    atual = gastos.atual()
+    if not usa_gemini(o) or atual is None or getattr(o, "plano_gemini", "?") == "pago":
+        return ""
+    restam = atual.restam_hoje("voz")
+    if restam is None:
+        return ""
+    volta = atual.virada_do_dia()
+    if restam <= 0:
+        return (f"O limite do dia da chave grátis do Gemini (voz) já acabou hoje: volta às {volta}. Se começar agora, "
+                "para no 1º pedido de voz (o que ficar pronto é guardado e continua depois).")
+    precisa = pedidos_de_voz_estimados(o, falas) if falas else 0
+    if precisa > restam:
+        return (f"Este trabalho deve usar ~{precisa} pedido(s) de voz do Gemini e restam ~{restam} hoje na chave "
+                f"grátis: pode parar no meio (o que ficar pronto é guardado e continua depois das {volta}).")
+    return ""
+
+
 def preparar_motor(o: OpcoesJellyfin, progresso_piper=None, progresso_voz=None):
     """A voz da dublagem: Gemini (premium, com a chave do AI Studio) ou Piper (grátis; baixa na 1ª vez). Com os
     figurantes no Piper (mista), um MotorMisto: cada fala vai para o motor da voz dela."""
@@ -303,9 +343,15 @@ def preparar_motor(o: OpcoesJellyfin, progresso_piper=None, progresso_voz=None):
                                     "e cole no campo \"Chave do Google AI Studio\" (ou use o Piper, grátis).")
         clonadas = vozes_clonadas()
         conferir_voz_clonada(o.voz_gemini, clonadas)
+        simultaneos, bloco, letras = jeito_do_gemini(o)
+        if simultaneos == voz_gemini.SIMULTANEOS_GRATIS:
+            obter_logger().info("Dublagem: chave grátis do Gemini: 1 pedido de voz por vez%s (para não esbarrar no "
+                                "limite por minuto)", f", até {bloco} falas por pedido" if bloco > voz_gemini.BLOCO
+                                else "")
         gemini = voz_gemini.MotorGemini(chave_gemini(o), o.voz_gemini,
                                         vozes_clonadas=voz_clonada.chaves([v for v in clonadas if not v.vencida()]),
-                                        avisar=lambda texto: obter_logger().info("Dublagem: %s", texto))
+                                        avisar=lambda texto: obter_logger().info("Dublagem: %s", texto),
+                                        simultaneos=simultaneos, bloco=bloco, letras=letras)
         if not o.figurantes_piper:
             return gemini
         return MotorMisto(gemini, lambda voz: motor_piper(o, voz),
@@ -1125,11 +1171,14 @@ def descartar_previa_de(video: str | Path, log: logging.Logger | None = None) ->
 
 
 def dublar_item(o: OpcoesJellyfin, item, motor, log: logging.Logger, parar=None, ao_progresso=None, separar=None,
-                legenda_no_video: bool = False):
-    """Dubla um vídeo. Com a fase de teste, o resultado é uma PRÉVIA (status "previa"), registrada para aprovar."""
+                legenda_no_video: bool = False, vozes: dict | None = None, tipo: str = "jellyfin"):
+    """Dubla um vídeo. Com a fase de teste, o resultado é uma PRÉVIA (status "previa"), registrada para aprovar.
+    vozes: as da 1ª parte (continuação depois do limite do dia), para a voz não mudar no meio do filme. Se o limite
+    do dia da chave grátis parar a dublagem, ela fica guardada para continuar sozinha (anotar_continuacao)."""
     previa = caminho_previa(item.video) if usa_previa(o) else None
+    vozes = vozes if vozes is not None else vozes_automaticas(o, item, log)
     r = dublar_video(item.video, item.legenda, motor, adaptar=adaptador(o, item.video.stem),
-                     avisar=lambda texto: log.warning("Dublagem: %s", texto), vozes=vozes_automaticas(o, item, log),
+                     avisar=lambda texto: log.warning("Dublagem: %s", texto), vozes=vozes,
                      pasta_cache=pasta_dublagem(), destino=item.destino, parar=parar, ao_progresso=ao_progresso,
                      separar=separar, no_original=o.dublagem_no_original, legenda_no_video=legenda_no_video,
                      previa=previa, ambientar=getattr(o, "ambientar_voz", True),
@@ -1138,7 +1187,127 @@ def dublar_item(o: OpcoesJellyfin, item, motor, log: logging.Logger, parar=None,
     registrar_qualidade(log, r)
     if r.status == "previa":
         registrar_previa(item.video, r.destino, item.legenda if legenda_no_video else None)
+    anotar_continuacao(o, item.video, tipo, r, vozes, log)
     return r
+
+
+# ============================================================================ continuar depois do limite do dia
+def arquivo_continuar() -> Path:
+    """As dublagens que pararam no limite do dia da chave grátis do Gemini, para o robô --continuar-dublagem."""
+    return config.ARQUIVO.parent / "continuar_dublagem.json"
+
+
+def ler_continuacoes() -> dict:
+    """{chave do vídeo: {"video", "tipo" ("jellyfin" ou "avulso"), "vozes" ({fala: voz} ou None), "desde"}}"""
+    try:
+        dados = json.loads(arquivo_continuar().read_text(encoding="utf-8"))
+        return dados if isinstance(dados, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _gravar_continuacoes(dados: dict) -> None:
+    arquivo = arquivo_continuar()
+    if not dados:
+        arquivo.unlink(missing_ok=True)
+        return
+    arquivo.parent.mkdir(parents=True, exist_ok=True)
+    arquivo.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def parou_no_limite_do_dia(detalhe: str) -> bool:
+    return "limite do dia" in detalhe or "limite de uso do Gemini" in detalhe
+
+
+def hora_de_continuar() -> str:
+    """10 min depois da virada do dia do Google (meia-noite na Califórnia), na hora daqui: 'HH:MM'."""
+    atual = gastos.atual()
+    h, m = (int(x) for x in (atual.virada_do_dia() if atual is not None else "04:00").split(":"))
+    total = (h * 60 + m + 10) % (24 * 60)
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def anotar_continuacao(o: OpcoesJellyfin, video: Path, tipo: str, r, vozes: dict | None,
+                       log: logging.Logger | None = None, agendar=None) -> None:
+    """Depois de cada dublagem: parou no limite do dia da chave GRÁTIS -> guarda (com as vozes usadas, para não
+    mudarem) e agenda o robô --continuar-dublagem para depois da virada do dia; ficou pronta -> sai da lista."""
+    dados = ler_continuacoes()
+    chave = _chave(video)
+    if (r.status == "erro" and parou_no_limite_do_dia(r.detalhe or "")
+            and getattr(o, "plano_gemini", "?") == "gratis"):
+        dados[chave] = {"video": str(video), "tipo": tipo, "desde": datetime.now().isoformat(timespec="minutes"),
+                        "vozes": {str(k): v for k, v in vozes.items()} if vozes else None}
+        _gravar_continuacoes(dados)
+        hora = hora_de_continuar()
+        try:
+            (agendar or agendador.agendar)("--continuar-dublagem", agendador.FREQUENCIAS[0], hora)
+            if log:
+                log.warning("Dublagem: o limite do dia da chave grátis do Gemini acabou; %s continua sozinho às %s "
+                            "(tarefa \"Maestro\\continuar-dublagem\" no Agendador do Windows; o computador precisa "
+                            "estar ligado e com você conectado). O que já ficou pronto está guardado", video.name, hora)
+        except agendador.ErroAgenda as erro:
+            if log:
+                log.warning("Dublagem: o limite do dia acabou; não deu para agendar a continuação (%s). Dublar de "
+                            "novo depois das %s continua de onde parou", erro, hora)
+    elif r.status in ("dublado", "previa") and chave in dados:
+        dados.pop(chave)
+        _gravar_continuacoes(dados)
+
+
+def continuar_dublagem(log: logging.Logger, remover=None) -> Resultado:
+    """Robô --continuar-dublagem (agendado sozinho quando o limite do dia acaba): retoma SÓ as dublagens que pararam
+    (não pega outros filmes), com as mesmas vozes. Sem nada para continuar, tira a própria tarefa do Agendador."""
+    pendentes = ler_continuacoes()
+
+    def tirar_tarefa():
+        try:
+            (remover or agendador.remover)("--continuar-dublagem")
+        except agendador.ErroAgenda:
+            pass
+    if not pendentes:
+        tirar_tarefa()
+        return Resultado("--continuar-dublagem", OK, "Nada para continuar (a tarefa agendada foi removida).")
+    o, pastas = opcoes_salvas()
+    atual = gastos.atual()
+    if atual is not None and atual.restam_hoje("voz") == 0:
+        return Resultado("--continuar-dublagem", OK, f"O limite do dia do Gemini ainda não voltou: {len(pendentes)} "
+                                                     "dublagem(ns) esperando a próxima execução.")
+    try:
+        motor = preparar_motor(o)
+    except ErroDublagem as erro:
+        return Resultado("--continuar-dublagem", PROBLEMA, f"Não deu para preparar a voz: {erro}")
+    idioma = o.idioma.split(",")[0].strip() or "pt-BR"
+    jellyfin = {_chave(i.video): i for i in itens_para_dublar(pastas, idioma, no_original=o.dublagem_no_original)} \
+        if any(p.get("tipo") == "jellyfin" for p in pendentes.values()) else {}
+    separar = separador_de_vozes(o, log)
+    feitos, erros = 0, []
+    for chave, pendente in list(pendentes.items()):
+        video = Path(pendente.get("video", ""))
+        vozes = {int(k): v for k, v in pendente["vozes"].items()} if pendente.get("vozes") else None
+        if pendente.get("tipo") == "avulso":
+            item = next((i for i in planejar_avulsos(o, o.pasta_avulsos, [video]).dublar), None)
+            tipo = "avulso"
+        else:
+            item, tipo = jellyfin.get(chave), "jellyfin"
+        if item is None:                              # já dublado (ou o vídeo saiu do lugar): sai da lista
+            dados = ler_continuacoes()
+            dados.pop(chave, None)
+            _gravar_continuacoes(dados)
+            continue
+        log.info("Continuar: %s (parou no limite do dia em %s)", video.name, pendente.get("desde", "?"))
+        r = dublar_item(o, item, motor, log, separar=separar, vozes=vozes, tipo=tipo)
+        if r.status in ("dublado", "previa"):
+            feitos += 1
+        elif r.status == "erro":
+            erros.append(f"{video.name}: {r.detalhe}")
+            if parou_no_limite_do_dia(r.detalhe or ""):
+                break                                 # acabou de novo: os outros esperam a próxima execução
+    if not ler_continuacoes():
+        tirar_tarefa()
+    faltam = len(ler_continuacoes())
+    return Resultado("--continuar-dublagem", PROBLEMA if erros and not faltam else OK,
+                     f"{feitos} dublagem(ns) continuada(s) até o fim" + (f"; {faltam} ainda esperando" if faltam
+                                                                          else "") + ".", erros, {"dublados": feitos})
 
 
 # ============================================================================ vídeos avulsos
@@ -1361,7 +1530,7 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
                           f"Dublando {k + 1} de {total}: {item.video.stem} – {relogio.texto(fracao)}")
             progresso(0.0)
             r = dublar_item(o, item, motor, log, parar, separar=separar or None, legenda_no_video=legendar,
-                            ao_progresso=progresso)
+                            ao_progresso=progresso, tipo="avulso")
             log.info("[%s] avulso %s%s", r.status, r.video.name, f" ({r.detalhe})" if r.detalhe else "")
             if r.status == "erro":
                 erros.append(f"{item.video.name}: {r.detalhe}")
@@ -1789,7 +1958,8 @@ def _rodar(comando: str, args, log: logging.Logger) -> Resultado:
              "--legendar-audio": lambda: legendar_audio(log, args.limite_videos, args.limite_dolares),
              "--sincronizar-legendas": lambda: sincronizar_legendas(log, args.limite_videos),
              "--dublar": lambda: dublar(log, args.limite_videos),
-             "--avulsos": lambda: avulsos(log)}
+             "--avulsos": lambda: avulsos(log),
+             "--continuar-dublagem": lambda: continuar_dublagem(log)}
     try:
         return acoes[comando]()
     except FaltaConfiguracao as falta:

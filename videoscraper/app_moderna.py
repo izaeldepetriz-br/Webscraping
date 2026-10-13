@@ -2632,8 +2632,10 @@ class AppModerna(TVAoVivo, JanelaModerna):
         estilo = ("As vozes originais saem e a dublagem entra sobre a música e os efeitos"
                   + (", com o tom e o eco da cena" if o.ambientar_voz else "") + " (mais lento)."
                   if o.separar_vozes else "A voz original fica mais baixa por baixo (estilo documentário).")
+        saldo = automacao.aviso_do_saldo_gemini(o, sum(i.falas for i in itens))
         escolha = self.escolher(
             "Dublar (voz sintética)",
+            (f"⚠ {saldo}\n\n" if saldo else "") +
             f"{len(itens)} {'vídeo(s)' if episodios else 'filme(s)'} com legenda em português e sem áudio em "
             f"português:\n{exemplos}\n\n"
             f"A legenda é lida {voz}. {estilo} A boca dos atores não acompanha.\n{onde}{encurtar}\n\n"
@@ -2821,6 +2823,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
             self.mostrar_mensagem("Testar", "Marque Legendar e/ou Dublar.", "aviso")
             return
         minutos = self.texto_minutos_teste()
+        if o.avulsos_dublar and not self._saldo_do_gemini_da(
+                o, int(automacao.minutos_de_teste(o) * automacao.FALAS_POR_MINUTO), "Fazer o teste mesmo assim?"):
+            return
 
         def tarefa():
             andamento = lambda fracao, texto: self.fila.put(("jf_analise", (fracao, texto)))   # noqa: E731
@@ -2939,6 +2944,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                           f"{onde}.{natural}")
         if o.avulsos_legendar:
             linhas.append("• A legenda em português entra como faixa dentro do vídeo (o .srt ao lado sai)")
+        if o.avulsos_dublar and (saldo := automacao.aviso_do_saldo_gemini(o)):
+            linhas.insert(0, f"⚠ {saldo}")
         atual = gastos.atual()
         teto = (f"\n\nGastos do mês até agora: {atual.resumo()}." if atual is not None and atual.total() else "")
         escolha = self.escolher("Vídeos avulsos", f"{plano.videos} vídeo(s):\n" + "\n".join(linhas) + "\n\nAntes de "
@@ -2979,6 +2986,9 @@ class AppModerna(TVAoVivo, JanelaModerna):
         if escolha is None:
             return
         item = itens[escolha]
+        if not self._saldo_do_gemini_da(o, min(item.falas, int(minutos * automacao.FALAS_POR_MINUTO)) or 1,
+                                        "Fazer o teste mesmo assim?"):
+            return
 
         def tarefa():
             gasto_antes, foto_antes = automacao.gasto_ate_agora(), automacao.foto_dos_gastos()
@@ -3168,6 +3178,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                 automacao.registrar_qualidade(self._log, r)
                 if r.status == "previa":
                     automacao.registrar_previa(item.video, r.destino, None)
+                # parou no limite do dia da chave grátis: continua sozinho depois da virada, com as MESMAS vozes
+                automacao.anotar_continuacao(o, item.video, "jellyfin", r, vozes.get(str(item.video)), self._log)
                 resultados.append(r)
                 (self._log.error if r.status == "erro" else self._log.info)(
                     "[%s] %s%s (%d falas, %d adaptadas, %d aceleradas, %d cortadas, %d já prontas de antes, "
@@ -3296,6 +3308,11 @@ class AppModerna(TVAoVivo, JanelaModerna):
                               "minutos para valer.\n\nDepois, aqui, escolha \"Paga\" em \"A sua chave do Gemini\": "
                               "o uso passa a contar para o teto do mês. Dica: ligue o modo Flex (metade do preço) e "
                               "defina um teto. Se o Google ainda responder como chave grátis, o Maestro avisa.", "info")
+
+    def _saldo_do_gemini_da(self, o, falas: int, pergunta: str) -> bool:
+        """Chave grátis: se os pedidos de voz não cabem no que resta hoje, avisa e pergunta (True = pode seguir)."""
+        aviso = automacao.aviso_do_saldo_gemini(o, falas)
+        return not aviso or self.perguntar("Chave grátis do Gemini", f"{aviso}\n\n{pergunta}")
 
     def ao_criar_chave_gemini(self) -> None:
         """Abre a página do Google AI Studio onde se cria a chave (entra com a conta Google)."""

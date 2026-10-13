@@ -242,6 +242,18 @@ primeira falha (antes esperava o tempo limite em cada filme).
 
 ### Novidades da v2.18.10
 
+- **Chave grátis do Gemini rende mais**: a voz vai **1 pedido por vez** (o limite por minuto da chave grátis é
+  baixo: 4 pedidos juntos esbarravam nele) e, com a opção ligada (padrão, em Configurações > Gastos), **até 20 falas
+  por pedido** em vez de 10 (o limite conta pedidos, não tamanho: menos pedidos por teste = mais testes por dia).
+- **Aviso antes de começar**: com o limite do dia conhecido, o teste, o "Dublar" e os avulsos avisam (e perguntam)
+  se os pedidos de voz não cabem no que resta hoje, ou se o limite do dia já acabou.
+- **Continua sozinho depois da virada do dia**: se o limite do dia da chave grátis parar uma dublagem, ela fica
+  guardada (com as MESMAS vozes, para não mudarem no meio do filme) e o Maestro agenda no Agendador do Windows a
+  tarefa "Maestro\\continuar-dublagem" para 10 min depois da virada do dia do Google (no Brasil, ~4h10). O robô
+  `--continuar-dublagem` retoma só esses vídeos (não pega outros filmes) e tira a própria tarefa quando não sobra
+  nada. O computador precisa estar ligado e com você conectado.
+- **A escuta do original não é refeita à toa**: o que o Gemini ouviu (tom, gênero, idade) fica guardado pelo
+  HORÁRIO da fala. Refazer um teste com outra tradução (o Claude não traduz sempre igual) não pede a escuta de novo.
 - **Quanto resta HOJE na chave grátis do Gemini**: Configurações > Gastos tem o quadro "Chave grátis do Gemini:
   quanto resta HOJE" (com "Atualizar"), o painel do topo mostra o resumo em todas as abas ("Gemini grátis hoje: voz
   9/15 (restam ~6) · escuta 4 pedido(s)") e o fim de cada teste também. O Google não informa quanto resta: o Maestro

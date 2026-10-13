@@ -344,7 +344,7 @@ def test_tom_de_cada_fala_vai_no_pedido_da_voz(tmp_path):
 
 def test_ouvir_o_tom_so_do_trecho_e_guardar(tmp_path):
     """O Gemini ouve só em volta das falas pedidas (a amostra de 1 min manda ~1 min) e o que ouviu fica guardado:
-    o filme inteiro, depois, não paga de novo; a fala com outro texto é ouvida de novo."""
+    o filme inteiro, depois, não paga de novo; outra tradução no mesmo horário reaproveita; outro horário ouve."""
     from jellyfin_tools import tom
     falas = [(Fala(f"00:{m:02d}:{s:02d},000 --> 00:{m:02d}:{s + 2:02d},000", t), t) for m, s, t in
              [(0, 5, "Saia daqui!"), (0, 9, "Tá bom."), (20, 1, "Bom dia.")]]
@@ -369,7 +369,10 @@ def test_ouvir_o_tom_so_do_trecho_e_guardar(tmp_path):
                                  "gritando.")
     assert trechos == [(4.0, 8.0)] and "1 [5.0s] Tá bom." in perguntas[0]      # 0:04 a 0:12, não 15 minutos
     assert tom.ouvir_falas("f.mkv", falas, [0, 1], None, "ffmpeg", guardado) == achados  # guardado: não pede
-    falas[1] = (falas[1][0], "Está bem.")                                       # a legenda mudou
+    falas[1] = (falas[1][0], "Está bem.")                                       # só a tradução mudou
+    tom.ouvir_falas("f.mkv", falas, [0, 1], Ouvinte(), "ffmpeg", guardado, extrair=extrair)
+    assert len(perguntas) == 1                                                  # mesmo horário: reaproveita
+    falas[1] = (Fala("00:00:10,000 --> 00:00:12,000", "Está bem."), "Está bem.")  # o horário mudou
     tom.ouvir_falas("f.mkv", falas, [0, 1], Ouvinte(), "ffmpeg", guardado, extrair=extrair)
     assert len(perguntas) == 2 and "Saia daqui" not in perguntas[1]             # só a fala que mudou
     assert 0.1 < tom.custo_estimado(3600) < 0.2                                 # ~US$ 0,12 por hora
@@ -670,3 +673,32 @@ def test_escuta_segue_depois_de_um_pedaco_lento_e_avisa_enquanto_espera(tmp_path
         tom.ouvir_falas("f.mkv", falas, [0, 1, 2], ouvinte, "ffmpeg", tmp_path / "b.json", extrair=lambda *a: b"mp3",
                         esperar=lambda s: None)
     assert ouvinte.vezes == 4                                                    # 2 pedaços seguidos: parou
+
+
+def test_escuta_guardada_pelo_horario_nao_ouve_de_novo_quando_so_a_traducao_muda(tmp_path):
+    """O tom e o gênero são do áudio original: um teste refeito com outra tradução (o Claude não traduz sempre
+    igual) reaproveita o que já foi ouvido pelo HORÁRIO da fala, sem pedir a escuta de novo (nem gastar a cota)."""
+    from jellyfin_tools import tom
+    pedidos = []
+
+    class Ouvinte:
+        def __init__(self):
+            self.interactions = self
+
+        def create(self, model, input):
+            pedidos.append(1)
+            return SimpleNamespace(output_text=json.dumps({"falas": [{"id": 0, "tom": "animada", "genero": "f"},
+                                                                     {"id": 1, "tom": "calmo", "genero": "m"}]}))
+    tempos = ["00:00:01,000 --> 00:00:03,000", "00:00:04,000 --> 00:00:06,000"]
+    primeira = [(Fala(t, x), x) for t, x in zip(tempos, ["Oi, tudo bem?", "Tudo ótimo."])]
+    arquivo = tmp_path / "tons.json"
+    ouvidas = tom.ouvir_falas("f.mkv", primeira, [0, 1], Ouvinte(), "ffmpeg", arquivo, extrair=lambda *a: b"mp3")
+    assert len(pedidos) == 1 and ouvidas[0].tom == "animada"
+    outra_traducao = [(Fala(t, x), x) for t, x in zip(tempos, ["Olá, como vai?", "Tudo ótimo."])]
+    ouvidas = tom.ouvir_falas("f.mkv", outra_traducao, [0, 1], Ouvinte(), "ffmpeg", arquivo,
+                              extrair=lambda *a: b"mp3")
+    assert len(pedidos) == 1                                                 # nada foi pedido de novo
+    assert (ouvidas[0].tom, ouvidas[0].genero, ouvidas[1].genero) == ("animada", "f", "m")
+    outro_horario = [(Fala("00:00:09,000 --> 00:00:11,000", "Olá, como vai?"), "Olá, como vai?")]
+    tom.ouvir_falas("f.mkv", outro_horario, [0], Ouvinte(), "ffmpeg", arquivo, extrair=lambda *a: b"mp3")
+    assert len(pedidos) == 2                                                 # outra fala: ouve de verdade

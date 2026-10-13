@@ -124,13 +124,15 @@ def _limpar(texto, maximo: int) -> str:
 
 
 def _ler_guardado(arquivo: Path | None, falas: list) -> dict[int, Ouvida]:
-    """{número: Ouvida} do que já foi ouvido com o MESMO texto ({número: [texto, tom, gênero, cena]})."""
+    """{número: Ouvida} do que já foi ouvido ({número: [texto, tom, gênero, cena, quem, idade, horário]}). Vale a
+    fala com o MESMO horário (o tom e o gênero são do áudio original: não mudam quando só a tradução muda, e assim
+    um teste refeito não pede a escuta de novo) ou, nos guardados antigos (sem o horário), com o mesmo texto."""
     guardado = {}
     for k, valor in _carregar(arquivo).items():
         try:
             k = int(k)
             if (0 <= k < len(falas) and isinstance(valor, list) and len(valor) >= 4
-                    and valor[0] == falas[k][1]):
+                    and (valor[0] == falas[k][1] or (len(valor) > 6 and valor[6] == falas[k][0].tempo))):
                 guardado[k] = Ouvida(str(valor[1]), str(valor[2]), str(valor[3]),
                                      str(valor[4]) if len(valor) > 4 else "", str(valor[5]) if len(valor) > 5 else "")
         except (ValueError, IndexError, TypeError):
@@ -192,7 +194,8 @@ def ouvir_falas(video: str | Path, falas: list, ids: list[int], cliente, ffmpeg:
             ouvidas.setdefault(k, Ouvida(cena=cena))     # sem resposta para ela: não pergunta (nem paga) de novo
         if arquivo:
             arquivo.parent.mkdir(parents=True, exist_ok=True)
-            arquivo.write_text(json.dumps({str(k): [falas[k][1], o.tom, o.genero, o.cena, o.quem, o.idade]
+            arquivo.write_text(json.dumps({str(k): [falas[k][1], o.tom, o.genero, o.cena, o.quem, o.idade,
+                                                    falas[k][0].tempo]
                                            for k, o in sorted(ouvidas.items())}, ensure_ascii=False),
                                encoding="utf-8")
         if ao_progresso:
