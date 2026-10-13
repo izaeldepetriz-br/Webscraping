@@ -163,6 +163,7 @@ class OpcoesJellyfin:
     emocao_da_cena: bool = True      # Gemini: ouve o original e cada fala é dita com a mesma emoção (custo pequeno)
     pronuncias: str = ""             # "Johnson = Djônson; Madrid = Madri": como a voz diz cada nome
     gemini_flex: bool = False        # Gemini no nível Flex: metade do preço, mais lento (até ~15 min por pedido)
+    manter_sons: bool = True         # tirando as vozes: bocejo, risada, suspiro do original voltam (não se traduzem)
     plano_gemini: str = "?"          # a chave do Gemini: "gratis" (sem faturamento), "pago" ou "?" (não sei)
     figurantes_cloud: bool = False   # mista: figurantes no Google Cloud enquanto a cota grátis do mês der (depois Piper)
     perguntar_filmes: bool = True    # Gemini com vários filmes: perguntar quais vão com o Gemini (o resto, Piper)
@@ -3255,6 +3256,10 @@ class JanelaModerna(ctk.CTk):
         self.cb_separar_gpu = self._checkbox(
             lateral, "Usar a placa de vídeo (bem mais rápido; se não der, usa o processador)", self.var_jf_separar_gpu)
         self.cb_separar_gpu.pack_configure(padx=(42, 18), pady=(4, 8))
+        self.var_jf_manter_sons = tk.BooleanVar(self, value=True)
+        self._checkbox(lateral, "Manter os sons sem fala do original (bocejo, risada, suspiro, choro): eles saíam junto "
+                                "com as vozes; o Gemini ouve onde estão e eles voltam do áudio original",
+                       self.var_jf_manter_sons)
         self.var_jf_dublagem_no_original = tk.BooleanVar(value=True)
         self._checkbox(lateral, "Gravar a dublagem dentro do próprio vídeo (faixa \"Português (dublagem IA)\")",
                        self.var_jf_dublagem_no_original, self._ao_trocar_dublagem_no_original)
@@ -4082,7 +4087,7 @@ class JanelaModerna(ctk.CTk):
             robo_so_piper=self.var_jf_robo_so_piper.get(), guardar_gravacoes=self.var_jf_guardar_gravacoes.get(),
             teto_gastos=float(self.campo_teto_gastos.get()), pasta_avulsos=self.var_jf_pasta_avulsos.get().strip(),
             moeda_gastos=self.var_jf_moeda_gastos.get().split()[0],
-            gemini_flex=self.var_jf_gemini_flex.get(),
+            gemini_flex=self.var_jf_gemini_flex.get(), manter_sons=self.var_jf_manter_sons.get(),
             plano_gemini=self._CHAVES_PLANO[self.PLANOS_GEMINI.index(self.var_jf_plano_gemini.get())]
             if self.var_jf_plano_gemini.get() in self.PLANOS_GEMINI else "?",
             motor_traducao=self.var_jf_motor_traducao.get().split()[0],
@@ -4211,7 +4216,7 @@ class JanelaModerna(ctk.CTk):
                   "sobrescrever": self.var_jf_sobrescrever, "lembrar_chaves": self.var_jf_lembrar,
                   "whisper_gpu": self.var_jf_whisper_gpu, "resumo_diario": self.var_jf_resumo_diario,
                   "encurtar_falas": self.var_jf_encurtar_falas, "emocao_da_cena": self.var_jf_emocao_da_cena,
-                  "gemini_flex": self.var_jf_gemini_flex,
+                  "gemini_flex": self.var_jf_gemini_flex, "manter_sons": self.var_jf_manter_sons,
                   "voz_por_personagem": self.var_jf_voz_por_personagem,
                   "figurantes_piper": self.var_jf_figurantes_piper,
                   "figurantes_cloud": self.var_jf_figurantes_cloud,

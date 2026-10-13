@@ -40,11 +40,59 @@ se o original é exagerado ou teatral, diga.
    - quem: QUEM fala, como um perfil para o dublador, em 3 a 8 palavras (idade aproximada, jeito, personalidade; ex.: "senhora idosa, calorosa e teatral", "jovem estrangeira, tímida", "menino de 8 anos, travesso"). Use o mesmo perfil para a mesma pessoa.
    - idade: "crianca", "jovem", "adulto" ou "idoso", pela voz.
 
+3. sons: os sons de voz SEM palavras que alguém faz neste trecho (bocejo, risada, suspiro, choro, grito sem palavras, \
+tosse, espirro, gemido, respiração ofegante), com o início e o fim em segundos CONTADOS DO INÍCIO DESTE TRECHO. Não \
+inclua falas com palavras, música nem efeitos sonoros. Se não houver, uma lista vazia.
+
 Responda SÓ com JSON, neste formato:
-{{"cena": "...", "falas": [{{"id": 12, "tom": "animada, explicando", "genero": "f", "idade": "adulto", "quem": "professora, paciente"}}]}}
+{{"sons": [{{"inicio": 61.2, "fim": 63.0, "tipo": "bocejo"}}], "cena": "...", "falas": [{{"id": 12, "tom": "animada, explicando", "genero": "f", "idade": "adulto", "quem": "professora, paciente"}}]}}
 
 Falas:
 {falas}"""
+
+
+_PERGUNTA_SONS = """Você ouve um trecho do áudio ORIGINAL de um filme ou vídeo ({inicio} a {fim}). Liste os sons de voz \
+SEM palavras que alguém faz (bocejo, risada, suspiro, choro, grito sem palavras, tosse, espirro, gemido, respiração \
+ofegante), com o início e o fim em segundos CONTADOS DO INÍCIO DESTE TRECHO. Não inclua falas com palavras, música \
+nem efeitos sonoros.
+
+Responda SÓ com JSON: {{"sons": [{{"inicio": 61.2, "fim": 63.0, "tipo": "bocejo"}}]}} (lista vazia se não houver)."""
+SONS_MAXIMO = 8.0             # segundos: um "som sem fala" mais longo que isso é engano (ou é música)
+
+
+def arquivo_sons(arquivo_tons: Path) -> Path:
+    """Os sons sem fala ouvidos no original, ao lado do tons.json (dublagem.sons_guardados lê daqui)."""
+    return Path(arquivo_tons).with_name("sons.json")
+
+
+def _ler_sons(arquivo: Path | None) -> dict:
+    dados = _carregar(arquivo)
+    return {"ouvidos": [list(x) for x in dados.get("ouvidos", []) if isinstance(x, list) and len(x) == 2],
+            "sons": [list(x) for x in dados.get("sons", []) if isinstance(x, list) and len(x) == 3]}
+
+
+def _anotar_sons(arquivo: Path | None, inicio: float, fim: float, dados: dict) -> None:
+    """Guarda os sons sem fala de um pedaço (em segundos do VÍDEO) e que o pedaço já foi ouvido para isso."""
+    if not arquivo:
+        return
+    guardados = _ler_sons(arquivo)
+    guardados["sons"] = [x for x in guardados["sons"] if not inicio <= x[0] < fim]   # ouvido de novo: troca
+    for item in dados.get("sons", []) or []:
+        try:
+            a, b = float(item["inicio"]), float(item["fim"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if 0 <= a < b and b - a <= SONS_MAXIMO:
+            guardados["sons"].append([round(inicio + a, 2), round(inicio + b, 2), _limpar(item.get("tipo"), 30)])
+    guardados["ouvidos"].append([round(inicio, 2), round(fim, 2)])
+    arquivo.parent.mkdir(parents=True, exist_ok=True)
+    arquivo.write_text(json.dumps(guardados, ensure_ascii=False), encoding="utf-8")
+
+
+def _coberta(falas: list, k: int, ouvidos: list) -> bool:
+    """A fala k está dentro de um pedaço já ouvido para os sons sem fala."""
+    inicio, fim = horarios(falas[k][0].tempo)
+    return any(a <= inicio and fim <= b for a, b in ouvidos)
 
 
 @dataclass(frozen=True)
@@ -119,6 +167,7 @@ def ouvir_falas(video: str | Path, falas: list, ids: list[int], cliente, ffmpeg:
                 avisar(f"parte das falas não foi ouvida no original ({str(erro)[:150]}): elas seguem sem a emoção "
                        "da cena")
             break
+        _anotar_sons(arquivo_sons(arquivo) if arquivo else None, inicio, fim, dados)
         cena = _limpar(dados.get("cena"), CENA_MAXIMO)
         validos = set(grupo)
         for item in dados.get("falas", []):
@@ -139,5 +188,29 @@ def ouvir_falas(video: str | Path, falas: list, ids: list[int], cliente, ffmpeg:
                                encoding="utf-8")
         if ao_progresso:
             ao_progresso((n + 1) / len(partes))
+    if arquivo:                                         # falas ouvidas antes (sem os sons): só os sons, pedido curto
+        ouvidos = _ler_sons(arquivo_sons(arquivo))["ouvidos"]
+        _ouvir_so_os_sons(video, falas, [k for k in ids if not _coberta(falas, k, ouvidos)],
+                          cliente, ffmpeg, arquivo_sons(arquivo), parar, extrair, tamanho, esperar, avisar)
     pedidos = set(ids)
     return {k: o for k, o in ouvidas.items() if k in pedidos}
+
+
+def _ouvir_so_os_sons(video, falas, ids, cliente, ffmpeg, arquivo, parar, extrair, tamanho, esperar, avisar) -> None:
+    """Os sons sem fala (bocejo, risada...) dos pedaços cujas falas já tinham sido ouvidas antes desta versão: não
+    ouve o tom de novo (o que já foi gerado continua valendo), só pergunta pelos sons."""
+    for inicio, fim, _ in pedacos(falas, ids, tamanho):
+        if parar and parar():
+            raise ErroDublagem("interrompido (botão Parar)")
+        try:
+            mp3 = extrair(ffmpeg, video, inicio, fim - inicio)
+            kwargs = {"esperar": esperar} if esperar else {}
+            dados = ler_json(perguntar_sobre_audio(cliente, _PERGUNTA_SONS.format(inicio=_hms(inicio), fim=_hms(fim)),
+                                                   mp3, **kwargs))
+        except Exception as erro:
+            if parar and parar():
+                raise
+            if avisar:
+                avisar(f"os sons sem fala (risos, bocejos) não foram ouvidos ({str(erro)[:150]})")
+            return
+        _anotar_sons(arquivo, inicio, fim, dados)

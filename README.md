@@ -255,6 +255,11 @@ primeira falha (antes esperava o tempo limite em cada filme).
 - **Chave grátis do Gemini não vira gasto**: escolhendo "Grátis (sem cartão)", o uso do Gemini aparece como grátis e
   não conta para o teto do mês.
 - A duração na previsão de custo agora é arredondada ("29 min", "1 h 40 min"; antes "28,9932 min").
+- **Bocejo, risada, suspiro e choro não somem mais**: tirando as vozes originais, os sons SEM palavras saíam junto
+  (o bocejo no fim de um teste ficava mudo). A escuta do original (a mesma da emoção e do gênero, sem custo a mais)
+  agora anota onde eles estão, e nesses momentos o som original da pessoa volta para a trilha (não há o que traduzir
+  num bocejo). Vale para qualquer vídeo; Configurações > Dublagem > "Manter os sons sem fala do original". Falas já
+  ouvidas numa versão anterior: o Maestro pergunta só pelos sons (pedido curto), sem refazer as vozes.
 
 ### Novidades da v2.18.8
 

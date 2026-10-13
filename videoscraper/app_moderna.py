@@ -2999,7 +2999,7 @@ class AppModerna(TVAoVivo, JanelaModerna):
                              separar=separar, ambientar=o.ambientar_voz,
                              tons=automacao.ouvinte_de_tons(o, item.video, motor, self._log),
                              por_genero=automacao.vozes_por_genero(o, motor), vozes=vozes,
-                             pronuncias=automacao.pronuncias_de(o))
+                             pronuncias=automacao.pronuncias_de(o), manter_sons=o.manter_sons)
             if r.status != "dublado":
                 self._log.error("Amostra de %s: %s", item.video.name, r.detalhe)
                 self.fila.put(("msg", ("Amostra da dublagem", f"Não deu para fazer a amostra: {r.detalhe}", "erro")))
@@ -3160,7 +3160,8 @@ class AppModerna(TVAoVivo, JanelaModerna):
                                  destino=item.destino, separar=separar, no_original=o.dublagem_no_original,
                                  previa=previa, ambientar=o.ambientar_voz,
                                  tons=automacao.ouvinte_de_tons(o, item.video, deste, self._log),
-                                 por_genero=automacao.vozes_por_genero(o, deste), pronuncias=automacao.pronuncias_de(o))
+                                 por_genero=automacao.vozes_por_genero(o, deste), pronuncias=automacao.pronuncias_de(o),
+                                 manter_sons=o.manter_sons)
                 automacao.registrar_qualidade(self._log, r)
                 if r.status == "previa":
                     automacao.registrar_previa(item.video, r.destino, None)

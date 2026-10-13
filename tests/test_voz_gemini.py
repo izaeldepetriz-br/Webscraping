@@ -502,3 +502,32 @@ def test_identificar_guarda_a_idade(tmp_path):
     elenco = tmp_path / "elenco.json"
     personagens.salvar_elenco(elenco, lista, {"Lia": "Leda"})
     assert personagens.carregar_elenco(elenco)["pessoas"][0]["idade"] == "crianca"
+
+
+def test_a_escuta_anota_os_sons_sem_fala(tmp_path):
+    """Bocejo, risada...: a mesma escuta do tom anota os sons sem palavras (em segundos do vídeo). Falas já ouvidas
+    numa versão anterior (sem os sons): só os sons são perguntados (o tom e as vozes já geradas não mudam)."""
+    from jellyfin_tools import tom
+    falas = [(Fala("00:00:58,000 --> 00:01:02,600", "Você deve estar cansada?"), "Você deve estar cansada?")]
+    perguntas = []
+
+    class Ouvinte:
+        def __init__(self):
+            self.interactions = self
+
+        def create(self, model, input):
+            perguntas.append(input[0]["text"])
+            return SimpleNamespace(output_text=json.dumps({
+                "sons": [{"inicio": 4.4, "fim": 6.9, "tipo": "bocejo"}, {"inicio": 1, "fim": 30, "tipo": "música"}],
+                "cena": "x", "falas": [{"id": 0, "tom": "cansada", "genero": "f"}]}))
+    guardado = tmp_path / "tons.json"
+    tom.ouvir_falas("f.mkv", falas, [0], Ouvinte(), "ffmpeg", guardado, extrair=lambda *a: b"mp3")
+    sons = json.loads((tmp_path / "sons.json").read_text(encoding="utf-8"))
+    assert sons["sons"] == [[61.4, 63.9, "bocejo"]]                       # 57 s (o pedaço) + 4,4; os 29 s: engano
+    assert '"sons"' in perguntas[0] and len(perguntas) == 1
+    (tmp_path / "sons.json").unlink()                                     # como se fosse de uma versão anterior
+    tom.ouvir_falas("f.mkv", falas, [0], Ouvinte(), "ffmpeg", guardado, extrair=lambda *a: b"mp3")
+    assert len(perguntas) == 2 and "Liste os sons de voz SEM palavras" in perguntas[1]   # só os sons
+    assert json.loads((tmp_path / "sons.json").read_text(encoding="utf-8"))["sons"] == [[61.4, 63.9, "bocejo"]]
+    tom.ouvir_falas("f.mkv", falas, [0], Ouvinte(), "ffmpeg", guardado, extrair=lambda *a: b"mp3")
+    assert len(perguntas) == 2                                            # tudo guardado: não pergunta de novo

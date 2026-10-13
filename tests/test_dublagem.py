@@ -889,3 +889,33 @@ def test_ajuste_de_uma_fala_refaz_so_ela_e_vale_no_video_inteiro(tmp_path):
     assert gemini.tons[-1].startswith("Nesta fala: sussurrando.")
     dublagem.salvar_ajuste(pasta_filme, dublagem.chave_da_fala(falas[1][0]))     # tudo vazio: volta ao automático
     assert dublagem.ler_ajustes(pasta_filme) == {}
+
+
+@pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
+def test_sons_sem_fala_do_original_voltam_na_dublagem(tmp_path):
+    """Tirando as vozes originais, o bocejo e a risada sumiam junto. A escuta anota onde estão (sons.json) e, nesses
+    momentos, a voz original volta (mistura menos fundo); o resto continua sem as vozes originais."""
+    pasta = tmp_path / "Filme (2003)"
+    pasta.mkdir()
+    video = video_de_teste(pasta / "Filme (2003).mkv", segundos=8)
+    legenda = pasta / "Filme (2003).pt-BR.srt"
+    legenda.write_text(SRT, encoding="utf-8")
+    cache = tmp_path / "cache"
+    progresso = dublagem.pasta_do_filme(cache, video)
+    progresso.mkdir(parents=True)
+    (progresso / "sons.json").write_text(json.dumps({"ouvidos": [[0, 8]], "sons": [[5.5, 6.8, "bocejo"],
+                                                                                    [20, 22, "risada"]]}))
+    assert dublagem.sons_guardados(progresso) == [(5.5, 6.8, "bocejo"), (20.0, 22.0, "risada")]
+    assert dublagem.sons_guardados(progresso, (5, 8)) == [(0.5, 1.8, "bocejo")]       # contado do início do trecho
+    filtro = dublagem.filtro_mixagem(True, sons=[(0.5, 1.8, "bocejo")])
+    assert "weights='1 -1'" in filtro and "between(t,0.35,1.95)" in filtro and "amix=inputs=3" in filtro
+    assert "between" not in dublagem.filtro_mixagem(True) and "between" not in dublagem.filtro_mixagem(False)
+    avisos, chamadas = [], []
+    r = dublar_video(video, legenda, VozFalsa(), pasta_cache=cache, trecho=(0, 8), destino=tmp_path / "teste.mkv",
+                     separar=_separar_falso(chamadas), avisar=avisos.append)
+    assert r.status == "dublado", r.detalhe                               # o ffmpeg aceitou a mistura
+    assert any("sons sem fala mantidos do original: bocejo em 0:05" in a for a in avisos)
+    avisos.clear()
+    r = dublar_video(video, legenda, VozFalsa(), pasta_cache=cache, trecho=(0, 8), destino=tmp_path / "teste2.mkv",
+                     separar=_separar_falso(chamadas), avisar=avisos.append, manter_sons=False)
+    assert r.status == "dublado" and not any("sons sem fala" in a for a in avisos)

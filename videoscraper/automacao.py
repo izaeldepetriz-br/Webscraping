@@ -1134,7 +1134,7 @@ def dublar_item(o: OpcoesJellyfin, item, motor, log: logging.Logger, parar=None,
                      separar=separar, no_original=o.dublagem_no_original, legenda_no_video=legenda_no_video,
                      previa=previa, ambientar=getattr(o, "ambientar_voz", True),
                      tons=ouvinte_de_tons(o, item.video, motor, log), por_genero=vozes_por_genero(o, motor),
-                     pronuncias=pronuncias_de(o))
+                     pronuncias=pronuncias_de(o), manter_sons=getattr(o, "manter_sons", True))
     registrar_qualidade(log, r)
     if r.status == "previa":
         registrar_previa(item.video, r.destino, item.legenda if legenda_no_video else None)
@@ -1496,7 +1496,7 @@ def refazer_fala(o: OpcoesJellyfin, teste: dict, k: int, log: logging.Logger, te
                      pasta_cache=pasta_dublagem(), separar=separar, ambientar=getattr(o, "ambientar_voz", True),
                      legenda_no_video=bool(teste.get("legendar")), adaptar=adaptador(o, video.stem), vozes=vozes,
                      tons=ouvinte_de_tons(o, video, motor, log), por_genero=vozes_por_genero(o, motor),
-                     pronuncias=pronuncias_de(o), parar=parar, ao_progresso=ao_progresso,
+                     pronuncias=pronuncias_de(o), manter_sons=getattr(o, "manter_sons", True), parar=parar, ao_progresso=ao_progresso,
                      avisar=lambda aviso: log.warning("Ajustar falas: %s", aviso))
     if r.status != "dublado":
         raise ErroDublagem(r.detalhe)
@@ -1713,7 +1713,7 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
             r_dub = dublar_video(video, legenda_teste, motor, parar=parar, trecho=r.trecho, destino=destino,
                                  adaptar=adaptador(o, video.stem), pasta_cache=pasta_dublagem(), separar=separar,
                                  tons=ouvinte_de_tons(o, video, motor, log), por_genero=vozes_por_genero(o, motor),
-                                 vozes=vozes_teste, pronuncias=pronuncias_de(o),
+                                 vozes=vozes_teste, pronuncias=pronuncias_de(o), manter_sons=getattr(o, "manter_sons", True),
                                  ambientar=getattr(o, "ambientar_voz", True), legenda_no_video=o.avulsos_legendar,
                                  avisar=lambda texto: log.warning("Teste: %s", texto),
                                  ao_progresso=lambda f: andamento(0.45 + 0.55 * f,
