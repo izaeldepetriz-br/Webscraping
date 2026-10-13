@@ -240,6 +240,21 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.18.11
+
+- **Camada de emoção**: nas falas gritadas, choradas, gemidas (de dor ou de prazer) ou ditas rindo, um pouco da voz
+  original (~18%) fica por baixo da dublada: a textura real do grito ou do choro aparece (a voz sintética interpreta,
+  mas não grita nem chora de verdade). A escuta do Gemini diz quais falas são assim (olhando só o jeito de dizer
+  daquela fala, não a cena). Configurações > Dublagem > "Camada de emoção" (ligada; precisa da separação das vozes).
+- **Sons sem fala sem vazar a fala original**: o bocejo, a risada ou o gemido voltam cheios só FORA das falas com
+  palavras; a parte que encosta numa fala volta baixinho (antes, um pedaço da fala original em outro idioma podia
+  vazar junto).
+- **Sons longos**: gemido, choro, riso e respiração ofegante podem durar até 20 s (cena de dor, choro longo); antes,
+  tudo com mais de 8 s era descartado. Os outros sons continuam até 8 s.
+- **Sons também com o Piper e o Google Cloud**: com a chave do Gemini, a separação das vozes e "Manter os sons"
+  ligados, o Gemini ouve só os sons sem fala (pedido curto) e eles voltam, mesmo com uma voz que não interpreta.
+  Nos robôs com "só o Piper (sem custo)", o Gemini não é chamado.
+
 ### Novidades da v2.18.10
 
 - **Chave grátis do Gemini rende mais**: a voz vai **1 pedido por vez** (o limite por minuto da chave grátis é

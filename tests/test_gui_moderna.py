@@ -3794,6 +3794,13 @@ def test_pergunta_antes_do_teste_quando_o_saldo_do_gemini_nao_da(app, monkeypatc
     assert "já acabou hoje" in perguntas[0] and perguntas[0].endswith("Fazer o teste mesmo assim?")
 
 
+def test_opcao_camada_de_emocao(app):
+    """Configurações > Dublagem: "Camada de emoção" (ligada por padrão) vai para as opções da dublagem."""
+    assert app.var_jf_camada_de_emocao.get() is True and app.obter_opcoes_jellyfin().camada_de_emocao is True
+    app.var_jf_camada_de_emocao.set(False)
+    assert app.obter_opcoes_jellyfin().camada_de_emocao is False
+
+
 def test_link_embaixo_de_cada_chave_abre_o_site_certo(app, monkeypatch):
     """Configurações > Chaves de API: cada nome tem, embaixo, o link do site onde se cria a chave; o do Jellyfin abre
     a página das chaves no servidor do campo (e pede o endereço se estiver vazio)."""

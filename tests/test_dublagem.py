@@ -919,3 +919,49 @@ def test_sons_sem_fala_do_original_voltam_na_dublagem(tmp_path):
     r = dublar_video(video, legenda, VozFalsa(), pasta_cache=cache, trecho=(0, 8), destino=tmp_path / "teste2.mkv",
                      separar=_separar_falso(chamadas), avisar=avisos.append, manter_sons=False)
     assert r.status == "dublado" and not any("sons sem fala" in a for a in avisos)
+
+
+def test_janelas_da_voz_original_recortam_os_sons_e_somam_a_camada_de_emocao():
+    """O som sem fala volta cheio só FORA das falas com palavras (senão um pedaço da fala original vazava); a parte
+    que cai dentro de uma fala volta baixinho. As falas intensas (grito, choro) ganham a voz original baixinho."""
+    nivel = dublagem.NIVEL_EMOCAO
+    falas = [(10.0, 12.0), (20.0, 22.0)]
+    janelas = dublagem.janelas_da_voz_original([(11.5, 14.0, "risada"), (30.0, 31.0, "bocejo")], falas)
+    assert janelas == [(11.35, 12.0, nivel), (12.0, 14.15, 1.0), (29.85, 31.15, 1.0)]
+    assert dublagem.janelas_da_voz_original([(10.5, 11.0, "suspiro")], falas) == [(10.35, 11.15, nivel)]  # dentro
+    assert dublagem.janelas_da_voz_original([(9.9, 10.05, "tosse")], falas) == []        # sobrou 0,05 s: não volta
+    com_emocao = dublagem.janelas_da_voz_original([], falas, intensas=[(20.0, 22.0)])
+    assert com_emocao == [(20.0, 22.0, nivel)]
+    volume = dublagem._volume_da_voz_original(janelas + com_emocao)
+    assert volume == (f"if(between(t,12.00,14.15)+between(t,29.85,31.15),1,"
+                      f"if(between(t,11.35,12.00)+between(t,20.00,22.00),{nivel},0))")
+    assert dublagem._volume_da_voz_original([(0.5, 1.8, "bocejo")]) == "if(between(t,0.35,1.95),1,0)"  # do jeito antigo
+    muitas = [(k * 3.0, k * 3.0 + 1, nivel) for k in range(2000)]                    # filme com muitos gritos
+    assert dublagem._volume_da_voz_original(muitas + [(0.0, 0.5, 1.0)]) == "if(between(t,0.00,0.50),1,0)"
+    assert not dublagem.fala_intensa("Cena: alguém grita ao fundo. Nesta fala: calma.")
+    assert dublagem.fala_intensa("Nesta fala: com dor, gemendo.") and not dublagem.fala_intensa("adorando")
+
+
+def test_camada_de_emocao_entra_na_mistura_do_ffmpeg(tmp_path):
+    """Com a separação das vozes, a fala marcada como gritada leva um pouco da voz original por baixo; o ffmpeg
+    aceita a mistura. Desligada, nada muda."""
+    pasta = tmp_path / "Filmes"
+    pasta.mkdir()
+    video = video_de_teste(pasta / "Filme (2004).mkv", segundos=8)
+    legenda = pasta / "Filme (2004).pt-BR.srt"
+    legenda.write_text(SRT, encoding="utf-8")
+    tons = lambda falas, ids, pasta, parar: {0: "Nesta fala: com raiva, gritando."}     # noqa: E731
+
+    class VozComTom(VozFalsa):                           # como o Gemini: recebe a nota de direção de cada fala
+        def sintetizar(self, pedidos, parar=None, ao_progresso=None):
+            return super().sintetizar([p[:2] for p in pedidos], parar, ao_progresso)
+    avisos, chamadas = [], []
+    r = dublar_video(video, legenda, VozComTom(), pasta_cache=tmp_path / "cache", trecho=(0, 8),
+                     destino=tmp_path / "teste.mkv", separar=_separar_falso(chamadas), avisar=avisos.append, tons=tons)
+    assert r.status == "dublado", r.detalhe
+    assert any("camada de emoção: 1 fala(s) intensa(s)" in a for a in avisos)
+    avisos.clear()
+    r = dublar_video(video, legenda, VozComTom(), pasta_cache=tmp_path / "cache", trecho=(0, 8),
+                     destino=tmp_path / "teste2.mkv", separar=_separar_falso(chamadas), avisar=avisos.append,
+                     tons=tons, camada_emocao=False)
+    assert r.status == "dublado" and not any("camada de emoção" in a for a in avisos)

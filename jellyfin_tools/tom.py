@@ -58,6 +58,15 @@ nem efeitos sonoros.
 
 Responda SÓ com JSON: {{"sons": [{{"inicio": 61.2, "fim": 63.0, "tipo": "bocejo"}}]}} (lista vazia se não houver)."""
 SONS_MAXIMO = 8.0             # segundos: um "som sem fala" mais longo que isso é engano (ou é música)
+SONS_MAXIMO_LONGO = 20.0      # gemido, choro, riso e respiração ofegante podem durar uma cena inteira
+SONS_LONGOS = ("gem", "chor", "solu", "ris", "gargalh", "respira", "ofeg")
+
+
+def maximo_do_som(tipo: str) -> float:
+    """Quantos segundos um som sem fala pode durar: 20 s para gemido, choro, riso e respiração ofegante (costumam
+    ser contínuos: cena de dor, choro longo); 8 s para os outros (mais que isso é engano ou música)."""
+    tipo = str(tipo or "").lower()
+    return SONS_MAXIMO_LONGO if any(p in tipo for p in SONS_LONGOS) else SONS_MAXIMO
 
 
 def arquivo_sons(arquivo_tons: Path) -> Path:
@@ -82,7 +91,7 @@ def _anotar_sons(arquivo: Path | None, inicio: float, fim: float, dados: dict) -
             a, b = float(item["inicio"]), float(item["fim"])
         except (KeyError, TypeError, ValueError):
             continue
-        if 0 <= a < b and b - a <= SONS_MAXIMO:
+        if 0 <= a < b and b - a <= maximo_do_som(item.get("tipo")):
             guardados["sons"].append([round(inicio + a, 2), round(inicio + b, 2), _limpar(item.get("tipo"), 30)])
     guardados["ouvidos"].append([round(inicio, 2), round(fim, 2)])
     arquivo.parent.mkdir(parents=True, exist_ok=True)
@@ -208,6 +217,19 @@ def ouvir_falas(video: str | Path, falas: list, ids: list[int], cliente, ffmpeg:
                           cliente, ffmpeg, arquivo_sons(arquivo), parar, extrair, tamanho, esperar, avisar)
     pedidos = set(ids)
     return {k: o for k, o in ouvidas.items() if k in pedidos}
+
+
+def ouvir_sons(video: str | Path, falas: list, ids: list[int], cliente, ffmpeg: str, arquivo_tons: str | Path,
+               parar=None, avisar=None, extrair=audio_do_trecho, tamanho: float = TRECHO, esperar=None) -> None:
+    """SÓ os sons sem fala (bocejo, risada, gemido...) em volta das falas `ids`, para a voz que não interpreta (Piper,
+    Google Cloud): ela não usa o tom, mas os sons voltam do original (com a separação das vozes, sumiriam). O que
+    já foi ouvido (sons.json, ao lado de arquivo_tons) não é pedido de novo."""
+    arquivo = arquivo_sons(Path(arquivo_tons))
+    ouvidos = _ler_sons(arquivo)["ouvidos"]
+    faltam = [k for k in ids if not _coberta(falas, k, ouvidos)]
+    if faltam:
+        _ouvir_so_os_sons(Path(video), falas, faltam, cliente, ffmpeg, arquivo, parar, extrair, tamanho, esperar,
+                          avisar)
 
 
 def _ouvir_so_os_sons(video, falas, ids, cliente, ffmpeg, arquivo, parar, extrair, tamanho, esperar, avisar) -> None:

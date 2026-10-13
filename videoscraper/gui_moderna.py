@@ -165,6 +165,7 @@ class OpcoesJellyfin:
     gemini_flex: bool = False        # Gemini no nível Flex: metade do preço, mais lento (até ~15 min por pedido)
     gemini_blocos_maiores: bool = True   # chave grátis: até 20 falas por pedido (menos pedidos por dia)
     manter_sons: bool = True         # tirando as vozes: bocejo, risada, suspiro do original voltam (não se traduzem)
+    camada_de_emocao: bool = True    # falas gritadas/choradas/gemidas: um pouco da voz original por baixo da dublada
     plano_gemini: str = "?"          # a chave do Gemini: "gratis" (sem faturamento), "pago" ou "?" (não sei)
     figurantes_cloud: bool = False   # mista: figurantes no Google Cloud enquanto a cota grátis do mês der (depois Piper)
     perguntar_filmes: bool = True    # Gemini com vários filmes: perguntar quais vão com o Gemini (o resto, Piper)
@@ -3280,9 +3281,13 @@ class JanelaModerna(ctk.CTk):
             lateral, "Usar a placa de vídeo (bem mais rápido; se não der, usa o processador)", self.var_jf_separar_gpu)
         self.cb_separar_gpu.pack_configure(padx=(42, 18), pady=(4, 8))
         self.var_jf_manter_sons = tk.BooleanVar(self, value=True)
-        self._checkbox(lateral, "Manter os sons sem fala do original (bocejo, risada, suspiro, choro): eles saíam junto "
-                                "com as vozes; o Gemini ouve onde estão e eles voltam do áudio original",
+        self._checkbox(lateral, "Manter os sons sem fala do original (bocejo, risada, suspiro, choro, gemido): eles "
+                                "saíam junto com as vozes; o Gemini ouve onde estão e eles voltam do áudio original",
                        self.var_jf_manter_sons)
+        self.var_jf_camada_de_emocao = tk.BooleanVar(self, value=True)
+        self._checkbox(lateral, "Camada de emoção: nas falas gritadas, choradas, gemidas ou rindo, um pouco da voz "
+                                "original fica por baixo da dublada (a voz sintética não grita nem chora de verdade)",
+                       self.var_jf_camada_de_emocao)
         self.var_jf_dublagem_no_original = tk.BooleanVar(value=True)
         self._checkbox(lateral, "Gravar a dublagem dentro do próprio vídeo (faixa \"Português (dublagem IA)\")",
                        self.var_jf_dublagem_no_original, self._ao_trocar_dublagem_no_original)
@@ -4146,6 +4151,7 @@ class JanelaModerna(ctk.CTk):
             teto_gastos=float(self.campo_teto_gastos.get()), pasta_avulsos=self.var_jf_pasta_avulsos.get().strip(),
             moeda_gastos=self.var_jf_moeda_gastos.get().split()[0],
             gemini_flex=self.var_jf_gemini_flex.get(), manter_sons=self.var_jf_manter_sons.get(),
+            camada_de_emocao=self.var_jf_camada_de_emocao.get(),
             gemini_blocos_maiores=self.var_jf_gemini_blocos_maiores.get(),
             plano_gemini=self.plano_gemini_escolhido(),
             motor_traducao=self.var_jf_motor_traducao.get().split()[0],
@@ -4275,6 +4281,7 @@ class JanelaModerna(ctk.CTk):
                   "whisper_gpu": self.var_jf_whisper_gpu, "resumo_diario": self.var_jf_resumo_diario,
                   "encurtar_falas": self.var_jf_encurtar_falas, "emocao_da_cena": self.var_jf_emocao_da_cena,
                   "gemini_flex": self.var_jf_gemini_flex, "manter_sons": self.var_jf_manter_sons,
+                  "camada_de_emocao": self.var_jf_camada_de_emocao,
                   "gemini_blocos_maiores": self.var_jf_gemini_blocos_maiores,
                   "voz_por_personagem": self.var_jf_voz_por_personagem,
                   "figurantes_piper": self.var_jf_figurantes_piper,

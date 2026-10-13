@@ -363,10 +363,28 @@ def preparar_motor(o: OpcoesJellyfin, progresso_piper=None, progresso_voz=None):
 def ouvinte_de_tons(o: OpcoesJellyfin, video: str | Path, motor, log: logging.Logger | None = None):
     """Quem ouve o original (tom.py) e diz, de cada fala, se quem fala é homem ou mulher (SEMPRE, nas abas Jellyfin e
     Avulsos, no teste e no vídeo inteiro: a voz segue o gênero) e, com a "Emoção da cena" ligada, o tom e a cena,
-    para a voz repetir a interpretação. None: sem a chave do Gemini ou a voz não é do Gemini (o Piper não interpreta)."""
-    if not chave_gemini(o) or not motor_expressivo(motor):
+    para a voz repetir a interpretação. Com o Piper ou o Google Cloud (não interpretam): só os sons sem fala, se
+    eles forem voltar (separação das vozes e "Manter os sons" ligados). None: sem a chave do Gemini, ou nos robôs
+    "só com o Piper (sem custo)"."""
+    if not chave_gemini(o) or getattr(o, "sem_gemini", False):
         return None
     video = Path(video)
+    if not motor_expressivo(motor):                   # Piper / Google Cloud: só os sons sem fala (se forem voltar)
+        if not (getattr(o, "manter_sons", True) and getattr(o, "separar_vozes", False)):
+            return None
+
+        def so_os_sons(falas, ids, pasta, parar):
+            ffmpeg = localizar_ffmpeg()
+            if not ffmpeg:
+                raise ErroDublagem("falta o ffmpeg (pip install imageio-ffmpeg)")
+            aviso = (lambda texto: log.warning("Dublagem: %s", texto)) if log else None
+            if log:
+                log.info("Dublagem: o Gemini está ouvindo só os sons sem fala do original (bocejo, risada, gemido): "
+                         "a voz não interpreta, mas os sons voltam")
+            tom.ouvir_sons(video, falas, ids, voz_gemini._cliente(chave_gemini(o), aviso), ffmpeg,
+                           Path(pasta) / "tons.json", parar=parar, avisar=aviso)
+            return {}                                 # sem tom: a voz do Piper/Google Cloud não usa
+        return so_os_sons
     emocao = getattr(o, "emocao_da_cena", True)
 
     def ouvir(falas, ids, pasta, parar):
@@ -967,6 +985,7 @@ def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
     o, pastas = opcoes_salvas()
     if o.robo_so_piper:                               # opção "Nos robôs agendados, usar só o Piper (sem custo)"
         o.motor_voz, o.voz_por_personagem, o.figurantes_piper = "Piper (grátis, no PC)", False, False
+        o.sem_gemini = True                           # nem a escuta dos sons sem fala (sem custo nenhum)
     if not any(pastas.get(t) and Path(pastas[t]).is_dir() for t in ("Filmes", "Séries")):
         raise FaltaConfiguracao("Escolha a biblioteca de Filmes e/ou de Séries na aba Jellyfin.")
     itens = itens_para_dublar(pastas, o.idioma.split(",")[0].strip() or "pt-BR",
@@ -1183,7 +1202,8 @@ def dublar_item(o: OpcoesJellyfin, item, motor, log: logging.Logger, parar=None,
                      separar=separar, no_original=o.dublagem_no_original, legenda_no_video=legenda_no_video,
                      previa=previa, ambientar=getattr(o, "ambientar_voz", True),
                      tons=ouvinte_de_tons(o, item.video, motor, log), por_genero=vozes_por_genero(o, motor),
-                     pronuncias=pronuncias_de(o), manter_sons=getattr(o, "manter_sons", True))
+                     pronuncias=pronuncias_de(o), manter_sons=getattr(o, "manter_sons", True),
+                     camada_emocao=getattr(o, "camada_de_emocao", True))
     registrar_qualidade(log, r)
     if r.status == "previa":
         registrar_previa(item.video, r.destino, item.legenda if legenda_no_video else None)
@@ -1665,7 +1685,8 @@ def refazer_fala(o: OpcoesJellyfin, teste: dict, k: int, log: logging.Logger, te
                      pasta_cache=pasta_dublagem(), separar=separar, ambientar=getattr(o, "ambientar_voz", True),
                      legenda_no_video=bool(teste.get("legendar")), adaptar=adaptador(o, video.stem), vozes=vozes,
                      tons=ouvinte_de_tons(o, video, motor, log), por_genero=vozes_por_genero(o, motor),
-                     pronuncias=pronuncias_de(o), manter_sons=getattr(o, "manter_sons", True), parar=parar, ao_progresso=ao_progresso,
+                     pronuncias=pronuncias_de(o), manter_sons=getattr(o, "manter_sons", True),
+                     camada_emocao=getattr(o, "camada_de_emocao", True), parar=parar, ao_progresso=ao_progresso,
                      avisar=lambda aviso: log.warning("Ajustar falas: %s", aviso))
     if r.status != "dublado":
         raise ErroDublagem(r.detalhe)
@@ -1883,6 +1904,7 @@ def testar_avulso(o: OpcoesJellyfin, video: str | Path, log: logging.Logger, mot
                                  adaptar=adaptador(o, video.stem), pasta_cache=pasta_dublagem(), separar=separar,
                                  tons=ouvinte_de_tons(o, video, motor, log), por_genero=vozes_por_genero(o, motor),
                                  vozes=vozes_teste, pronuncias=pronuncias_de(o), manter_sons=getattr(o, "manter_sons", True),
+                                 camada_emocao=getattr(o, "camada_de_emocao", True),
                                  ambientar=getattr(o, "ambientar_voz", True), legenda_no_video=o.avulsos_legendar,
                                  avisar=lambda texto: log.warning("Teste: %s", texto),
                                  ao_progresso=lambda f: andamento(0.45 + 0.55 * f,
@@ -1923,6 +1945,7 @@ def avulsos(log: logging.Logger) -> Resultado:
         raise FaltaConfiguracao("Escolha a pasta de vídeos avulsos (Configurações > Vídeos avulsos).")
     if o.robo_so_piper:                               # opção "Nos robôs agendados, usar só o Piper (sem custo)"
         o.motor_voz, o.voz_por_personagem, o.figurantes_piper = "Piper (grátis, no PC)", False, False
+        o.sem_gemini = True                           # nem a escuta dos sons sem fala (sem custo nenhum)
     return processar_avulsos(o, log, o.pasta_avulsos, avisar=lambda texto: log.info("%s", texto))
 
 

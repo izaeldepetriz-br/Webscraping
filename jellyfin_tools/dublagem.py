@@ -479,9 +479,91 @@ def sons_guardados(pasta: Path, trecho: tuple[float, float] | None = None) -> li
 FOLGA_SONS = 0.15             # segundos a mais antes e depois de cada som sem fala devolvido do original
 
 
-def _janelas_dos_sons(sons: list) -> str:
-    """"between(t,60.25,63.15)+between(t,...)": quando a voz original (só os sons sem fala) fica ligada."""
-    return "+".join(f"between(t,{max(0.0, a - FOLGA_SONS):.2f},{b + FOLGA_SONS:.2f})" for a, b, *_ in sons)
+NIVEL_EMOCAO = 0.18           # quanto da voz original fica por baixo da dublada nas falas intensas (grito, choro)
+SOM_MINIMO = 0.3              # pedaço de som (recortado das falas) mais curto que isso não volta
+# palavras INTEIRAS da nota de direção que marcam uma fala intensa ("adorando" e "dormindo" não contam como "dor")
+INTENSAS = re.compile(r"\b(grit\w*|berr\w*|urr\w*|chor\w*|solu[çc]\w*|prantos?|gem[ei]\w*|dor|dores|dolorid\w*|"
+                      r"desesper\w*|hist[ée]ric\w*|rindo|gargalh\w*|risad\w*|ofeg\w*|aterroriz\w*|apavor\w*)\b")
+TAMANHO_MAXIMO_FILTRO = 12000  # letras das janelas no filtro do ffmpeg (a linha de comando do Windows tem limite)
+
+
+def fala_intensa(nota: str) -> bool:
+    """A nota de direção da fala (tom.Ouvida.nota) diz que ela é gritada, chorada, gemida, rindo...? Olha só o "Nesta
+    fala:" (a descrição da cena pode falar em grito sem que ESTA fala seja gritada)."""
+    nota = str(nota or "")
+    if "Nesta fala:" in nota:
+        nota = nota.split("Nesta fala:", 1)[1]
+    elif nota.startswith(("Cena:", "Quem fala:")):
+        return False
+    nota = nota.split("Ritmo:", 1)[0].lower()            # o ritmo ("fale mais rápido") não é emoção
+    return bool(INTENSAS.search(nota))
+
+
+def _menos(pedacos: list, a: float, b: float) -> tuple[list, list]:
+    """Tira [a, b] de cada pedaço: (o que sobra, o que foi tirado)."""
+    sobra, tirado = [], []
+    for x, y in pedacos:
+        if b <= x or y <= a:
+            sobra.append((x, y))
+            continue
+        if x < a:
+            sobra.append((x, a))
+        if b < y:
+            sobra.append((b, y))
+        tirado.append((max(x, a), min(y, b)))
+    return sobra, tirado
+
+
+def janelas_da_voz_original(sons: list, falas: list, intensas: list = ()) -> list[tuple[float, float, float]]:
+    """[(início, fim, volume)] de quando a voz original (original - fundo) volta para a trilha dublada:
+    - os sons sem fala (bocejo, risada, gemido), com uma folga, em volume cheio, MAS recortados para não encostar nas
+      falas com palavras (senão um pedaço da fala original, em outro idioma, vazava junto). A parte do som que cai
+      dentro de uma fala volta só baixinho (NIVEL_EMOCAO), por baixo da dublada;
+    - as falas intensas (gritada, chorada, gemida, rindo): a voz original baixinho por baixo da dublada, para a
+      textura real do grito ou do choro aparecer (a voz sintética não grita nem chora de verdade).
+    falas e intensas: [(início, fim)] em segundos (do trecho, no teste)."""
+    janelas = []
+    for a, b, *_ in sons:
+        pedacos, dentro = [(max(0.0, a - FOLGA_SONS), b + FOLGA_SONS)], []
+        for fi, ff in falas:
+            pedacos, tirado = _menos(pedacos, fi, ff)
+            dentro += tirado
+        janelas += [(x, y, 1.0) for x, y in pedacos if y - x >= SOM_MINIMO]
+        janelas += [(x, y, NIVEL_EMOCAO) for x, y in dentro if y - x >= SOM_MINIMO]
+    janelas += [(max(0.0, a), b, NIVEL_EMOCAO) for a, b in intensas if b > a]
+    return sorted((round(a, 2), round(b, 2), v) for a, b, v in janelas)
+
+
+def _juntar(janelas: list, distancia: float = 0.5) -> list[tuple[float, float]]:
+    """Junta janelas que se tocam (ou quase): menos 'between' no filtro."""
+    juntas = []
+    for a, b in sorted(janelas):
+        if juntas and a <= juntas[-1][1] + distancia:
+            juntas[-1] = (juntas[-1][0], max(juntas[-1][1], b))
+        else:
+            juntas.append((a, b))
+    return juntas
+
+
+def _volume_da_voz_original(sons: list) -> str:
+    """"if(between(t,..)+...,1,if(between(t,..),0.18,0))": o volume da voz original a cada instante. Aceita os sons
+    do jeito antigo [(início, fim, tipo)] (a folga entra aqui) ou as janelas_da_voz_original [(início, fim, volume)]."""
+    cheias, baixas = [], []
+    for a, b, *resto in sons:
+        volume = resto[0] if resto and isinstance(resto[0], (int, float)) else None
+        if volume is None:
+            cheias.append((max(0.0, a - FOLGA_SONS), b + FOLGA_SONS))
+        else:
+            (cheias if volume >= 1 else baixas).append((a, b))
+
+    def entre(lista):
+        return "+".join(f"between(t,{a:.2f},{b:.2f})" for a, b in _juntar(lista))
+    cheio, baixo = entre(cheias), entre(baixas)
+    if len(cheio) + len(baixo) > TAMANHO_MAXIMO_FILTRO:   # filme com muitas falas intensas: fica só o essencial
+        baixo = ""
+    if not baixo:
+        return f"if({cheio},1,0)" if cheio else "0"
+    return f"if({cheio},1,if({baixo},{NIVEL_EMOCAO},0))" if cheio else f"if({baixo},{NIVEL_EMOCAO},0)"
 
 
 def filtro_mixagem(fundo: bool, ambiente: dict | None = None, indice_sala: int | None = None,
@@ -500,11 +582,12 @@ def filtro_mixagem(fundo: bool, ambiente: dict | None = None, indice_sala: int |
     if fundo:
         partes = ["[abaixado]", "[voz]"]
         filtro = voz + ";"
-        if sons:                                        # os sons sem fala do original (bocejo, risada) voltam:
+        if sons:                                        # os sons sem fala do original (bocejo, risada) voltam
+            #                                             (e, baixinho, a voz original nas falas intensas):
             filtro = ("[2:a]aresample=48000,aformat=channel_layouts=stereo,asplit=2[fundo][fundo_menos];"   # as vozes
                       "[0:a:0]aresample=48000,aformat=channel_layouts=stereo[orig];"                        # originais
                       "[orig][fundo_menos]amix=inputs=2:weights='1 -1':normalize=0:duration=first,"         # = mistura
-                      f"volume='if({_janelas_dos_sons(sons)},1,0)':eval=frame[sons];" + filtro)             # - fundo
+                      f"volume='{_volume_da_voz_original(sons)}':eval=frame[sons];" + filtro)                # - fundo
             partes.append("[sons]")
         else:
             filtro = "[2:a]aresample=48000,aformat=channel_layouts=stereo[fundo];" + filtro
@@ -1244,7 +1327,8 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
                  destino: str | Path | None = None, separar=None, no_original: bool = False,
                  legenda_no_video: bool = False, previa: str | Path | None = None,
                  ambientar: bool = False, tons=None, por_genero: dict | None = None, pronuncias: dict | None = None,
-                 ar_de_sala: bool = True, manter_sons: bool = True) -> ResultadoDublagem:
+                 ar_de_sala: bool = True, manter_sons: bool = True,
+                 camada_emocao: bool = True) -> ResultadoDublagem:
     """Lê a legenda com a voz, monta a trilha e grava 'Nome - Dublado IA.mkv' (o original não é tocado) ou, com
     no_original, acrescenta a faixa 'Português (dublagem IA)' no PRÓPRIO arquivo (a cópia é conferida antes de trocar).
     separar(vídeo, destino.flac, trecho, duração, parar, ao_progresso): tira as vozes originais (separar_vozes) e a
@@ -1392,9 +1476,21 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
                     f"{t or 'som'} em {int(a + (trecho[0] if trecho else 0)) // 60}:"
                     f"{int(a + (trecho[0] if trecho else 0)) % 60:02d}" for a, _, t in sons[:10])
                     + (f" e mais {len(sons) - 10}" if len(sons) > 10 else ""))
+            voz_original = []
+            if fundo and (sons or camada_emocao):        # quando a voz original volta (sons e falas intensas)
+
+                def no_trecho(fala):
+                    a, b = horarios(fala.tempo)
+                    return a - inicio, b - inicio
+                intensas = [no_trecho(falas[k][0]) for k in indices
+                            if fala_intensa(tom_de.get(k, ""))] if camada_emocao else []
+                voz_original = janelas_da_voz_original(sons, [no_trecho(f) for f, _ in falas], intensas)
+                if intensas and avisar:
+                    avisar(f"camada de emoção: {len(intensas)} fala(s) intensa(s) (grito, choro, gemido, riso) com "
+                           "um pouco da voz original por baixo da dublada")
             mixar(ffmpeg, video, pasta / "trilha.wav", destino, duracao, len(idiomas), parar,
                   lambda f: andamento(fatias[3] + (1 - fatias[3]) * f), trecho, fundo, nova, formato, ambiente, sala,
-                  ar, sons)
+                  ar, voz_original)
             if no_original:
                 copiou = video.suffix.lower() == ".mkv" or (formato == "mp4" and video.suffix.lower() in MESMO_MP4)
                 destino = trocar_original(ffmpeg, video, destino, final, 1,

@@ -702,3 +702,30 @@ def test_escuta_guardada_pelo_horario_nao_ouve_de_novo_quando_so_a_traducao_muda
     outro_horario = [(Fala("00:00:09,000 --> 00:00:11,000", "Olá, como vai?"), "Olá, como vai?")]
     tom.ouvir_falas("f.mkv", outro_horario, [0], Ouvinte(), "ffmpeg", arquivo, extrair=lambda *a: b"mp3")
     assert len(pedidos) == 2                                                 # outra fala: ouve de verdade
+
+
+def test_sons_longos_por_tipo_e_escuta_so_dos_sons(tmp_path):
+    """Gemido, choro, riso e respiração ofegante podem durar até 20 s (cena de dor, choro longo); os outros sons,
+    8 s. A escuta só dos sons (voz do Piper/Google Cloud) guarda em sons.json e não pede de novo o que já ouviu."""
+    from jellyfin_tools import tom
+    assert tom.maximo_do_som("gemido de dor") == tom.maximo_do_som("choro") == tom.maximo_do_som("risada") == 20
+    assert tom.maximo_do_som("respiração ofegante") == 20 and tom.maximo_do_som("bocejo") == 8
+    pedidos = []
+
+    class Ouvinte:
+        def __init__(self):
+            self.interactions = self
+
+        def create(self, model, input):
+            pedidos.append(input[0]["text"])
+            return SimpleNamespace(output_text=json.dumps({"sons": [
+                {"inicio": 1.0, "fim": 16.0, "tipo": "gemido"}, {"inicio": 2.0, "fim": 14.0, "tipo": "tosse"}]}))
+    falas = [(Fala("00:00:01,000 --> 00:00:03,000", "Ai."), "Ai."),
+             (Fala("00:00:20,000 --> 00:00:22,000", "Calma."), "Calma.")]
+    arquivo = tmp_path / "tons.json"
+    tom.ouvir_sons("f.mkv", falas, [0, 1], Ouvinte(), "ffmpeg", arquivo, extrair=lambda *a: b"mp3")
+    guardado = json.loads((tmp_path / "sons.json").read_text(encoding="utf-8"))
+    assert [s[2] for s in guardado["sons"]] == ["gemido"]                     # 15 s de gemido fica; 12 s de tosse não
+    assert len(pedidos) == 1 and "SEM palavras" in pedidos[0]
+    tom.ouvir_sons("f.mkv", falas, [0, 1], Ouvinte(), "ffmpeg", arquivo, extrair=lambda *a: b"mp3")
+    assert len(pedidos) == 1                                                   # já ouvido: não pede de novo

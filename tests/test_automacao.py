@@ -537,11 +537,20 @@ def test_emocao_da_cena_so_com_a_voz_do_gemini(casa, tmp_path, monkeypatch):
     casa(chave_gemini="chave", emocao_da_cena=True)
     o, _ = automacao.opcoes_salvas()
     assert automacao.ouvinte_de_tons(o, "f.mkv", GeminiFalso()) is not None
-    assert automacao.ouvinte_de_tons(o, "f.mkv", VozComVoz()) is None          # o Piper não interpreta
-    o.emocao_da_cena = False                                                    # sem a emoção: ainda ouve o gênero
     from jellyfin_tools import tom
     monkeypatch.setattr(automacao, "localizar_ffmpeg", lambda: "ffmpeg")
     monkeypatch.setattr(automacao.voz_gemini, "_cliente", lambda chave, avisar=None: None)
+    sons = []
+    monkeypatch.setattr(tom, "ouvir_sons", lambda video, falas, ids, *a, **k: sons.append(ids))
+    so_sons = automacao.ouvinte_de_tons(o, "f.mkv", VozComVoz())               # o Piper não interpreta: só os sons
+    assert so_sons([], [0, 1], tmp_path, None) == {} and sons == [[0, 1]]
+    o.separar_vozes = False                                                     # sem separar, os sons nem saem
+    assert automacao.ouvinte_de_tons(o, "f.mkv", VozComVoz()) is None
+    o.separar_vozes, o.sem_gemini = True, True                                  # robô "só Piper, sem custo"
+    assert automacao.ouvinte_de_tons(o, "f.mkv", VozComVoz()) is None
+    assert automacao.ouvinte_de_tons(o, "f.mkv", GeminiFalso()) is None
+    o.sem_gemini = False
+    o.emocao_da_cena = False                                                    # sem a emoção: ainda ouve o gênero
     monkeypatch.setattr(tom, "ouvir_falas", lambda *a, **k: {0: tom.Ouvida("animada", "f", "Uma aula.")})
     ouvidas = automacao.ouvinte_de_tons(o, "f.mkv", GeminiFalso())([], [0], tmp_path, None)
     assert ouvidas == {0: tom.Ouvida(genero="f")} and ouvidas[0].nota() == ""
