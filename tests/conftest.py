@@ -326,3 +326,12 @@ def _placa_do_whisper_esquecida():
     transcricao._PLACA_RECUSADA = None
     yield
     transcricao._PLACA_RECUSADA = None
+
+
+@pytest.fixture(autouse=True)
+def _gemini_sem_flex():
+    """O modo Flex do Gemini é uma escolha global (Configurações > Gastos): cada teste começa no preço normal."""
+    from jellyfin_tools import voz_gemini
+    voz_gemini.usar_flex(False)
+    yield
+    voz_gemini.usar_flex(False)
