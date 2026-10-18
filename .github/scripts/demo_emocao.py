@@ -44,7 +44,7 @@ CENA = [
 # o "original" em inglês: a voz dela bem aguda (uma de 160 a 185 Hz fica "sem saber" e vai com a voz principal)
 VOZ_ORIGINAL = {"m": "Viktor Eka", "f": "Narelle Moon"}
 VOZ_DUBLAGEM = {"m": "Gilberto Mathias", "f": "Ana Florence"}     # a dublagem (a principal é a masculina)
-NORMAL_RMS, GRITO_RMS, SUSSURRO_RMS = 0.05, 0.2, 0.01
+NORMAL_RMS, GRITO_RMS, SUSSURRO_RMS = 0.03, 0.12, 0.006     # sem estourar (a distorção engana o tom)
 
 pasta, saida = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
 saida.mkdir(parents=True, exist_ok=True)
