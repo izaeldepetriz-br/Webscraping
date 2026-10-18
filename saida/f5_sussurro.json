@@ -1,0 +1,16 @@
+[
+ {
+  "motor": "f5",
+  "emocao": "Sussurro",
+  "texto": "Fala baixo. Eles podem ouvir a gente. Fica quieto.",
+  "ouvido": "Fala baixo. Eles podem ouvir a gente. Fica quieto.",
+  "segundos_para_gerar": 629.4,
+  "segundos_por_frase": [
+   197.3,
+   227.7,
+   201.9
+  ],
+  "duracao_do_audio": 4.9,
+  "leu_ponto": false
+ }
+]

@@ -1,0 +1,17 @@
+[
+ {
+  "motor": "f5",
+  "emocao": "Grito",
+  "texto": "Corre! Corre! Ele está vindo! Sai da frente!",
+  "ouvido": "corre, corre, corre, corre ele está vindo? sai da frente",
+  "segundos_para_gerar": 921.8,
+  "segundos_por_frase": [
+   233.5,
+   235.7,
+   227.5,
+   222.3
+  ],
+  "duracao_do_audio": 8.1,
+  "leu_ponto": false
+ }
+]

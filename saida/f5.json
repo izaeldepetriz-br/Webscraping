@@ -1,0 +1,113 @@
+[
+ {
+  "motor": "f5",
+  "emocao": "Alegria",
+  "texto": "A gente conseguiu! Eu não acredito, a gente conseguiu!",
+  "ouvido": "A gente conseguiu. Eu não acredito. A gente conseguiu.",
+  "segundos_para_gerar": 251.2,
+  "segundos_por_frase": [
+   114.8,
+   134.7
+  ],
+  "duracao_do_audio": 5.5,
+  "leu_ponto": false
+ },
+ {
+  "motor": "f5",
+  "emocao": "Choro",
+  "texto": "Por favor, não me deixa sozinha. Eu não aguento mais. Eu não aguento.",
+  "ouvido": "Por favor, não me deixe a sozinha, eu não aguento mais, eu não aguento.",
+  "segundos_para_gerar": 678.4,
+  "segundos_por_frase": [
+   247.1,
+   219.8,
+   208.8
+  ],
+  "duracao_do_audio": 7.0,
+  "leu_ponto": false
+ },
+ {
+  "motor": "f5",
+  "emocao": "Grito",
+  "texto": "Corre! Corre! Ele está vindo! Sai da frente!",
+  "ouvido": "corre, corre, corre, corre ele está vindo? sai da frente",
+  "segundos_para_gerar": 921.8,
+  "segundos_por_frase": [
+   233.5,
+   235.7,
+   227.5,
+   222.3
+  ],
+  "duracao_do_audio": 8.1,
+  "leu_ponto": false
+ },
+ {
+  "motor": "f5",
+  "emocao": "Medo",
+  "texto": "Tem alguém aí? Quem está aí? Por favor, responde.",
+  "ouvido": "Tem alguém aí? Quem está aí? Por favor, responde-me.",
+  "segundos_para_gerar": 646.8,
+  "segundos_por_frase": [
+   212.9,
+   211.6,
+   219.5
+  ],
+  "duracao_do_audio": 5.5,
+  "leu_ponto": false
+ },
+ {
+  "motor": "f5",
+  "emocao": "Ódio",
+  "texto": "Eu nunca vou te perdoar pelo que você fez. Nunca. Você destruiu a minha família.",
+  "ouvido": "Eu nunca vou te perdoar pelo que você fez. Nunca. Você destruiu a minha família.",
+  "segundos_para_gerar": 772.6,
+  "segundos_por_frase": [
+   286.1,
+   224.6,
+   259.1
+  ],
+  "duracao_do_audio": 9.7,
+  "leu_ponto": false
+ },
+ {
+  "motor": "f5",
+  "emocao": "Raiva",
+  "texto": "Eu já disse para você sair daqui! Agora! Não quero te ver nunca mais!",
+  "ouvido": "eu já disse para você sair daqui agora agora não quero te ver nunca mais",
+  "segundos_para_gerar": 769.8,
+  "segundos_por_frase": [
+   274.1,
+   234.4,
+   258.7
+  ],
+  "duracao_do_audio": 9.2,
+  "leu_ponto": false
+ },
+ {
+  "motor": "f5",
+  "emocao": "Sussurro",
+  "texto": "Fala baixo. Eles podem ouvir a gente. Fica quieto.",
+  "ouvido": "Fala baixo. Eles podem ouvir a gente. Fica quieto.",
+  "segundos_para_gerar": 629.4,
+  "segundos_por_frase": [
+   197.3,
+   227.7,
+   201.9
+  ],
+  "duracao_do_audio": 4.9,
+  "leu_ponto": false
+ },
+ {
+  "motor": "f5",
+  "emocao": "Tristeza",
+  "texto": "Ele foi embora e não volta mais. Eu nem consegui me despedir.",
+  "ouvido": "Ele foi embora e não volta mais. Eu nem consegui me despedir.",
+  "segundos_para_gerar": 517.0,
+  "segundos_por_frase": [
+   263.7,
+   250.7
+  ],
+  "duracao_do_audio": 6.3,
+  "leu_ponto": false
+ }
+]

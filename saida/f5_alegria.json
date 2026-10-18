@@ -1,0 +1,15 @@
+[
+ {
+  "motor": "f5",
+  "emocao": "Alegria",
+  "texto": "A gente conseguiu! Eu não acredito, a gente conseguiu!",
+  "ouvido": "A gente conseguiu. Eu não acredito. A gente conseguiu.",
+  "segundos_para_gerar": 251.2,
+  "segundos_por_frase": [
+   114.8,
+   134.7
+  ],
+  "duracao_do_audio": 5.5,
+  "leu_ponto": false
+ }
+]

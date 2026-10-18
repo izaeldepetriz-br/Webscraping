@@ -1,0 +1,16 @@
+[
+ {
+  "motor": "f5",
+  "emocao": "Ódio",
+  "texto": "Eu nunca vou te perdoar pelo que você fez. Nunca. Você destruiu a minha família.",
+  "ouvido": "Eu nunca vou te perdoar pelo que você fez. Nunca. Você destruiu a minha família.",
+  "segundos_para_gerar": 772.6,
+  "segundos_por_frase": [
+   286.1,
+   224.6,
+   259.1
+  ],
+  "duracao_do_audio": 9.7,
+  "leu_ponto": false
+ }
+]

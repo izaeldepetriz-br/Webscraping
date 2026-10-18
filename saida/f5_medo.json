@@ -1,0 +1,16 @@
+[
+ {
+  "motor": "f5",
+  "emocao": "Medo",
+  "texto": "Tem alguém aí? Quem está aí? Por favor, responde.",
+  "ouvido": "Tem alguém aí? Quem está aí? Por favor, responde-me.",
+  "segundos_para_gerar": 646.8,
+  "segundos_por_frase": [
+   212.9,
+   211.6,
+   219.5
+  ],
+  "duracao_do_audio": 5.5,
+  "leu_ponto": false
+ }
+]

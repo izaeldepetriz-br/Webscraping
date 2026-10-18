@@ -1,0 +1,16 @@
+[
+ {
+  "motor": "f5",
+  "emocao": "Raiva",
+  "texto": "Eu já disse para você sair daqui! Agora! Não quero te ver nunca mais!",
+  "ouvido": "eu já disse para você sair daqui agora agora não quero te ver nunca mais",
+  "segundos_para_gerar": 769.8,
+  "segundos_por_frase": [
+   274.1,
+   234.4,
+   258.7
+  ],
+  "duracao_do_audio": 9.2,
+  "leu_ponto": false
+ }
+]

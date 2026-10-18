@@ -1,0 +1,16 @@
+[
+ {
+  "motor": "f5",
+  "emocao": "Choro",
+  "texto": "Por favor, não me deixa sozinha. Eu não aguento mais. Eu não aguento.",
+  "ouvido": "Por favor, não me deixe a sozinha, eu não aguento mais, eu não aguento.",
+  "segundos_para_gerar": 678.4,
+  "segundos_por_frase": [
+   247.1,
+   219.8,
+   208.8
+  ],
+  "duracao_do_audio": 7.0,
+  "leu_ponto": false
+ }
+]

@@ -1,0 +1,15 @@
+[
+ {
+  "motor": "f5",
+  "emocao": "Tristeza",
+  "texto": "Ele foi embora e não volta mais. Eu nem consegui me despedir.",
+  "ouvido": "Ele foi embora e não volta mais. Eu nem consegui me despedir.",
+  "segundos_para_gerar": 517.0,
+  "segundos_por_frase": [
+   263.7,
+   250.7
+  ],
+  "duracao_do_audio": 6.3,
+  "leu_ponto": false
+ }
+]
