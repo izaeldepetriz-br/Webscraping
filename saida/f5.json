@@ -1,0 +1,178 @@
+[
+ {
+  "motor": "xtts",
+  "emocao": "Raiva",
+  "texto": "Eu já disse para você sair daqui! Agora! Não quero te ver nunca mais!",
+  "ouvido": "Eu já disse pra você sair daqui. Agora? Não quero te ver nunca mais.",
+  "leu_ponto": false
+ },
+ {
+  "motor": "xtts",
+  "emocao": "Ódio",
+  "texto": "Eu nunca vou te perdoar pelo que você fez. Nunca. Você destruiu a minha família.",
+  "ouvido": "Eu nunca vou te perdoar pelo que você fez. Nunca! Você destruiu a minha família.",
+  "leu_ponto": false
+ },
+ {
+  "motor": "xtts",
+  "emocao": "Choro",
+  "texto": "Por favor, não me deixa sozinha. Eu não aguento mais. Eu não aguento.",
+  "ouvido": "Por favor, não me deixa sozinha. Eu não aguento mais. Eu não aguento.",
+  "leu_ponto": false
+ },
+ {
+  "motor": "xtts",
+  "emocao": "Medo",
+  "texto": "Tem alguém aí? Quem está aí? Por favor, responde.",
+  "ouvido": "Tem alguém aí? Quem está aí? Por favor, responde.",
+  "leu_ponto": false
+ },
+ {
+  "motor": "xtts",
+  "emocao": "Alegria",
+  "texto": "A gente conseguiu! Eu não acredito, a gente conseguiu!",
+  "ouvido": "A gente conseguiu. Eu não acredito, a gente conseguiu.",
+  "leu_ponto": false
+ },
+ {
+  "motor": "xtts",
+  "emocao": "Tristeza",
+  "texto": "Ele foi embora e não volta mais. Eu nem consegui me despedir.",
+  "ouvido": "Ele foi embora, e não volta mais. Eu nem consegui me despedir.",
+  "leu_ponto": false
+ },
+ {
+  "motor": "xtts",
+  "emocao": "Sussurro",
+  "texto": "Fala baixo. Eles podem ouvir a gente. Fica quieto.",
+  "ouvido": "fala abaixo. Eles podem ouvir a gente. Fica quieto.",
+  "leu_ponto": false
+ },
+ {
+  "motor": "xtts",
+  "emocao": "Grito",
+  "texto": "Corre! Corre! Ele está vindo! Sai da frente!",
+  "ouvido": "Corre, corre, ele está vindo. Sai da frente.",
+  "leu_ponto": false
+ },
+ {
+  "motor": "chatterbox",
+  "emocao": "Raiva",
+  "texto": "Eu já disse para você sair daqui! Agora! Não quero te ver nunca mais!",
+  "ouvido": "Eu já disse para você sair daqui, agora, não quero te ver nunca mais.",
+  "leu_ponto": false
+ },
+ {
+  "motor": "chatterbox",
+  "emocao": "Ódio",
+  "texto": "Eu nunca vou te perdoar pelo que você fez. Nunca. Você destruiu a minha família.",
+  "ouvido": "Eu nunca vou te perdoar pelo que você fez. Nunca! Você destruiu a minha família.",
+  "leu_ponto": false
+ },
+ {
+  "motor": "chatterbox",
+  "emocao": "Choro",
+  "texto": "Por favor, não me deixa sozinha. Eu não aguento mais. Eu não aguento.",
+  "ouvido": "Por favor, não me deixe a sozinha. Eu não aguento mais. Eu não aguento.",
+  "leu_ponto": false
+ },
+ {
+  "motor": "chatterbox",
+  "emocao": "Medo",
+  "texto": "Tem alguém aí? Quem está aí? Por favor, responde.",
+  "ouvido": "Tem alguém aí? Quem está aí? Aí, por favor, responde.",
+  "leu_ponto": false
+ },
+ {
+  "motor": "chatterbox",
+  "emocao": "Alegria",
+  "texto": "A gente conseguiu! Eu não acredito, a gente conseguiu!",
+  "ouvido": "a gente conseguiu. Eu não acredito, a gente conseguiu.",
+  "leu_ponto": false
+ },
+ {
+  "motor": "chatterbox",
+  "emocao": "Tristeza",
+  "texto": "Ele foi embora e não volta mais. Eu nem consegui me despedir.",
+  "ouvido": "Ele foi embora e não volta mais. Eu nem consegui me despedir.",
+  "leu_ponto": false
+ },
+ {
+  "motor": "chatterbox",
+  "emocao": "Sussurro",
+  "texto": "Fala baixo. Eles podem ouvir a gente. Fica quieto.",
+  "ouvido": "fala baixo eles podem ouvir a gente fica quieto",
+  "leu_ponto": false
+ },
+ {
+  "motor": "chatterbox",
+  "emocao": "Grito",
+  "texto": "Corre! Corre! Ele está vindo! Sai da frente!",
+  "ouvido": "corre, corre, ele está vindo, sai da frente.",
+  "leu_ponto": false
+ },
+ {
+  "motor": "f5",
+  "emocao": "Raiva",
+  "texto": "Eu já disse para você sair daqui! Agora! Não quero te ver nunca mais!",
+  "ouvido": "Eu sinto que sou bem por internavo simulou é a sede de cinza subindo Eu sinto que sou bem por internavo simulou Eu sinto que sou bem por internavo simulou é a sede de cinza subindo",
+  "segundos_para_gerar": 785.3,
+  "leu_ponto": false
+ },
+ {
+  "motor": "f5",
+  "emocao": "Ódio",
+  "texto": "Eu nunca vou te perdoar pelo que você fez. Nunca. Você destruiu a minha família.",
+  "ouvido": "Eu sei de uma coisa ou bem, por internavo a gente, mas eu não me pergunto a sério de vida, mas eu não me pergunto a sério de vida, mas eu não me pergunto a sério de vida...",
+  "segundos_para_gerar": 796.7,
+  "leu_ponto": false
+ },
+ {
+  "motor": "f5",
+  "emocao": "Choro",
+  "texto": "Por favor, não me deixa sozinha. Eu não aguento mais. Eu não aguento.",
+  "ouvido": "Não veja três vejinhos antes do acurrântaro de uma ujinha ou de uma indústria. Não veja três vejinhos antes do acurrântaro. Não veja três vejinhos antes do...",
+  "segundos_para_gerar": 690.7,
+  "leu_ponto": false
+ },
+ {
+  "motor": "f5",
+  "emocao": "Medo",
+  "texto": "Tem alguém aí? Quem está aí? Por favor, responde.",
+  "ouvido": "Não vejo em 3 ou 2 dias não me faça. Não vejo em 3 ou 2 dias não me faça. Não vejo em 3 ou 2 dias não me faça.",
+  "segundos_para_gerar": 658.2,
+  "leu_ponto": false
+ },
+ {
+  "motor": "f5",
+  "emocao": "Alegria",
+  "texto": "A gente conseguiu! Eu não acredito, a gente conseguiu!",
+  "ouvido": "Não vejo a troia do dedo do ocular. Não vejo a troia do dedo do ocular. Não vejo a troia do dedo do ocular.",
+  "segundos_para_gerar": 489.5,
+  "leu_ponto": false
+ },
+ {
+  "motor": "f5",
+  "emocao": "Tristeza",
+  "texto": "Ele foi embora e não volta mais. Eu nem consegui me despedir.",
+  "ouvido": "",
+  "segundos_para_gerar": 527.9,
+  "leu_ponto": false
+ },
+ {
+  "motor": "f5",
+  "emocao": "Sussurro",
+  "texto": "Fala baixo. Eles podem ouvir a gente. Fica quieto.",
+  "ouvido": "Não vejo entre eles. Não vejo entre eles, eu não estou procurando todo mundo. Não vejo entre eles.",
+  "segundos_para_gerar": 640.2,
+  "leu_ponto": false
+ },
+ {
+  "motor": "f5",
+  "emocao": "Grito",
+  "texto": "Corre! Corre! Ele está vindo! Sai da frente!",
+  "ouvido": "",
+  "segundos_para_gerar": 939.3,
+  "leu_ponto": false
+ }
+]
