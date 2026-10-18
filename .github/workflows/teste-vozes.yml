@@ -5,9 +5,7 @@
 name: Teste de vozes
 
 on:
-  push:
-    branches: [teste-xtts]
-  workflow_dispatch:
+  workflow_dispatch:      # (rodou na comparação; não roda mais a cada envio deste ramo)
 
 permissions:
   contents: write

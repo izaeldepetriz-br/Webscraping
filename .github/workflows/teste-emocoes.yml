@@ -1,0 +1,102 @@
+# Teste de emoções (só neste ramo): raiva, ódio, choro, medo, alegria, tristeza, sussurro e grito no XTTS-v2 e no
+# Chatterbox, com as mesmas 2 vozes. Os áudios vão para o ramo "audios-emocoes-<execução>".
+name: Teste de emoções
+
+on:
+  push:
+    branches: [teste-xtts]
+    paths:
+      - .github/scripts/emocoes_*.py
+      - .github/workflows/teste-emocoes.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  TORCH_CPU: https://download.pytorch.org/whl/cpu
+
+jobs:
+  xtts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: XTTS-v2
+        run: |
+          set -o pipefail
+          { pip install torch==2.8.0 torchaudio==2.8.0 --index-url $TORCH_CPU \
+            && pip install coqui-tts==0.27.5 "transformers>=4.57,<5" \
+            && python .github/scripts/emocoes_xtts.py saida; } 2>&1 | tee registro_xtts.txt
+      - name: Mostrar o erro
+        if: failure()
+        run: echo "::error title=xtts::$(grep -v -E 'Downloading|━|Collecting|Requirement already|Using cached|Successfully|Installing collected' registro_xtts.txt | tail -n 25 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xtts
+          path: |
+            saida/
+            registro_xtts.txt
+
+  chatterbox:
+    needs: xtts
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: xtts
+          path: refs
+      - name: Chatterbox
+        run: |
+          set -o pipefail
+          { pip install torch==2.6.0 torchaudio==2.6.0 --index-url $TORCH_CPU && pip install chatterbox-tts \
+            && python .github/scripts/emocoes_chatterbox.py saida refs/saida; } 2>&1 | tee registro_chatterbox.txt
+      - name: Mostrar o erro
+        if: failure()
+        run: echo "::error title=chatterbox::$(grep -v -E 'Downloading|━|Collecting|Requirement already|Using cached|Successfully|Installing collected' registro_chatterbox.txt | tail -n 25 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chatterbox
+          path: |
+            saida/
+            registro_chatterbox.txt
+
+  comparar:
+    needs: [xtts, chatterbox]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          path: resultados
+      - name: O Whisper ouve cada fala
+        run: |
+          pip install faster-whisper
+          python .github/scripts/emocoes_comparar.py resultados 2>&1 | tee resultados/registro_comparar.txt
+      - name: Guardar os áudios num ramo
+        if: always()
+        run: |
+          cd resultados
+          git init -q -b audios-emocoes-${{ github.run_id }}
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Teste de emoções (execução ${{ github.run_id }})"
+          git push -q "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD
+          echo "::notice title=Resultados::ramo audios-emocoes-${{ github.run_id }}"
