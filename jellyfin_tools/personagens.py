@@ -47,9 +47,27 @@ class Catalogo:
     por_idade: dict
     padrao: str
     chave: str = "vozes"
+    variante_da_idade: dict = field(default_factory=dict)    # XTTS-v2: {"jovem": "jovem", "idoso": "grave", ...}
 
     def valida(self, voz: str) -> bool:
         return voz in self.masculinas or voz in self.femininas or any(voz in v for v in self.por_idade.values())
+
+    def base(self, voz: str) -> str:
+        """A voz de base ('Ana Florence · jovem' -> 'Ana Florence'): duas variantes da mesma voz são a MESMA pessoa
+        para a regra de não repetir na cena."""
+        if not self.variante_da_idade:
+            return voz
+        from .voz_local import separar_variante
+        return separar_variante(voz)[0]
+
+    def na_idade(self, voz: str, idade: str) -> str:
+        """A voz na idade do personagem: 'Damien Black' para um jovem -> 'Damien Black · jovem' (a voz principal
+        continua com o protagonista adolescente)."""
+        variante = self.variante_da_idade.get(idade)
+        if not variante or self.base(voz) != voz:
+            return voz
+        from .voz_local import com_variante
+        return com_variante(voz, variante)
 
 
 CATALOGO_GEMINI = Catalogo(VOZES_MASCULINAS, VOZES_FEMININAS, VOZES_POR_IDADE, VOZ_PADRAO)
@@ -68,7 +86,8 @@ def catalogo_xtts() -> Catalogo:
     graves = {g: tuple(com_variante(v, "grave") for v in base[g]) for g in base}
     por_idade = {(g, idade): vozes for g in base for idade, vozes in
                  (("crianca", jovens[g]), ("jovem", jovens[g]), ("idoso", graves[g]))}
-    return Catalogo(adultas("m"), adultas("f"), por_idade, PADRAO_LOCAL, "vozes_xtts")
+    return Catalogo(adultas("m"), adultas("f"), por_idade, PADRAO_LOCAL, "vozes_xtts",
+                    {"crianca": "jovem", "jovem": "jovem", "idoso": "grave"})
 
 
 def idade_de(texto) -> str:
@@ -270,32 +289,33 @@ def distribuir_vozes(personagens: list[Personagem], voz_principal: str = VOZ_PAD
     figurante ("piper:faber"): dublagem MISTA, quem tem menos de `limite` falas vai para essa voz (Piper, grátis).
     figurante "cloud:Neural2": vai para o Google Cloud (cota grátis), com uma voz do tipo e do gênero de cada um."""
     catalogo = catalogo or CATALOGO_GEMINI
+    base = catalogo.base
     pessoal = voz_principal.startswith(("clone:", "imp:"))    # a SUA voz como principal: vai para quem mais fala
     principal = voz_principal if catalogo.valida(voz_principal) or pessoal else catalogo.padrao
     fixas = fixas or {}
-    usadas: Counter = Counter(fixas.values())
-    dono: dict[str, list[str]] = {}                    # voz -> quem já está com ela
+    usadas: Counter = Counter(base(v) for v in fixas.values())      # pela voz de BASE (as variantes contam junto)
+    dono: dict[str, list[str]] = {}                    # voz de base -> quem já está com ela
     for rotulo, voz in fixas.items():
-        dono.setdefault(voz, []).append(rotulo)
+        dono.setdefault(base(voz), []).append(rotulo)
     juntos = na_mesma_cena(personagens, tempos) if tempos else {}
     principais_vozes: set[str] = set()
 
     def conflito(voz: str, rotulo: str) -> int:
-        return sum(1 for outro in dono.get(voz, ()) if outro in juntos.get(rotulo, ()))
+        return sum(1 for outro in dono.get(base(voz), ()) if outro in juntos.get(rotulo, ()))
 
     def dar(rotulo: str, voz: str, principal_: bool) -> None:
         mapa[rotulo] = voz
-        usadas[voz] += 1
-        dono.setdefault(voz, []).append(rotulo)
+        usadas[base(voz)] += 1
+        dono.setdefault(base(voz), []).append(rotulo)
         if principal_:
-            principais_vozes.add(voz)
+            principais_vozes.add(base(voz))
 
     mapa, figurantes = {}, Counter()
     for p in personagens:                              # já vêm de quem fala mais para quem fala menos
         if p.rotulo in fixas:                          # série: a voz que esse personagem já tinha
             mapa[p.rotulo] = fixas[p.rotulo]
             if len(p.falas) >= MINIMO_FALAS:
-                principais_vozes.add(fixas[p.rotulo])
+                principais_vozes.add(base(fixas[p.rotulo]))
             continue
         if figurante and len(p.falas) < limite:
             mapa[p.rotulo] = voz_de_figurante(figurante, p.genero, figurantes[p.genero])
@@ -305,34 +325,38 @@ def distribuir_vozes(personagens: list[Personagem], voz_principal: str = VOZ_PAD
                                                                         catalogo.masculinas + catalogo.femininas)
         da_idade = catalogo.por_idade.get((p.genero, p.idade), ())
         grupo = tuple(da_idade) + tuple(v for v in grupo if v not in da_idade)   # criança: as vozes mais jovens antes
-        adulta = p.idade not in ("crianca", "idoso")   # a voz principal (adulta) não vai para criança nem idoso
+        na_idade = principal if pessoal else catalogo.na_idade(principal, p.idade)
+        adulta = p.idade not in ("crianca", "idoso") or na_idade != principal   # (ou a principal na idade dele)
         if len(p.falas) < MINIMO_FALAS and not tempos:    # fala pouco (sem o elenco): a principal, se for do gênero
             mapa[p.rotulo] = (principal if (principal in grupo and adulta) or pessoal else
-                              next((v for v in grupo if usadas[v] and (adulta or v in da_idade)), grupo[0]))
+                              next((v for v in grupo if usadas[base(v)] and (adulta or v in da_idade)), grupo[0]))
             continue
-        if not usadas[principal] and (((principal in grupo and adulta) and (tempos or not usadas)) or
-                                      (pessoal and not usadas)):
-            voz = principal                            # (com o elenco: quem mais fala do gênero e da idade dela)
+        if not usadas[base(principal)] and (((principal in grupo and adulta) and (tempos or not usadas)) or
+                                            (pessoal and not usadas)):
+            voz = na_idade                             # (com o elenco: quem mais fala do gênero da voz principal)
         elif len(p.falas) < MINIMO_FALAS:              # fala pouco: sem repetir na cena e sem a voz de um principal
-            voz = min(grupo, key=lambda v: (conflito(v, p.rotulo) > 0, v in principais_vozes or v == principal,
-                                            usadas[v], grupo.index(v)))
+            voz = min(grupo, key=lambda v: (conflito(v, p.rotulo) > 0,
+                                            base(v) in principais_vozes or base(v) == base(principal),
+                                            usadas[base(v)], grupo.index(v)))
             dar(p.rotulo, voz, False)
             continue
         else:
-            voz = min(grupo, key=lambda v: (usadas[v] > 0, conflito(v, p.rotulo), usadas[v], grupo.index(v)))
+            voz = min(grupo, key=lambda v: (usadas[base(v)] > 0, conflito(v, p.rotulo), usadas[base(v)],
+                                            grupo.index(v)))
         dar(p.rotulo, voz, True)
     return mapa
 
 
 def repetidas_na_cena(mapa: dict[str, str], personagens: list[Personagem], tempos: dict[int, float],
                       janela: float = JANELA_CENA) -> list[tuple[str, str, str]]:
-    """[(voz, rótulo, rótulo)]: duas pessoas da mesma cena com a mesma voz (para o registro avisar)."""
+    """[(voz, rótulo, rótulo)]: duas pessoas da mesma cena com a mesma voz (ou variantes da mesma voz de base)."""
+    from .voz_local import separar_variante
     juntos = na_mesma_cena(personagens, tempos, janela)
     saida = []
     for a, vizinhos in juntos.items():
         for b in vizinhos:
-            if a < b and mapa.get(a) and mapa.get(a) == mapa.get(b):
-                saida.append((mapa[a], a, b))
+            if a < b and mapa.get(a) and separar_variante(mapa[a])[0] == separar_variante(mapa.get(b, ""))[0]:
+                saida.append((separar_variante(mapa[a])[0], a, b))
     return sorted(saida)
 
 

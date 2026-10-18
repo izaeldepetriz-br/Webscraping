@@ -47,7 +47,11 @@ def test_ninguem_repete_a_voz_na_mesma_cena():
     lista, tempos = cena(3, 6)
     mapa = ps.distribuir_vozes(lista, "Damien Black", catalogo=ps.catalogo_xtts(), tempos=tempos)
     assert mapa["Principal 0"] == "Damien Black"                           # quem mais fala: a voz principal
-    assert len(set(mapa.values())) == 9 and ps.repetidas_na_cena(mapa, lista, tempos) == []
+    assert len({vl.separar_variante(v)[0] for v in mapa.values()}) == 9     # 9 vozes de BASE diferentes
+    assert ps.repetidas_na_cena(mapa, lista, tempos) == []
+    duas = [P("Zoe", "f", falas=[0]), P("Lima", "f", falas=[1])]
+    assert ps.repetidas_na_cena({"Zoe": "Ana Florence · jovem", "Lima": "Ana Florence"}, duas, {0: 0.0, 1: 5.0}) == [
+        ("Ana Florence", "Lima", "Zoe")]                                    # a variante é a mesma pessoa
     principais = {mapa[f"Principal {i}"] for i in range(3)}
     assert not principais & {mapa[f"Figurante {i}"] for i in range(3, 9)}   # figurante não usa voz de principal
     antes = ps.distribuir_vozes(lista, "Damien Black", catalogo=ps.catalogo_xtts())   # sem os tempos: como antes
@@ -70,8 +74,12 @@ def test_idade_e_voz_pessoal_no_xtts():
              P("Pai", "m", falas=list(range(18, 24)))]
     tempos = {k: float(k) for k in range(24)}
     mapa = ps.distribuir_vozes(lista, "Damien Black", catalogo=ps.catalogo_xtts(), tempos=tempos)
-    assert mapa["Menina"].endswith(" · jovem") and mapa["Avô"].endswith(" · grave")
-    assert mapa["Pai"] == "Damien Black"                                   # a principal não vai para criança/idoso
+    assert mapa["Menina"].endswith(" · jovem") and mapa["Avô"] == "Damien Black · grave"   # a principal, idosa
+    assert vl.separar_variante(mapa["Pai"])[0] not in ("Damien Black", vl.separar_variante(mapa["Avô"])[0])
+    jovem = ps.distribuir_vozes([P("Jimmy", "m", falas=list(range(10)), idade="jovem"), P("Diretor", "m",
+                                 falas=list(range(10, 15)))], "Damien Black", catalogo=ps.catalogo_xtts(),
+                                tempos={k: float(k) for k in range(15)})
+    assert jovem == {"Jimmy": "Damien Black · jovem", "Diretor": vl.vozes_por_genero("masculina")[0]}
     pessoal = ps.distribuir_vozes(lista, "imp:izael", catalogo=ps.catalogo_xtts(), tempos=tempos)
     assert pessoal["Menina"] == "imp:izael"                                # a SUA voz: para quem mais fala
 
