@@ -38,10 +38,17 @@ falas = [("Olá! Este é o teste do motor de vozes, no Windows, sem placa de ví
 t0 = time.time()
 motor.sintetizar(falas)
 gasto = time.time() - t0
+ouvidos = []
 for f in falas:
     segundos = duracao(f[1])
     assert segundos > 1.0, f"{f[1].name}: só {segundos:.2f} s"
-    print(f"{f[1].name}: {segundos:.1f} s", flush=True)
+    segmentos, _ = conferir.transcritor.motor.transcribe(str(f[1]), language="pt", beam_size=5)
+    ouvido = " ".join(s.text.strip() for s in segmentos)
+    ouvidos.append(f"{f[1].stem}: {ouvido}")
+    print(f"{f[1].name}: {segundos:.1f} s -> {ouvido}", flush=True)
+print("::notice title=O Whisper ouviu::" + "%0A".join(ouvidos), flush=True)
+lidos = [o for o in ouvidos if "ponto" in o.lower()]
+assert not lidos, f"o XTTS-v2 leu a pontuação: {lidos}"
 print(f"::notice title=Vozes prontas::{len(falas)} falas em {gasto:.0f} s (processador; dispositivo={motor.dispositivo}); "
       f"cortadas={motor.cortadas} refeitas={motor.refeitas}", flush=True)
 motor.fechar()

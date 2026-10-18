@@ -5518,7 +5518,7 @@ def test_motor_de_vozes_xtts_pela_tela(app, tmp_path, monkeypatch):
     def instalar(pasta, gpu=None, parar=None, ao_progresso=None):
         pedidos.append(gpu)
         ao_progresso(0.5, "Baixando o PyTorch...")
-        pacote_falso(Path(pasta))
+        pacote_falso(Path(pasta), monkeypatch)
         return {"gpu": gpu}
     monkeypatch.setattr(voz_local, "tem_placa_nvidia", lambda *a: True)
     monkeypatch.setattr(voz_local, "instalar", instalar)

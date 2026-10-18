@@ -253,9 +253,12 @@ primeira falha (antes esperava o tempo limite em cada filme).
   - **A fala de mulher sai com voz feminina e a de homem, masculina, sem o Gemini**: o Maestro mede o **tom de cada
     fala do original** (a altura da voz) no PC. No meio do caminho (homem gritando, mulher de voz grave) a fala fica
     com a voz principal. É uma aproximação: confira no teste antes do filme inteiro.
-  - **Conferir cada fala com o Whisper** (marcada): o XTTS-v2 às vezes inventa uma sílaba no fim ("nas árvores.u.")
-    ou embola uma palavra. O Whisper ouve cada fala gerada: a sobra do fim é **cortada** e a embolada é **gerada de
-    novo** (até 2 vezes, fica a melhor).
+  - **Sem ler a pontuação**: em português, o XTTS-v2 lê o ponto final em voz alta ("...nas árvores, ponto"). O
+    Maestro manda cada frase sozinha e **sem o ponto**, com uma pausa de silêncio no lugar; "?" e "!" ficam (dão a
+    entonação), e ";" e ":" viram vírgula.
+  - **Conferir cada fala com o Whisper** (marcada): o XTTS-v2 às vezes inventa uma sílaba no fim ou embola uma
+    palavra. O Whisper ouve cada fala gerada: a sobra do fim é **cortada** e a embolada é **gerada de novo** (até 2
+    vezes, fica a melhor).
   - Por que o XTTS-v2: no teste de comparação (a mesma cena com XTTS-v2, Chatterbox e OpenVoice, duas rodadas,
     medidas pelo Whisper, pela nota de naturalidade UTMOS e pela semelhança de voz), o Chatterbox imitando uma
     gravação foi tão bem ou um pouco melhor (97-99% entendido), mas tem uma voz pronta só, e ela "inventou" frases;

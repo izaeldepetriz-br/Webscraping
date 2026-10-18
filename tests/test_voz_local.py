@@ -37,8 +37,9 @@ for linha in sys.stdin:
 '''
 
 
-def pacote_falso(pasta):
+def pacote_falso(pasta, monkeypatch):
     """Um motor "instalado": o python do ambiente é o deste teste e o servidor é o de mentira."""
+    monkeypatch.setattr(vl, "SERVIDOR", SERVIDOR_FALSO)
     python = vl.python_do_motor(pasta)
     python.parent.mkdir(parents=True)
     os.symlink(sys.executable, python) if os.name != "nt" else python.write_bytes(open(sys.executable, "rb").read())
@@ -47,9 +48,9 @@ def pacote_falso(pasta):
 
 
 @pytest.mark.skipif(os.name == "nt", reason="o python falso usa um atalho (symlink)")
-def test_motor_fala_com_o_servidor_e_escolhe_as_vozes(tmp_path):
+def test_motor_fala_com_o_servidor_e_escolhe_as_vozes(tmp_path, monkeypatch):
     pasta = tmp_path / "motor_vozes"
-    pacote_falso(pasta)
+    pacote_falso(pasta, monkeypatch)
     gravacao = vi.VozImportada("Izael", "izael", vi.GRAVACAO, genero="masculina")
     (tmp_path / "vozes_importadas" / "izael").mkdir(parents=True)
     (tmp_path / "vozes_importadas" / "izael" / "referencia.wav").write_bytes(b"RIFF")
@@ -60,6 +61,7 @@ def test_motor_fala_com_o_servidor_e_escolhe_as_vozes(tmp_path):
     motor.sintetizar(pedidos, ao_progresso=progresso.append)
     enviados = [json.loads((tmp_path / f"{n}.wav.json").read_text(encoding="utf-8")) for n in "abcd"]
     assert enviados[0]["voz"] == "Ana Florence" and enviados[0]["idioma"] == "pt"
+    assert enviados[0]["frases"] == [["Olá, tudo bem?", 0.0]] and enviados[1]["frases"] == [["Com a minha voz", 0.0]]
     assert enviados[1]["referencia"].endswith("referencia.wav") and enviados[3]["referencia"] == enviados[1]["referencia"]
     assert enviados[2]["voz"] in vl.vozes_por_genero("feminina")        # "Kore" é feminina no Gemini
     assert all((tmp_path / f"{n}.wav").is_file() for n in "abcd") and progresso[-1] == 1.0
@@ -122,7 +124,7 @@ def test_instalar_com_o_uv(tmp_path, gpu):
     assert (vl.INDICE_GPU if gpu else vl.INDICE_CPU) in comandos[1] and "torch==2.8.0" in comandos[1]
     assert "coqui-tts==0.27.5" in comandos[2] and "transformers>=4.57,<5" in comandos[2]
     assert info["gpu"] is gpu and vl.instalado(tmp_path)["gpu"] is gpu and etapas[-1] == 1.0
-    assert "tts_to_file" in vl.arquivo_servidor(tmp_path).read_text(encoding="utf-8")
+    assert "frases" in vl.arquivo_servidor(tmp_path).read_text(encoding="utf-8")
     comandos.clear()                                     # de novo: o Python já está lá, só confere os pacotes
     vl.instalar(tmp_path, gpu=gpu, sistema="linux", baixar=baixar, executar=executar)
     assert [c[1] for c in comandos] == ["pip", "pip"] and len(baixados) == 1
@@ -157,9 +159,9 @@ def test_avaliar_a_fala_ouvida_pelo_whisper():
 
 
 @pytest.mark.skipif(os.name == "nt", reason="o python falso usa um atalho (symlink)")
-def test_motor_corta_a_sobra_e_gera_de_novo_a_embolada(tmp_path):
+def test_motor_corta_a_sobra_e_gera_de_novo_a_embolada(tmp_path, monkeypatch):
     pasta = tmp_path / "motor_vozes"
-    pacote_falso(pasta)
+    pacote_falso(pasta, monkeypatch)
     respostas = {"corta.wav": [("cortar", 0.2, 0.9)], "refaz.wav": [("refazer", None, 0.4), ("ok", None, 1.0)]}
 
     def conferir(texto, wav):
@@ -174,3 +176,15 @@ def test_motor_corta_a_sobra_e_gera_de_novo_a_embolada(tmp_path):
     assert not list(tmp_path.glob("*-tentativa*.wav")) and (tmp_path / "refaz.wav").is_file()
     assert any("1 fala(s) com sobra" in a for a in avisos)
     motor.fechar()
+
+
+def test_frases_sem_o_ponto_final():
+    """O XTTS-v2 lia o ponto final ("...nas árvores, ponto"): cada frase vai sem ele, com uma pausa no lugar."""
+    assert vl.frases_para_falar("E cuidado. Tem algo se mexendo nas árvores.") == [
+        ["E cuidado", vl.PAUSA_PONTO], ["Tem algo se mexendo nas árvores", 0.0]]
+    assert vl.frases_para_falar("Ei, você! Quer cruzar a floresta? Fale antes.") == [
+        ["Ei, você!", vl.PAUSA_PERGUNTA], ["Quer cruzar a floresta?", vl.PAUSA_PERGUNTA], ["Fale antes", 0.0]]
+    assert vl.frases_para_falar("Bem... não sei; talvez: amanhã...") == [["Bem, não sei, talvez, amanhã", 0.0]]
+    assert vl.frases_para_falar("Sim.") == [["Sim", 0.0]]
+    for frase, _ in vl.frases_para_falar("Um. Dois... Três; quatro: cinco."):
+        assert not frase.endswith((".", "…", ";", ":"))

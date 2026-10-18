@@ -132,6 +132,7 @@ def responder(dados):
 
 
 try:
+    import numpy as np
     import torch
     from TTS.api import TTS
     dispositivo = "cuda" if torch.cuda.is_available() else "cpu"
@@ -148,12 +149,44 @@ for linha in sys.stdin:
         if pedido.get("cmd") == "sair":
             break
         voz = {"speaker_wav": pedido["referencia"]} if pedido.get("referencia") else {"speaker": pedido["voz"]}
-        tts.tts_to_file(pedido["texto"], language=pedido.get("idioma", "pt"), file_path=pedido["saida"],
-                        split_sentences=True, **voz)
+        frases = pedido.get("frases") or [[pedido["texto"], 0.0]]
+        taxa = getattr(tts.synthesizer, "output_sample_rate", 24000) or 24000
+        partes = []
+        for frase, pausa in frases:          # uma por vez, sem o ponto final (o XTTS lia "ponto" em voz alta)
+            partes.append(np.asarray(tts.tts(text=frase, language=pedido.get("idioma", "pt"), split_sentences=False,
+                                             **voz), dtype=np.float32))
+            if pausa:
+                partes.append(np.zeros(int(taxa * pausa), dtype=np.float32))
+        tts.synthesizer.save_wav(wav=np.concatenate(partes), path=pedido["saida"])
         responder({"ok": True})
     except Exception as erro:
         responder({"erro": f"{type(erro).__name__}: {erro}"})
 '''
+
+
+# ----------------------------------------------------------------- o texto: frase a frase, sem o ponto final
+# O XTTS-v2 LÊ o ponto final em português ("...nas árvores, ponto"): no teste, 1 em cada 3 falas. Por isso cada frase
+# vai sozinha e sem o ponto, e no lugar dele entra uma pausa de silêncio. "?" e "!" ficam (dão a entonação de
+# pergunta e de exclamação); ";" e ":" viram vírgula; reticências no meio viram vírgula e, no fim, saem.
+PAUSA_PONTO, PAUSA_PERGUNTA = 0.30, 0.35
+
+
+def frases_para_falar(texto: str) -> list[list]:
+    """'E cuidado. Tem algo ali?' -> [['E cuidado', 0.3], ['Tem algo ali?', 0.0]] (a última sem pausa)."""
+    import re
+    texto = " ".join(texto.replace("...", "…").split())
+    texto = re.sub(r"\s*[;:]\s*", ", ", texto)
+    texto = re.sub(r"…(?=\s*\w)", ",", texto)
+    frases = []
+    for parte in re.split(r"(?<=[.!?…])\s+", texto):
+        parte = parte.strip()
+        frase = parte.rstrip(".…").rstrip(" ,")
+        if not re.search(r"\w", frase):
+            continue
+        frases.append([frase, PAUSA_PERGUNTA if parte.endswith(("?", "!")) else PAUSA_PONTO])
+    if frases:
+        frases[-1][1] = 0.0
+    return frases or [[texto, 0.0]]
 
 
 # ----------------------------------------------------------------- as vozes
@@ -428,8 +461,9 @@ class MotorLocal:
         if not instalado(self.pasta) or not python.is_file():
             raise ErroDublagem("o motor de vozes XTTS-v2 não está instalado: Configurações > Dublagem > \"Instalar "
                                "o motor de vozes\"")
-        if not arquivo_servidor(self.pasta).is_file():
-            arquivo_servidor(self.pasta).write_text(SERVIDOR, encoding="utf-8")
+        servidor, codigo = arquivo_servidor(self.pasta), SERVIDOR        # (nos testes, um servidor de mentira)
+        if not servidor.is_file() or servidor.read_text(encoding="utf-8") != codigo:   # versão nova do Maestro
+            servidor.write_text(codigo, encoding="utf-8")
         ambiente = {**os.environ, "COQUI_TOS_AGREED": "1", "TTS_HOME": str(self.pasta / "modelos"),
                     "HF_HOME": str(self.pasta / "modelos" / "hf"), "PYTHONIOENCODING": "utf-8",
                     "PYTHONUNBUFFERED": "1", "MAESTRO_MODELO": MODELO}
@@ -487,7 +521,8 @@ class MotorLocal:
         return {"voz": voz}
 
     def _falar(self, texto: str, saida: Path, voz: dict, parar) -> None:
-        pedido = {"texto": texto, "saida": str(saida), "idioma": self.idioma, **voz}
+        pedido = {"texto": texto, "frases": frases_para_falar(texto), "saida": str(saida), "idioma": self.idioma,
+                  **voz}
         self._processo.stdin.write(json.dumps(pedido, ensure_ascii=False) + "\n")
         self._processo.stdin.flush()
         resposta = self._resposta(600, parar)
