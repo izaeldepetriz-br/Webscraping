@@ -45,7 +45,7 @@ VOZ_ORIGINAL = {"m": "Viktor Eka", "f": "Ana Florence"}          # o "original" 
 VOZ_DUBLAGEM = {"m": "Gilberto Mathias", "f": "Narelle Moon"}     # a dublagem (a principal é a masculina)
 NORMAL_RMS, GRITO_RMS, SUSSURRO_RMS = 0.05, 0.2, 0.01
 
-pasta, saida = Path(sys.argv[1]), Path(sys.argv[2])
+pasta, saida = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
 saida.mkdir(parents=True, exist_ok=True)
 inicio = time.time()
 
