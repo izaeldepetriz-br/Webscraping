@@ -1,0 +1,51 @@
+# Teste do F5-TTS em português (ajuste firstpixel/F5-TTS-pt-br): as mesmas 8 falas de emoção e as mesmas 2 vozes do
+# "Teste de emoções" (as referências vêm daquela execução). Os áudios vão para o ramo "audios-f5-<execução>".
+name: Teste F5-TTS
+
+on:
+  push:
+    branches: [teste-xtts]
+    paths:
+      - .github/scripts/f5_teste.py
+      - .github/workflows/teste-f5.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  f5:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: xtts
+          path: refs
+          run-id: 39105076401
+          github-token: ${{ github.token }}
+      - name: F5-TTS
+        run: |
+          set -o pipefail
+          { pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu \
+            && pip install f5-tts faster-whisper \
+            && python .github/scripts/f5_teste.py saida refs/saida; } 2>&1 | tee registro_f5.txt
+      - name: Mostrar o erro
+        if: failure()
+        run: echo "::error title=f5::$(grep -v -E 'Downloading|━|Collecting|Requirement already|Using cached|Successfully|Installing collected' registro_f5.txt | tail -n 25 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+      - name: Guardar os áudios num ramo
+        if: always()
+        run: |
+          mkdir -p resultados && cp -r saida registro_f5.txt resultados/ 2>/dev/null || true
+          cd resultados
+          git init -q -b audios-f5-${{ github.run_id }}
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Teste F5-TTS (execução ${{ github.run_id }})"
+          git push -q "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD
