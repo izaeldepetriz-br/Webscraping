@@ -256,10 +256,12 @@ primeira falha (antes esperava o tempo limite em cada filme).
   - **Conferir cada fala com o Whisper** (marcada): o XTTS-v2 às vezes inventa uma sílaba no fim ("nas árvores.u.")
     ou embola uma palavra. O Whisper ouve cada fala gerada: a sobra do fim é **cortada** e a embolada é **gerada de
     novo** (até 2 vezes, fica a melhor).
-  - Por que o XTTS-v2: no teste de comparação (a mesma cena com XTTS-v2, Chatterbox e OpenVoice, medida pelo Whisper,
-    pela nota de naturalidade UTMOS e pela semelhança de voz), ele foi o mais equilibrado: entende bem o português
-    (97%), tem dezenas de vozes prontas e imita uma gravação curta. O Chatterbox soou um pouco mais natural, mas a voz
-    padrão dele "inventou" frases inteiras; o OpenVoice só troca o timbre do Piper (o ritmo continua robótico).
+  - Por que o XTTS-v2: no teste de comparação (a mesma cena com XTTS-v2, Chatterbox e OpenVoice, duas rodadas,
+    medidas pelo Whisper, pela nota de naturalidade UTMOS e pela semelhança de voz), o Chatterbox imitando uma
+    gravação foi tão bem ou um pouco melhor (97-99% entendido), mas tem uma voz pronta só, e ela "inventou" frases;
+    o XTTS-v2 entende bem o português (91-98%), traz 57 vozes prontas e imita uma gravação curta, e a sobra que ele às
+    vezes inventa é cortada pela conferência do Whisper. O OpenVoice não fala português sozinho: troca o timbre do
+    Piper (o ritmo continua o do Piper) e imitou pouco a voz-alvo (72%).
 - **"Importar voz"** (Configurações > Dublagem): o arquivo, o **nome**, o **gênero** e a **idade** da voz.
   - **Modelo do Piper** (.onnx, com o .onnx.json ao lado): mais uma voz grátis no menu "Voz do Piper" e na tabela dos
     personagens (há várias em huggingface.co/rhasspy/piper-voices; em português: cadu, jeff...).
