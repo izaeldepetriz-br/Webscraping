@@ -1,6 +1,7 @@
 # (o PyAV 19 tirou uma opção que o faster-whisper usa: "av<19", como no Maestro)
-# Teste do F5-TTS em português (ajuste firstpixel/F5-TTS-pt-br): as mesmas 8 falas de emoção e as mesmas 2 vozes do
-# "Teste de emoções" (as referências vêm daquela execução). Os áudios vão para o ramo "audios-f5-<execução>".
+# Teste do F5-TTS em português (ajuste firstpixel/F5-TTS-pt-br, arquitetura F5TTS_Base): as mesmas 8 falas de emoção
+# e as mesmas 2 vozes do "Teste de emoções" (as referências vêm daquela execução). Cada emoção roda numa máquina (no
+# processador o F5 leva minutos por frase); no fim os áudios vão juntos para o ramo "audios-f5-<execução>".
 name: Teste F5-TTS
 
 on:
@@ -18,7 +19,11 @@ permissions:
 jobs:
   f5:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        emocao: [raiva, odio, choro, medo, alegria, tristeza, sussurro, grito]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,26 +35,37 @@ jobs:
           path: refs
           run-id: 39105076401
           github-token: ${{ github.token }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: chatterbox
-          path: outros
-          run-id: 39105076401
-          github-token: ${{ github.token }}
       - name: F5-TTS
         run: |
           set -o pipefail
           { pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu \
             && pip install f5-tts faster-whisper "av<19" \
-            && python .github/scripts/f5_teste.py saida refs/saida outros/saida; } 2>&1 | tee registro_f5.txt
+            && python .github/scripts/f5_teste.py saida refs/saida ${{ matrix.emocao }}; } 2>&1 | tee registro_f5.txt
       - name: Mostrar o erro
         if: failure()
-        run: echo "::error title=f5::$(grep -v -E 'Downloading|━|Collecting|Requirement already|Using cached|Successfully|Installing collected' registro_f5.txt | tail -n 25 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
-      - name: Guardar os áudios num ramo
+        run: echo "::error title=f5 ${{ matrix.emocao }}::$(grep -v -E 'Downloading|━|Collecting|Requirement already|Using cached|Successfully|Installing collected' registro_f5.txt | tail -n 25 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+      - if: always()
+        run: mkdir -p saida && cp registro_f5.txt saida/registro_${{ matrix.emocao }}.txt || true
+      - uses: actions/upload-artifact@v4
         if: always()
+        with:
+          name: f5-${{ matrix.emocao }}
+          path: saida
+
+  juntar:
+    needs: f5
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: f5-*
+          path: resultados/saida
+          merge-multiple: true
+      - name: Guardar os áudios num ramo
         run: |
-          mkdir -p resultados && cp -r saida registro_f5.txt resultados/ 2>/dev/null || true
           cd resultados
+          python3 -c "import json,pathlib; p=pathlib.Path('saida'); json.dump([x for a in sorted(p.glob('f5_*.json')) for x in json.loads(a.read_text())], open(p/'f5.json','w'), ensure_ascii=False, indent=1)"
           git init -q -b audios-f5-${{ github.run_id }}
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
