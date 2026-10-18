@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 from .dublagem import ErroDublagem, _baixar
-from .emocoes import CHATTERBOX, EMOCOES
+from .emocoes import EMOCOES, NORMAL, intensidade_chatterbox
 from .voz_local import (INDICE_CPU, ServidorDeVoz, _etapas, conferir_espaco, espaco_livre, frases_para_falar,
                         instalar_pacote, python_do_motor, tem_placa_nvidia)
 
@@ -196,12 +196,15 @@ class MotorEmocao(ServidorDeVoz):
                              parar)
 
     def falar(self, texto: str, saida: str | Path, referencia: str | Path, emocao: str, parar=None,
-              idioma: str = "pt") -> None:
+              idioma: str = "pt", forca: float = 0.0) -> None:
+        """A fala com a emoção. Com a força da interpretação (> 0), mais intensa e no jeito da emoção (as pausas do
+        choro, o "!" da raiva)."""
         if emocao not in EMOCOES:
             raise ErroDublagem(f"emoção desconhecida: {emocao}")
         self.iniciar(parar)
-        exaggeration, cfg = CHATTERBOX[emocao]
-        resposta = self._pedir({"texto": texto, "frases": frases_para_falar(texto), "idioma": idioma,
+        exaggeration, cfg = intensidade_chatterbox(emocao, forca)
+        frases = frases_para_falar(texto, emocao if forca > 0 else NORMAL)
+        resposta = self._pedir({"texto": texto, "frases": frases, "idioma": idioma,
                                 "saida": str(Path(saida).absolute()),           # caminhos completos: o servidor
                                 "referencia": str(Path(referencia).absolute()),  # trabalha em outra pasta
                                 "exaggeration": exaggeration, "cfg": cfg}, parar)

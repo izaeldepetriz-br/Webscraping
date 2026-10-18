@@ -34,6 +34,11 @@ CHATTERBOX: dict[str, tuple[float, float]] = {
     "brava": (1.1, 0.4), "grito": (1.4, 0.3), "triste": (0.4, 0.3), "choro": (0.9, 0.3),
     "alegre": (1.0, 0.5), "medo": (0.8, 0.4), "sussurro": (0.25, 0.3),
 }
+# a força da interpretação (Configurações > Dublagem > "Força da emoção"): o Chatterbox mais intenso, as pausas do
+# choro e o que atuacao.py faz com a voz (choro trêmulo, raiva rasgada...). "Desligada" = como na v2.20
+FORCAS: dict[str, float] = {"Desligada": 0.0, "Leve": 0.45, "Média": 0.75, "Forte": 1.0}
+FORCA_PADRAO = "Forte"
+EXAGERO_MAX = 1.8               # acima disso o Chatterbox embola as palavras
 # as palavras da nota de direção (em ordem: a 1ª que bater vale; "gritando de medo" é grito)
 _PALAVRAS = [
     ("sussurro", r"sussurr\w*|cochich\w*|baixinho|murmur\w*|em voz baixa"),
@@ -57,6 +62,18 @@ def emocao_da_nota(nota: str) -> str:
         return NORMAL
     nota = nota.split("Ritmo:", 1)[0].lower()
     return next((emocao for emocao, padrao in _PADROES if padrao.search(nota)), NORMAL)
+
+
+def forca_do_menu(texto: str) -> float:
+    """'Forte' -> 1.0; desconhecido -> a padrão."""
+    return FORCAS.get(texto, FORCAS[FORCA_PADRAO])
+
+
+def intensidade_chatterbox(emocao: str, forca: float = 0.0) -> tuple[float, float]:
+    """(exaggeration, cfg) do Chatterbox: o da tabela na força 0 e até 35% mais intenso na "Forte" (no máximo
+    EXAGERO_MAX)."""
+    exaggeration, cfg = CHATTERBOX[emocao]
+    return round(min(EXAGERO_MAX, exaggeration * (1 + 0.35 * max(0.0, forca))), 2), cfg
 
 
 def nome_da_emocao(emocao: str) -> str:

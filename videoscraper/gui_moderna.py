@@ -155,6 +155,7 @@ class OpcoesJellyfin:
     voz_local: str = "Damien Black"  # XTTS-v2 no PC: voz pronta ("Ana Florence") ou importada ("imp:izael")
     conferir_falas: bool = True      # XTTS-v2: o Whisper ouve cada fala gerada (corta a sobra do fim, refaz a embolada)
     emocao_chatterbox: bool = True   # XTTS-v2: as falas com emoção vão pelo Chatterbox (se instalado e sem a gravação)
+    forca_emocao: str = emocoes.FORCA_PADRAO   # XTTS-v2: a interpretação (choro trêmulo, raiva rasgada); "Desligada"
     chave_gemini: str = ""           # Google AI Studio > Get API key (vazio = variável GEMINI_API_KEY)
     encurtar_falas: bool = True      # dublagem: o Claude reescreve mais curtas as falas que não cabem no tempo
     voz_por_personagem: bool = False  # Gemini: ouve o filme, separa quem fala e dá uma voz para cada personagem
@@ -4504,6 +4505,14 @@ class JanelaModerna(ctk.CTk):
         self.var_jf_emocao_chatterbox = tk.BooleanVar(self, value=True)
         self._checkbox(lateral, "Usar o Chatterbox nas falas com emoção que não têm a gravação da emoção",
                        self.var_jf_emocao_chatterbox)
+        self._rotulo(lateral, "Força da emoção").pack(anchor="w", pady=(10, 2), **p)
+        self.var_jf_forca_emocao = tk.StringVar(self, value=emocoes.FORCA_PADRAO)
+        self._menu_opcoes(lateral, self.var_jf_forca_emocao, emocoes.FORCAS).pack(fill="x", **p)
+        self._rotulo(lateral, "Depois da voz, a interpretação: no choro a voz treme, quebra e puxa o ar entre as "
+                              "frases; na raiva sai forçada e rasgada, mais alta e batendo nas sílabas fortes (também "
+                              "medo, tristeza, alegria e sussurro). Vale com ou sem o Chatterbox. \"Desligada\": "
+                              "como na v2.20.",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(4, 6), **p)
         self.atualizar_motor_local(self._motor_local)
 
     _motor_local: dict | None = None
@@ -5266,6 +5275,7 @@ class JanelaModerna(ctk.CTk):
             voz_gemini=valor_da_voz(self.var_jf_voz_gemini.get()), chave_gemini=self.var_jf_chave_gemini.get().strip(),
             voz_local=voz_local.valor_do_menu(self.var_jf_voz_local.get()),
             conferir_falas=self.var_jf_conferir_falas.get(), emocao_chatterbox=self.var_jf_emocao_chatterbox.get(),
+            forca_emocao=self.var_jf_forca_emocao.get(),
             encurtar_falas=self.var_jf_encurtar_falas.get(), emocao_da_cena=self.var_jf_emocao_da_cena.get(),
             pronuncias=self.var_jf_pronuncias.get().strip(),
             voz_por_personagem=self.var_jf_voz_por_personagem.get(),
@@ -5393,7 +5403,8 @@ class JanelaModerna(ctk.CTk):
                   "jellyfin_api_key": self.var_jf_chave_jellyfin, "discord_webhook": self.var_jf_discord,
                   "telegram_token": self.var_jf_telegram_token, "telegram_chat_id": self.var_jf_telegram_chat,
                   "pasta_avulsos": self.var_jf_pasta_avulsos, "chave_cloud_tts": self.var_jf_chave_cloud,
-                  "inicio_teste": self.var_inicio_teste(), "pronuncias": self.var_jf_pronuncias}
+                  "inicio_teste": self.var_inicio_teste(), "pronuncias": self.var_jf_pronuncias,
+                  "forca_emocao": self.var_jf_forca_emocao}
         marcas = {"tmdb": self.var_jf_tmdb, "incluir_tmdbid": self.var_jf_tmdbid,
                   "conferir_falas": self.var_jf_conferir_falas, "emocao_chatterbox": self.var_jf_emocao_chatterbox,
                   "exigir_catalogo": self.var_jf_exigir, "legendas": self.var_jf_legendas,

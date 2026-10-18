@@ -102,6 +102,9 @@ motor.fechar()
 print("\n".join(avisos), flush=True)
 assert not any("o Chatterbox falhou" in a for a in avisos), avisos
 assert any("3 pelo Chatterbox" in a for a in avisos), avisos
+interpretacao = next((a for a in avisos if a.startswith("interpretação da emoção:")), "")   # a "Forte" (padrão)
+assert "tremor" in interpretacao and "rasgada" in interpretacao and "tom +" in interpretacao, avisos   # (o ffmpeg)
+print(f"::notice title=Interpretação::{interpretacao}", flush=True)
 ouvidos = [f"{f[1].stem} ({duracao(f[1]):.1f} s): {ouvir(f[1])}" for f in falas]
 print("::notice title=Chatterbox · o Whisper ouviu::" + "%0A".join(ouvidos), flush=True)
 assert all(duracao(f[1]) > 1.0 for f in falas) and not [o for o in ouvidos if "ponto" in o.lower()], ouvidos

@@ -330,16 +330,23 @@ class MotorMisto:
 
 VOLUME_ALVO = 3300            # nível (RMS, de 32767) de cada fala na trilha: todas no MESMO volume
 GANHO_NIVELAR = (0.5, 2.5)    # quanto uma fala pode ser abaixada/aumentada para chegar lá
+# dB acima (ou abaixo) do VOLUME_ALVO pela emoção da fala: o grito continua mais alto que a conversa e o sussurro, mais
+# baixo (no mesmo volume, a raiva perdia o "excesso")
+VOLUME_DA_EMOCAO = {"grito": 6.0, "brava": 3.0, "alegre": 1.0, "medo": 0.0, "choro": -1.0, "triste": -2.0,
+                    "sussurro": -9.0}
 SEM_SOM = 120                 # RMS abaixo disso: a fala saiu muda (relatório de qualidade)
 ACELERADA_DEMAIS = 1.3        # acelerada acima disso já se nota (relatório de qualidade)
 
 
-def nivelar(amostras: bytes, largura: int = 2) -> tuple[bytes, float]:
+def nivelar(amostras: bytes, largura: int = 2, db: float = 0.0) -> tuple[bytes, float]:
     """(a fala no VOLUME_ALVO, o volume que ela tinha). Mede só os trechos com voz (o silêncio não puxa a média
     para baixo) e não deixa estourar. Blocos diferentes do Gemini e o Piper/Google Cloud saíam com volumes
-    diferentes, e a troca de volume de uma fala para a outra denunciava a dublagem."""
+    diferentes, e a troca de volume de uma fala para a outra denunciava a dublagem. db: acima (ou abaixo) do alvo,
+    pela emoção (VOLUME_DA_EMOCAO)."""
     if largura != 2 or not amostras:
         return amostras, 0.0
+    fator = 10 ** (db / 20)
+    alvo, menor, maior = VOLUME_ALVO * fator, GANHO_NIVELAR[0] * min(1.0, fator), GANHO_NIVELAR[1] * max(1.0, fator)
     try:                                               # com o numpy (vem com o separar vozes): bem mais rápido
         import numpy as np
         x = np.frombuffer(amostras[:len(amostras) // 2 * 2], dtype="<i2").astype(np.float64)
@@ -350,7 +357,7 @@ def nivelar(amostras: bytes, largura: int = 2) -> tuple[bytes, float]:
         rms = float(np.sqrt(np.mean(voz * voz))) if voz.size else 0.0
         if rms < SEM_SOM:
             return amostras, rms
-        ganho = min(max(VOLUME_ALVO / rms, GANHO_NIVELAR[0]), GANHO_NIVELAR[1], 32000 / pico)
+        ganho = min(max(alvo / rms, menor), maior, 32000 / pico)
         if abs(ganho - 1) < 0.05:
             return amostras, rms
         return (x * ganho).astype("<i2").tobytes(), rms
@@ -365,16 +372,17 @@ def nivelar(amostras: bytes, largura: int = 2) -> tuple[bytes, float]:
     rms = math.sqrt(sum(x * x for x in com_voz) / len(com_voz)) if com_voz else 0.0
     if rms < SEM_SOM:
         return amostras, rms
-    ganho = min(max(VOLUME_ALVO / rms, GANHO_NIVELAR[0]), GANHO_NIVELAR[1], 32000 / pico)
+    ganho = min(max(alvo / rms, menor), maior, 32000 / pico)
     if abs(ganho - 1) < 0.05:
         return amostras, rms
     return array("h", (int(x * ganho) for x in dados)).tobytes(), rms
 
 
 def montar_trilha(clipes: list[tuple[float, float, Path]], duracao: float, destino: Path, acelerar=None,
-                  reamostrar=None, nivelar_volume: bool = True) -> dict:
+                  reamostrar=None, nivelar_volume: bool = True, volumes_db: list[float] | None = None) -> dict:
     """clipes: [(início, fim da fala na legenda, .wav)] em ordem. Grava 'destino' (mono, 16 bits) do tamanho do
-    vídeo, com cada fala no horário e todas no mesmo volume (nivelar). Devolve {"aceleradas": n, "cortadas": n,
+    vídeo, com cada fala no horário e todas no mesmo volume (nivelar; volumes_db: o de cada fala acima ou abaixo,
+    pela emoção). Devolve {"aceleradas": n, "cortadas": n,
     "problemas": [(posição do clipe, "acelerada" | "cortada" | "sem som", fator)]} (o relatório de qualidade).
     reamostrar(wav, taxa): converte a fala que vier noutra taxa (dublagem mista); sem ele, taxas diferentes são erro."""
     contas = {"aceleradas": 0, "cortadas": 0, "problemas": []}
@@ -419,7 +427,8 @@ def montar_trilha(clipes: list[tuple[float, float, Path]], duracao: float, desti
                     raise ErroDublagem("as falas vieram em formatos diferentes")
                 amostras = w.readframes(w.getnframes())
             if nivelar_volume:
-                amostras, volume = nivelar(amostras, largura)
+                db = volumes_db[k] if volumes_db and k < len(volumes_db) else 0.0
+                amostras, volume = nivelar(amostras, largura, db)
                 if volume < SEM_SOM:
                     contas["problemas"].append((k, "sem som", 0.0))
             comeco = max(int(inicio * taxa), cursor)
@@ -1449,8 +1458,10 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
                 clipes, adaptadas = _adaptar(clipes, [t for _, t in falas], duracao, motor, adaptar, parar, avisar,
                                              vozes, pasta, indices, tom_de)
             andamento(fatias[1])
+            from .emocoes import emocao_da_nota
+            volumes = [VOLUME_DA_EMOCAO.get(emocao_da_nota(tom_de.get(k, "")), 0.0) for k in indices]
             contas = montar_trilha(clipes, duracao, pasta / "trilha.wav", acelerar_com_ffmpeg(ffmpeg),
-                                   reamostrar_com_ffmpeg(ffmpeg))
+                                   reamostrar_com_ffmpeg(ffmpeg), volumes_db=volumes)
             andamento(fatias[2])
             fundo = None
             if separar:

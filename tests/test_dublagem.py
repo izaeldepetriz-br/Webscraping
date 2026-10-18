@@ -837,6 +837,11 @@ def test_todas_as_falas_no_mesmo_volume_e_relatorio(tmp_path):
              [(0, 5, "Oi."), (1, 26, "Sou Agatha, Agatha Johnson, muito prazer em conhecer.")]]
     assert dublagem.relatorio_de_qualidade([(0, "acelerada", 1.58), (1, "sem som", 0.0)], falas, [0, 1]) == [
         '0:05 "Oi.": acelerada 1,6x', '1:26 "Sou Agatha, Agatha Johnson,...": sem som']
+    # pela emoção: o grito fica 6 dB acima da conversa e o sussurro, 9 dB abaixo (mesmo que gerados no mesmo volume)
+    dublagem.montar_trilha([(0.0, 1.0, baixa), (2.0, 3.0, baixa), (4.0, 5.0, baixa)], 6.0, trilha,
+                           volumes_db=[0.0, dublagem.VOLUME_DA_EMOCAO["grito"], dublagem.VOLUME_DA_EMOCAO["sussurro"]])
+    conversa, grito, sussurro = (_rms_do_trecho(trilha, a + 0.1, a + 0.9) for a in (0, 2, 4))
+    assert abs(20 * math.log10(grito / conversa) - 6) < 0.5 and abs(20 * math.log10(sussurro / conversa) + 9) < 0.5
 
 
 def test_ar_de_sala_e_pronuncias():

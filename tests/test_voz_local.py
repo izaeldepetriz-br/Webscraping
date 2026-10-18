@@ -304,13 +304,25 @@ def test_frases_sem_o_ponto_final():
         assert not frase.endswith((".", "…", ";", ":"))
 
 
+def test_frases_no_jeito_da_emocao():
+    """Chorando, aos pedaços (cada vírgula vira pausa, sem deixar uma palavra sozinha); com raiva, com "!"."""
+    assert vl.frases_para_falar("Por favor, não me deixa sozinha. Eu não aguento.", "choro") == [
+        ["Por favor", 0.4], ["não me deixa sozinha", 0.55], ["Eu não aguento", 0.0]]
+    assert vl.frases_para_falar("Não, espera, eu explico.", "choro") == [["Não, espera", 0.4], ["eu explico", 0.0]]
+    assert vl.frases_para_falar("Eu não aguento, não.", "choro") == [["Eu não aguento, não", 0.0]]
+    assert vl.frases_para_falar("Tem alguém aí, eu ouvi.", "medo") == [["Tem alguém aí", 0.3], ["eu ouvi", 0.0]]
+    assert vl.frases_para_falar("Sai daqui. Agora? Já.", "brava") == [["Sai daqui!", vl.PAUSA_PERGUNTA],
+                                                                     ["Agora?", vl.PAUSA_PERGUNTA], ["Já!", 0.0]]
+    assert vl.frases_para_falar("Sai daqui, agora.", "sussurro") == vl.frases_para_falar("Sai daqui, agora.")
+
+
 class ChatterboxFalso:
     """O 2º motor de mentira: anota cada fala (e falha quando mandado)."""
 
     def __init__(self, falhar_em=None):
         self.falas, self.falhar_em, self.fechado = [], falhar_em, False
 
-    def falar(self, texto, saida, referencia, emocao, parar=None, idioma="pt"):
+    def falar(self, texto, saida, referencia, emocao, parar=None, idioma="pt", forca=0.0):
         if texto == self.falhar_em:
             raise ErroDublagem("o Chatterbox não abriu: sem memória")
         self.falas.append((texto, str(referencia), emocao))
@@ -380,7 +392,7 @@ def test_um_de_cada_vez_na_placa_pequena(tmp_path, monkeypatch, memoria):
     ordem = []
 
     class Espiao(ChatterboxFalso):
-        def falar(self, texto, saida, referencia, emocao, parar=None, idioma="pt"):
+        def falar(self, texto, saida, referencia, emocao, parar=None, idioma="pt", forca=0.0):
             ordem.append((texto, "XTTS aberto" if motor.aberto() else "XTTS fechado"))
             super().falar(texto, saida, referencia, emocao, parar, idioma)
 
@@ -399,4 +411,27 @@ def test_um_de_cada_vez_na_placa_pequena(tmp_path, monkeypatch, memoria):
     else:
         assert ordem == [("Corre!", "XTTS aberto"), ("Socorro!", "XTTS aberto")] and not any(
             "um de cada vez" in a for a in avisos)
+    motor.fechar()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="o python falso usa um atalho (symlink)")
+@pytest.mark.parametrize("forca", [1.0, 0.0])
+def test_interpretacao_da_emocao_depois_da_voz(tmp_path, monkeypatch, forca):
+    """Sem o Chatterbox, a fala chorada sai do XTTS-v2 aos pedaços e a interpretação faz a voz tremer; na força 0
+    ("Desligada"), como na v2.20."""
+    pasta = tmp_path / "motor_vozes"
+    pacote_falso(pasta, monkeypatch)
+    avisos = []
+    motor = vl.MotorLocal(pasta, "Ana Florence", avisar=avisos.append, forca_emocao=forca, ffmpeg="")
+    motor.sintetizar([("Por favor, não vai. Fica comigo.", tmp_path / "a.wav", "", "Nesta fala: chorando."),
+                      ("Tudo bem.", tmp_path / "b.wav")])
+    enviado = json.loads((tmp_path / "a.wav.json").read_text(encoding="utf-8"))
+    chorada, neutra = (tmp_path / "a.wav").read_bytes(), (tmp_path / "b.wav").read_bytes()
+    if forca:
+        assert enviado["frases"] == [["Por favor", 0.4], ["não vai", 0.55], ["Fica comigo", 0.0]]
+        assert len(chorada) == len(neutra) and chorada != neutra            # a mesma duração, outra voz
+        assert any(a.startswith("interpretação da emoção: 1 fala(s) chorando (") and "tremor" in a for a in avisos)
+    else:
+        assert enviado["frases"] == [["Por favor, não vai", vl.PAUSA_PONTO], ["Fica comigo", 0.0]]
+        assert chorada == neutra and not any("interpretação" in a for a in avisos)
     motor.fechar()
