@@ -40,3 +40,40 @@ def test_ouvir_generos_le_em_blocos_e_guarda(tmp_path):
     lidos.clear()
     assert gl.ouvir_generos("filme.mkv", falas, [0, 1, 2], "ffmpeg", arquivo, ler=ler)[1].genero == "f"
     assert lidos == []                                                               # tudo do que foi guardado
+
+
+def test_emocao_pelo_volume_grito_e_sussurro(tmp_path):
+    """Comparada com as outras falas do filme: bem mais alta = gritando; bem mais baixa e sem "vibração" = sussurro."""
+    normais = [(SimpleNamespace(tempo=f"00:00:{2 * i:02d},000 --> 00:00:{2 * i + 1:02d},500"), f"Fala {i}.")
+               for i in range(10)]
+    falas = normais + [(SimpleNamespace(tempo="00:00:30,000 --> 00:00:31,500"), "Sai daqui!"),
+                       (SimpleNamespace(tempo="00:00:40,000 --> 00:00:41,500"), "Fala baixo."),
+                       (SimpleNamespace(tempo="00:00:50,000 --> 00:00:51,500"), "Agora!")]
+    trechos = {k: voz(130 + 7 * k) for k in range(10)}
+    trechos[10] = voz(150) * 3.5                                       # ~11 dB acima: grito
+    trechos[11] = np.random.default_rng(3).standard_normal(int(gl.TAXA * 1.5)) * 0.02   # baixo e só "ar"
+    trechos[12] = voz(140) * 2.2                                       # ~7 dB acima, com "!": também grito
+
+    def ler(ffmpeg, video, inicio, duracao):
+        som = np.zeros(int((duracao + 1) * gl.TAXA), dtype=np.float32)
+        for k, (fala, _) in enumerate(falas):
+            a = float(fala.tempo[6:8]) - inicio
+            if 0 <= a < duracao:
+                trecho = trechos[k]
+                som[int(a * gl.TAXA):int(a * gl.TAXA) + len(trecho)] = trecho
+        return som
+    ouvidas = gl.ouvir_generos("filme.mkv", falas, list(range(13)), "ffmpeg", tmp_path / "g.json", ler=ler,
+                               emocao=True)
+    assert (ouvidas[10].tom, ouvidas[11].tom, ouvidas[12].tom) == (gl.TOM_GRITO, gl.TOM_SUSSURRO, gl.TOM_GRITO)
+    assert all(ouvidas[k].tom == "" for k in range(10)) and ouvidas[10].genero == "m"
+    assert "Nesta fala: gritando" in ouvidas[10].nota()
+    sem = gl.ouvir_generos("filme.mkv", falas, [10, 11], "ffmpeg", tmp_path / "g.json", ler=ler)   # desligada
+    assert sem[10].tom == "" and sem[11].tom == ""
+
+
+def test_tom_pelo_volume_precisa_de_falas_para_comparar():
+    assert gl.tom_pelo_volume(-10.0, None, 0.9) == ""                       # sem o "normal" do filme
+    assert gl.tom_pelo_volume(-70.0, -20.0, 0.0) == ""                      # silêncio não é sussurro
+    assert gl.tom_pelo_volume(-15.0, -20.0, 0.9, "Oi!") == ""               # só 5 dB: não é grito
+    assert gl.tom_pelo_volume(-13.0, -20.0, 0.9, "Oi!") == gl.TOM_GRITO     # 7 dB com "!": é
+    assert gl.tom_pelo_volume(-31.0, -20.0, 0.8) == ""                      # baixo, mas com voz: fala baixa normal

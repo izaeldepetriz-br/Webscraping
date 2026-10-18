@@ -6,6 +6,7 @@ import os
 import sys
 import tarfile
 import wave
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -117,7 +118,7 @@ def test_instalar_com_o_uv(tmp_path, gpu):
             python.write_text("")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
     info = vl.instalar(tmp_path, gpu=gpu, sistema="linux", baixar=baixar, executar=executar,
-                       ao_progresso=lambda f, t: etapas.append(f))
+                       ao_progresso=lambda f, t: etapas.append(f), medir_espaco=lambda p: 100.0)
     assert baixados == [vl.URL_UV + "uv-x86_64-unknown-linux-gnu.tar.gz"]
     assert [c[1:3] for c in comandos] == [["venv", str(tmp_path / "ambiente")], ["pip", "install"],
                                           ["pip", "install"]]
@@ -126,7 +127,7 @@ def test_instalar_com_o_uv(tmp_path, gpu):
     assert info["gpu"] is gpu and vl.instalado(tmp_path)["gpu"] is gpu and etapas[-1] == 1.0
     assert "frases" in vl.arquivo_servidor(tmp_path).read_text(encoding="utf-8")
     comandos.clear()                                     # de novo: o Python já está lá, só confere os pacotes
-    vl.instalar(tmp_path, gpu=gpu, sistema="linux", baixar=baixar, executar=executar)
+    vl.instalar(tmp_path, gpu=gpu, sistema="linux", baixar=baixar, executar=executar, medir_espaco=lambda p: 100.0)
     assert [c[1] for c in comandos] == ["pip", "pip"] and len(baixados) == 1
 
 
@@ -139,8 +140,115 @@ def test_instalar_explica_a_falha(tmp_path):
         return SimpleNamespace(returncode=1, stdout="", stderr="erro\nNo space left on device")
     with pytest.raises(ErroDublagem, match="PyTorch: No space left"):
         vl.instalar(tmp_path, gpu=True, sistema="linux", baixar=lambda u, d, p: d.write_bytes(uv_falso()),
-                    executar=executar)
+                    executar=executar, medir_espaco=lambda p: 100.0)
     assert vl.instalado(tmp_path) is None
+
+
+def test_instalar_confere_o_espaco_no_disco(tmp_path):
+    """Sem espaço, avisa ANTES de baixar (antes, parava no meio com "No space left on device")."""
+    comandos = []
+
+    def executar(argumentos, **k):
+        comandos.append(argumentos)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    pasta = tmp_path / "motor_vozes"
+    with pytest.raises(ErroDublagem, match=r"falta espaço no disco .*uns 9 GB livres e há 3\.2 GB"):
+        vl.instalar(pasta, gpu=True, sistema="linux", baixar=None, executar=executar, medir_espaco=lambda p: 3.2)
+    with pytest.raises(ErroDublagem, match="uns 4 GB"):                     # sem placa: o PyTorch é menor
+        vl.instalar(pasta, gpu=False, sistema="linux", baixar=None, executar=executar, medir_espaco=lambda p: 3.2)
+    assert comandos == [] and not pasta.exists()
+    assert vl.espaco_livre(tmp_path / "ainda" / "nao" / "existe") > 0         # mede o disco da pasta de cima
+    vl.conferir_espaco(pasta, 2.0, medir=lambda p: None)                     # não deu para medir: segue
+
+
+# ----------------------------------------------------------------- o servidor de verdade, com bibliotecas de mentira
+TORCH_FALSO = """
+import os
+class _Cuda:
+    class OutOfMemoryError(RuntimeError):
+        pass
+    def is_available(self):
+        return bool(os.environ.get("PLACA"))
+    def get_device_name(self, i):
+        return os.environ["PLACA"]
+    def empty_cache(self):
+        pass
+cuda = _Cuda()
+"""
+TTS_FALSO = """
+import math, os, struct, wave
+class _Sintetizador:
+    output_sample_rate = 24000
+    def save_wav(self, wav, path):
+        with wave.open(path, "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000)
+            w.writeframes(b"".join(struct.pack("<h", int(8000 * x)) for x in wav))
+class TTS:
+    def __init__(self, nome):
+        self.speakers, self.synthesizer, self.lugar = ["Ana Florence"], _Sintetizador(), "cpu"
+    def to(self, lugar):
+        if lugar == "cuda" and os.environ.get("FALHA") == "carregar":
+            raise RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
+        self.lugar = lugar
+        return self
+    def tts(self, text, language, split_sentences, **voz):
+        if self.lugar == "cuda" and os.environ.get("FALHA") == "falar":
+            raise RuntimeError("CUDA error: no kernel image is available for execution on the device")
+        return [math.sin(i / 8) * 0.5 for i in range(2400)]
+"""
+
+
+def bibliotecas_falsas(pasta, monkeypatch, placa="GT 1030", falha=""):
+    """torch e TTS de mentira (a placa "falha" ao carregar ou ao falar), na frente das bibliotecas deste Python."""
+    pasta.mkdir(parents=True, exist_ok=True)
+    (pasta / "torch.py").write_text(TORCH_FALSO, encoding="utf-8")
+    (pasta / "TTS").mkdir(exist_ok=True)
+    (pasta / "TTS" / "__init__.py").write_text("", encoding="utf-8")
+    (pasta / "TTS" / "api.py").write_text(TTS_FALSO, encoding="utf-8")
+    pacotes = [p for p in sys.path if p.endswith("site-packages")]           # o numpy deste Python
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(pasta)] + pacotes))
+    monkeypatch.setenv("PLACA", placa)
+    monkeypatch.setenv("FALHA", falha)
+
+
+def pacote_de_verdade(pasta):
+    """Um motor "instalado" com o servidor DE VERDADE (o MotorLocal escreve o SERVIDOR do Maestro)."""
+    python = vl.python_do_motor(pasta)
+    python.parent.mkdir(parents=True)
+    os.symlink(sys.executable, python)
+    (pasta / "instalado.json").write_text(json.dumps({"gpu": True}), encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="o python falso usa um atalho (symlink)")
+@pytest.mark.parametrize("falha", ["carregar", "falar"])
+def test_plano_b_vai_pelo_processador_quando_a_placa_nao_aguenta(tmp_path, monkeypatch, falha):
+    bibliotecas_falsas(tmp_path / "libs", monkeypatch, falha=falha)
+    pasta = tmp_path / "motor_vozes"
+    pacote_de_verdade(pasta)
+    avisos = []
+    motor = vl.MotorLocal(pasta, "Ana Florence", avisar=avisos.append)
+    motor.sintetizar([("Oi. Tudo bem?", tmp_path / "a.wav"), ("De novo.", tmp_path / "b.wav")])
+    with wave.open(str(tmp_path / "a.wav")) as w:                        # as duas frases + a pausa
+        assert w.getnframes() == 2 * 2400 + int(24000 * vl.PAUSA_PONTO)
+    assert (tmp_path / "b.wav").is_file() and motor.dispositivo == "cpu" and motor.placa == ""
+    if falha == "carregar":
+        assert any("não aguentou o modelo" in a and "mais devagar" in a for a in avisos)
+    else:
+        assert any("GT 1030" in a for a in avisos)                         # abriu na placa...
+        assert sum("segue pelo processador" in a for a in avisos) == 1      # ...e passou para o processador uma vez
+    motor.fechar()
+    assert "processador" in (pasta / "registro.txt").read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="o python falso usa um atalho (symlink)")
+def test_servidor_de_verdade_na_placa_que_aguenta(tmp_path, monkeypatch):
+    bibliotecas_falsas(tmp_path / "libs", monkeypatch)
+    pasta = tmp_path / "motor_vozes"
+    pacote_de_verdade(pasta)
+    motor = vl.MotorLocal(pasta, "Ana Florence")
+    motor.sintetizar([("Oi.", tmp_path / "a.wav")])
+    assert (motor.dispositivo, motor.placa) == ("cuda", "GT 1030")
+    motor.fechar()
 
 
 def test_avaliar_a_fala_ouvida_pelo_whisper():
@@ -188,3 +296,66 @@ def test_frases_sem_o_ponto_final():
     assert vl.frases_para_falar("Sim.") == [["Sim", 0.0]]
     for frase, _ in vl.frases_para_falar("Um. Dois... Três; quatro: cinco."):
         assert not frase.endswith((".", "…", ";", ":"))
+
+
+class ChatterboxFalso:
+    """O 2º motor de mentira: anota cada fala (e falha quando mandado)."""
+
+    def __init__(self, falhar_em=None):
+        self.falas, self.falhar_em, self.fechado = [], falhar_em, False
+
+    def falar(self, texto, saida, referencia, emocao, parar=None, idioma="pt"):
+        if texto == self.falhar_em:
+            raise ErroDublagem("o Chatterbox não abriu: sem memória")
+        self.falas.append((texto, str(referencia), emocao))
+        Path(saida).write_bytes(b"RIFF")
+
+    def fechar(self):
+        self.fechado = True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="o python falso usa um atalho (symlink)")
+def test_emocao_vai_pela_gravacao_da_emocao_ou_pelo_chatterbox(tmp_path, monkeypatch):
+    pasta = tmp_path / "motor_vozes"
+    pacote_falso(pasta, monkeypatch)
+    izael = vi.VozImportada("Izael", "izael", vi.GRAVACAO, genero="masculina", emocoes=["brava", "sussurro"])
+    gravacoes = tmp_path / "vozes_importadas" / "izael"
+    gravacoes.mkdir(parents=True)
+    for nome in ("referencia", "brava", "sussurro"):
+        (gravacoes / f"{nome}.wav").write_bytes(b"RIFF")
+    chatterbox, avisos = ChatterboxFalso(), []
+    motor = vl.MotorLocal(pasta, "Ana Florence", [izael], tmp_path, emocao=chatterbox, avisar=avisos.append)
+    motor.sintetizar([
+        ("Sai daqui!", tmp_path / "a.wav", "imp:izael", "Nesta fala: gritando, com força."),   # grito -> a brava
+        ("Fala baixo.", tmp_path / "b.wav", "imp:izael", "Cena: um esconderijo. Nesta fala: sussurrando."),
+        ("Por favor.", tmp_path / "c.wav", "imp:izael", "Nesta fala: chorando."),     # sem a de choro: Chatterbox
+        ("Socorro!", tmp_path / "d.wav", "", "Nesta fala: com medo, apavorada."),     # voz pronta: Chatterbox
+        ("Tudo bem.", tmp_path / "e.wav", "imp:izael", "Ritmo: cerca de 1,0 s no original."),        # neutra
+    ])
+    enviados = {n: json.loads((tmp_path / f"{n}.wav.json").read_text(encoding="utf-8")) for n in "abe"}
+    assert enviados["a"]["referencia"].endswith("brava.wav")
+    assert json.loads((tmp_path / "b.wav.json").read_text(encoding="utf-8"))["referencia"].endswith("sussurro.wav")
+    assert enviados["e"]["referencia"].endswith("referencia.wav")
+    pronta = pasta / "referencias" / "ana-florence.wav"                  # a fala que o Chatterbox imita
+    pedido = json.loads((pasta / "referencias" / "ana-florence.tmp.wav.json").read_text(encoding="utf-8"))
+    assert pronta.is_file() and pedido["texto"] == vl.FRASE_DE_REFERENCIA and pedido["voz"] == "Ana Florence"
+    assert chatterbox.falas == [("Por favor.", str(gravacoes / "referencia.wav"), "choro"),
+                                ("Socorro!", str(pronta), "medo")]
+    assert any("2 fala(s) com a gravação de emoção da voz, 2 pelo Chatterbox" in a for a in avisos)
+    motor.fechar()
+    assert chatterbox.fechado
+
+
+@pytest.mark.skipif(os.name == "nt", reason="o python falso usa um atalho (symlink)")
+def test_chatterbox_que_falha_deixa_o_resto_neutro(tmp_path, monkeypatch):
+    pasta = tmp_path / "motor_vozes"
+    pacote_falso(pasta, monkeypatch)
+    chatterbox, avisos = ChatterboxFalso(falhar_em="Socorro!"), []
+    motor = vl.MotorLocal(pasta, "Ana Florence", emocao=chatterbox, avisar=avisos.append)
+    motor.sintetizar([("Socorro!", tmp_path / "a.wav", "", "Nesta fala: gritando."),
+                      ("Corre!", tmp_path / "b.wav", "", "Nesta fala: gritando.")])
+    for n in "ab":                                                      # as duas pelo XTTS-v2, neutras
+        assert json.loads((tmp_path / f"{n}.wav.json").read_text(encoding="utf-8"))["voz"] == "Ana Florence"
+    assert motor.emocao is None and chatterbox.fechado and chatterbox.falas == []
+    assert sum("o Chatterbox falhou" in a for a in avisos) == 1
+    motor.fechar()

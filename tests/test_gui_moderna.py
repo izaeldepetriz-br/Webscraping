@@ -5490,6 +5490,21 @@ def test_importar_voz_pelas_configuracoes(app, tmp_path, monkeypatch):
         esperar(app)
         assert app.caixas[-1][0] == "sucesso" and "masculina, adulta" in app.caixas[-1][2]
         assert "Izael: gravação para clonar · masculina, adulta" in app.lb_vozes_importadas.cget("text")
+        # uma gravação de EMOÇÃO da mesma voz: o nome diz de qual voz é
+        brava = tmp_path / "gritando.wav"
+        brava.write_bytes(wav(4))
+        app.var_imp_arquivo.set(str(brava))
+        app.var_imp_emocao.set("Gritando")
+        app.var_imp_nome.set("Outra pessoa")
+        app.bt_importar_voz.invoke()
+        assert app.caixas[-1][0] == "aviso" and "voz já importada" in app.caixas[-1][2]
+        app.var_imp_nome.set("izael")
+        app.bt_importar_voz.invoke()
+        esperar(app)
+        assert app.caixas[-1][0] == "sucesso" and "\"Gritando\"" in app.caixas[-1][2], app.caixas[-1]
+        assert "emoções: gritando" in app.lb_vozes_importadas.cget("text")
+        assert next(v for v in automacao.vozes_importadas() if v.id == "izael").emocoes == ["grito"]
+        app.var_imp_emocao.set(app.EMOCAO_NORMAL)
     # remover o modelo do Piper: some do menu, os arquivos saem do PC e a voz escolhida volta para a padrão
     app.escolher_da_lista = lambda *a, **k: 0
     app.bt_remover_voz_importada.invoke()
@@ -5513,6 +5528,8 @@ def test_motor_de_vozes_xtts_pela_tela(app, tmp_path, monkeypatch):
     assert "Ainda não instalado" in app.lb_motor_local.cget("text")
     assert app.bt_ouvir_local.cget("state") == "disabled" and app.bt_remover_motor_local.cget("state") == "disabled"
     assert "XTTS-v2" in app.NOMES_MODO_VOZ.values() and "local" in app._cartoes_modo_voz
+    assert app.bt_instalar_chatterbox.cget("state") == "disabled"          # o Chatterbox precisa do XTTS-v2
+    assert "Instale primeiro o XTTS-v2" in app.lb_chatterbox.cget("text")
     pedidos = []
 
     def instalar(pasta, gpu=None, parar=None, ao_progresso=None):
@@ -5546,6 +5563,34 @@ def test_motor_de_vozes_xtts_pela_tela(app, tmp_path, monkeypatch):
     assert isinstance(motor, voz_local.MotorLocal) and motor.voz == "Ana Florence"
     assert automacao.vozes_por_genero(o, motor) == {"f": "Ana Florence", "m": voz_local.VOZ_PADRAO}
     assert automacao.ouvinte_de_tons(o, tmp_path / "filme.mkv", motor) is not None
+    assert motor.emocao is None                                       # sem o Chatterbox: emoção só pela gravação
+    # o Chatterbox (as falas com emoção): instalar (de mentira), a dublagem usa, desligar e remover
+    from jellyfin_tools import voz_emocao
+    assert app.bt_instalar_chatterbox.cget("state") == "normal" and "ainda não instalado" in app.lb_chatterbox.cget(
+        "text")
+
+    def instalar_chatterbox(pasta, gpu=None, parar=None, ao_progresso=None):
+        ao_progresso(0.5, "Instalando o Chatterbox...")
+        python = voz_local.python_do_motor(voz_emocao.pasta_do_chatterbox(pasta))
+        python.parent.mkdir(parents=True)
+        python.write_text("")
+        (voz_emocao.pasta_do_chatterbox(pasta) / "instalado.json").write_text('{"gpu": false}', encoding="utf-8")
+        return {"gpu": False}
+    monkeypatch.setattr(voz_emocao, "instalar", instalar_chatterbox)
+    app.bt_instalar_chatterbox.invoke()
+    esperar(app)
+    for _ in range(20):
+        app.update()
+        time.sleep(0.01)
+    assert "Chatterbox instalado (processador)" in app.lb_chatterbox.cget("text"), app.caixas[-1:]
+    assert app.caixas[-1][0] == "sucesso" and app.bt_remover_chatterbox.cget("state") == "normal"
+    assert isinstance(automacao.preparar_motor(app.obter_opcoes_jellyfin()).emocao, voz_emocao.MotorEmocao)
+    app.var_jf_emocao_chatterbox.set(False)
+    assert automacao.preparar_motor(app.obter_opcoes_jellyfin()).emocao is None
+    app.var_jf_emocao_chatterbox.set(True)
+    app.bt_remover_chatterbox.invoke()
+    assert voz_emocao.instalado(automacao.pasta_motor_local()) is None and "ainda não instalado" in \
+        app.lb_chatterbox.cget("text")
     # remover do PC: apaga o pacote e volta para o Piper
     app.bt_remover_motor_local.invoke()
     assert not automacao.pasta_motor_local().exists() and app.var_jf_motor_voz.get() == app.MOTORES_VOZ[0]

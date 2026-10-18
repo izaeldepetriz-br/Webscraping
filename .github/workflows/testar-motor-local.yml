@@ -1,12 +1,15 @@
 # Teste de verdade do motor de vozes XTTS-v2 (grátis, no PC) num Windows, como no PC de quem usa o Maestro: instala
 # o pacote do zero (uv, Python 3.12, PyTorch e coqui-tts), gera falas com vozes prontas e com uma voz importada e
-# confere cada uma com o Whisper. Roda quando o motor muda (ou pelo botão "Run workflow").
+# confere cada uma com o Whisper; depois instala o Chatterbox (o motor das falas com emoção) e gera falas gritadas,
+# choradas e sussurradas. Roda quando o motor muda (ou pelo botão "Run workflow").
 name: Motor de vozes no Windows
 
 on:
   push:
     paths:
       - jellyfin_tools/voz_local.py
+      - jellyfin_tools/voz_emocao.py
+      - jellyfin_tools/emocoes.py
       - .github/scripts/testar_motor_local.py
       - .github/workflows/testar-motor-local.yml
   workflow_dispatch:
@@ -36,3 +39,4 @@ jobs:
         run: |
           echo "::error title=motor de vozes::$(grep -v -E 'Downloading|━|Collecting|Requirement already|Using cached|Successfully|Installing collected' registro.txt | tail -n 25 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
           echo "::error title=registro do servidor::$(tail -n 25 "$RUNNER_TEMP/motor_vozes/registro.txt" 2>/dev/null | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+          echo "::error title=registro do Chatterbox::$(tail -n 25 "$RUNNER_TEMP/motor_vozes/chatterbox/registro.txt" 2>/dev/null | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"

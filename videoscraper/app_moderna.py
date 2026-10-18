@@ -787,6 +787,8 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, JanelaModerna):
             self.atualizar_vozes_importadas(dado)
         elif tipo == "motor_local":                    # o XTTS-v2 acabou de ser instalado
             self.after(50, lambda d=dado: self._motor_local_instalado(d))
+        elif tipo == "chatterbox":                     # o Chatterbox (emoção) acabou de ser instalado
+            self.after(50, lambda d=dado: self._chatterbox_instalado(d))
         elif tipo == "tocar":
             self._tocar(dado)
         elif tipo == "audio":                          # aba 🎧 Áudio: faixas lidas, encaixe, ondas, amostra, troca

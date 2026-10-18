@@ -74,7 +74,7 @@ from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, ClienteTV, carregar_canais, 
                                        salvar_historico)
 from jellyfin_tools import cotacao, gastos, personagens, tom, vigia, voz_clonada, voz_cloud, voz_gemini
 from jellyfin_tools import vozes_importadas as vozes_importadas_mod
-from jellyfin_tools import genero_local, voz_local
+from jellyfin_tools import genero_local, voz_emocao, voz_local
 from jellyfin_tools.adaptacao import Adaptador
 from jellyfin_tools.vigia import filtro_prontos
 
@@ -250,9 +250,13 @@ def motor_local(o: OpcoesJellyfin, avisar=None):
     if getattr(o, "conferir_falas", True):            # o Whisper "base" (rápido) ouve cada fala gerada
         conferir = voz_local.ConferidorWhisper(Transcritor(modelo="base", usar_gpu=o.whisper_gpu,
                                                            pasta_modelos=str(config.ARQUIVO.parent / "modelos_whisper")))
+    avisar = avisar or (lambda texto: obter_logger().info("Dublagem: %s", texto))
+    emocao = None
+    if getattr(o, "emocao_chatterbox", True) and voz_emocao.instalado(pasta_motor_local()):
+        emocao = voz_emocao.MotorEmocao(pasta_motor_local(), avisar=avisar)    # as falas com emoção (abre só se houver)
     return voz_local.MotorLocal(pasta_motor_local(), getattr(o, "voz_local", "") or voz_local.VOZ_PADRAO,
-                                vozes_importadas(), config.ARQUIVO.parent, conferir=conferir,
-                                avisar=avisar or (lambda texto: obter_logger().info("Dublagem: %s", texto)))
+                                vozes_importadas(), config.ARQUIVO.parent, conferir=conferir, avisar=avisar,
+                                emocao=emocao)
 
 
 def chave_cloud(o: OpcoesJellyfin) -> str:
@@ -404,16 +408,22 @@ def ouvinte_de_tons(o: OpcoesJellyfin, video: str | Path, motor, log: logging.Lo
     "só com o Piper (sem custo)"."""
     video = Path(video)
     if isinstance(getattr(motor, "premium", motor), voz_local.MotorLocal):    # XTTS-v2: o gênero pelo tom, no PC
+        emocao = getattr(o, "emocao_da_cena", True)        # e, ligada, a emoção pelo volume (grito e sussurro)
 
         def pelo_tom(falas, ids, pasta, parar):
             ffmpeg = localizar_ffmpeg()
             if not ffmpeg:
                 raise ErroDublagem("falta o ffmpeg (pip install imageio-ffmpeg)")
-            ouvidas = genero_local.ouvir_generos(video, falas, ids, ffmpeg, Path(pasta) / "generos.json", parar=parar)
+            ouvidas = genero_local.ouvir_generos(video, falas, ids, ffmpeg, Path(pasta) / "generos.json", parar=parar,
+                                                 emocao=emocao)
             if log:
                 generos = Counter(x.genero for x in ouvidas.values())
                 log.info("Dublagem: o tom de %d falas foi medido no PC (%d de mulher, %d de homem, %d sem saber: "
                          "ficam com a voz principal)", len(ouvidas), generos["f"], generos["m"], generos["?"])
+                tons = Counter(x.tom for x in ouvidas.values() if x.tom)
+                if tons:
+                    log.info("Dublagem: pelo volume do original, %d fala(s) gritada(s) e %d sussurrada(s) (vão com a "
+                             "emoção)", tons[genero_local.TOM_GRITO], tons[genero_local.TOM_SUSSURRO])
             return ouvidas
         return pelo_tom
     if not chave_gemini(o) or getattr(o, "sem_gemini", False):

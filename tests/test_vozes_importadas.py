@@ -100,3 +100,37 @@ def test_importar_gravacao_com_genero_e_idade_sem_consentimento(tmp_path):
     vi.remover(nova, tmp_path, tmp_path / "vozes")
     with pytest.raises(ErroDublagem, match="sumiu"):
         vi.arquivo_da_gravacao(nova, tmp_path)
+
+
+def test_gravacoes_de_emocao_na_mesma_voz(tmp_path):
+    referencia = tmp_path / "normal.wav"
+    referencia.write_bytes(wav(12))
+    izael = vi.importar_gravacao(referencia, "Izael", "masculina", "adulta", True, tmp_path, FFMPEG)
+    brava = tmp_path / "brava.wav"
+    brava.write_bytes(wav(4))                                           # 3 s já bastam para a emoção
+    assert vi.achar_gravacao("  izael ", [izael]) is izael
+    with pytest.raises(ErroDublagem, match="o nome tem de ser o de uma voz já importada.*Izael"):
+        vi.achar_gravacao("Outra", [izael])
+    with pytest.raises(ErroDublagem, match="declaração"):
+        vi.importar_emocao(brava, izael, "brava", False, tmp_path, FFMPEG)
+    with pytest.raises(ErroDublagem, match="escolha a emoção"):
+        vi.importar_emocao(brava, izael, "normal", True, tmp_path, FFMPEG)
+    curta = tmp_path / "curta.wav"
+    curta.write_bytes(wav(2))
+    with pytest.raises(ErroDublagem, match="pelo menos 3 s"):
+        vi.importar_emocao(curta, izael, "brava", True, tmp_path, FFMPEG)
+    vi.importar_emocao(brava, izael, "brava", True, tmp_path, FFMPEG)
+    vi.importar_emocao(brava, izael, "sussurro", True, tmp_path, FFMPEG)
+    vi.importar_emocao(brava, izael, "brava", True, tmp_path, FFMPEG)    # de novo: troca, não repete
+    assert izael.emocoes == ["brava", "sussurro"] and "emoções: brava / com raiva, sussurrando" in izael.descrever()
+    pasta = vi.pasta_da_gravacao(tmp_path, "izael")
+    assert vi.arquivo_da_emocao(izael, tmp_path, "brava") == pasta / "brava.wav"
+    assert vi.arquivo_da_emocao(izael, tmp_path, "grito") == pasta / "brava.wav"     # a parecida
+    assert vi.arquivo_da_emocao(izael, tmp_path, "choro") is None
+    assert vi.arquivo_da_emocao(izael, tmp_path, "normal") is None
+    arquivo = tmp_path / "vozes_importadas.json"
+    vi.salvar([izael], arquivo)
+    assert vi.carregar(arquivo)[0].emocoes == ["brava", "sussurro"]
+    piper = vi.VozImportada("Cadu", "cadu", vi.PIPER)
+    with pytest.raises(ErroDublagem, match="voz do Piper"):
+        vi.importar_emocao(brava, piper, "brava", True, tmp_path, FFMPEG)

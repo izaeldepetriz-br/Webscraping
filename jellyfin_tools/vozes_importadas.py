@@ -7,12 +7,14 @@
 2. Gravação de uma voz para CLONAR (a pessoa lendo com calma, de 6 a 60 s): o motor de vozes no PC (XTTS-v2) fala
    com esse timbre. Sem conferir consentimento: só uma declaração de que a voz é sua ou de quem autorizou. Áudio
    de dentro de vídeos (filme, série, jogo) continua recusado: a voz seria de atores.
+   Gravações de EMOÇÃO (a mesma pessoa lendo brava, chorando, sussurrando..., de 3 a 60 s) entram na mesma voz:
+   o XTTS-v2 copia o jeito da gravação, e a fala com raiva vai com a gravação brava (emocoes.py).
 
 Em todas: o nome, o gênero e a idade (a "Automática" escolhe a voz pelo gênero e pela idade de quem fala).
 
     vozes_importadas.json   a lista (nome, tipo, gênero, idade, idioma...)
     vozes/<id>.onnx(.json)  os modelos do Piper importados (a mesma pasta das vozes baixadas)
-    vozes_importadas/<id>/  referencia.wav das gravações
+    vozes_importadas/<id>/  referencia.wav das gravações (e brava.wav, choro.wav... as de emoção)
 """
 
 from __future__ import annotations
@@ -21,12 +23,13 @@ import json
 import re
 import shutil
 import unicodedata
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 from .dublagem import VOZES, ErroDublagem
 from . import voz_clonada
+from .emocoes import EMOCOES, NORMAL, PARECIDAS
 
 PIPER, GRAVACAO = "piper", "gravacao"
 EXTENSOES_GRAVACAO = (".wav", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".wma", ".webm")
@@ -48,6 +51,7 @@ class VozImportada:
     importada_em: str = ""
     genero: str = "masculina"     # GENEROS
     idade: str = "adulta"         # IDADES
+    emocoes: list = field(default_factory=list)    # gravações de emoção desta voz ("brava", "choro"...: emocoes.py)
 
     @property
     def perfil(self) -> str:
@@ -57,7 +61,9 @@ class VozImportada:
         if self.tipo == PIPER:
             return f"{self.nome}: voz do Piper ({self.idioma or 'idioma não informado'}) · {self.perfil} · importada " \
                    f"em {self.importada_em}"
-        return f"{self.nome}: gravação para clonar · {self.perfil} · importada em {self.importada_em}"
+        emocoes = f" · emoções: {', '.join(EMOCOES[e].lower() for e in self.emocoes if e in EMOCOES)}" \
+            if self.emocoes else ""
+        return f"{self.nome}: gravação para clonar · {self.perfil}{emocoes} · importada em {self.importada_em}"
 
 
 def criar_id(nome: str) -> str:
@@ -158,24 +164,65 @@ def modelo_piper(ident: str, pasta_vozes: str | Path) -> Path | None:
 def importar_gravacao(referencia: str | Path, nome: str, genero: str, idade: str, declaro: bool, pasta: str | Path,
                       ffmpeg: str, existentes: list[VozImportada] = (), executar=None) -> VozImportada:
     """Guarda a gravação (WAV 24 kHz, mono, sem os silêncios das pontas) para o motor de vozes no PC."""
-    if not declaro:
-        raise ErroDublagem("marque a declaração de que a voz é sua ou de quem autorizou (não de atores ou famosos)")
-    if tipo_do_arquivo(referencia) != GRAVACAO:
-        raise ErroDublagem(f"{Path(referencia).name}: escolha um arquivo de áudio ({', '.join(EXTENSOES_GRAVACAO)})")
+    _conferir_gravacao(referencia, declaro)
     nome, ident = validar_nome(nome, existentes)
     genero, idade = conferir_perfil(genero, idade)
-    extra = {"executar": executar} if executar else {}
-    ref = voz_clonada.preparar_audio(Path(referencia), ffmpeg, **extra)
-    segundos = voz_clonada.duracao(ref)
-    if segundos < voz_clonada.MINIMO_REFERENCIA:
-        raise ErroDublagem(f"a gravação tem {segundos:.0f} s (sem os silêncios); use pelo menos "
-                           f"{voz_clonada.MINIMO_REFERENCIA:.0f} s de fala (o ideal é de 10 a 30 s)")
-    if segundos > voz_clonada.MAXIMO_REFERENCIA:
-        raise ErroDublagem(f"a gravação tem {segundos:.0f} s; use no máximo {voz_clonada.MAXIMO_REFERENCIA:.0f} s")
+    ref = _preparar_gravacao(referencia, ffmpeg, executar, voz_clonada.MINIMO_REFERENCIA)
     destino = pasta_da_gravacao(pasta, ident)
     destino.mkdir(parents=True, exist_ok=True)
     (destino / "referencia.wav").write_bytes(ref)
     return VozImportada(nome, ident, GRAVACAO, str(referencia), importada_em=_agora(), genero=genero, idade=idade)
+
+
+MINIMO_EMOCAO = 3.0           # segundos: um grito ou um choro curto já mostram o jeito (a normal pede 6)
+
+
+def importar_emocao(referencia: str | Path, voz: VozImportada, emocao: str, declaro: bool, pasta: str | Path,
+                    ffmpeg: str, executar=None) -> VozImportada:
+    """Junta à gravação importada `voz` a gravação de uma EMOÇÃO (a mesma pessoa lendo brava, chorando...).
+    Devolve a voz com a emoção na lista (a gravação de antes da mesma emoção é trocada)."""
+    if emocao not in EMOCOES:
+        raise ErroDublagem(f"escolha a emoção da gravação ({', '.join(EMOCOES.values())})")
+    if voz.tipo != GRAVACAO:
+        raise ErroDublagem(f"\"{voz.nome}\" é uma voz do Piper: as gravações de emoção são das gravações para clonar")
+    _conferir_gravacao(referencia, declaro)
+    ref = _preparar_gravacao(referencia, ffmpeg, executar, MINIMO_EMOCAO)
+    destino = pasta_da_gravacao(pasta, voz.id)
+    destino.mkdir(parents=True, exist_ok=True)
+    (destino / f"{emocao}.wav").write_bytes(ref)
+    voz.emocoes = [e for e in EMOCOES if e in set(voz.emocoes) | {emocao}]       # na ordem do menu
+    return voz
+
+
+def achar_gravacao(nome: str, existentes: list[VozImportada]) -> VozImportada:
+    """A gravação importada com este nome (para juntar a ela uma gravação de emoção)."""
+    alvo = " ".join(nome.split()).lower()
+    achada = next((v for v in existentes if v.tipo == GRAVACAO and (v.nome.lower() == alvo or v.id == criar_id(alvo))),
+                  None)
+    if achada is None:
+        nomes = ", ".join(v.nome for v in existentes if v.tipo == GRAVACAO)
+        raise ErroDublagem(f"para uma gravação de emoção, o nome tem de ser o de uma voz já importada (a gravação "
+                           f"normal vem antes){': ' + nomes if nomes else ''}")
+    return achada
+
+
+def _conferir_gravacao(referencia: str | Path, declaro: bool) -> None:
+    if not declaro:
+        raise ErroDublagem("marque a declaração de que a voz é sua ou de quem autorizou (não de atores ou famosos)")
+    if tipo_do_arquivo(referencia) != GRAVACAO:
+        raise ErroDublagem(f"{Path(referencia).name}: escolha um arquivo de áudio ({', '.join(EXTENSOES_GRAVACAO)})")
+
+
+def _preparar_gravacao(referencia: str | Path, ffmpeg: str, executar, minimo: float) -> bytes:
+    extra = {"executar": executar} if executar else {}
+    ref = voz_clonada.preparar_audio(Path(referencia), ffmpeg, **extra)
+    segundos = voz_clonada.duracao(ref)
+    if segundos < minimo:
+        raise ErroDublagem(f"a gravação tem {segundos:.0f} s (sem os silêncios); use pelo menos {minimo:.0f} s de "
+                           "fala (o ideal é de 10 a 30 s)")
+    if segundos > voz_clonada.MAXIMO_REFERENCIA:
+        raise ErroDublagem(f"a gravação tem {segundos:.0f} s; use no máximo {voz_clonada.MAXIMO_REFERENCIA:.0f} s")
+    return ref
 
 
 def pasta_da_gravacao(pasta: str | Path, ident: str) -> Path:
@@ -188,6 +235,18 @@ def arquivo_da_gravacao(v: VozImportada, pasta: str | Path) -> Path:
     if not arquivo.is_file():
         raise ErroDublagem(f"a gravação da voz \"{v.nome}\" sumiu deste PC; importe de novo")
     return arquivo
+
+
+def arquivo_da_emocao(v: VozImportada, pasta: str | Path, emocao: str) -> Path | None:
+    """A gravação de EMOÇÃO da voz (ou a da emoção parecida: sem a de grito, a brava), ou None se não tem."""
+    if emocao == NORMAL:
+        return None
+    for qual in (emocao, PARECIDAS.get(emocao)):
+        if qual and qual in v.emocoes:
+            arquivo = pasta_da_gravacao(pasta, v.id) / f"{qual}.wav"
+            if arquivo.is_file():
+                return arquivo
+    return None
 
 
 # ----------------------------------------------------------------- guardar neste PC

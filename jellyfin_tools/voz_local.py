@@ -19,6 +19,12 @@ ou "referencia"} e recebe {"ok": true} ou {"erro": "..."}.
 As vozes: as PRONTAS do XTTS-v2 (genéricas, de estúdio; o gênero de cada uma foi medido pelo tom) e as gravações
 importadas (Configurações > Dublagem > Importar voz), como "imp:<id>". Uma voz do Gemini ("Charon", "Kore"...) que
 chegue da voz por personagem vira uma voz pronta do mesmo gênero (sempre a mesma para o mesmo nome).
+
+A EMOÇÃO (emocoes.py): a fala com nota de direção ("Nesta fala: gritando") vai com a gravação daquela emoção da voz
+importada, se houver; senão, com o Chatterbox (voz_emocao.py, opcional), imitando a mesma voz; sem os dois, neutra.
+
+Placa de vídeo que não aguenta (pouca memória, ou nova demais para este PyTorch): o servidor passa para o
+processador sozinho (mais devagar, mas termina) e avisa.
 """
 
 from __future__ import annotations
@@ -33,9 +39,11 @@ import sys
 import tarfile
 import threading
 import zipfile
+from collections import Counter
 from pathlib import Path
 
 from .dublagem import SEM_JANELA, ErroDublagem, _baixar
+from .emocoes import NORMAL, emocao_da_nota
 
 NOME = "XTTS-v2 (grátis, no PC)"
 VERSAO_UV = "0.13.1"
@@ -51,6 +59,11 @@ MODELO = "tts_models/multilingual/multi-dataset/xtts_v2"
 PREFIXO_IMPORTADA = "imp:"
 TEMPO_PARA_CARREGAR = 3600      # segundos: na 1ª vez o servidor baixa o modelo (~1,8 GB) antes de ficar pronto
 FRASE_DE_TESTE = "Olá! Esta é a voz que vai dublar os seus vídeos, aqui no seu computador, sem custo."
+# a fala que o Chatterbox imita para fazer uma voz PRONTA com emoção (gerada uma vez pelo XTTS-v2, em referencias/)
+FRASE_DE_REFERENCIA = ("Olá! Hoje o dia está bonito. Vou fazer um café e ver um filme. Você quer vir junto? Vai ser "
+                       "ótimo!")
+# espaço livre no disco para instalar (GB): PyTorch + coqui-tts + o modelo (~1,8 GB); para atualizar, bem menos
+ESPACO_GPU, ESPACO_CPU, ESPACO_ATUALIZAR = 9.0, 4.0, 1.5
 
 # As vozes prontas do XTTS-v2 (os nomes são inventados pela Coqui: não dizem o gênero). O gênero foi MEDIDO pelo tom
 # de cada uma falando português (genero_local.tom_medio); nas poucas do meio do caminho, o grupo em que vêm no modelo.
@@ -131,34 +144,66 @@ def responder(dados):
     canal.flush()
 
 
+def erro_da_placa(erro):
+    """Falta de memória na placa de vídeo, ou placa nova demais para este PyTorch ("no kernel image")."""
+    texto = f"{type(erro).__name__} {erro}".lower()
+    return "cuda" in texto or "out of memory" in texto or "cublas" in texto or "cudnn" in texto
+
+
 try:
     import numpy as np
     import torch
     from TTS.api import TTS
-    dispositivo = "cuda" if torch.cuda.is_available() else "cpu"
-    tts = TTS(os.environ.get("MAESTRO_MODELO", "tts_models/multilingual/multi-dataset/xtts_v2")).to(dispositivo)
-    placa = torch.cuda.get_device_name(0) if dispositivo == "cuda" else ""
-    responder({"pronto": True, "dispositivo": dispositivo, "placa": placa, "vozes": list(tts.speakers or [])})
+    tts = TTS(os.environ.get("MAESTRO_MODELO", "tts_models/multilingual/multi-dataset/xtts_v2"))
+    dispositivo, placa, aviso = "cpu", "", ""
+    if torch.cuda.is_available():
+        try:
+            tts = tts.to("cuda")
+            dispositivo, placa = "cuda", torch.cuda.get_device_name(0)
+        except Exception as erro:            # plano B: a placa não aguentou, vai pelo processador
+            print(f"a placa de vídeo não aguentou ({type(erro).__name__}: {erro}); vai pelo processador",
+                  file=sys.stderr)
+            tts = tts.to("cpu")
+            torch.cuda.empty_cache()
+            aviso = f"a placa de vídeo não aguentou o modelo ({type(erro).__name__}); vai pelo processador"
+    responder({"pronto": True, "dispositivo": dispositivo, "placa": placa, "aviso": aviso,
+               "vozes": list(tts.speakers or [])})
 except Exception as erro:
     responder({"erro": f"{type(erro).__name__}: {erro}"})
     sys.exit(1)
+
+
+def gerar(pedido):
+    voz = {"speaker_wav": pedido["referencia"]} if pedido.get("referencia") else {"speaker": pedido["voz"]}
+    frases = pedido.get("frases") or [[pedido["texto"], 0.0]]
+    taxa = getattr(tts.synthesizer, "output_sample_rate", 24000) or 24000
+    partes = []
+    for frase, pausa in frases:          # uma por vez, sem o ponto final (o XTTS lia "ponto" em voz alta)
+        partes.append(np.asarray(tts.tts(text=frase, language=pedido.get("idioma", "pt"), split_sentences=False,
+                                         **voz), dtype=np.float32))
+        if pausa:
+            partes.append(np.zeros(int(taxa * pausa), dtype=np.float32))
+    return np.concatenate(partes)
+
 
 for linha in sys.stdin:
     try:
         pedido = json.loads(linha)
         if pedido.get("cmd") == "sair":
             break
-        voz = {"speaker_wav": pedido["referencia"]} if pedido.get("referencia") else {"speaker": pedido["voz"]}
-        frases = pedido.get("frases") or [[pedido["texto"], 0.0]]
-        taxa = getattr(tts.synthesizer, "output_sample_rate", 24000) or 24000
-        partes = []
-        for frase, pausa in frases:          # uma por vez, sem o ponto final (o XTTS lia "ponto" em voz alta)
-            partes.append(np.asarray(tts.tts(text=frase, language=pedido.get("idioma", "pt"), split_sentences=False,
-                                             **voz), dtype=np.float32))
-            if pausa:
-                partes.append(np.zeros(int(taxa * pausa), dtype=np.float32))
-        tts.synthesizer.save_wav(wav=np.concatenate(partes), path=pedido["saida"])
-        responder({"ok": True})
+        try:
+            audio = gerar(pedido)
+        except Exception as erro:
+            if dispositivo != "cuda" or not erro_da_placa(erro):
+                raise
+            print(f"a placa de vídeo falhou no meio ({type(erro).__name__}: {erro}); segue pelo processador",
+                  file=sys.stderr)
+            tts = tts.to("cpu")
+            torch.cuda.empty_cache()
+            dispositivo, placa = "cpu", ""
+            audio = gerar(pedido)
+        tts.synthesizer.save_wav(wav=audio, path=pedido["saida"])
+        responder({"ok": True, "dispositivo": dispositivo})
     except Exception as erro:
         responder({"erro": f"{type(erro).__name__}: {erro}"})
 '''
@@ -322,6 +367,27 @@ def tem_placa_nvidia(executar=subprocess.run) -> bool:
     return r.returncode == 0 and "GPU" in (r.stdout or "")
 
 
+def espaco_livre(pasta: str | Path) -> float | None:
+    """GB livres no disco da pasta (a pasta ainda não existe: o disco da 1ª que existe acima), ou None."""
+    alvo = Path(pasta).absolute()
+    while not alvo.exists() and alvo.parent != alvo:
+        alvo = alvo.parent
+    try:
+        return shutil.disk_usage(alvo).free / 1e9
+    except OSError:
+        return None
+
+
+def conferir_espaco(pasta: str | Path, precisa: float, medir=espaco_livre, o_que: str = "o motor de vozes") -> None:
+    """ErroDublagem em português se o disco não tem `precisa` GB livres (em vez de falhar no meio da instalação)."""
+    livre = medir(pasta)
+    if livre is not None and livre < precisa:
+        disco = Path(pasta).absolute().anchor or str(pasta)
+        raise ErroDublagem(f"falta espaço no disco {disco}: {o_que} precisa de uns {precisa:.0f} GB livres e há "
+                           f"{livre:.1f} GB. Libere espaço (apague arquivos grandes ou esvazie a Lixeira) e tente de "
+                           "novo")
+
+
 def _ambiente_do_uv(pasta: Path) -> dict:
     """Tudo do uv dentro da pasta do pacote (apagar a pasta desinstala tudo)."""
     return {**os.environ, "UV_PYTHON_INSTALL_DIR": str(pasta / "python"), "UV_CACHE_DIR": str(pasta / "cache"),
@@ -364,20 +430,40 @@ def _preparar_uv(pasta: Path, sistema: str, baixar) -> Path:
 
 
 def instalar(pasta: str | Path, gpu: bool | None = None, sistema: str = sys.platform, baixar=_baixar,
-             executar=subprocess.run, ao_progresso=None, parar=None) -> dict:
+             executar=subprocess.run, ao_progresso=None, parar=None, medir_espaco=espaco_livre) -> dict:
     """Instala (ou completa) o pacote: uv -> Python 3.12 -> PyTorch (placa de vídeo ou processador) -> coqui-tts.
-    Devolve o que ficou instalado. Pode demorar (o PyTorch para a placa de vídeo tem ~3 GB)."""
+    Devolve o que ficou instalado. Pode demorar (o PyTorch para a placa de vídeo tem ~3 GB). Antes, confere se o
+    disco tem espaço (sem ele, a instalação parava no meio com um erro em inglês)."""
     pasta = Path(pasta)
-    pasta.mkdir(parents=True, exist_ok=True)
     if gpu is None:
         gpu = tem_placa_nvidia(executar)
-    ambiente = _ambiente_do_uv(pasta)
+    conferir_espaco(pasta, ESPACO_ATUALIZAR if instalado(pasta) else ESPACO_GPU if gpu else ESPACO_CPU,
+                    medir_espaco)
+    pasta.mkdir(parents=True, exist_ok=True)
+    etapa = _etapas(ao_progresso, parar)
+    instalar_pacote(pasta, pasta, VERSAO_PYTHON, TORCH, INDICE_GPU if gpu else INDICE_CPU, PACOTES,
+                    "o XTTS-v2 (coqui-tts)", gpu, sistema, baixar, executar, etapa)
+    arquivo_servidor(pasta).write_text(SERVIDOR, encoding="utf-8")
+    info = {"gpu": gpu, "torch": TORCH[0], "pacotes": PACOTES, "uv": VERSAO_UV}
+    (pasta / "instalado.json").write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
+    etapa(1.0, "Motor de vozes instalado.")
+    return info
 
+
+def _etapas(ao_progresso, parar):
     def etapa(fracao: float, texto: str) -> None:
         if parar and parar():
             raise ErroDublagem("interrompido (botão Parar)")
         if ao_progresso:
             ao_progresso(fracao, texto)
+    return etapa
+
+
+def instalar_pacote(pasta_uv: Path, destino: Path, versao_python: str, torch: list, indice: str, pacotes: list,
+                    nome: str, gpu: bool, sistema: str, baixar, executar, etapa) -> None:
+    """uv -> Python -> PyTorch -> os pacotes, no ambiente destino/ambiente. O uv, os Pythons baixados e o cache ficam
+    em pasta_uv (o 2º motor, o Chatterbox, usa os mesmos: não baixa o uv de novo)."""
+    ambiente = _ambiente_do_uv(Path(pasta_uv))
 
     def rodar(argumentos: list[str], quanto: str) -> None:
         r = executar(argumentos, capture_output=True, text=True, env=ambiente, timeout=3 * 3600, **SEM_JANELA)
@@ -386,51 +472,37 @@ def instalar(pasta: str | Path, gpu: bool | None = None, sistema: str = sys.plat
             raise ErroDublagem(f"não deu para instalar {quanto}: {detalhe[-1] if detalhe else r.returncode}")
 
     etapa(0.02, "Baixando o instalador (uv)...")
-    uv = str(_preparar_uv(pasta, sistema, baixar))
-    python = python_do_motor(pasta, sistema)
+    uv = str(_preparar_uv(Path(pasta_uv), sistema, baixar))
+    python = python_do_motor(destino, sistema)
     if not python.is_file():
-        etapa(0.08, f"Baixando o Python {VERSAO_PYTHON} do motor de vozes...")
-        rodar([uv, "venv", str(pasta / "ambiente"), "--python", VERSAO_PYTHON], f"o Python {VERSAO_PYTHON}")
+        etapa(0.08, f"Baixando o Python {versao_python} do motor de vozes...")
+        rodar([uv, "venv", str(Path(destino) / "ambiente"), "--python", versao_python], f"o Python {versao_python}")
     etapa(0.15, "Baixando o PyTorch " + ("para a placa de vídeo (~3 GB, a parte mais demorada)..." if gpu
                                          else "para o processador..."))
-    rodar([uv, "pip", "install", "--python", str(python), *TORCH, "--index-url", INDICE_GPU if gpu else INDICE_CPU],
-          "o PyTorch")
-    etapa(0.80, "Instalando o XTTS-v2 (coqui-tts)...")
-    rodar([uv, "pip", "install", "--python", str(python), *PACOTES], "o XTTS-v2 (coqui-tts)")
-    arquivo_servidor(pasta).write_text(SERVIDOR, encoding="utf-8")
-    info = {"gpu": gpu, "torch": TORCH[0], "pacotes": PACOTES, "uv": VERSAO_UV}
-    (pasta / "instalado.json").write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
-    etapa(1.0, "Motor de vozes instalado.")
-    return info
+    rodar([uv, "pip", "install", "--python", str(python), *torch, "--index-url", indice], "o PyTorch")
+    etapa(0.80, f"Instalando {nome}...")
+    rodar([uv, "pip", "install", "--python", str(python), *pacotes], nome)
 
 
 def desinstalar(pasta: str | Path) -> None:
     shutil.rmtree(pasta, ignore_errors=True)
 
 
-# ----------------------------------------------------------------- o motor
-class MotorLocal:
-    """A voz da dublagem pelo XTTS-v2 no PC. sintetizar(pedidos): [(texto, wav[, voz[, tom]])]; a voz de cada fala:
-    vazia (a principal), uma pronta ("Ana Florence"), uma importada ("imp:izael"), uma do Gemini (vira a
-    equivalente) ou uma clonada do Gemini ("clone:Izael": a importada de mesmo nome, se houver)."""
+# ----------------------------------------------------------------- o "interfone" com o servidor
+class ServidorDeVoz:
+    """Um "estúdio" (servidor.py no Python de um pacote) que fica aberto e fala cada pedido que chega: o Maestro
+    manda uma linha JSON pela entrada dele e lê a resposta na saída (o que a biblioteca escreve vai para o
+    registro.txt). Base do XTTS-v2 (MotorLocal) e do Chatterbox (voz_emocao.MotorEmocao)."""
 
-    expressiva = False                  # não interpreta o tom da cena (só o timbre): sem a nota de direção
-    modelo = "xtts_v2"
-    estilo = ""
+    nome = "o motor de vozes"
+    registro = "motor_vozes/registro.txt"     # onde ver o que deu errado (na pasta das configurações)
 
-    def __init__(self, pasta: str | Path, voz: str = VOZ_PADRAO, importadas: list = (), pasta_importadas=None,
-                 abrir=subprocess.Popen, avisar=None, idioma: str = "pt", conferir=None):
-        self.pasta, self.voz, self.idioma = Path(pasta), voz or VOZ_PADRAO, idioma
-        self.conferir = conferir                 # ConferidorWhisper (ou None: sem conferir)
-        self.cortadas = self.refeitas = 0
-        self.importadas, self.pasta_importadas = list(importadas), pasta_importadas
+    def __init__(self, abrir=subprocess.Popen, avisar=None):
         self._abrir, self.avisar = abrir, avisar
         self._processo = None
         self._respostas: queue.Queue = queue.Queue()
         self.dispositivo = self.placa = ""
-        self.pedidos = 0
 
-    # --- o servidor
     def _ler_saida(self, saida) -> None:
         for linha in saida:
             linha = linha.strip()
@@ -439,7 +511,7 @@ class MotorLocal:
                     self._respostas.put(json.loads(linha))
                 except ValueError:
                     pass
-        self._respostas.put({"erro": "o motor de vozes fechou sozinho (veja o motor_vozes/registro.txt)"})
+        self._respostas.put({"erro": f"{self.nome} fechou sozinho (veja o {self.registro})"})
 
     def _resposta(self, limite: float, parar=None) -> dict:
         fim = limite
@@ -452,36 +524,45 @@ class MotorLocal:
                     self.fechar()
                     raise ErroDublagem("interrompido (botão Parar)")
         self.fechar()
-        raise ErroDublagem("o motor de vozes não respondeu a tempo")
+        raise ErroDublagem(f"{self.nome} não respondeu a tempo")
 
-    def iniciar(self, parar=None) -> None:
-        if self._processo is not None and self._processo.poll() is None:
-            return
-        python = python_do_motor(self.pasta)
-        if not instalado(self.pasta) or not python.is_file():
-            raise ErroDublagem("o motor de vozes XTTS-v2 não está instalado: Configurações > Dublagem > \"Instalar "
-                               "o motor de vozes\"")
-        servidor, codigo = arquivo_servidor(self.pasta), SERVIDOR        # (nos testes, um servidor de mentira)
+    def aberto(self) -> bool:
+        return self._processo is not None and self._processo.poll() is None
+
+    def _abrir_servidor(self, python: Path, servidor: Path, codigo: str, ambiente: dict, pasta: Path,
+                        carregando: str, parar=None) -> dict:
+        """Abre o servidor e espera ele dizer que está pronto (na 1ª vez, baixando o modelo)."""
         if not servidor.is_file() or servidor.read_text(encoding="utf-8") != codigo:   # versão nova do Maestro
             servidor.write_text(codigo, encoding="utf-8")
-        ambiente = {**os.environ, "COQUI_TOS_AGREED": "1", "TTS_HOME": str(self.pasta / "modelos"),
-                    "HF_HOME": str(self.pasta / "modelos" / "hf"), "PYTHONIOENCODING": "utf-8",
-                    "PYTHONUNBUFFERED": "1", "MAESTRO_MODELO": MODELO}
-        registro = open(self.pasta / "registro.txt", "a", encoding="utf-8", errors="replace")
-        self._processo = self._abrir([str(python), "-u", str(arquivo_servidor(self.pasta))], stdin=subprocess.PIPE,
+        registro = open(pasta / "registro.txt", "a", encoding="utf-8", errors="replace")
+        self._processo = self._abrir([str(python), "-u", str(servidor)], stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, stderr=registro, text=True, encoding="utf-8",
-                                     env=ambiente, cwd=str(self.pasta), **SEM_JANELA)
+                                     env=ambiente, cwd=str(pasta), **SEM_JANELA)
         registro.close()
         threading.Thread(target=self._ler_saida, args=(self._processo.stdout,), daemon=True).start()
         if self.avisar:
-            self.avisar("carregando o motor de vozes XTTS-v2 (na 1ª vez baixa o modelo, ~1,8 GB)")
+            self.avisar(carregando)
         pronto = self._resposta(TEMPO_PARA_CARREGAR, parar)
         if not pronto.get("pronto"):
             self.fechar()
-            raise ErroDublagem(f"o motor de vozes não abriu: {pronto.get('erro', 'sem resposta')}")
+            raise ErroDublagem(f"{self.nome} não abriu: {pronto.get('erro', 'sem resposta')}")
         self.dispositivo, self.placa = pronto.get("dispositivo", ""), pronto.get("placa", "")
         if self.avisar:
-            self.avisar(f"motor de vozes pronto ({'placa de vídeo ' + self.placa if self.placa else 'processador'})")
+            if pronto.get("aviso"):
+                self.avisar(f"{self.nome}: {pronto['aviso']} (mais devagar, mas termina)")
+            self.avisar(f"{self.nome} pronto ({'placa de vídeo ' + self.placa if self.placa else 'processador'})")
+        return pronto
+
+    def _pedir(self, pedido: dict, parar=None, limite: float = 600) -> dict:
+        self._processo.stdin.write(json.dumps(pedido, ensure_ascii=False) + "\n")
+        self._processo.stdin.flush()
+        resposta = self._resposta(limite, parar)
+        if resposta.get("dispositivo") == "cpu" and self.dispositivo == "cuda":     # plano B no meio do trabalho
+            self.dispositivo, self.placa = "cpu", ""
+            if self.avisar:
+                self.avisar(f"{self.nome}: a placa de vídeo não aguentou (pouca memória, ou placa não suportada); "
+                            "segue pelo processador, mais devagar")
+        return resposta
 
     def fechar(self) -> None:
         processo, self._processo = self._processo, None
@@ -501,9 +582,51 @@ class MotorLocal:
         except Exception:
             pass
 
+
+# ----------------------------------------------------------------- o motor
+class MotorLocal(ServidorDeVoz):
+    """A voz da dublagem pelo XTTS-v2 no PC. sintetizar(pedidos): [(texto, wav[, voz[, tom]])]; a voz de cada fala:
+    vazia (a principal), uma pronta ("Ana Florence"), uma importada ("imp:izael"), uma do Gemini (vira a
+    equivalente) ou uma clonada do Gemini ("clone:Izael": a importada de mesmo nome, se houver). O tom (a nota de
+    direção) diz a EMOÇÃO: a fala vai com a gravação daquela emoção da voz, ou com o Chatterbox (emocao), ou neutra."""
+
+    expressiva = False                  # não interpreta o tom da cena como o Gemini: a emoção vai pela gravação
+    modelo = "xtts_v2"
+    estilo = ""
+
+    def __init__(self, pasta: str | Path, voz: str = VOZ_PADRAO, importadas: list = (), pasta_importadas=None,
+                 abrir=subprocess.Popen, avisar=None, idioma: str = "pt", conferir=None, emocao=None):
+        super().__init__(abrir, avisar)
+        self.pasta, self.voz, self.idioma = Path(pasta), voz or VOZ_PADRAO, idioma
+        self.conferir = conferir                 # ConferidorWhisper (ou None: sem conferir)
+        self.emocao = emocao                     # voz_emocao.MotorEmocao (o Chatterbox) ou None
+        self.cortadas = self.refeitas = 0
+        self.com_emocao: Counter = Counter()     # "gravação" / "chatterbox": quantas falas foram com emoção
+        self.importadas, self.pasta_importadas = list(importadas), pasta_importadas
+        self.pedidos = 0
+
+    # --- o servidor
+    def iniciar(self, parar=None) -> None:
+        if self.aberto():
+            return
+        python = python_do_motor(self.pasta)
+        if not instalado(self.pasta) or not python.is_file():
+            raise ErroDublagem("o motor de vozes XTTS-v2 não está instalado: Configurações > Dublagem > \"Instalar "
+                               "o motor de vozes\"")
+        ambiente = {**os.environ, "COQUI_TOS_AGREED": "1", "TTS_HOME": str(self.pasta / "modelos"),
+                    "HF_HOME": str(self.pasta / "modelos" / "hf"), "PYTHONIOENCODING": "utf-8",
+                    "PYTHONUNBUFFERED": "1", "MAESTRO_MODELO": MODELO}
+        self._abrir_servidor(python, arquivo_servidor(self.pasta), SERVIDOR, ambiente, self.pasta,  # (nos testes,
+                             "carregando o motor de vozes XTTS-v2 (na 1ª vez baixa o modelo, ~1,8 GB)", parar)  # outro)
+
+    def fechar(self) -> None:
+        super().fechar()
+        if getattr(self, "emocao", None) is not None:
+            self.emocao.fechar()
+
     # --- as falas
-    def _voz_do_pedido(self, voz: str) -> dict:
-        """{"voz": nome pronto} ou {"referencia": wav importado}."""
+    def _resolver(self, voz: str) -> tuple[dict, object]:
+        """({"voz": nome pronto} ou {"referencia": wav importado}, a VozImportada ou None)."""
         from .vozes_importadas import GRAVACAO, PIPER, arquivo_da_gravacao
         voz = voz or self.voz
         if voz.startswith("clone:"):                    # clonada do Gemini: a importada de mesmo nome, se houver
@@ -514,32 +637,77 @@ class MotorLocal:
             ident = voz[len(PREFIXO_IMPORTADA):]
             achada = next((v for v in self.importadas if v.id == ident and v.tipo != PIPER), None)
             if achada is not None and self.pasta_importadas is not None:
-                return {"referencia": str(arquivo_da_gravacao(achada, self.pasta_importadas))}
+                return {"referencia": str(arquivo_da_gravacao(achada, self.pasta_importadas))}, achada
             voz = VOZ_PADRAO
         if voz not in VOZES_PRONTAS:
             voz = equivalente(voz)
-        return {"voz": voz}
+        return {"voz": voz}, None
+
+    def _voz_do_pedido(self, voz: str) -> dict:
+        return self._resolver(voz)[0]
 
     def _falar(self, texto: str, saida: Path, voz: dict, parar) -> None:
         pedido = {"texto": texto, "frases": frases_para_falar(texto), "saida": str(saida), "idioma": self.idioma,
                   **voz}
-        self._processo.stdin.write(json.dumps(pedido, ensure_ascii=False) + "\n")
-        self._processo.stdin.flush()
-        resposta = self._resposta(600, parar)
+        resposta = self._pedir(pedido, parar)
         if not resposta.get("ok"):
             raise ErroDublagem(f"o motor de vozes não gerou a fala: {resposta.get('erro', 'sem resposta')}")
         self.pedidos += 1
 
-    def _falar_conferindo(self, texto: str, wav: Path, voz: dict, parar) -> None:
+    def referencia_da_pronta(self, voz: str, parar=None) -> Path:
+        """A fala de referência de uma voz PRONTA (para o Chatterbox imitar): gerada uma vez pelo XTTS-v2."""
+        from .vozes_importadas import criar_id
+        destino = self.pasta / "referencias" / f"{criar_id(voz)}.wav"
+        if not destino.is_file():
+            destino.parent.mkdir(parents=True, exist_ok=True)
+            temporario = destino.with_suffix(".tmp.wav")
+            self._falar(FRASE_DE_REFERENCIA, temporario, {"voz": voz}, parar)
+            temporario.replace(destino)
+        return destino
+
+    def _como_falar(self, voz: str, emocao: str, parar):
+        """falar(texto, saida) da fala: com a gravação da emoção, com o Chatterbox ou neutra (o XTTS-v2 normal)."""
+        from .vozes_importadas import arquivo_da_emocao
+        xtts, importada = self._resolver(voz)
+        if emocao != NORMAL:
+            gravacao = (arquivo_da_emocao(importada, self.pasta_importadas, emocao)
+                        if importada is not None and self.pasta_importadas is not None else None)
+            if gravacao is not None:
+                self.com_emocao["gravação"] += 1
+                return lambda texto, saida: self._falar(texto, saida, {"referencia": str(gravacao)}, parar)
+            if self.emocao is not None:
+                referencia = xtts.get("referencia") or str(self.referencia_da_pronta(xtts["voz"], parar))
+                self.com_emocao["chatterbox"] += 1
+                return lambda texto, saida: self._falar_com_emocao(texto, saida, referencia, emocao, xtts, parar)
+        return lambda texto, saida: self._falar(texto, saida, xtts, parar)
+
+    def _falar_com_emocao(self, texto: str, saida: Path, referencia: str, emocao: str, xtts: dict, parar) -> None:
+        """Pelo Chatterbox; se ele falhar (não abriu, sem memória...), o resto segue neutro pelo XTTS-v2."""
+        if self.emocao is not None:
+            try:
+                self.emocao.falar(texto, saida, referencia, emocao, parar, idioma=self.idioma)
+                self.pedidos += 1
+                return
+            except ErroDublagem as erro:
+                if parar and parar():
+                    raise
+                if self.avisar:
+                    self.avisar(f"o Chatterbox falhou ({str(erro)[:150]}): as falas com emoção seguem neutras pelo "
+                                "XTTS-v2")
+                self.emocao.fechar()
+                self.emocao = None
+        self._falar(texto, saida, xtts, parar)
+
+    def _falar_conferindo(self, texto: str, wav: Path, falar) -> None:
         """Gera; com o conferidor, corta a sobra do fim ou gera de novo a embolada (fica a de melhor nota)."""
-        self._falar(texto, wav, voz, parar)
+        falar(texto, wav)
         if self.conferir is None:
             return
         melhor = None
         for tentativa in range(TENTATIVAS):
             atual = wav if tentativa == 0 else wav.with_name(f"{wav.stem}-tentativa{tentativa}.wav")
             if tentativa:
-                self._falar(texto, atual, voz, parar)
+                falar(texto, atual)
             try:
                 acao, corte, nota = self.conferir(texto, atual)
             except Exception as erro:                      # sem o Whisper: fica como saiu
@@ -567,10 +735,14 @@ class MotorLocal:
         for n, p in enumerate(pedidos, 1):
             if parar and parar():
                 raise ErroDublagem("interrompido (botão Parar)")
-            self._falar_conferindo(p[0], Path(p[1]), self._voz_do_pedido(p[2] if len(p) > 2 and p[2] else ""),
-                                   parar)
+            voz, nota = (p[2] if len(p) > 2 and p[2] else ""), (p[3] if len(p) > 3 else "")
+            self._falar_conferindo(p[0], Path(p[1]), self._como_falar(voz, emocao_da_nota(nota), parar))
             if ao_progresso:
                 ao_progresso(n / len(pedidos))
         if (self.cortadas or self.refeitas) and self.avisar:
             self.avisar(f"conferência pelo Whisper: {self.cortadas} fala(s) com sobra no fim cortada(s), "
                         f"{self.refeitas} gerada(s) de novo")
+        if self.com_emocao and self.avisar:
+            self.avisar(f"emoção: {self.com_emocao['gravação']} fala(s) com a gravação de emoção da voz, "
+                        f"{self.com_emocao['chatterbox']} pelo Chatterbox")
+            self.com_emocao.clear()

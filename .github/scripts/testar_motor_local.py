@@ -1,6 +1,7 @@
 """Teste de verdade do motor de vozes XTTS-v2 (o mesmo código do Maestro), num Windows sem placa de vídeo:
 instala (uv -> Python 3.12 -> PyTorch -> coqui-tts), fala com uma voz pronta e com uma "importada" (uma gravação
-gerada pela própria voz pronta: nenhuma pessoa real) e confere cada fala com o Whisper.
+gerada pela própria voz pronta: nenhuma pessoa real) e confere cada fala com o Whisper. Depois, as falas com
+EMOÇÃO: pela gravação de emoção da voz importada e pelo Chatterbox (instalado no ambiente dele).
 
 Uso: python testar_motor_local.py <pasta_do_motor> <pasta_de_saida>
 """
@@ -12,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from jellyfin_tools import voz_emocao as ve                    # noqa: E402
 from jellyfin_tools import voz_local as vl                     # noqa: E402
 from jellyfin_tools import vozes_importadas as vi              # noqa: E402
 from jellyfin_tools.transcricao import Transcritor             # noqa: E402
@@ -25,6 +27,7 @@ def duracao(wav: Path) -> float:
         return w.getnframes() / w.getframerate()
 
 
+print(f"::notice title=Espaço no disco::{vl.espaco_livre(pasta):.0f} GB livres", flush=True)
 inicio = time.time()
 info = vl.instalar(pasta, gpu=False, ao_progresso=lambda f, texto: print(f"{f:4.0%} {texto}", flush=True))
 print(f"::notice title=Instalado::{info} em {time.time() - inicio:.0f} s", flush=True)
@@ -63,3 +66,44 @@ motor.sintetizar([("Esta fala usa o timbre da voz importada.", saida / "importad
 assert duracao(saida / "importada.wav") > 1.0
 motor.fechar()
 print(f"::notice title=Voz importada::ok ({duracao(saida / 'importada.wav'):.1f} s); total {time.time() - inicio:.0f} s")
+
+
+def ouvir(wav: Path) -> str:
+    segmentos, _ = conferir.transcritor.motor.transcribe(str(wav), language="pt", beam_size=5)
+    return " ".join(s.text.strip() for s in segmentos)
+
+
+# EMOÇÃO 1: a gravação "brava" da voz importada (aqui, a mesma gravação: o teste é do caminho, não da atuação)
+shutil.copyfile(destino / "referencia.wav", destino / "brava.wav")
+importada.emocoes = ["brava"]
+avisos = []
+motor = vl.MotorLocal(pasta, "imp:teste", [importada], saida, conferir=conferir, avisar=avisos.append)
+motor.sintetizar([("Eu já disse para você sair daqui!", saida / "emocao_gravacao.wav", "",
+                   "Nesta fala: gritando, com força.")])         # grito -> a gravação "brava" (a parecida)
+motor.fechar()
+assert any("1 fala(s) com a gravação de emoção" in a for a in avisos), avisos
+print(f"::notice title=Emoção pela gravação::{ouvir(saida / 'emocao_gravacao.wav')}", flush=True)
+
+# EMOÇÃO 2: o Chatterbox, instalado no ambiente dele, imitando uma voz pronta e a importada
+t0 = time.time()
+info = ve.instalar(pasta, gpu=False, ao_progresso=lambda f, texto: print(f"{f:4.0%} {texto}", flush=True))
+print(f"::notice title=Chatterbox instalado::{info} em {time.time() - t0:.0f} s", flush=True)
+avisos = []
+motor = vl.MotorLocal(pasta, "Damien Black", [importada], saida, conferir=conferir,
+                      emocao=ve.MotorEmocao(pasta, avisar=avisos.append), avisar=avisos.append)
+falas = [("Corre! Ele está vindo! Sai da frente!", saida / "chatterbox_grito.wav", "", "Nesta fala: gritando."),
+         ("Por favor, não me deixa sozinha.", saida / "chatterbox_choro.wav", "imp:teste", "Nesta fala: chorando."),
+         ("Fala baixo. Eles podem ouvir a gente.", saida / "chatterbox_sussurro.wav", "imp:teste",
+          "Nesta fala: sussurrando, em voz baixa.")]
+t0 = time.time()
+motor.sintetizar(falas)
+gasto = time.time() - t0
+motor.fechar()
+print("\n".join(avisos), flush=True)
+assert not any("o Chatterbox falhou" in a for a in avisos), avisos
+assert any("3 pelo Chatterbox" in a for a in avisos), avisos
+ouvidos = [f"{f[1].stem} ({duracao(f[1]):.1f} s): {ouvir(f[1])}" for f in falas]
+print("::notice title=Chatterbox · o Whisper ouviu::" + "%0A".join(ouvidos), flush=True)
+assert all(duracao(f[1]) > 1.0 for f in falas) and not [o for o in ouvidos if "ponto" in o.lower()], ouvidos
+print(f"::notice title=Chatterbox::3 falas com emoção em {gasto:.0f} s (com o 1º carregamento do modelo); "
+      f"total {time.time() - inicio:.0f} s", flush=True)

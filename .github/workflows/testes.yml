@@ -15,7 +15,9 @@ permissions:
 
 jobs:
   testes:
-    runs-on: ubuntu-latest
+    # versão fixa do Ubuntu: o "ubuntu-latest" passa a ser o Ubuntu 26 a partir de 19/10/2026, e os testes da janela
+    # dependem dos pacotes do sistema (Tk, xvfb, ffmpeg); a troca de versão fica para quando der para testar com calma
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4

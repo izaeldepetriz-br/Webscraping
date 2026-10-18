@@ -24,7 +24,7 @@ from tkinter import filedialog, ttk
 
 import customtkinter as ctk
 
-from jellyfin_tools import voz_clonada, voz_cloud, voz_local, vozes_importadas
+from jellyfin_tools import emocoes, voz_clonada, voz_cloud, voz_local, vozes_importadas
 
 from . import icone
 
@@ -154,6 +154,7 @@ class OpcoesJellyfin:
     voz_gemini: str = "Charon"       # voz do Gemini: pronta ("Kore") ou clonada com consentimento ("clone:Izael")
     voz_local: str = "Damien Black"  # XTTS-v2 no PC: voz pronta ("Ana Florence") ou importada ("imp:izael")
     conferir_falas: bool = True      # XTTS-v2: o Whisper ouve cada fala gerada (corta a sobra do fim, refaz a embolada)
+    emocao_chatterbox: bool = True   # XTTS-v2: as falas com emoção vão pelo Chatterbox (se instalado e sem a gravação)
     chave_gemini: str = ""           # Google AI Studio > Get API key (vazio = variável GEMINI_API_KEY)
     encurtar_falas: bool = True      # dublagem: o Claude reescreve mais curtas as falas que não cabem no tempo
     voz_por_personagem: bool = False  # Gemini: ouve o filme, separa quem fala e dá uma voz para cada personagem
@@ -4298,10 +4299,11 @@ class JanelaModerna(ctk.CTk):
         self.var_jf_emocao_da_cena = tk.BooleanVar(value=True)
         self._checkbox(lateral, "Emoção da cena: o Gemini ouve o áudio original e cada fala é dita com a mesma emoção "
                                 "(raiva, alegria, sussurro...)", self.var_jf_emocao_da_cena)
-        self._rotulo(lateral, "Só com a voz do Gemini. Ele ouve o original SEMPRE (marcado ou não) para saber se quem "
+        self._rotulo(lateral, "Com a voz do Gemini: ele ouve o original SEMPRE (marcado ou não) para saber se quem "
                               "fala é homem ou mulher: a fala de mulher sai com voz feminina e a de homem, masculina. "
                               "Custo pequeno: ~US$ 0,12 por hora de vídeo; o que já foi ouvido fica guardado, e o "
-                              "teste não paga de novo no vídeo inteiro.",
+                              "teste não paga de novo no vídeo inteiro. Com o XTTS-v2 (grátis): o volume de cada fala "
+                              "do original é medido no PC (a gritada e a sussurrada vão com a emoção).",
                      fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(0, 4), **p)
 
         self._rotulo(lateral, "Texto da fala", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
@@ -4382,6 +4384,8 @@ class JanelaModerna(ctk.CTk):
                           ("Modelo do Piper", "*.onnx"),
                           ("Gravação de voz", " ".join(f"*{e}" for e in vozes_importadas.EXTENSOES_GRAVACAO))]
 
+    EMOCAO_NORMAL = "Normal (voz nova)"
+
     def _montar_importar_voz(self, lateral) -> None:
         p = dict(padx=18)
         pequeno = ctk.CTkFont(Tema.FAMILIA, 11)
@@ -4390,7 +4394,9 @@ class JanelaModerna(ctk.CTk):
                               "(há várias em huggingface.co/rhasspy/piper-voices; em português: cadu, jeff...). "
                               "Gravação de voz (.wav, .mp3, .m4a..., de 6 a 60 s de fala): o motor XTTS-v2 fala com "
                               "esse timbre, no seu PC. O gênero e a idade servem para a \"Automática\" escolher a voz "
-                              "de quem fala. Áudio de filmes, séries ou jogos não é aceito (a voz seria de atores).",
+                              "de quem fala. Emoção: com o mesmo nome, importe a pessoa lendo brava, chorando, "
+                              "sussurrando... (3 s ou mais): a fala com essa emoção vai com essa gravação. Áudio de "
+                              "filmes, séries ou jogos não é aceito (a voz seria de atores).",
                      fonte=pequeno).pack(anchor="w", pady=(0, 6), **p)
         grade = ctk.CTkFrame(lateral, fg_color="transparent")
         grade.pack(fill="x", **p)
@@ -4417,6 +4423,12 @@ class JanelaModerna(ctk.CTk):
                                                 [i.capitalize() for i in vozes_importadas.IDADES])
         self.menu_imp_idade.configure(width=150)
         self.menu_imp_idade.grid(row=2, column=3, sticky="w", pady=3)
+        self.var_imp_emocao = tk.StringVar(self, value=self.EMOCAO_NORMAL)
+        self._rotulo(grade, "Emoção da gravação:").grid(row=3, column=0, sticky="w", padx=(0, 10), pady=3)
+        self.menu_imp_emocao = self._menu_opcoes(grade, self.var_imp_emocao,
+                                                 [self.EMOCAO_NORMAL] + list(emocoes.EMOCOES.values()))
+        self.menu_imp_emocao.configure(width=230)
+        self.menu_imp_emocao.grid(row=3, column=1, columnspan=3, sticky="w", pady=3)
         self._checkbox(lateral, "Gravação: declaro que a voz é minha ou de quem autorizou (não de atores ou famosos)",
                        self.var_imp_autorizo)
         linha = ctk.CTkFrame(lateral, fg_color="transparent")
@@ -4465,6 +4477,26 @@ class JanelaModerna(ctk.CTk):
         self.var_jf_conferir_falas = tk.BooleanVar(self, value=True)
         self._checkbox(lateral, "Conferir cada fala com o Whisper: corta a sílaba que sobra no fim e refaz a embolada",
                        self.var_jf_conferir_falas)
+        self._rotulo(lateral, "Emoção (opcional): o XTTS-v2 não tem controle de emoção. A fala gritada, chorada ou "
+                              "sussurrada vai com a gravação daquela emoção da voz importada (Importar voz > Emoção "
+                              "da gravação) ou, sem ela, com o Chatterbox (grátis, licença MIT): ele imita a mesma "
+                              "voz e põe a emoção. Instale uma vez: ~1 GB (~5 GB com a placa NVIDIA) e, na 1ª fala "
+                              "com emoção, o modelo (~3,2 GB).",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(8, 4), **p)
+        self.lb_chatterbox = ctk.CTkLabel(lateral, text="", font=self.f_rotulo, text_color=Tema.TEXTO_FRACO,
+                                          anchor="w", justify="left")
+        self.lb_chatterbox.pack(anchor="w", pady=(0, 6), **p)
+        linha = ctk.CTkFrame(lateral, fg_color="transparent")
+        linha.pack(fill="x", **p)
+        self.bt_instalar_chatterbox = self._botao(linha, "⬇  Instalar o Chatterbox (emoção)",
+                                                  self.ao_instalar_chatterbox, "secundario")
+        self.bt_instalar_chatterbox.pack(side="left")
+        self.bt_remover_chatterbox = self._botao(linha, "Remover o Chatterbox...", self.ao_remover_chatterbox,
+                                                 "fantasma")
+        self.bt_remover_chatterbox.pack(side="left", padx=(8, 0))
+        self.var_jf_emocao_chatterbox = tk.BooleanVar(self, value=True)
+        self._checkbox(lateral, "Usar o Chatterbox nas falas com emoção que não têm a gravação da emoção",
+                       self.var_jf_emocao_chatterbox)
         self.atualizar_motor_local(self._motor_local)
 
     _motor_local: dict | None = None
@@ -4490,6 +4522,29 @@ class JanelaModerna(ctk.CTk):
                                                "⬇  Instalar o motor de vozes")
         self.bt_remover_motor_local.configure(state="normal" if info else "disabled")
         self.bt_ouvir_local.configure(state="normal" if info else "disabled")
+        self.atualizar_chatterbox(self._chatterbox if info else None)
+
+    _chatterbox: dict | None = None
+
+    def atualizar_chatterbox(self, info: dict | None) -> None:
+        """info: o que está instalado do Chatterbox ({"gpu": True}) ou None. Sem o XTTS-v2, não dá para instalar."""
+        self._chatterbox = info
+        if not hasattr(self, "lb_chatterbox"):
+            return
+        if info:
+            self.lb_chatterbox.configure(text="✓ Chatterbox instalado " + ("(com a placa de vídeo NVIDIA)" if
+                                                                           info.get("gpu") else "(processador)"),
+                                         text_color=Tema.SUCESSO)
+        elif self._motor_local:
+            self.lb_chatterbox.configure(text="Chatterbox ainda não instalado: as falas com emoção sem a gravação da "
+                                              "emoção saem neutras.", text_color=Tema.TEXTO_FRACO)
+        else:
+            self.lb_chatterbox.configure(text="Instale primeiro o XTTS-v2 (o Chatterbox imita as vozes dele).",
+                                         text_color=Tema.TEXTO_FRACO)
+        self.bt_instalar_chatterbox.configure(text="↻  Reinstalar o Chatterbox" if info else
+                                              "⬇  Instalar o Chatterbox (emoção)",
+                                              state="normal" if self._motor_local else "disabled")
+        self.bt_remover_chatterbox.configure(state="normal" if info else "disabled")
 
     def _atualizar_menu_voz_local(self) -> None:
         if not hasattr(self, "menu_voz_local"):
@@ -4506,6 +4561,12 @@ class JanelaModerna(ctk.CTk):
         pass
 
     def ao_ouvir_voz_local(self) -> None:
+        pass
+
+    def ao_instalar_chatterbox(self) -> None:           # o app faz (baixa e instala numa tarefa)
+        pass
+
+    def ao_remover_chatterbox(self) -> None:
         pass
 
     def vozes_piper_do_menu(self) -> tuple:
@@ -5197,7 +5258,7 @@ class JanelaModerna(ctk.CTk):
             voz_dublagem=self.var_jf_voz_dublagem.get(), motor_voz=self.var_jf_motor_voz.get(),
             voz_gemini=valor_da_voz(self.var_jf_voz_gemini.get()), chave_gemini=self.var_jf_chave_gemini.get().strip(),
             voz_local=voz_local.valor_do_menu(self.var_jf_voz_local.get()),
-            conferir_falas=self.var_jf_conferir_falas.get(),
+            conferir_falas=self.var_jf_conferir_falas.get(), emocao_chatterbox=self.var_jf_emocao_chatterbox.get(),
             encurtar_falas=self.var_jf_encurtar_falas.get(), emocao_da_cena=self.var_jf_emocao_da_cena.get(),
             pronuncias=self.var_jf_pronuncias.get().strip(),
             voz_por_personagem=self.var_jf_voz_por_personagem.get(),
@@ -5327,7 +5388,7 @@ class JanelaModerna(ctk.CTk):
                   "pasta_avulsos": self.var_jf_pasta_avulsos, "chave_cloud_tts": self.var_jf_chave_cloud,
                   "inicio_teste": self.var_inicio_teste(), "pronuncias": self.var_jf_pronuncias}
         marcas = {"tmdb": self.var_jf_tmdb, "incluir_tmdbid": self.var_jf_tmdbid,
-                  "conferir_falas": self.var_jf_conferir_falas,
+                  "conferir_falas": self.var_jf_conferir_falas, "emocao_chatterbox": self.var_jf_emocao_chatterbox,
                   "exigir_catalogo": self.var_jf_exigir, "legendas": self.var_jf_legendas,
                   "limpar_lixo": self.var_jf_lixo, "imagens_tmdb": self.var_jf_imagens,
                   "apagar_pasta_origem": self.var_jf_apagar_pasta, "nomes_episodios": self.var_jf_nomes_ep,
