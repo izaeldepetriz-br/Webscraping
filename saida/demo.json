@@ -1,0 +1,248 @@
+{
+ "linhas": [
+  {
+   "quem": "m",
+   "ingles": "Did you hear that? Something is moving outside.",
+   "portugues": "Você ouviu isso? Tem alguma coisa se mexendo lá fora.",
+   "jeito": "normal",
+   "medido": {
+    "texto": "Você ouviu isso? Tem alguma coisa se mexendo lá fora.",
+    "genero": "m",
+    "f0": 136.8,
+    "db": -24.4,
+    "vozeado": 0.61
+   },
+   "genero": "m",
+   "nota": "",
+   "emocao": "normal",
+   "voz": "Gilberto Mathias",
+   "motor_depois": "XTTS-v2",
+   "ouvido_antes": "Você ouviu isso? Tem alguma coisa se mexendo lá fora?",
+   "ouvido_depois": "Você ouviu isso? Tem alguma coisa se mexendo lá fora."
+  },
+  {
+   "quem": "f",
+   "ingles": "It's just the wind. Go back to sleep.",
+   "portugues": "É só o vento. Volta a dormir.",
+   "jeito": "normal",
+   "medido": {
+    "texto": "É só o vento. Volta a dormir.",
+    "genero": "f",
+    "f0": 235.3,
+    "db": -21.7,
+    "vozeado": 0.97
+   },
+   "genero": "f",
+   "nota": "",
+   "emocao": "normal",
+   "voz": "Ana Florence",
+   "motor_depois": "XTTS-v2",
+   "ouvido_antes": "É só o vento. Volta a dormir.",
+   "ouvido_depois": "É só o vento. Volta a dormir."
+  },
+  {
+   "quem": "m",
+   "ingles": "No, listen. Someone is at the door.",
+   "portugues": "Não, escuta. Tem alguém na porta.",
+   "jeito": "normal",
+   "medido": {
+    "texto": "Não, escuta. Tem alguém na porta.",
+    "genero": "m",
+    "f0": 105.3,
+    "db": -23.0,
+    "vozeado": 0.6
+   },
+   "genero": "m",
+   "nota": "",
+   "emocao": "normal",
+   "voz": "Gilberto Mathias",
+   "motor_depois": "XTTS-v2",
+   "ouvido_antes": "Não, escuta. Tem alguém na porta?",
+   "ouvido_depois": "Não, escuta. Tem alguém na porta."
+  },
+  {
+   "quem": "m",
+   "ingles": "Stay quiet. They can hear us.",
+   "portugues": "Fica quieta. Eles podem ouvir a gente.",
+   "jeito": "sussurro",
+   "medido": {
+    "texto": "Fica quieta. Eles podem ouvir a gente.",
+    "genero": "?",
+    "f0": 291.0,
+    "db": -37.0,
+    "vozeado": 0.11
+   },
+   "genero": "?",
+   "nota": "Nesta fala: sussurrando, em voz baixa.",
+   "emocao": "sussurro",
+   "voz": "Gilberto Mathias",
+   "motor_depois": "Chatterbox",
+   "ouvido_antes": "Fica quieta. Eles podem ouvir a gente.",
+   "ouvido_depois": "Fica quieta. Eles podem ouvir a gente."
+  },
+  {
+   "quem": "f",
+   "ingles": "Okay. What do we do now?",
+   "portugues": "Tá bom. E agora, o que a gente faz?",
+   "jeito": "normal",
+   "medido": {
+    "texto": "Tá bom. E agora, o que a gente faz?",
+    "genero": "f",
+    "f0": 275.9,
+    "db": -24.0,
+    "vozeado": 0.97
+   },
+   "genero": "f",
+   "nota": "",
+   "emocao": "normal",
+   "voz": "Ana Florence",
+   "motor_depois": "XTTS-v2",
+   "ouvido_antes": "Tá bom. E agora? O que a gente faz?",
+   "ouvido_depois": "Está bom! E agora, o que a gente faz?"
+  },
+  {
+   "quem": "m",
+   "ingles": "I'm going to check the window.",
+   "portugues": "Vou olhar pela janela.",
+   "jeito": "normal",
+   "medido": {
+    "texto": "Vou olhar pela janela.",
+    "genero": "f",
+    "f0": 200.0,
+    "db": -23.6,
+    "vozeado": 0.47
+   },
+   "genero": "f",
+   "nota": "",
+   "emocao": "normal",
+   "voz": "Ana Florence",
+   "motor_depois": "XTTS-v2",
+   "ouvido_antes": "Vou olhar pela janela.",
+   "ouvido_depois": "Vou olhar pela janela."
+  },
+  {
+   "quem": "f",
+   "ingles": "Be careful, please.",
+   "portugues": "Toma cuidado, por favor.",
+   "jeito": "normal",
+   "medido": {
+    "texto": "Toma cuidado, por favor.",
+    "genero": "f",
+    "f0": 210.5,
+    "db": -21.8,
+    "vozeado": 1.0
+   },
+   "genero": "f",
+   "nota": "",
+   "emocao": "normal",
+   "voz": "Ana Florence",
+   "motor_depois": "XTTS-v2",
+   "ouvido_antes": "Toma cuidado. Por favor.",
+   "ouvido_depois": "Toma cuidado, por favor."
+  },
+  {
+   "quem": "m",
+   "ingles": "Run! Get out of the house, now!",
+   "portugues": "Corre! Sai da casa, agora!",
+   "jeito": "grito",
+   "medido": {
+    "texto": "Corre! Sai da casa, agora!",
+    "genero": "?",
+    "f0": 163.3,
+    "db": -11.6,
+    "vozeado": 0.46
+   },
+   "genero": "m",
+   "nota": "Nesta fala: gritando, com força.",
+   "emocao": "grito",
+   "voz": "Gilberto Mathias",
+   "motor_depois": "Chatterbox",
+   "ouvido_antes": "Corre. Sai da casa agora.",
+   "ouvido_depois": "Corre. Sai da casa, agora?"
+  },
+  {
+   "quem": "f",
+   "ingles": "Where are you going? Wait for me!",
+   "portugues": "Pra onde você vai? Me espera!",
+   "jeito": "normal",
+   "medido": {
+    "texto": "Pra onde você vai? Me espera!",
+    "genero": "f",
+    "f0": 242.4,
+    "db": -23.1,
+    "vozeado": 1.0
+   },
+   "genero": "f",
+   "nota": "",
+   "emocao": "normal",
+   "voz": "Ana Florence",
+   "motor_depois": "XTTS-v2",
+   "ouvido_antes": "pra onde você vai? A... me espera...",
+   "ouvido_depois": "Pra onde você vai? Me espera."
+  },
+  {
+   "quem": "f",
+   "ingles": "Please, don't leave me alone. I can't do this.",
+   "portugues": "Por favor, não me deixa sozinha. Eu não aguento.",
+   "jeito": "choro",
+   "medido": {
+    "texto": "Por favor, não me deixa sozinha. Eu não aguento.",
+    "genero": "f",
+    "f0": 250.0,
+    "db": -23.5,
+    "vozeado": 0.97
+   },
+   "genero": "f",
+   "nota": "Nesta fala: chorando.",
+   "emocao": "choro",
+   "voz": "Ana Florence",
+   "motor_depois": "Chatterbox",
+   "ouvido_antes": "Por favor, não me deixe a sozinha. Eu não aguento.",
+   "ouvido_depois": "Por favor, não me deixe a sozinha, eu não aguento."
+  },
+  {
+   "quem": "m",
+   "ingles": "Get down! Now!",
+   "portugues": "Abaixa! Agora!",
+   "jeito": "grito",
+   "medido": {
+    "texto": "Abaixa! Agora!",
+    "genero": "?",
+    "f0": 125.0,
+    "db": -10.7,
+    "vozeado": 0.33
+   },
+   "genero": "?",
+   "nota": "",
+   "emocao": "normal",
+   "voz": "Gilberto Mathias",
+   "motor_depois": "XTTS-v2",
+   "ouvido_antes": "Abaixa... Agora.",
+   "ouvido_depois": "Abaixa. Agora?"
+  },
+  {
+   "quem": "m",
+   "ingles": "It's over. We're safe now.",
+   "portugues": "Acabou. Agora a gente está seguro.",
+   "jeito": "normal",
+   "medido": {
+    "texto": "Acabou. Agora a gente está seguro.",
+    "genero": "m",
+    "f0": 142.9,
+    "db": -22.6,
+    "vozeado": 0.36
+   },
+   "genero": "m",
+   "nota": "",
+   "emocao": "normal",
+   "voz": "Gilberto Mathias",
+   "motor_depois": "XTTS-v2",
+   "ouvido_antes": "Acabou! Agora, a gente está seguro.",
+   "ouvido_depois": "Acabou? Agora, a gente está seguro."
+  }
+ ],
+ "segundos": {
+  "antes": 132.5,
+  "depois": 433.9
+ }
+}
