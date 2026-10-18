@@ -73,6 +73,7 @@ from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, ClienteTV, carregar_canais, 
                                        conferir_canais, mensagem_fora_do_ar, publicar, registrar_no_historico,
                                        salvar_historico)
 from jellyfin_tools import cotacao, gastos, personagens, tom, vigia, voz_clonada, voz_cloud, voz_gemini
+from jellyfin_tools import vozes_importadas as vozes_importadas_mod
 from jellyfin_tools.adaptacao import Adaptador
 from jellyfin_tools.vigia import filtro_prontos
 
@@ -255,6 +256,15 @@ def arquivo_vozes_clonadas() -> Path:
 
 def vozes_clonadas() -> list:
     return voz_clonada.carregar(arquivo_vozes_clonadas())
+
+
+def arquivo_vozes_importadas() -> Path:
+    """As vozes importadas (modelos do Piper e gravações para clonar): Configurações > Dublagem > "Importar voz"."""
+    return config.ARQUIVO.parent / "vozes_importadas.json"
+
+
+def vozes_importadas() -> list:
+    return vozes_importadas_mod.carregar(arquivo_vozes_importadas())
 
 
 def conferir_voz_clonada(voz: str, vozes: list) -> None:

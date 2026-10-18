@@ -130,9 +130,14 @@ def preparar_piper(pasta: str | Path, sistema: str = sys.platform, baixar=_baixa
 
 
 def preparar_voz(nome: str, pasta: str | Path, baixar=_baixar, ao_progresso=None) -> Path:
-    """O modelo da voz (.onnx + .onnx.json; baixa na 1ª vez). Devolve o caminho do .onnx."""
+    """O modelo da voz (.onnx + .onnx.json; baixa na 1ª vez). Devolve o caminho do .onnx. Uma voz que não vem com o
+    Maestro só serve se foi importada (Configurações > Dublagem > "Importar voz"): está na pasta como <nome>.onnx."""
     if nome not in VOZES:
-        raise ErroDublagem(f"voz desconhecida: {nome} (opções: {', '.join(VOZES)})")
+        importada = Path(pasta) / f"{nome}.onnx"
+        if re.fullmatch(r"[a-z0-9-]+", nome or "") and importada.is_file() and importada.with_name(importada.name + ".json").is_file():
+            return importada
+        raise ErroDublagem(f"voz desconhecida: {nome} (opções: {', '.join(VOZES)}; ou importe a voz em "
+                           "Configurações > Dublagem > Importar voz)")
     pasta = Path(pasta)
     pasta.mkdir(parents=True, exist_ok=True)
     modelo = pasta / (VOZES[nome].rsplit("/", 1)[-1] + ".onnx")
@@ -145,9 +150,11 @@ def preparar_voz(nome: str, pasta: str | Path, baixar=_baixar, ao_progresso=None
 
 def voz_pronta(nome: str, pasta_piper: str | Path, pasta_vozes: str | Path) -> bool:
     """O Piper e a voz já estão no PC? (senão, são baixados na 1ª dublagem)"""
-    if nome not in VOZES or not executavel_piper(pasta_piper).is_file():
+    if not executavel_piper(pasta_piper).is_file():
         return False
-    modelo = Path(pasta_vozes) / (VOZES[nome].rsplit("/", 1)[-1] + ".onnx")
+    if nome not in VOZES and not re.fullmatch(r"[a-z0-9-]+", nome or ""):
+        return False
+    modelo = Path(pasta_vozes) / ((VOZES[nome].rsplit("/", 1)[-1] if nome in VOZES else nome) + ".onnx")
     return modelo.is_file() and modelo.with_name(modelo.name + ".json").is_file()
 
 

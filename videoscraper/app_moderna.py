@@ -76,6 +76,7 @@ from .gui_moderna import (DialogoCompletar, PainelEspelhos, JanelaModerna, Janel
                           OpcoesInterface, Tema)
 from .tv_moderna import TVAoVivo
 from .audio_moderna import TrocaDeAudio
+from .vozes_moderna import ImportarVozes
 from .navegador import PERFIL_PADRAO, PlaywrightAusente
 from .rede import pode_ignorar_robots, site_de
 from .servico import MENSAGEM_ROBOTS, Trabalho, fazer_login
@@ -181,7 +182,7 @@ STATUS_LEGENDA = {"baixada": ("baixada", "ok"), "ja_existe": ("já existia", Non
                   "sem_video": ("sem vídeo", None)}
 
 
-class AppModerna(TVAoVivo, TrocaDeAudio, JanelaModerna):
+class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, JanelaModerna):
     def __init__(self):
         super().__init__(pasta_padrao=PASTA_PADRAO)
         self._abandonadas: set[int] = set()          # tarefas que não obedeceram ao Parar a tempo
@@ -226,6 +227,7 @@ class AppModerna(TVAoVivo, TrocaDeAudio, JanelaModerna):
         self._espelhos_salvos = {}
         self._vigia_conferindo = False
         self._movimentos_previa: list = []      # o que a última pré-visualização mostrou
+        self._iniciar_vozes_importadas()                              # idem: a voz do Piper pode ser importada
         self.atualizar_vozes_clonadas(automacao.vozes_clonadas())     # antes das opções: a voz salva pode ser uma
         self._carregar_config()
         self._configurar_gastos()
@@ -781,6 +783,8 @@ class AppModerna(TVAoVivo, TrocaDeAudio, JanelaModerna):
         elif tipo == "vozes_clonadas":
             self.atualizar_vozes_clonadas(dado)
             self.definir_saude(self.itens_saude())
+        elif tipo == "vozes_importadas":
+            self.atualizar_vozes_importadas(dado)
         elif tipo == "tocar":
             self._tocar(dado)
         elif tipo == "audio":                          # aba 🎧 Áudio: faixas lidas, encaixe, ondas, amostra, troca
