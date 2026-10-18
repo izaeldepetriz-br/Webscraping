@@ -1,0 +1,173 @@
+# Teste de vozes (só neste ramo, não vai para a main): XTTS-v2, Chatterbox e OpenVoice falando a mesma cena em
+# português, no processador. O último passo mede todos com a mesma régua (Whisper, UTMOS e semelhança de voz) e
+# guarda os áudios + o comparativo num ramo novo "audios-vozes-<número da execução>".
+# Se um passo falhar, o fim do registro dele vira uma anotação de erro no resumo da execução.
+name: Teste de vozes
+
+on:
+  push:
+    branches: [teste-xtts]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  TORCH_CPU: https://download.pytorch.org/whl/cpu
+
+jobs:
+  referencia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: XTTS-v2 lendo o texto de referência (a voz-alvo)
+        run: |
+          set -o pipefail
+          { pip install torch torchaudio --index-url $TORCH_CPU && pip install coqui-tts \
+            && python .github/scripts/vozes_xtts.py saida referencia; } 2>&1 | tee registro_referencia.txt
+      - name: Mostrar o erro
+        if: failure()
+        run: echo "::error title=referencia::$(tail -n 40 registro_referencia.txt | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: referencia
+          path: |
+            saida/
+            registro_referencia.txt
+
+  xtts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: XTTS-v2 (cena + catálogo das vozes prontas)
+        run: |
+          set -o pipefail
+          { pip install torch torchaudio --index-url $TORCH_CPU && pip install coqui-tts \
+            && python .github/scripts/vozes_xtts.py saida tudo; } 2>&1 | tee registro_xtts.txt
+      - name: Mostrar o erro
+        if: failure()
+        run: echo "::error title=xtts::$(tail -n 40 registro_xtts.txt | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xtts
+          path: |
+            saida/
+            registro_xtts.txt
+
+  chatterbox:
+    needs: referencia
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: referencia
+          path: ref
+      - name: Chatterbox Multilingual (voz padrão e imitando o alvo)
+        run: |
+          set -o pipefail
+          { pip install torch==2.6.0 torchaudio==2.6.0 --index-url $TORCH_CPU && pip install chatterbox-tts \
+            && python .github/scripts/vozes_chatterbox.py saida ref/saida/ref_alvo.wav; } 2>&1 | tee registro_chatterbox.txt
+      - name: Mostrar o erro
+        if: failure()
+        run: echo "::error title=chatterbox::$(tail -n 40 registro_chatterbox.txt | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chatterbox
+          path: |
+            saida/
+            registro_chatterbox.txt
+
+  openvoice:
+    needs: referencia
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: referencia
+          path: ref
+      - name: Piper (faber e edresson) e OpenVoice V2 (timbre do alvo)
+        run: |
+          set -o pipefail
+          {
+            V=https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/pt/pt_BR
+            mkdir -p piper vozes
+            curl -sSL https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz | tar -xz -C piper
+            for v in faber/medium/pt_BR-faber-medium edresson/low/pt_BR-edresson-low; do
+              curl -sSL -o vozes/$(basename $v).onnx $V/$v.onnx
+              curl -sSL -o vozes/$(basename $v).onnx.json $V/$v.onnx.json
+            done
+            python .github/scripts/vozes_piper.py piper_saida piper/piper/piper vozes
+            pip install torch torchaudio --index-url $TORCH_CPU
+            pip install librosa soundfile huggingface_hub eng_to_ipa inflect unidecode pypinyin jieba cn2an
+            pip install --no-deps git+https://github.com/myshell-ai/OpenVoice.git
+            python .github/scripts/vozes_openvoice.py saida ref/saida/ref_alvo.wav piper_saida
+            cp piper_saida/*.wav saida/
+          } 2>&1 | tee registro_openvoice.txt
+      - name: Mostrar o erro
+        if: failure()
+        run: echo "::error title=openvoice::$(tail -n 40 registro_openvoice.txt | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: openvoice
+          path: |
+            saida/
+            piper_saida/
+            registro_openvoice.txt
+
+  comparar:
+    needs: [referencia, xtts, chatterbox, openvoice]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          path: resultados
+      - name: Medir todos com a mesma régua
+        run: |
+          set -o pipefail
+          { pip install torch torchaudio --index-url $TORCH_CPU \
+            && pip install librosa faster-whisper \
+            && { pip install resemblyzer || echo "::warning::resemblyzer não instalou (sem a semelhança de voz)"; } \
+            && python .github/scripts/comparar_vozes.py resultados; } 2>&1 | tee resultados/registro_comparar.txt
+      - name: Mostrar o erro
+        if: failure()
+        run: echo "::error title=comparar::$(tail -n 40 resultados/registro_comparar.txt | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+      - name: Guardar os áudios num ramo de resultados
+        if: always()
+        run: |
+          cd resultados
+          git init -q -b audios-vozes-${{ github.run_id }}
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Resultados do teste de vozes (execução ${{ github.run_id }})"
+          git push -q "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD
+          echo "::notice title=Resultados::ramo audios-vozes-${{ github.run_id }}"
