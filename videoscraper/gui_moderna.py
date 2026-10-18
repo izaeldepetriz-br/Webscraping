@@ -4108,7 +4108,8 @@ class JanelaModerna(ctk.CTk):
         modos = ctk.CTkFrame(lateral, fg_color="transparent")
         modos.pack(fill="x", **p)
         self._cartoes_modo_voz: dict[str, ctk.CTkFrame] = {}
-        for valor, titulo, texto in (
+        modos.grid_columnconfigure((0, 1, 2), weight=1, uniform="modo")     # 3 por linha (5 não cabem lado a lado)
+        for n, (valor, titulo, texto) in enumerate((
                 ("piper", "Piper", "Grátis, no seu PC. Voz mais robótica; uma voz para o filme todo."),
                 ("local", "XTTS-v2", "Grátis, no seu PC. Voz natural (e as vozes importadas); usa a placa de "
                                      "vídeo. Instale o motor uma vez (~3 GB)."),
@@ -4116,16 +4117,16 @@ class JanelaModerna(ctk.CTk):
                                               "acima dela, por caractere."),
                 ("gemini", "Gemini (premium)", "Voz natural, com emoção. Pago por uso (Google AI Studio)."),
                 ("misto", "Misto: Gemini + Piper", "Principais com o Gemini, figurantes com o Piper. "
-                                                   "Economiza pedidos.")):
+                                                   "Economiza pedidos."))):
             cartao = ctk.CTkFrame(modos, fg_color=Tema.CAMPO, corner_radius=12, border_width=1,
                                   border_color=Tema.CAMPO_BORDA)
-            cartao.pack(side="left", fill="both", expand=True, padx=(0, 10))
+            cartao.grid(row=n // 3, column=n % 3, sticky="nsew", padx=(0, 10), pady=(0, 10))
             ctk.CTkRadioButton(cartao, text=titulo, value=valor, variable=self.var_jf_modo_voz,
                                command=self._ao_escolher_modo_voz, font=self.f_botao, text_color=Tema.TEXTO,
                                fg_color=Tema.PRIMARIA, hover_color=Tema.PRIMARIA_HOVER).pack(anchor="w", padx=14,
                                                                                               pady=(12, 4))
             ctk.CTkLabel(cartao, text=texto, font=ctk.CTkFont(Tema.FAMILIA, 11), text_color=Tema.TEXTO_SUAVE,
-                         anchor="w", justify="left", wraplength=170).pack(anchor="w", padx=14, pady=(0, 12))
+                         anchor="w", justify="left", wraplength=240).pack(anchor="w", padx=14, pady=(0, 12))
             self._cartoes_modo_voz[valor] = cartao
         self.var_jf_motor_voz.trace_add("write", lambda *_: self._sincronizar_modo_voz())
         self.var_jf_figurantes_piper.trace_add("write", lambda *_: self._sincronizar_modo_voz())
@@ -4462,9 +4463,8 @@ class JanelaModerna(ctk.CTk):
         self.bt_ouvir_local = self._botao(linha, "▶  Ouvir uma frase de teste", self.ao_ouvir_voz_local, "fantasma")
         self.bt_ouvir_local.pack(side="left", padx=(8, 0))
         self.var_jf_conferir_falas = tk.BooleanVar(self, value=True)
-        self._checkbox(lateral, "Conferir cada fala com o Whisper (no PC): o XTTS-v2 às vezes inventa uma sílaba no "
-                                "fim ou embola uma palavra; a sobra é cortada e a embolada, gerada de novo (um pouco "
-                                "mais lento)", self.var_jf_conferir_falas)
+        self._checkbox(lateral, "Conferir cada fala com o Whisper: corta a sílaba que sobra no fim e refaz a embolada",
+                       self.var_jf_conferir_falas)
         self.atualizar_motor_local(self._motor_local)
 
     _motor_local: dict | None = None
