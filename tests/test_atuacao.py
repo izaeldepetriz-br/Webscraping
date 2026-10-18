@@ -137,3 +137,43 @@ def test_tom_sobe_sem_mudar_a_duracao():
     assert at.mudar_tom(som, TAXA, 2.0, None) is som                       # sem o ffmpeg, fica como está
     novo, feito = at.interpretar_som(som, TAXA, "grito", 1.0, FFMPEG)
     assert feito["semitons"] == 2.0 and len(novo) == len(som)
+
+
+def vogal(f0: float = 140.0, segundos: float = 1.0) -> np.ndarray:
+    """Um "a" de mentira: os harmônicos do tom com as ressonâncias da boca (formantes em 700, 1200 e 2600 Hz)."""
+    t = np.arange(int(segundos * TAXA)) / TAXA
+    som = np.zeros(len(t))
+    for h in range(1, int(11000 / f0)):
+        amp = sum(a / (1 + ((f0 * h - F) / B) ** 2) for F, B, a in ((700, 90, 1.0), (1200, 110, 0.6), (2600, 160, 0.3)))
+        som += amp * np.sin(2 * np.pi * f0 * h * t)
+    return som / np.abs(som).max() * 0.5
+
+
+def centro_dos_formantes(som: np.ndarray, f0: float) -> float:
+    """O "centro" do envelope (medido nos harmônicos): sobe quando a garganta fica menor."""
+    espectro, f = np.abs(np.fft.rfft(som * np.hanning(len(som)))), np.fft.rfftfreq(len(som), 1 / TAXA)
+    harmonicos = np.arange(3, int(3500 / f0)) * f0
+    amps = np.array([espectro[np.argmin(abs(f - h))] for h in harmonicos])
+    return float((harmonicos * amps ** 2).sum() / (amps ** 2).sum())
+
+
+def test_garganta_menor_ou_maior_sem_mudar_o_tom():
+    som = vogal()
+    antes = centro_dos_formantes(som, 140)
+    menor, maior = at.mudar_formantes(som, TAXA, 1.10), at.mudar_formantes(som, TAXA, 0.94)
+    assert len(menor) == len(som) and at.mudar_formantes(som, TAXA, 1.0) is som
+    assert centro_dos_formantes(menor, 140) / antes > 1.04 and centro_dos_formantes(maior, 140) / antes < 0.985
+    for x in (menor, maior):                                                 # o tom continua 140 Hz
+        assert abs(np.median(f0_por_quadro(x * 0.5 / np.abs(x).max(), 140)) - 140) < 3
+
+
+@pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
+def test_variante_jovem_sobe_o_tom_e_a_garganta(tmp_path):
+    som = vogal()
+    jovem = at.variar_som(som, TAXA, 3.0, 1.10, FFMPEG)
+    assert len(jovem) == len(som) and abs(np.sqrt(np.mean(jovem ** 2)) / np.sqrt(np.mean(som ** 2)) - 1) < 0.05
+    assert abs(np.median(f0_por_quadro(jovem, 166)) / 140 - 2 ** (3 / 12)) < 0.03
+    wav = gravar(tmp_path / "fala.wav", som)
+    assert at.variar(wav, -2.5, 0.93, FFMPEG) and at.ler_wav(wav)[0].shape == som.shape
+    (tmp_path / "quebrado.wav").write_bytes(b"RIFF")
+    assert not at.variar(tmp_path / "quebrado.wav", 2.0, 1.04, FFMPEG)

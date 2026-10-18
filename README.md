@@ -254,6 +254,22 @@ primeira falha (antes esperava o tempo limite em cada filme).
   - **medo** (treme rápido, com ar), **tristeza** (tremor leve, mais grave e escura), **alegria** (mais aguda e
     brilhante) e **sussurro** (a voz vira ar de verdade, sem a vibração).
   Vale com ou sem o Chatterbox (só o XTTS-v2 também ganha a interpretação) e não muda a duração da fala.
+- **228 vozes no XTTS-v2, sem clonar ninguém: as variantes**. Cada uma das 57 vozes prontas (genéricas) ganha 3
+  variantes: **grave** (tom ~2 semitons abaixo e a "garganta" maior), **aguda** (2 semitons acima) e **jovem** (2 a 3
+  semitons acima e a garganta 10% menor: os adolescentes e as crianças, que as prontas, todas de adultos, não tinham).
+  A garganta são os **formantes** (as ressonâncias que dizem o tamanho de quem fala): o Maestro muda o envelope do
+  som sem mudar o tom, e o tom pelo ffmpeg. Na tabela "Vozes dos personagens", um 2º menu escolhe a variante
+  ("Ana Florence · jovem"); também funciona com o Chatterbox (ele imita a voz de base e a variante vem depois).
+- **Elenco fixo por obra, sem repetir voz na mesma cena** ("Uma voz para cada personagem"):
+  - agora também com o **XTTS-v2** (grátis): quem fala vem do **roteiro** ao lado do vídeo (botão Roteiro) ou, com a
+    chave do Gemini, ele ouve o filme; antes, no XTTS-v2, todos os homens saíam com uma voz e todas as mulheres com
+    outra;
+  - **ninguém repete a voz de outro na mesma cena** (quem fala a menos de 45 s um do outro): quem fala pouco
+    (figurante) não fica mais com a voz principal, ganha uma voz que nenhum personagem principal usa; quando as
+    vozes acabam, a repetida é de alguém que nunca está na mesma cena (e o registro avisa se não deu);
+  - criança e jovem ganham as variantes jovens; idoso, as graves;
+  - a série guarda o elenco (a escolha da tabela vale para os próximos episódios), separado por motor: trocar entre o
+    Gemini e o XTTS-v2 não perde a escolha do outro.
 - **O grito continua mais alto na trilha**: a trilha deixava todas as falas no mesmo volume, e o grito ficava na
   altura da conversa. Agora o volume segue a emoção (grito +6 dB, raiva +3 dB, sussurro −9 dB...), para todos os
   motores de voz.

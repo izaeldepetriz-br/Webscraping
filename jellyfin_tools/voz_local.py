@@ -130,6 +130,16 @@ VOZES_PRONTAS: dict[str, str] = {
     "Luis Moray": "masculina, adulta",
 }
 VOZ_PADRAO = "Damien Black"
+# As VARIANTES de cada voz pronta (mais vozes sem clonar ninguém): outro tom (semitons) e outra "garganta" (os
+# formantes: 1,10 = 10% menor, voz mais jovem). A mesma voz genérica com outro tom e outra garganta soa como outra
+# pessoa: as 57 viram 228, e a "jovem" faz os adolescentes (as prontas são todas de adultos). "Ana Florence · jovem".
+SEPARADOR_VARIANTE = " · "
+VARIANTES: dict[str, dict[str, tuple[float, float]]] = {      # variante: {gênero: (semitons, formantes)}
+    "grave": {"masculina": (-2.5, 0.93), "feminina": (-2.0, 0.94)},
+    "aguda": {"masculina": (2.0, 1.04), "feminina": (2.0, 1.04)},
+    "jovem": {"masculina": (3.0, 1.10), "feminina": (2.0, 1.10)},
+}
+PERFIL_DA_VARIANTE = {"grave": "adulta, mais grave", "aguda": "adulta, mais aguda", "jovem": "jovem"}
 
 # O "estúdio" que roda no Python do pacote (fica em motor_vozes/servidor.py). O que a biblioteca escreve na tela vai
 # para o registro (stderr): a saída fica só para as respostas, uma linha JSON por pedido.
@@ -268,13 +278,28 @@ def frases_para_falar(texto: str, emocao: str = NORMAL) -> list[list]:
 
 
 # ----------------------------------------------------------------- as vozes
-def vozes_por_genero(genero: str) -> list[str]:
-    return [v for v, perfil in VOZES_PRONTAS.items() if perfil.startswith(genero)]
+def separar_variante(voz: str) -> tuple[str, str]:
+    """'Ana Florence · jovem' -> ('Ana Florence', 'jovem'); sem variante -> (voz, '')."""
+    base, separador, variante = str(voz or "").rpartition(SEPARADOR_VARIANTE)
+    return (base, variante) if separador and base and variante in VARIANTES else (voz, "")
+
+
+def com_variante(voz: str, variante: str) -> str:
+    """('Ana Florence', 'jovem') -> 'Ana Florence · jovem' (variante vazia ou desconhecida: a voz como está)."""
+    base = separar_variante(voz)[0]
+    return f"{base}{SEPARADOR_VARIANTE}{variante}" if variante in VARIANTES else base
+
+
+def vozes_por_genero(genero: str, variantes: bool = False) -> list[str]:
+    """As vozes prontas do gênero; com variantes, depois delas as variantes de cada uma (grave, aguda, jovem)."""
+    base = [v for v, perfil in VOZES_PRONTAS.items() if perfil.startswith(genero)]
+    return base + ([com_variante(v, n) for n in VARIANTES for v in base] if variantes else [])
 
 
 def texto_do_menu(voz: str) -> str:
-    """'Ana Florence' -> 'Ana Florence (feminina, adulta)'."""
-    return f"{voz} ({VOZES_PRONTAS[voz]})" if voz in VOZES_PRONTAS else voz
+    """'Ana Florence' -> 'Ana Florence (feminina, adulta)'; 'Ana Florence · jovem' -> '... (feminina, jovem)'."""
+    perfil = perfil_da_voz(voz)
+    return f"{voz} ({perfil})" if perfil and separar_variante(voz)[0] in VOZES_PRONTAS else voz
 
 
 def valor_do_menu(texto: str) -> str:
@@ -290,11 +315,16 @@ def menu_da_importada(v) -> str:
 
 
 def perfil_da_voz(voz: str, importadas: list = ()) -> str:
-    """'feminina, adulta' (ou '' se não sabe) de uma voz pronta ou importada."""
+    """'feminina, adulta' (ou '' se não sabe) de uma voz pronta ou importada; da variante, 'feminina, jovem'."""
+    voz, variante = separar_variante(voz)
     if voz.startswith(PREFIXO_IMPORTADA):
         achada = next((v for v in importadas if v.id == voz[len(PREFIXO_IMPORTADA):]), None)
-        return achada.perfil if achada else ""
-    return VOZES_PRONTAS.get(voz, "")
+        perfil = achada.perfil if achada else ""
+    else:
+        perfil = VOZES_PRONTAS.get(voz, "")
+    if perfil and variante:
+        return f"{perfil.split(',')[0]}, {PERFIL_DA_VARIANTE[variante]}"
+    return perfil
 
 
 def equivalente(voz: str) -> str:
@@ -644,6 +674,7 @@ class MotorLocal(ServidorDeVoz):
         self.cortadas = self.refeitas = 0
         self.com_emocao: Counter = Counter()     # "gravação" / "chatterbox": quantas falas foram com emoção
         self.interpretadas: Counter = Counter()  # emoção -> quantas falas a interpretação mudou
+        self.variadas: Counter = Counter()       # variante -> quantas falas ("grave", "aguda", "jovem")
         self.como_ficou: dict[str, str] = {}     # emoção -> o que a interpretação fez (para o registro)
         self.importadas, self.pasta_importadas = list(importadas), pasta_importadas
         self.pedidos = 0
@@ -677,7 +708,7 @@ class MotorLocal(ServidorDeVoz):
     def _resolver(self, voz: str) -> tuple[dict, object]:
         """({"voz": nome pronto} ou {"referencia": wav importado}, a VozImportada ou None)."""
         from .vozes_importadas import GRAVACAO, PIPER, arquivo_da_gravacao
-        voz = voz or self.voz
+        voz = separar_variante(voz or self.voz)[0]          # a variante entra depois (_variar), na fala pronta
         if voz.startswith("clone:"):                    # clonada do Gemini: a importada de mesmo nome, se houver
             nome = voz[len("clone:"):].lower()
             achada = next((v for v in self.importadas if v.nome.lower() == nome and v.tipo == GRAVACAO), None)
@@ -788,15 +819,30 @@ class MotorLocal(ServidorDeVoz):
         for sobra in wav.parent.glob(f"{wav.stem}-tentativa*.wav"):
             sobra.unlink(missing_ok=True)
 
+    def _ffmpeg(self) -> str | None:
+        if self.ffmpeg is None:
+            from .dublagem import localizar_ffmpeg
+            self.ffmpeg = localizar_ffmpeg() or ""
+        return self.ffmpeg or None
+
+    def _variar(self, wav: Path, voz: str) -> None:
+        """A variante da voz ("Ana Florence · jovem"): outro tom e outra garganta na fala já conferida (e antes da
+        interpretação). Também na fala do Chatterbox, que imitou a voz de base."""
+        base, variante = separar_variante(voz or self.voz)
+        if not variante:
+            return
+        from . import atuacao
+        genero = "feminina" if perfil_da_voz(base, self.importadas).startswith("feminina") else "masculina"
+        semitons, formantes = VARIANTES[variante][genero]
+        if atuacao.variar(wav, semitons, formantes, self._ffmpeg()):
+            self.variadas[variante] += 1
+
     def _interpretar(self, wav: Path, emocao: str) -> None:
         """A interpretação da emoção (atuacao.py) na fala já conferida: o choro treme, a raiva rasga..."""
         if emocao == NORMAL or self.forca <= 0:
             return
         from . import atuacao
-        if self.ffmpeg is None:
-            from .dublagem import localizar_ffmpeg
-            self.ffmpeg = localizar_ffmpeg() or ""
-        feito = atuacao.interpretar(wav, emocao, self.forca, self.ffmpeg or None)
+        feito = atuacao.interpretar(wav, emocao, self.forca, self._ffmpeg())
         if feito:
             self.interpretadas[emocao] += 1
             self.como_ficou[emocao] = atuacao.resumo(feito)
@@ -820,9 +866,10 @@ class MotorLocal(ServidorDeVoz):
             emocao = emocao_da_nota(nota)
             modo, falar = self._como_falar(voz, emocao, parar)
             if modo == "chatterbox" and self.um_de_cada_vez():
-                depois.append((p[0], Path(p[1]), falar, emocao))
+                depois.append((p[0], Path(p[1]), falar, emocao, voz))
                 continue
             self._falar_conferindo(p[0], Path(p[1]), falar)
+            self._variar(Path(p[1]), voz)
             self._interpretar(Path(p[1]), emocao)
             feitas += 1
             if ao_progresso:
@@ -833,10 +880,11 @@ class MotorLocal(ServidorDeVoz):
                 self.avisar(f"um de cada vez na placa{memoria}: fechando o XTTS-v2 para o Chatterbox fazer as "
                             f"{len(depois)} fala(s) com emoção")
             ServidorDeVoz.fechar(self)           # só o XTTS-v2 (o Chatterbox abre agora)
-            for texto, wav, falar, emocao in depois:
+            for texto, wav, falar, emocao, voz in depois:
                 if parar and parar():
                     raise ErroDublagem("interrompido (botão Parar)")
                 self._falar_conferindo(texto, wav, falar)
+                self._variar(wav, voz)
                 self._interpretar(wav, emocao)
                 feitas += 1
                 if ao_progresso:
@@ -848,6 +896,9 @@ class MotorLocal(ServidorDeVoz):
             self.avisar(f"emoção: {self.com_emocao['gravação']} fala(s) com a gravação de emoção da voz, "
                         f"{self.com_emocao['chatterbox']} pelo Chatterbox")
             self.com_emocao.clear()
+        if self.variadas and self.avisar:
+            self.avisar("variantes das vozes: " + ", ".join(f"{n} fala(s) {v}" for v, n in self.variadas.items()))
+            self.variadas.clear()
         if self.interpretadas and self.avisar:
             self.avisar("interpretação da emoção: " + "; ".join(
                 f"{n} fala(s) {nome_da_emocao(e).lower()} ({self.como_ficou[e]})" for e, n in self.interpretadas.items()))

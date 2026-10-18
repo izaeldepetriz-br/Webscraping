@@ -4092,6 +4092,14 @@ def test_janela_vozes_dos_personagens(app):
     janela = DialogoVozes(app, "Filme", ["x"], ["Pessoa 1"], {}, app.VOZES_GEMINI)
     janela.bt_uma_voz.invoke()
     assert janela.resultado == {}                                       # uma voz só para todos
+    xtts = tuple(f"XTTS: {v}" for v in app.vozes_locais_do_menu())          # XTTS-v2: o 2º menu, a variante
+    janela = DialogoVozes(app, "Filme", ["Tina", "Bob"], ["Tina", "Bob"],
+                          {"Tina": "Ana Florence · jovem", "Bob": "Damien Black"}, xtts, ("grave", "aguda", "jovem"))
+    assert janela.vars["Tina"].get() == "XTTS: Ana Florence (feminina, adulta)"
+    assert janela.vars_variante["Tina"].get() == "jovem" and janela.vars_variante["Bob"].get() == "original"
+    janela.vars_variante["Bob"].set("grave")
+    janela.bt_dublar.invoke()
+    assert janela.resultado == {"Tina": "Ana Florence · jovem", "Bob": "Damien Black · grave"}
 
 
 def test_dublagem_mista_por_filme_e_figurantes(app, tmp_path, monkeypatch):

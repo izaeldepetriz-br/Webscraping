@@ -2700,7 +2700,7 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaMode
             if marcados is None:
                 return
             premium = {str(itens[k].video) for k in marcados}
-        if automacao.usa_gemini(o) and o.voz_por_personagem and premium:
+        if automacao.personagem_por_voz(o) and premium:
             self._ouvir_personagens(itens, o, premium)
         else:
             self._dublar(itens, o, premium=premium)
@@ -2741,7 +2741,7 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaMode
         opção de Configurações; "ativo": False quando não vale com a voz/chaves de agora (fica apagada, com o
         motivo)."""
         o = self.obter_opcoes_jellyfin()
-        gemini, cloud = automacao.usa_gemini(o), automacao.usa_cloud(o)
+        gemini, cloud, local_xtts = automacao.usa_gemini(o), automacao.usa_cloud(o), automacao.usa_local(o)
         chave_g = bool(automacao.chave_gemini(o))
         claude = bool(o.chave_claude or os.environ.get("ANTHROPIC_API_KEY"))
         atual = gastos.atual()
@@ -2825,13 +2825,17 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaMode
              "interpretação)", "quem": "Gemini (escuta)", "gemini": True,
              "custo": "na mesma escuta" if gemini else "—",
              "situacao": situacao("var_jf_emocao_da_cena") if gemini else so_gemini},
-            {"var": "var_jf_voz_por_personagem", "ativo": gemini and chave_g, "oque": "Uma voz para cada personagem",
-             "quem": "Gemini", "gemini": True, "custo": "+1 pedido de escuta a cada 15 min de filme" if gemini else "—",
-             "situacao": situacao("var_jf_voz_por_personagem") if gemini else "só com a voz do Gemini"},
-            {"var": "var_jf_usar_roteiro", "ativo": gemini and o.voz_por_personagem,
+            {"var": "var_jf_voz_por_personagem", "ativo": (gemini and chave_g) or local_xtts,
+             "oque": "Uma voz para cada personagem (elenco sem repetir voz na cena)",
+             "quem": "Gemini" if gemini else "XTTS-v2 (quem fala: " + ("Gemini)" if chave_g else "roteiro)"),
+             "gemini": True, "custo": ("+1 pedido de escuta a cada 15 min de filme" if gemini or (local_xtts and chave_g)
+                                       else "grátis (precisa do roteiro ao lado do vídeo)" if local_xtts else "—"),
+             "situacao": (situacao("var_jf_voz_por_personagem") if gemini or local_xtts
+                          else "só com a voz do Gemini ou do XTTS-v2")},
+            {"var": "var_jf_usar_roteiro", "ativo": (gemini or local_xtts) and o.voz_por_personagem,
              "oque": "Usar o roteiro (botão Roteiro) para saber quem fala", "quem": "no seu PC", "custo": "grátis (o Gemini ouve "
-             "menos)", "situacao": (situacao("var_jf_usar_roteiro") if gemini and o.voz_por_personagem
-                                   else "precisa da voz por personagem (Gemini)")},
+             "menos)", "situacao": (situacao("var_jf_usar_roteiro") if (gemini or local_xtts) and o.voz_por_personagem
+                                   else "precisa da voz por personagem")},
             {"var": "var_jf_camada_de_emocao", "ativo": gemini and o.emocao_da_cena and o.separar_vozes,
              "oque": "Camada de emoção (a voz original baixinho nas falas intensas)", "quem": "no seu PC",
              "custo": "grátis", "situacao": (situacao("var_jf_camada_de_emocao")
@@ -3103,9 +3107,9 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaMode
             else:
                 texto_fim += ("\n\nAinda sem legenda em português ao lado do vídeo: a comparação acontece na hora "
                               "de dublar.")
-            if not (automacao.usa_gemini(o) and o.voz_por_personagem):
-                texto_fim += ("\n\nPara usar: Configurações > Dublagem, motor Gemini (ou Misto) com \"Uma voz para "
-                              "cada personagem\" marcada.")
+            if not automacao.personagem_por_voz(o):
+                texto_fim += ("\n\nPara usar: Configurações > Dublagem, motor Gemini (ou Misto) ou XTTS-v2, com "
+                              "\"Uma voz para cada personagem\" marcada.")
             self._log.info("Roteiro: %s (%d falas, %d personagens)", destino, len(dialogos), len(nomes))
             self.fila.put(("msg", ("Roteiro", texto_fim, "info")))
 
@@ -3289,21 +3293,24 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaMode
                               + (f"\n\n{extra}" if extra else ""), "sucesso")
 
     def _ouvir_personagens(self, itens: list, o, premium: set | None = None) -> None:
-        """Voz por personagem, 1ª parte (numa tarefa): o Gemini ouve cada filme e diz quem fala cada fala. Depois,
-        na janela, a tabela "Pessoa -> Voz" de cada filme (_escolher_vozes) e a dublagem."""
+        """Voz por personagem, 1ª parte (numa tarefa): o Gemini ouve cada filme e diz quem fala cada fala (no XTTS-v2
+        sem a chave do Gemini, o roteiro diz). Depois, na janela, a tabela "Pessoa -> Voz" de cada filme
+        (_escolher_vozes) e a dublagem."""
         def tarefa():
-            try:
-                cliente = voz_gemini._cliente(automacao.chave_gemini(o))
-            except ErroDublagem as erro:
-                self.fila.put(("msg", ("Dublar filmes", f"Não deu para usar o Gemini: {erro}", "erro")))
-                return
+            cliente = None
+            if automacao.usa_gemini(o) or automacao.chave_gemini(o):
+                try:
+                    cliente = voz_gemini._cliente(automacao.chave_gemini(o))
+                except ErroDublagem as erro:
+                    self.fila.put(("msg", ("Dublar filmes", f"Não deu para usar o Gemini: {erro}", "erro")))
+                    return
             achados, ouvir = [], [i for i in itens if premium is None or str(i.video) in premium]
             for k, item in enumerate(ouvir):
                 if self.evento_parar.is_set():
                     break
                 try:
                     falas = falas_da_legenda(item.legenda)
-                    lista = automacao.ouvir_personagens(
+                    lista = automacao.quem_fala(
                         o, item.video, falas, cliente, parar=self.evento_parar.is_set, serie=item.serie,
                         ao_progresso=lambda f, k=k, item=item: self.fila.put(("jf_analise", (
                             (k + f) / len(ouvir), f"Ouvindo quem fala em {item.video.stem} ({k + 1} de {len(ouvir)})"))))
@@ -3324,14 +3331,16 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaMode
             if not lista:                                      # não deu para ouvir: uma voz só
                 itens.append(item)
                 continue
-            sugestao = personagens.distribuir_vozes(lista, o.voz_gemini, automacao.figurante(o), o.limite_figurante,
-                                                    fixas=automacao.vozes_fixas(item.video, item.serie))
+            chave = automacao.catalogo_de_vozes(o).chave
+            sugestao = automacao.elenco_por_personagem(o, lista, falas, automacao.vozes_fixas(item.video, item.serie,
+                                                                                                chave), self._log)
+            principal = automacao.voz_principal(o)
             principais = [p for p in lista if len(p.falas) >= personagens.MINIMO_FALAS][:8]
             if not principais:
                 itens.append(item)
                 continue
             if o.vozes_sem_tabela:                             # Configurações: escolhe sozinho, sem a tabela
-                escolha = {p.rotulo: sugestao.get(p.rotulo, o.voz_gemini) for p in principais}
+                escolha = {p.rotulo: sugestao.get(p.rotulo, principal) for p in principais}
             else:
                 escolha = self.pedir_vozes(item.video.stem, personagens.resumo(principais, falas, len(principais)),
                                            [p.rotulo for p in principais], sugestao)
@@ -3340,10 +3349,10 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaMode
                 continue
             itens.append(item)
             if escolha:
-                mapa = {p.rotulo: escolha.get(p.rotulo, sugestao.get(p.rotulo, o.voz_gemini)) for p in lista}
+                mapa = {p.rotulo: escolha.get(p.rotulo, sugestao.get(p.rotulo, principal)) for p in lista}
                 vozes[str(item.video)] = personagens.vozes_por_fala(lista, mapa)
                 if item.serie:                                 # os próximos episódios usam as mesmas vozes
-                    personagens.salvar_elenco(automacao.arquivo_elenco(item.serie), lista, mapa)
+                    personagens.salvar_elenco(automacao.arquivo_elenco(item.serie), lista, mapa, chave)
                 self._log.info("%s: %s", item.video.name, ", ".join(f"{r} -> {v}" for r, v in escolha.items()))
         if itens:
             self._dublar(itens, o, vozes, premium)

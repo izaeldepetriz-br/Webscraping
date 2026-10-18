@@ -363,6 +363,67 @@ def _limitar(som: np.ndarray) -> np.ndarray:
     return saida
 
 
+def mudar_formantes(som: np.ndarray, taxa: int, fator: float, voltas: int = 8) -> np.ndarray:
+    """A "garganta" menor (fator > 1: voz mais jovem) ou maior (< 1: mais encorpada): o envelope do espectro (os
+    formantes, que dizem o tamanho de quem fala) estica ou encolhe no eixo das frequências; o tom (os harmônicos)
+    fica onde está. O envelope de cada pedacinho de ~43 ms é o "envelope verdadeiro" (o cepstro alisado que, volta a
+    volta, sobe até encostar nos picos dos harmônicos)."""
+    if abs(fator - 1) < 0.005 or len(som) < 64:
+        return som
+    n = 1024 if taxa >= 16000 else 512
+    passo, corte = n // 4, max(8, int(taxa / 700))            # (o tom de até ~350 Hz fica fora do envelope)
+    janela = np.hanning(n + 1)[:-1]
+    x = np.pad(som, (n, n))
+    quadros = np.lib.stride_tricks.sliding_window_view(x, n)[::passo] * janela
+    espectro = np.fft.rfft(quadros, axis=1)
+    medido = np.log(np.abs(espectro) + 1e-9)
+    alvo = medido
+    for _ in range(voltas):
+        cepstro = np.fft.irfft(alvo, n, axis=1)
+        cepstro[:, corte:n - corte + 1] = 0
+        envelope = np.fft.rfft(cepstro, axis=1).real
+        alvo = np.maximum(medido, envelope)
+    faixas = envelope.shape[1]
+    onde = np.clip(np.arange(faixas) / fator, 0, faixas - 1)
+    i = np.minimum(onde.astype(int), faixas - 2)
+    f = onde - i
+    novo_envelope = envelope[:, i] * (1 - f) + envelope[:, i + 1] * f
+    saida_quadros = np.fft.irfft(espectro * np.exp(novo_envelope - envelope), n, axis=1) * janela
+    saida, pesos = np.zeros(len(x)), np.zeros(len(x))
+    for k, quadro in enumerate(saida_quadros):
+        saida[k * passo:k * passo + n] += quadro
+        pesos[k * passo:k * passo + n] += janela ** 2
+    saida = saida / np.maximum(pesos, 1e-3)
+    return saida[n:n + len(som)]
+
+
+def variar_som(som: np.ndarray, taxa: int, semitons: float, formantes: float, ffmpeg: str | None = None,
+               executar=subprocess.run) -> np.ndarray:
+    """A VARIANTE de uma voz: outro tom (semitons) e outra "garganta" (formantes: 1,10 = 10% menor). O ffmpeg sobe o
+    tom e a garganta juntos; a garganta é acertada depois. Sem o ffmpeg, muda só a garganta. Mesma duração e volume."""
+    if not len(som) or not np.abs(som).max():
+        return som
+    tom = mudar_tom(som, taxa, semitons, ffmpeg, executar)
+    ja_subiu = 2 ** (semitons / 12) if tom is not som else 1.0
+    saida = mudar_formantes(tom, taxa, formantes / ja_subiu)
+    saida = saida * (_rms(som) / (_rms(saida) + 1e-12))
+    return _limitar(saida)
+
+
+def variar(wav: str | Path, semitons: float, formantes: float, ffmpeg: str | None = None,
+           executar=subprocess.run) -> bool:
+    """A variante na fala gravada em `wav` (no lugar). False se não deu para ler (fica como está)."""
+    wav = Path(wav)
+    try:
+        som, taxa = ler_wav(wav)
+    except (OSError, EOFError, ValueError, wave.Error):
+        return False
+    temporario = wav.with_name(wav.stem + ".variante.wav")
+    gravar_wav(temporario, variar_som(som, taxa, semitons, formantes, ffmpeg, executar), taxa)
+    temporario.replace(wav)
+    return True
+
+
 # ----------------------------------------------------------------- tudo junto
 def interpretar_som(som: np.ndarray, taxa: int, emocao: str, forca: float = 1.0, ffmpeg: str | None = None,
                     semente: int = 0, executar=subprocess.run) -> tuple[np.ndarray, dict]:
