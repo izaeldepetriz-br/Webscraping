@@ -265,12 +265,36 @@ primeira falha (antes esperava o tempo limite em cada filme).
     o XTTS-v2 entende bem o português (91-98%), traz 57 vozes prontas e imita uma gravação curta, e a sobra que ele às
     vezes inventa é cortada pela conferência do Whisper. O OpenVoice não fala português sozinho: troca o timbre do
     Piper (o ritmo continua o do Piper) e imitou pouco a voz-alvo (72%).
+  - **Instalar confere o espaço no disco antes de baixar**: sem os ~9 GB livres (~4 GB sem a placa de vídeo), avisa
+    em português qual disco está cheio, em vez de parar no meio com um erro em inglês.
+  - **Plano B da placa de vídeo**: placa com pouca memória (ex.: 2 GB) ou nova demais para este PyTorch não derruba
+    mais a dublagem: o motor passa sozinho para o processador (mais devagar, mas termina) e avisa no registro.
+- **Emoção no XTTS-v2** (ele não tem "botão de emoção": no teste de 8 emoções, a raiva e a tristeza saíram no mesmo
+  tom). A emoção de cada fala vem da nota de direção e escolhe COMO a fala é feita:
+  - **Medida no PC, sem custo** (com a "Emoção da cena" ligada): o **volume** de cada fala do original comparado com
+    o das outras do mesmo filme. Bem mais alta (e com voz): **gritando**; bem mais baixa e quase sem "vibração":
+    **sussurrando**. Raiva e alegria no mesmo volume o volume não separa: essas vêm da nota do Gemini ou do "Refazer
+    esta fala" (escreva "chorando", "com medo"...).
+  - **Gravações de emoção da voz importada** (Importar voz > **Emoção da gravação**: Brava, Gritando, Triste,
+    Chorando, Alegre, Com medo, Sussurrando; 3 s ou mais, com o mesmo nome da voz): o XTTS-v2 copia o jeito da
+    gravação, e o timbre continua o da pessoa. Sem a de grito, serve a brava (e a de choro e a triste, uma pela outra).
+  - **Chatterbox (opcional, grátis, licença MIT)** — "⬇ Instalar o Chatterbox (emoção)": as falas com emoção que
+    não têm a gravação vão por ele, que **imita a mesma voz** (a fala de referência das vozes prontas é gerada uma vez
+    pelo XTTS-v2) com a **intensidade** de cada emoção (os valores do teste). Fica num ambiente à parte (as
+    bibliotecas dele brigam com as do XTTS-v2): ~1 GB (~5 GB com a placa NVIDIA) e o modelo (~3,2 GB) na 1ª fala com
+    emoção. O áudio dele leva uma marca d'água inaudível ("voz feita por IA"). Se ele falhar, o resto segue neutro
+    pelo XTTS-v2, com um aviso.
+  - **Por que não o F5-TTS** (testado com o ajuste em português, as mesmas 8 emoções): imita bem a voz, mas no
+    processador levou **de 2 a 4 minutos por frase** (o XTTS-v2 fez cada emoção inteira em 6 a 10 s), entendeu 92%
+    das palavras (XTTS-v2 98%, Chatterbox 96%), às vezes repete palavras e não tem controle de emoção.
 - **"Importar voz"** (Configurações > Dublagem): o arquivo, o **nome**, o **gênero** e a **idade** da voz.
   - **Modelo do Piper** (.onnx, com o .onnx.json ao lado): mais uma voz grátis no menu "Voz do Piper" e na tabela dos
     personagens (há várias em huggingface.co/rhasspy/piper-voices; em português: cadu, jeff...).
   - **Gravação de voz** (.wav, .mp3, .m4a..., de 6 a 60 s de fala): o XTTS-v2 fala com esse timbre. Pede só a
     declaração de que a voz é sua ou de quem autorizou; áudio de filmes, séries ou jogos não é aceito (a voz seria de
     atores).
+  - **Emoção da gravação** ("Normal (voz nova)" ou uma emoção): com o nome de uma voz já importada, a gravação entra
+    nela como a daquela emoção (veja "Emoção no XTTS-v2" acima).
 
 ### Novidades da v2.19.0
 
