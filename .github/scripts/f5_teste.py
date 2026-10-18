@@ -1,6 +1,7 @@
 """F5-TTS em português (o ajuste firstpixel/F5-TTS-pt-br, licença CC-BY-NC: só uso não comercial): as 8 falas de
 emoção imitando as mesmas 2 vozes do teste (as referências geradas pelo XTTS-v2) e o que o Whisper ouve de cada uma.
-Uso: python f5_teste.py <saida> <pasta com ref_f.wav e ref_m.wav>"""
+Também ouve as falas do XTTS-v2 e do Chatterbox daquele teste (para comparar). Uso:
+python f5_teste.py <saida> <pasta com ref_f.wav, ref_m.wav e xtts_*.wav> <pasta com chatterbox_*.wav>"""
 import json
 import sys
 import time
@@ -13,7 +14,7 @@ from huggingface_hub import hf_hub_download, list_repo_files
 sys.path.insert(0, str(Path(__file__).parent))
 from emocoes_comum import EMOCOES, REFERENCIA, frases_para_falar   # noqa: E402
 
-SAIDA, REFS = Path(sys.argv[1]), Path(sys.argv[2])
+SAIDA, REFS, OUTROS = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
 SAIDA.mkdir(parents=True, exist_ok=True)
 REPO = "firstpixel/F5-TTS-pt-br"
 arquivos = list_repo_files(REPO)
@@ -47,6 +48,15 @@ if modelo is None:
 from faster_whisper import WhisperModel  # noqa: E402
 ouvido = WhisperModel("small", device="cpu", compute_type="int8")
 resultado = []
+for motor, pasta in (("xtts", REFS), ("chatterbox", OUTROS)):          # os outros dois motores, para comparar
+    for chave, emocao, texto, _, _, _ in EMOCOES:
+        arquivo = pasta / f"{motor}_{chave}.wav"
+        if arquivo.is_file():
+            segmentos, _ = ouvido.transcribe(str(arquivo), language="pt", beam_size=5)
+            texto_ouvido = " ".join(s.text.strip() for s in segmentos)
+            resultado.append({"motor": motor, "emocao": emocao, "texto": texto, "ouvido": texto_ouvido,
+                              "leu_ponto": "ponto" in texto_ouvido.lower()})
+            print(f"{motor} · {emocao}: {texto_ouvido}", flush=True)
 for chave, emocao, texto, genero, _, _ in EMOCOES:
     t0, partes = time.time(), []
     for frase, pausa in frases_para_falar(texto):
