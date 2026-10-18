@@ -5444,62 +5444,52 @@ def test_aba_audio_versoes_diferentes_desligam_inserir(app, tmp_path, monkeypatc
 
 
 def test_importar_voz_pelas_configuracoes(app, tmp_path, monkeypatch):
-    """Configurações > Dublagem > "Importar voz": um modelo do Piper vira uma voz do menu; vídeo é recusado; uma
-    gravação (com o consentimento, o dono e a autorização) fica guardada e pode virar voz clonada no Gemini;
+    """Configurações > Dublagem > "Importar voz": um modelo do Piper vira uma voz do menu, com o nome, o gênero e a
+    idade; vídeo é recusado; uma gravação (só com a declaração, sem consentimento) fica guardada para o XTTS-v2;
     remover apaga a voz e a escolhida volta para a padrão."""
-    from types import SimpleNamespace
-
-    from jellyfin_tools import voz_gemini
-    from tests.test_voz_clonada import FFMPEG, VozesFalsas, wav
+    from tests.test_voz_clonada import FFMPEG, wav
     from tests.test_vozes_importadas import modelo_piper
-    from videoscraper import config, gui_moderna
+    from videoscraper import automacao, config, gui_moderna
     app.mostrar_aba(app.ABA_CONFIG)
     app._botoes_config["Dublagem"].invoke()
     assert "Nenhuma voz importada" in app.lb_vozes_importadas.cget("text")
     assert app.bt_remover_voz_importada.cget("state") == "disabled"
-    assert app.bt_clonar_importada.cget("state") == "disabled"
+    assert not hasattr(app, "var_imp_consentimento")                 # a importação não pede consentimento
     app.bt_importar_voz.invoke()                                     # sem arquivo: avisa
     assert "Escolha o arquivo" in app.caixas[-1][2]
     app.var_imp_arquivo.set(str(tmp_path / "Filme (2020).mkv"))     # áudio de vídeo: nunca (voz de atores)
     app.bt_importar_voz.invoke()
     assert app.caixas[-1][0] == "aviso" and "atores" in app.caixas[-1][2]
-    # um modelo do Piper: escolher o arquivo sugere o nome; importar põe a voz no menu "Voz do Piper"
+    # um modelo do Piper: escolher o arquivo sugere o nome; gênero e idade vão junto
     onnx = modelo_piper(tmp_path)
     monkeypatch.setattr(gui_moderna.filedialog, "askopenfilename", lambda **k: str(onnx))
     app.var_imp_nome.set("")
     app.ao_escolher_arquivo_voz()
     assert app.var_imp_nome.get() == "Cadu"
+    app.var_imp_genero.set("Masculina")
+    app.var_imp_idade.set("Jovem")
     app.bt_importar_voz.invoke()
     assert app.caixas[-1][0] == "sucesso" and "Voz do Piper" in app.caixas[-1][2]
     assert "cadu" in app.menu_voz_piper.cget("values") and app.var_imp_arquivo.get() == ""
     assert (config.ARQUIVO.parent / "vozes" / "cadu.onnx").is_file()
+    assert automacao.vozes_importadas()[0].perfil == "masculina, jovem"
     app.var_jf_voz_dublagem.set("cadu")
     assert app.obter_opcoes_jellyfin().voz_dublagem == "cadu"
-    if FFMPEG:                                                       # uma gravação para clonar
-        referencia, consentimento = tmp_path / "minha voz.wav", tmp_path / "consentimento.wav"
+    if FFMPEG:                                                       # uma gravação: só a declaração
+        referencia = tmp_path / "minha voz.wav"
         referencia.write_bytes(wav(12))
-        consentimento.write_bytes(wav(6))
         app.var_imp_arquivo.set(str(referencia))
         app.var_imp_nome.set("Izael")
-        app.var_imp_dono.set("Izael Depetriz")
-        app.var_imp_consentimento.set(str(consentimento))
+        app.var_imp_genero.set("Masculina")
+        app.var_imp_idade.set("Adulta")
         app.bt_importar_voz.invoke()
         esperar(app)
-        assert "confirmação" in app.caixas[-1][2]                    # falta marcar a autorização
+        assert "declaração" in app.caixas[-1][2]                     # falta marcar a declaração
         app.var_imp_autorizo.set(True)
         app.bt_importar_voz.invoke()
         esperar(app)
-        assert app.caixas[-1][0] == "sucesso" and "autorizada por Izael Depetriz" in app.caixas[-1][2]
-        assert "Izael" in app.lb_vozes_importadas.cget("text")
-        assert app.bt_clonar_importada.cget("state") == "normal"
-        # "Clonar no Gemini": as gravações importadas vão para o Google (de mentira), que devolve a chave
-        app.var_jf_chave_gemini.set("AIza-teste")
-        vozes = VozesFalsas()
-        monkeypatch.setattr(voz_gemini, "_cliente", lambda chave, avisar=None: SimpleNamespace(voices=vozes))
-        app.bt_clonar_importada.invoke()
-        esperar(app)
-        assert app.caixas[-1][0] == "sucesso" and len(vozes.pedidos) == 1
-        assert "Clonada: Izael (autorizada por Izael Depetriz)" in app.menu_voz_gemini.cget("values")
+        assert app.caixas[-1][0] == "sucesso" and "masculina, adulta" in app.caixas[-1][2]
+        assert "Izael: gravação para clonar · masculina, adulta" in app.lb_vozes_importadas.cget("text")
     # remover o modelo do Piper: some do menu, os arquivos saem do PC e a voz escolhida volta para a padrão
     app.escolher_da_lista = lambda *a, **k: 0
     app.bt_remover_voz_importada.invoke()

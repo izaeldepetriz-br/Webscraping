@@ -4,15 +4,15 @@
    huggingface.co/rhasspy/piper-voices (em português: cadu, jeff, faber, edresson...). Vai para a pasta das vozes
    do Piper com o nome escolhido e aparece no menu "Voz do Piper" e na tabela "Vozes dos personagens".
 
-2. Gravação de uma voz para CLONAR: a referência (a pessoa lendo com calma, de 6 a 60 s) + o consentimento (a MESMA
-   pessoa dizendo a frase de consentimento, a mesma do Google). Só a SUA voz ou a de quem autorizou: nunca de
-   atores, de famosos ou de quem não sabe. Por isso não aceita áudio de dentro de vídeos (filme, série, jogo) e
-   pede quem é o dono da voz. Fica guardada neste PC, pronta para o motor de clonagem no PC (quando instalado) e
-   para "Clonar no Gemini" (o Google confere a frase e se as duas gravações são da mesma pessoa).
+2. Gravação de uma voz para CLONAR (a pessoa lendo com calma, de 6 a 60 s): o motor de vozes no PC (XTTS-v2) fala
+   com esse timbre. Sem conferir consentimento: só uma declaração de que a voz é sua ou de quem autorizou. Áudio
+   de dentro de vídeos (filme, série, jogo) continua recusado: a voz seria de atores.
 
-    vozes_importadas.json   a lista (nome, tipo, arquivos, dono, idioma...)
+Em todas: o nome, o gênero e a idade (a "Automática" escolhe a voz pelo gênero e pela idade de quem fala).
+
+    vozes_importadas.json   a lista (nome, tipo, gênero, idade, idioma...)
     vozes/<id>.onnx(.json)  os modelos do Piper importados (a mesma pasta das vozes baixadas)
-    vozes_importadas/<id>/  referencia.wav e consentimento.wav das gravações
+    vozes_importadas/<id>/  referencia.wav das gravações
 """
 
 from __future__ import annotations
@@ -31,6 +31,8 @@ from . import voz_clonada
 PIPER, GRAVACAO = "piper", "gravacao"
 EXTENSOES_GRAVACAO = (".wav", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".wma", ".webm")
 # áudio tirado de vídeo (filme, série, jogo) não serve: a voz seria de atores, que não autorizaram
+GENEROS = ("masculina", "feminina")
+IDADES = ("criança", "jovem", "adulta", "idosa")
 EXTENSOES_VIDEO = (".mkv", ".mp4", ".avi", ".mov", ".m4v", ".ts", ".m2ts", ".mts", ".wmv", ".flv", ".mpg",
                    ".mpeg", ".vob", ".iso", ".3gp", ".ogv", ".rmvb")
 
@@ -42,14 +44,20 @@ class VozImportada:
     tipo: str                 # PIPER ou GRAVACAO
     origem: str = ""          # o arquivo escolhido (só para lembrar de onde veio)
     idioma: str = ""          # do .onnx.json do Piper ("pt_BR"); vazio nas gravações
-    dono: str = ""            # gravação: quem é o dono da voz e gravou o consentimento
+    dono: str = ""            # (versões antigas: quem autorizou; não é mais pedido)
     importada_em: str = ""
+    genero: str = "masculina"     # GENEROS
+    idade: str = "adulta"         # IDADES
+
+    @property
+    def perfil(self) -> str:
+        return f"{self.genero}, {self.idade}"
 
     def descrever(self) -> str:
         if self.tipo == PIPER:
-            return f"{self.nome}: voz do Piper ({self.idioma or 'idioma não informado'}), importada em " \
-                   f"{self.importada_em}"
-        return f"{self.nome}: gravação para clonar, autorizada por {self.dono}, importada em {self.importada_em}"
+            return f"{self.nome}: voz do Piper ({self.idioma or 'idioma não informado'}) · {self.perfil} · importada " \
+                   f"em {self.importada_em}"
+        return f"{self.nome}: gravação para clonar · {self.perfil} · importada em {self.importada_em}"
 
 
 def criar_id(nome: str) -> str:
@@ -78,6 +86,15 @@ def validar_nome(nome: str, existentes: list[VozImportada] = ()) -> tuple[str, s
     return nome, ident
 
 
+def conferir_perfil(genero: str, idade: str) -> tuple[str, str]:
+    genero, idade = genero.strip().lower(), idade.strip().lower()
+    if genero not in GENEROS:
+        raise ErroDublagem(f"escolha o gênero da voz ({' ou '.join(GENEROS)})")
+    if idade not in IDADES:
+        raise ErroDublagem(f"escolha a idade da voz ({', '.join(IDADES)})")
+    return genero, idade
+
+
 def tipo_do_arquivo(caminho: str | Path) -> str:
     """PIPER (.onnx), GRAVACAO (áudio) ou ErroDublagem dizendo o que o Maestro aceita."""
     extensao = Path(caminho).suffix.lower()
@@ -97,8 +114,8 @@ def _agora() -> str:
 
 
 # ----------------------------------------------------------------- 1. modelo do Piper
-def importar_piper(onnx: str | Path, nome: str, pasta_vozes: str | Path,
-                   existentes: list[VozImportada] = ()) -> VozImportada:
+def importar_piper(onnx: str | Path, nome: str, pasta_vozes: str | Path, existentes: list[VozImportada] = (),
+                   genero: str = "masculina", idade: str = "adulta") -> VozImportada:
     """Copia o modelo (.onnx) e a configuração (.onnx.json, ao lado) para a pasta das vozes do Piper."""
     onnx = Path(onnx)
     if not onnx.is_file():
@@ -117,12 +134,14 @@ def importar_piper(onnx: str | Path, nome: str, pasta_vozes: str | Path,
         raise ErroDublagem(f"o {config.name} não parece ser de uma voz do Piper (faltam \"audio\" e "
                            "\"phoneme_id_map\")")
     nome, ident = validar_nome(nome, existentes)
+    genero, idade = conferir_perfil(genero, idade)
     idioma = (dados.get("language") or {}).get("code") or (dados.get("espeak") or {}).get("voice") or ""
     pasta = Path(pasta_vozes)
     pasta.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(onnx, pasta / f"{ident}.onnx")
     shutil.copyfile(config, pasta / f"{ident}.onnx.json")
-    return VozImportada(nome, ident, PIPER, str(onnx), idioma=str(idioma), importada_em=_agora())
+    return VozImportada(nome, ident, PIPER, str(onnx), idioma=str(idioma), importada_em=_agora(), genero=genero,
+                        idade=idade)
 
 
 def e_portugues(v: VozImportada) -> bool:
@@ -136,43 +155,39 @@ def modelo_piper(ident: str, pasta_vozes: str | Path) -> Path | None:
 
 
 # ----------------------------------------------------------------- 2. gravação para clonar
-def importar_gravacao(referencia: str | Path, consentimento: str | Path, nome: str, dono: str, autorizo: bool,
-                      pasta: str | Path, ffmpeg: str, existentes: list[VozImportada] = (),
-                      executar=None) -> VozImportada:
-    """Confere e guarda a referência + o consentimento (WAV 24 kHz, mono, sem os silêncios das pontas)."""
-    if not autorizo:
-        raise ErroDublagem("marque a confirmação de que a voz é sua ou de quem autorizou (e gravou o consentimento)")
-    dono = " ".join(dono.split())
-    if not dono:
-        raise ErroDublagem("diga quem é o dono da voz (quem autorizou e gravou o consentimento)")
-    if not str(consentimento).strip():
-        raise ErroDublagem("escolha também a gravação do consentimento (a mesma pessoa dizendo a frase)")
-    for arquivo in (referencia, consentimento):
-        if tipo_do_arquivo(arquivo) != GRAVACAO:
-            raise ErroDublagem(f"{Path(arquivo).name}: escolha um arquivo de áudio ({', '.join(EXTENSOES_GRAVACAO)})")
+def importar_gravacao(referencia: str | Path, nome: str, genero: str, idade: str, declaro: bool, pasta: str | Path,
+                      ffmpeg: str, existentes: list[VozImportada] = (), executar=None) -> VozImportada:
+    """Guarda a gravação (WAV 24 kHz, mono, sem os silêncios das pontas) para o motor de vozes no PC."""
+    if not declaro:
+        raise ErroDublagem("marque a declaração de que a voz é sua ou de quem autorizou (não de atores ou famosos)")
+    if tipo_do_arquivo(referencia) != GRAVACAO:
+        raise ErroDublagem(f"{Path(referencia).name}: escolha um arquivo de áudio ({', '.join(EXTENSOES_GRAVACAO)})")
     nome, ident = validar_nome(nome, existentes)
+    genero, idade = conferir_perfil(genero, idade)
     extra = {"executar": executar} if executar else {}
     ref = voz_clonada.preparar_audio(Path(referencia), ffmpeg, **extra)
-    con = voz_clonada.preparar_audio(Path(consentimento), ffmpeg, **extra)
-    voz_clonada.conferir_duracoes(ref, con)
+    segundos = voz_clonada.duracao(ref)
+    if segundos < voz_clonada.MINIMO_REFERENCIA:
+        raise ErroDublagem(f"a gravação tem {segundos:.0f} s (sem os silêncios); use pelo menos "
+                           f"{voz_clonada.MINIMO_REFERENCIA:.0f} s de fala (o ideal é de 10 a 30 s)")
+    if segundos > voz_clonada.MAXIMO_REFERENCIA:
+        raise ErroDublagem(f"a gravação tem {segundos:.0f} s; use no máximo {voz_clonada.MAXIMO_REFERENCIA:.0f} s")
     destino = pasta_da_gravacao(pasta, ident)
     destino.mkdir(parents=True, exist_ok=True)
     (destino / "referencia.wav").write_bytes(ref)
-    (destino / "consentimento.wav").write_bytes(con)
-    return VozImportada(nome, ident, GRAVACAO, str(referencia), dono=dono, importada_em=_agora())
+    return VozImportada(nome, ident, GRAVACAO, str(referencia), importada_em=_agora(), genero=genero, idade=idade)
 
 
 def pasta_da_gravacao(pasta: str | Path, ident: str) -> Path:
     return Path(pasta) / "vozes_importadas" / ident
 
 
-def ler_gravacao(v: VozImportada, pasta: str | Path) -> tuple[bytes, bytes]:
-    """(referência, consentimento) de uma gravação importada."""
-    destino = pasta_da_gravacao(pasta, v.id)
-    try:
-        return (destino / "referencia.wav").read_bytes(), (destino / "consentimento.wav").read_bytes()
-    except OSError as erro:
-        raise ErroDublagem(f"as gravações da voz \"{v.nome}\" sumiram deste PC; importe de novo") from erro
+def arquivo_da_gravacao(v: VozImportada, pasta: str | Path) -> Path:
+    """O .wav de referência de uma gravação importada (o motor de vozes no PC fala com esse timbre)."""
+    arquivo = pasta_da_gravacao(pasta, v.id) / "referencia.wav"
+    if not arquivo.is_file():
+        raise ErroDublagem(f"a gravação da voz \"{v.nome}\" sumiu deste PC; importe de novo")
+    return arquivo
 
 
 # ----------------------------------------------------------------- guardar neste PC

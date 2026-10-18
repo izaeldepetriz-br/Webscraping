@@ -41,8 +41,9 @@ def test_importar_piper_copia_e_o_piper_usa(tmp_path):
     origem = tmp_path / "baixados"
     origem.mkdir()
     vozes = tmp_path / "vozes"
-    nova = vi.importar_piper(modelo_piper(origem), "Cadu", vozes)
-    assert (nova.nome, nova.id, nova.tipo, nova.idioma) == ("Cadu", "cadu", vi.PIPER, "pt_BR")
+    nova = vi.importar_piper(modelo_piper(origem), "Cadu", vozes, genero="masculina", idade="jovem")
+    assert (nova.nome, nova.id, nova.tipo, nova.idioma, nova.perfil) == ("Cadu", "cadu", vi.PIPER, "pt_BR",
+                                                                         "masculina, jovem")
     assert (vozes / "cadu.onnx").read_bytes() == b"modelo" and (vozes / "cadu.onnx.json").is_file()
     assert vi.e_portugues(nova) and vi.modelo_piper("cadu", vozes) == vozes / "cadu.onnx"
     # a dublagem acha a voz importada sem baixar nada
@@ -75,31 +76,27 @@ def test_importar_piper_confere_a_configuracao(tmp_path):
 
 
 @pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
-def test_importar_gravacao_com_consentimento(tmp_path):
-    referencia, consentimento = tmp_path / "minha voz.wav", tmp_path / "consentimento.wav"
+def test_importar_gravacao_com_genero_e_idade_sem_consentimento(tmp_path):
+    referencia = tmp_path / "minha voz.wav"
     referencia.write_bytes(wav(12))
-    consentimento.write_bytes(wav(6))
-    faltando = [(dict(autorizo=False), "confirmação"), (dict(dono=" "), "dono da voz"),
-                (dict(consentimento=""), "consentimento")]
-    for troca, motivo in faltando:
-        pedido = dict(referencia=referencia, consentimento=consentimento, nome="Izael", dono="Izael Depetriz",
-                      autorizo=True, pasta=tmp_path, ffmpeg=FFMPEG)
-        pedido.update(troca)
-        with pytest.raises(ErroDublagem, match=motivo):
-            vi.importar_gravacao(**pedido)
+    with pytest.raises(ErroDublagem, match="declaração"):
+        vi.importar_gravacao(referencia, "Izael", "masculina", "adulta", False, tmp_path, FFMPEG)
+    with pytest.raises(ErroDublagem, match="gênero"):
+        vi.importar_gravacao(referencia, "Izael", "robô", "adulta", True, tmp_path, FFMPEG)
+    with pytest.raises(ErroDublagem, match="idade"):
+        vi.importar_gravacao(referencia, "Izael", "masculina", "antiga", True, tmp_path, FFMPEG)
     video = tmp_path / "trecho.mp4"
     video.write_bytes(b"")
     with pytest.raises(ErroDublagem, match="atores"):
-        vi.importar_gravacao(video, consentimento, "Izael", "Izael", True, tmp_path, FFMPEG)
+        vi.importar_gravacao(video, "Izael", "masculina", "adulta", True, tmp_path, FFMPEG)
     curta = tmp_path / "curta.wav"
     curta.write_bytes(wav(2))
-    with pytest.raises(ErroDublagem, match="referência tem"):
-        vi.importar_gravacao(curta, consentimento, "Izael", "Izael", True, tmp_path, FFMPEG)
-    nova = vi.importar_gravacao(referencia, consentimento, "Izael", "Izael Depetriz", True, tmp_path, FFMPEG)
-    assert (nova.tipo, nova.id, nova.dono) == (vi.GRAVACAO, "izael", "Izael Depetriz")
-    ref, con = vi.ler_gravacao(nova, tmp_path)
-    assert ref.startswith(b"RIFF") and con.startswith(b"RIFF")
-    assert "autorizada por Izael Depetriz" in nova.descrever()
+    with pytest.raises(ErroDublagem, match="pelo menos"):
+        vi.importar_gravacao(curta, "Izael", "masculina", "adulta", True, tmp_path, FFMPEG)
+    nova = vi.importar_gravacao(referencia, "Izael", "Masculina", "Adulta", True, tmp_path, FFMPEG)
+    assert (nova.tipo, nova.id, nova.perfil) == (vi.GRAVACAO, "izael", "masculina, adulta")
+    assert vi.arquivo_da_gravacao(nova, tmp_path).read_bytes().startswith(b"RIFF")
+    assert "masculina, adulta" in nova.descrever() and "consent" not in nova.descrever()
     vi.remover(nova, tmp_path, tmp_path / "vozes")
-    with pytest.raises(ErroDublagem, match="sumiram"):
-        vi.ler_gravacao(nova, tmp_path)
+    with pytest.raises(ErroDublagem, match="sumiu"):
+        vi.arquivo_da_gravacao(nova, tmp_path)

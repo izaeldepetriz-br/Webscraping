@@ -4366,7 +4366,7 @@ class JanelaModerna(ctk.CTk):
     def ao_clonar_voz(self) -> None:                    # o app faz (precisa da chave e da internet)
         pass
 
-    # ---- Importar voz: um modelo do Piper (.onnx) ou uma gravação para clonar (com o consentimento)
+    # ---- Importar voz: um modelo do Piper (.onnx) ou uma gravação para o motor de vozes no PC clonar
     TIPOS_VOZ_IMPORTAR = [("Voz do Piper ou gravação", "*.onnx " + " ".join(f"*{e}" for e in
                                                                            vozes_importadas.EXTENSOES_GRAVACAO)),
                           ("Modelo do Piper", "*.onnx"),
@@ -4378,31 +4378,37 @@ class JanelaModerna(ctk.CTk):
         self._rotulo(lateral, "Importar voz", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
         self._rotulo(lateral, "Modelo do Piper (.onnx, com o .onnx.json ao lado): vira mais uma voz grátis do Piper "
                               "(há várias em huggingface.co/rhasspy/piper-voices; em português: cadu, jeff...). "
-                              "Gravação de voz (.wav, .mp3, .m4a...): só a SUA voz ou a de quem autorizou, junto com "
-                              "a gravação do consentimento (a mesma pessoa dizendo a frase do \"Clonar uma voz\"); "
-                              "fica guardada neste PC, pronta para o motor de clonagem no PC e para \"Clonar no "
-                              "Gemini\". Áudio de filmes, séries ou jogos não é aceito (a voz seria de atores).",
+                              "Gravação de voz (.wav, .mp3, .m4a..., de 6 a 60 s de fala): o motor XTTS-v2 fala com "
+                              "esse timbre, no seu PC. O gênero e a idade servem para a \"Automática\" escolher a voz "
+                              "de quem fala. Áudio de filmes, séries ou jogos não é aceito (a voz seria de atores).",
                      fonte=pequeno).pack(anchor="w", pady=(0, 6), **p)
         grade = ctk.CTkFrame(lateral, fg_color="transparent")
         grade.pack(fill="x", **p)
         grade.grid_columnconfigure(1, weight=1)
         self.var_imp_arquivo, self.var_imp_nome = tk.StringVar(self), tk.StringVar(self)
-        self.var_imp_consentimento, self.var_imp_dono = tk.StringVar(self), tk.StringVar(self)
+        self.var_imp_genero = tk.StringVar(self, value=vozes_importadas.GENEROS[0].capitalize())
+        self.var_imp_idade = tk.StringVar(self, value="Adulta")
         self.var_imp_autorizo = tk.BooleanVar(self, value=False)
-        for linha, (rotulo, var, escolher, dica) in enumerate((
-                ("Arquivo da voz:", self.var_imp_arquivo, self.ao_escolher_arquivo_voz, ".onnx ou gravação"),
-                ("Nome da voz:", self.var_imp_nome, None, "como aparece nos menus (ex.: Cadu)"),
-                ("Consentimento:", self.var_imp_consentimento, self.ao_escolher_consentimento_voz,
-                 "só para gravação: a pessoa dizendo a frase"),
-                ("Dono da voz:", self.var_imp_dono, None, "só para gravação: quem autorizou"))):
-            self._rotulo(grade, rotulo).grid(row=linha, column=0, sticky="w", padx=(0, 10), pady=3)
-            ctk.CTkEntry(grade, textvariable=var, placeholder_text=dica).grid(row=linha, column=1, sticky="ew",
-                                                                               pady=3)
-            if escolher:
-                self._botao(grade, "Escolher...", escolher, "fantasma", largura=110).grid(row=linha, column=2,
-                                                                                          padx=(8, 0), pady=3)
-        self._checkbox(lateral, "A gravação é da minha voz ou de quem autorizou e gravou o consentimento (nunca de "
-                                "atores, de famosos ou de quem não sabe)", self.var_imp_autorizo)
+        self._rotulo(grade, "Arquivo da voz:").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=3)
+        ctk.CTkEntry(grade, textvariable=self.var_imp_arquivo, placeholder_text=".onnx ou gravação").grid(
+            row=0, column=1, columnspan=3, sticky="ew", pady=3)
+        self._botao(grade, "Escolher...", self.ao_escolher_arquivo_voz, "fantasma", largura=110).grid(
+            row=0, column=4, padx=(8, 0), pady=3)
+        self._rotulo(grade, "Nome da voz:").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=3)
+        ctk.CTkEntry(grade, textvariable=self.var_imp_nome, placeholder_text="como aparece nos menus (ex.: Cadu)").grid(
+            row=1, column=1, columnspan=3, sticky="ew", pady=3)
+        self._rotulo(grade, "Gênero:").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=3)
+        self.menu_imp_genero = self._menu_opcoes(grade, self.var_imp_genero,
+                                                 [g.capitalize() for g in vozes_importadas.GENEROS])
+        self.menu_imp_genero.configure(width=150)
+        self.menu_imp_genero.grid(row=2, column=1, sticky="w", pady=3)
+        self._rotulo(grade, "Idade:").grid(row=2, column=2, sticky="e", padx=(16, 10), pady=3)
+        self.menu_imp_idade = self._menu_opcoes(grade, self.var_imp_idade,
+                                                [i.capitalize() for i in vozes_importadas.IDADES])
+        self.menu_imp_idade.configure(width=150)
+        self.menu_imp_idade.grid(row=2, column=3, sticky="w", pady=3)
+        self._checkbox(lateral, "Gravação: declaro que a voz é minha ou de quem autorizou (não de atores ou famosos)",
+                       self.var_imp_autorizo)
         linha = ctk.CTkFrame(lateral, fg_color="transparent")
         linha.pack(fill="x", pady=(4, 0), **p)
         self.bt_importar_voz = self._botao(linha, "📥  Importar", self.ao_importar_voz, "secundario")
@@ -4410,9 +4416,6 @@ class JanelaModerna(ctk.CTk):
         self.bt_remover_voz_importada = self._botao(linha, "Remover voz importada...", self.ao_remover_voz_importada,
                                                     "fantasma")
         self.bt_remover_voz_importada.pack(side="left", padx=(8, 0))
-        self.bt_clonar_importada = self._botao(linha, "🎙  Clonar no Gemini...", self.ao_clonar_importada_no_gemini,
-                                               "fantasma")
-        self.bt_clonar_importada.pack(side="left", padx=(8, 0))
         self.lb_vozes_importadas = ctk.CTkLabel(lateral, text="", font=self.f_rotulo, text_color=Tema.TEXTO,
                                                 anchor="w", justify="left")
         self.lb_vozes_importadas.pack(anchor="w", pady=(6, 0), **p)
@@ -4431,8 +4434,6 @@ class JanelaModerna(ctk.CTk):
             text="\n".join(v.descrever() for v in self._vozes_importadas) or "Nenhuma voz importada ainda.",
             text_color=Tema.TEXTO if self._vozes_importadas else Tema.TEXTO_FRACO)
         self.bt_remover_voz_importada.configure(state="normal" if self._vozes_importadas else "disabled")
-        gravacoes = any(v.tipo == vozes_importadas.GRAVACAO for v in self._vozes_importadas)
-        self.bt_clonar_importada.configure(state="normal" if gravacoes else "disabled")
         opcoes = self.vozes_piper_do_menu()
         self.menu_voz_piper.configure(values=list(opcoes))
         if self.var_jf_voz_dublagem.get() not in opcoes:     # a escolhida foi removida: volta à padrão
@@ -4449,19 +4450,10 @@ class JanelaModerna(ctk.CTk):
             sugestao = partes[1] if Path(caminho).suffix.lower() == ".onnx" and len(partes) >= 3 else partes[0]
             self.var_imp_nome.set(sugestao.replace("_", " ").strip().title())
 
-    def ao_escolher_consentimento_voz(self) -> None:
-        caminho = filedialog.askopenfilename(parent=self, title="Escolha a gravação do consentimento",
-                                             filetypes=self.TIPOS_VOZ_IMPORTAR[2:])
-        if caminho:
-            self.var_imp_consentimento.set(caminho)
-
     def ao_importar_voz(self) -> None:                  # o app faz (precisa do ffmpeg e das pastas)
         pass
 
     def ao_remover_voz_importada(self) -> None:
-        pass
-
-    def ao_clonar_importada_no_gemini(self) -> None:
         pass
 
     def _ao_trocar_separar_vozes(self) -> None:
