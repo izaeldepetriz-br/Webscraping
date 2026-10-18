@@ -16,11 +16,13 @@ from jellyfin_tools import vozes_importadas as vi
 from jellyfin_tools.dublagem import ErroDublagem
 
 SERVIDOR_FALSO = r'''
-import json, math, struct, sys, wave
+import json, math, os, struct, sys, wave
 sys.stdin.reconfigure(encoding="utf-8")
 print("carregando...", file=sys.stderr)
 print("> uma linha que a biblioteca escreve na tela")           # não é JSON: o motor ignora
-print(json.dumps({"pronto": True, "dispositivo": "cuda", "placa": "RTX 4060", "vozes": ["Ana Florence"]}), flush=True)
+memoria = float(os.environ["MEMORIA_FALSA"]) if os.environ.get("MEMORIA_FALSA") else None
+print(json.dumps({"pronto": True, "dispositivo": "cuda", "placa": "RTX 4060", "memoria": memoria,
+                  "vozes": ["Ana Florence"]}), flush=True)
 pedidos = []
 for linha in sys.stdin:
     p = json.loads(linha)
@@ -171,6 +173,10 @@ class _Cuda:
         return bool(os.environ.get("PLACA"))
     def get_device_name(self, i):
         return os.environ["PLACA"]
+    def get_device_properties(self, i):
+        class _Propriedades:
+            total_memory = int(float(os.environ.get("MEMORIA_FALSA", "8")) * 1024 ** 3)
+        return _Propriedades()
     def empty_cache(self):
         pass
 cuda = _Cuda()
@@ -313,6 +319,9 @@ class ChatterboxFalso:
     def fechar(self):
         self.fechado = True
 
+    def aberto(self):
+        return False
+
 
 @pytest.mark.skipif(os.name == "nt", reason="o python falso usa um atalho (symlink)")
 def test_emocao_vai_pela_gravacao_da_emocao_ou_pelo_chatterbox(tmp_path, monkeypatch):
@@ -358,4 +367,36 @@ def test_chatterbox_que_falha_deixa_o_resto_neutro(tmp_path, monkeypatch):
         assert json.loads((tmp_path / f"{n}.wav.json").read_text(encoding="utf-8"))["voz"] == "Ana Florence"
     assert motor.emocao is None and chatterbox.fechado and chatterbox.falas == []
     assert sum("o Chatterbox falhou" in a for a in avisos) == 1
+    motor.fechar()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="o python falso usa um atalho (symlink)")
+@pytest.mark.parametrize("memoria", ["8", "24"])
+def test_um_de_cada_vez_na_placa_pequena(tmp_path, monkeypatch, memoria):
+    """RTX 4060 (8 GB): primeiro as falas do XTTS-v2, ele fecha, e só então o Chatterbox. Com 24 GB, juntos."""
+    monkeypatch.setenv("MEMORIA_FALSA", memoria)
+    pasta = tmp_path / "motor_vozes"
+    pacote_falso(pasta, monkeypatch)
+    ordem = []
+
+    class Espiao(ChatterboxFalso):
+        def falar(self, texto, saida, referencia, emocao, parar=None, idioma="pt"):
+            ordem.append((texto, "XTTS aberto" if motor.aberto() else "XTTS fechado"))
+            super().falar(texto, saida, referencia, emocao, parar, idioma)
+
+    avisos = []
+    motor = vl.MotorLocal(pasta, "Ana Florence", emocao=Espiao(), avisar=avisos.append)
+    motor.sintetizar([("Corre!", tmp_path / "a.wav", "", "Nesta fala: gritando."),
+                      ("Tudo bem.", tmp_path / "b.wav"),
+                      ("Socorro!", tmp_path / "c.wav", "", "Nesta fala: chorando."),
+                      ("Até logo.", tmp_path / "d.wav")])
+    assert all((tmp_path / f"{n}.wav").is_file() for n in "abcd") and motor.memoria == float(memoria)
+    if memoria == "8":
+        assert ordem == [("Corre!", "XTTS fechado"), ("Socorro!", "XTTS fechado")]   # as com emoção no fim
+        assert any("um de cada vez na placa (8 GB)" in a and "2 fala(s)" in a for a in avisos)
+        motor.sintetizar([("De novo.", tmp_path / "e.wav")])            # o XTTS-v2 abre de novo sozinho
+        assert (tmp_path / "e.wav").is_file()
+    else:
+        assert ordem == [("Corre!", "XTTS aberto"), ("Socorro!", "XTTS aberto")] and not any(
+            "um de cada vez" in a for a in avisos)
     motor.fechar()

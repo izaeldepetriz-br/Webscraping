@@ -240,6 +240,29 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.22.0
+
+- **Vozes otimizadas para placas de vídeo de 8 GB** (como a RTX 4060 de notebook): **um motor de cada vez na placa**.
+  O XTTS-v2 (~2–3 GB) e o Chatterbox (~4–5 GB) juntos, com o Whisper conferindo as falas, passam dos 8 GB e o
+  Windows começa a usar a memória do sistema (fica muito mais lento) ou dá falta de memória. Agora, em placas com
+  **menos de 12 GB**, o Maestro faz primeiro todas as falas normais pelo XTTS-v2, **fecha** o XTTS-v2 e só então abre
+  o Chatterbox para as falas com emoção (o registro avisa: "um de cada vez na placa (8 GB): fechando o XTTS-v2...").
+  Em placas de 12 GB ou mais, os dois continuam abertos juntos. Os motores informam a memória da placa ao abrir
+  ("XTTS-v2 pronto (placa de vídeo NVIDIA GeForce RTX 4060 Laptop GPU, 8 GB)").
+- **Correção**: ao reabrir o motor de vozes depois de fechado, uma mensagem antiga ("não abriu: fechou sozinho")
+  podia ser lida como se fosse a resposta nova. Cada abertura agora tem a sua própria fila de respostas.
+- **Base para dublar dentro do jogo (próxima etapa da aba 🎮 Jogos)**: o módulo novo `audio_jogo` grava a fala dublada
+  **no mesmo formato e com a mesma duração da fala original do jogo**, para caber no mesmo lugar da ISO:
+  - **WAV**, **VAG** (o áudio de fala do PS2, "VAGp") e **ADS** (o áudio de cena do PS2, "SShd/SSbd", em
+    estéreo intercalado), com o **PS-ADPCM** (o "compactador" de áudio do PS2: 28 amostras em 16 bytes) feito pelo
+    próprio Maestro;
+  - **duração exata, em amostras**: se a fala dublada ficou mais comprida, acelera até **35%** sem mudar o tom; se
+    ainda passar, corta com um **fim suave** (20 ms, sem estalo); se ficou curta, completa com silêncio;
+  - VAG e ADS saem **com o mesmo tamanho em bytes** da original (o nome interno do VAG e o resto do cabeçalho são
+    mantidos).
+  A extração e a reinserção dos arquivos de áudio dependem de cada jogo (ferramentas da comunidade, como o
+  QuickBMS) e entram quando escolhermos o jogo para testar.
+
 ### Novidades da v2.21.0
 
 - **Aba nova "🎮 Jogos": aplicar o patch de fãs (tradução, dublagem) na ISO do SEU disco**, numa cópia que roda em

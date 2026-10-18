@@ -52,6 +52,14 @@ def responder(dados):
     canal.flush()
 
 
+def memoria_da_placa():
+    """GB da placa de vídeo (None se não deu para saber: só informa, não decide o plano B)."""
+    try:
+        return round(torch.cuda.get_device_properties(0).total_memory / 1024 ** 3, 1)
+    except Exception:
+        return None
+
+
 def erro_da_placa(erro):
     texto = f"{type(erro).__name__} {erro}".lower()
     return "cuda" in texto or "out of memory" in texto or "cublas" in texto or "cudnn" in texto
@@ -62,11 +70,12 @@ try:
     import soundfile as sf
     import torch
     from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-    dispositivo, placa, aviso = "cpu", "", ""
+    dispositivo, placa, aviso, memoria = "cpu", "", "", None
     if torch.cuda.is_available():
         try:
             modelo = ChatterboxMultilingualTTS.from_pretrained(device="cuda")
             dispositivo, placa = "cuda", torch.cuda.get_device_name(0)
+            memoria = memoria_da_placa()
         except Exception as erro:            # plano B: a placa não aguentou, vai pelo processador
             print(f"a placa de vídeo não aguentou ({type(erro).__name__}: {erro}); vai pelo processador",
                   file=sys.stderr)
@@ -74,7 +83,7 @@ try:
             aviso = f"a placa de vídeo não aguentou o modelo ({type(erro).__name__}); vai pelo processador"
     if dispositivo == "cpu":
         modelo = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
-    responder({"pronto": True, "dispositivo": dispositivo, "placa": placa, "aviso": aviso})
+    responder({"pronto": True, "dispositivo": dispositivo, "placa": placa, "aviso": aviso, "memoria": memoria})
 except Exception as erro:
     responder({"erro": f"{type(erro).__name__}: {erro}"})
     sys.exit(1)
