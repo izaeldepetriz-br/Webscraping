@@ -274,7 +274,8 @@ primeira falha (antes esperava o tempo limite em cada filme).
   - **Medida no PC, sem custo** (com a "Emoção da cena" ligada): o **volume** de cada fala do original comparado com
     o das outras do mesmo filme. Bem mais alta (e com voz): **gritando**; bem mais baixa e quase sem "vibração":
     **sussurrando**. Raiva e alegria no mesmo volume o volume não separa: essas vêm da nota do Gemini ou do "Refazer
-    esta fala" (escreva "chorando", "com medo"...).
+    esta fala" (escreva "chorando", "com medo"...). Gritando, a voz do homem sobe (200-300 Hz): na fala gritada, a
+    régua do gênero sobe junto e ele não é dublado com voz de mulher; a sussurrada (sem tom) fica com a voz principal.
   - **Gravações de emoção da voz importada** (Importar voz > **Emoção da gravação**: Brava, Gritando, Triste,
     Chorando, Alegre, Com medo, Sussurrando; 3 s ou mais, com o mesmo nome da voz): o XTTS-v2 copia o jeito da
     gravação, e o timbre continua o da pessoa. Sem a de grito, serve a brava (e a de choro e a triste, uma pela outra).

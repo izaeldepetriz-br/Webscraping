@@ -4,7 +4,8 @@ A voz é uma vibração que se repete: a de homem costuma repetir de 85 a 160 ve
 185 a 255 (crianças, mais ainda). Para cada fala da legenda, o Maestro pega o trecho do áudio original, procura em
 cada pedacinho de 40 ms o "intervalo que se repete" (autocorrelação) e tira a mediana: abaixo de 160 Hz, voz de
 homem; acima de 185 Hz, de mulher; no meio (homem gritando e mulher de voz grave se encontram aí), ou com música alta
-e sem voz clara, não sabe e a fala fica com a voz principal. É o que o Gemini fazia ouvindo o filme, mas sem custo.
+e sem voz clara, não sabe e a fala fica com a voz principal. Na fala GRITADA (pelo volume, abaixo) a régua sobe: a
+voz do homem gritando chega a 200-300 Hz. É o que o Gemini fazia ouvindo o filme, mas sem custo.
 É uma aproximação: confira no teste antes de dublar o filme inteiro.
 
 A EMOÇÃO que dá para medir assim (com a "Emoção da cena" ligada): o VOLUME de cada fala comparado com o das outras do
@@ -29,6 +30,8 @@ TAXA = 8000                     # amostras por segundo: sobra para vozes de até
 QUADRO, PASSO = 0.04, 0.02      # pedacinhos de 40 ms, a cada 20 ms
 F0_MIN, F0_MAX = 70.0, 400.0
 LIMITE_HOMEM, LIMITE_MULHER = 160.0, 185.0
+# gritando, a voz sobe (o homem gritando chega a 200-300 Hz, a mulher passa de 300): a régua do grito é outra
+LIMITE_HOMEM_GRITO, LIMITE_MULHER_GRITO = 230.0, 300.0
 FORCA_MINIMA = 0.5              # quão "repetido" o pedacinho precisa ser para contar como voz (0 a 1)
 BLOCO = 120.0                   # segundos de áudio lidos de uma vez do vídeo
 # a emoção pelo volume (dB comparados com a mediana das falas do filme)
@@ -87,12 +90,13 @@ def tom_pelo_volume(volume: float | None, normal: float | None, vozeado: float, 
     return ""
 
 
-def genero_pelo_tom(f0: float | None) -> str:
+def genero_pelo_tom(f0: float | None, gritando: bool = False) -> str:
     if f0 is None:
         return "?"
-    if f0 < LIMITE_HOMEM:
+    homem, mulher = (LIMITE_HOMEM_GRITO, LIMITE_MULHER_GRITO) if gritando else (LIMITE_HOMEM, LIMITE_MULHER)
+    if f0 < homem:
         return "m"
-    return "f" if f0 > LIMITE_MULHER else "?"
+    return "f" if f0 > mulher else "?"
 
 
 def ler_audio(ffmpeg: str, video: str | Path, inicio: float, duracao: float, executar=subprocess.run):
@@ -157,7 +161,10 @@ def ouvir_generos(video: str | Path, falas: list, ids: list[int], ffmpeg: str, a
             medido = guardado.get(str(k), {})
             tom = tom_pelo_volume(medido.get("db"), normal, medido.get("vozeado", 0.0), falas[k][1])
             if tom:
-                resultado[k] = Ouvida(genero=resultado[k].genero, tom=tom)
+                genero = resultado[k].genero
+                if tom == TOM_GRITO:              # o homem gritando não vira mulher (a voz sobe no grito)
+                    genero = genero_pelo_tom(medido.get("f0"), gritando=True)
+                resultado[k] = Ouvida(genero=genero, tom=tom)
     if arquivo:
         arquivo.parent.mkdir(parents=True, exist_ok=True)
         arquivo.write_text(json.dumps(guardado, ensure_ascii=False), encoding="utf-8")

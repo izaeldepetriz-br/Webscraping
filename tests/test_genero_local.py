@@ -52,7 +52,7 @@ def test_emocao_pelo_volume_grito_e_sussurro(tmp_path):
     trechos = {k: voz(130 + 7 * k) for k in range(10)}
     trechos[10] = voz(150) * 3.5                                       # ~11 dB acima: grito
     trechos[11] = np.random.default_rng(3).standard_normal(int(gl.TAXA * 1.5)) * 0.02   # baixo e só "ar"
-    trechos[12] = voz(140) * 2.2                                       # ~7 dB acima, com "!": também grito
+    trechos[12] = voz(215) * 2.2                     # ~7 dB acima, com "!": grito (e de homem: a voz sobe no grito)
 
     def ler(ffmpeg, video, inicio, duracao):
         som = np.zeros(int((duracao + 1) * gl.TAXA), dtype=np.float32)
@@ -65,6 +65,8 @@ def test_emocao_pelo_volume_grito_e_sussurro(tmp_path):
     ouvidas = gl.ouvir_generos("filme.mkv", falas, list(range(13)), "ffmpeg", tmp_path / "g.json", ler=ler,
                                emocao=True)
     assert (ouvidas[10].tom, ouvidas[11].tom, ouvidas[12].tom) == (gl.TOM_GRITO, gl.TOM_SUSSURRO, gl.TOM_GRITO)
+    assert ouvidas[12].genero == "m" and gl.genero_pelo_tom(215) == "f"           # 215 Hz falando: mulher
+    assert gl.genero_pelo_tom(320, gritando=True) == "f" and gl.genero_pelo_tom(260, gritando=True) == "?"
     assert all(ouvidas[k].tom == "" for k in range(10)) and ouvidas[10].genero == "m"
     assert ouvidas[11].genero == "?"                                   # sussurro: sem tom confiável, voz principal
     assert "Nesta fala: gritando" in ouvidas[10].nota()
