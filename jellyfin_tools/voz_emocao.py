@@ -34,7 +34,9 @@ NOME = "Chatterbox (emoção, grátis, no PC)"
 VERSAO_PYTHON = "3.11"
 TORCH = ["torch==2.6.0", "torchaudio==2.6.0"]
 INDICE_GPU = "https://download.pytorch.org/whl/cu126"     # o PyTorch 2.6 (placas sem suporte: vai pelo processador)
-PACOTES = ["chatterbox-tts==0.1.7"]
+# o setuptools: a marca d'água (Perth) usa o pkg_resources, que o ambiente do uv não traz (sem ele, o Chatterbox
+# não abria: "'NoneType' object is not callable"; visto no teste de verdade no Windows)
+PACOTES = ["chatterbox-tts==0.1.7", "setuptools<81"]
 ESPACO_GPU, ESPACO_CPU, ESPACO_ATUALIZAR = 10.0, 6.0, 1.5  # GB: PyTorch + pacotes + o modelo (~3,2 GB)
 
 SERVIDOR = r'''
@@ -190,9 +192,10 @@ class MotorEmocao(ServidorDeVoz):
             raise ErroDublagem(f"emoção desconhecida: {emocao}")
         self.iniciar(parar)
         exaggeration, cfg = CHATTERBOX[emocao]
-        resposta = self._pedir({"texto": texto, "frases": frases_para_falar(texto), "saida": str(saida),
-                                "referencia": str(referencia), "exaggeration": exaggeration, "cfg": cfg,
-                                "idioma": idioma}, parar)
+        resposta = self._pedir({"texto": texto, "frases": frases_para_falar(texto), "idioma": idioma,
+                                "saida": str(Path(saida).absolute()),           # caminhos completos: o servidor
+                                "referencia": str(Path(referencia).absolute()),  # trabalha em outra pasta
+                                "exaggeration": exaggeration, "cfg": cfg}, parar)
         if not resposta.get("ok"):
             raise ErroDublagem(f"o Chatterbox não gerou a fala: {resposta.get('erro', 'sem resposta')}")
         self.pedidos += 1

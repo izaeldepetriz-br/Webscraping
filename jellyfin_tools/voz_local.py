@@ -647,8 +647,8 @@ class MotorLocal(ServidorDeVoz):
         return self._resolver(voz)[0]
 
     def _falar(self, texto: str, saida: Path, voz: dict, parar) -> None:
-        pedido = {"texto": texto, "frases": frases_para_falar(texto), "saida": str(saida), "idioma": self.idioma,
-                  **voz}
+        pedido = {"texto": texto, "frases": frases_para_falar(texto), "saida": str(Path(saida).absolute()),
+                  "idioma": self.idioma, **voz}          # caminho completo: o servidor trabalha em outra pasta
         resposta = self._pedir(pedido, parar)
         if not resposta.get("ok"):
             raise ErroDublagem(f"o motor de vozes não gerou a fala: {resposta.get('erro', 'sem resposta')}")

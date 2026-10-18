@@ -84,7 +84,8 @@ def test_instalar_o_chatterbox_no_ambiente_dele(tmp_path):
     assert [c[1:3] for c in comandos] == [["venv", str(pasta / "chatterbox" / "ambiente")], ["pip", "install"],
                                           ["pip", "install"]]
     assert comandos[0][-1] == "3.11" and "torch==2.6.0" in comandos[1] and ve.INDICE_GPU in comandos[1]
-    assert "chatterbox-tts==0.1.7" in comandos[2] and len(baixados) == 1 and etapas[-1] == 1.0
+    assert "chatterbox-tts==0.1.7" in comandos[2] and "setuptools<81" in comandos[2]    # o Perth usa o pkg_resources
+    assert len(baixados) == 1 and etapas[-1] == 1.0
     assert info["gpu"] and ve.instalado(pasta)["gpu"] and "exaggeration" in ve.arquivo_servidor(pasta).read_text(
         encoding="utf-8")
     ve.desinstalar(pasta)
