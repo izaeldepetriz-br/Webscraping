@@ -785,6 +785,8 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, JanelaModerna):
             self.definir_saude(self.itens_saude())
         elif tipo == "vozes_importadas":
             self.atualizar_vozes_importadas(dado)
+        elif tipo == "motor_local":                    # o XTTS-v2 acabou de ser instalado
+            self.after(50, lambda d=dado: self._motor_local_instalado(d))
         elif tipo == "tocar":
             self._tocar(dado)
         elif tipo == "audio":                          # aba 🎧 Áudio: faixas lidas, encaixe, ondas, amostra, troca
@@ -3345,18 +3347,19 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, JanelaModerna):
         None = todos com o motor da tela."""
         vozes = vozes or {}
         premium = {str(i.video) for i in itens} if premium is None else premium
-        gemini, cloud = automacao.usa_gemini(o), automacao.usa_cloud(o)
+        gemini, cloud, local = automacao.usa_gemini(o), automacao.usa_cloud(o), automacao.usa_local(o)
         def tarefa():
             progresso = {"progresso_piper": lambda f: self.fila.put(
                              ("jf_analise", (f * 0.5, f"Baixando o Piper: {int(f * 100)}%"))),
                          "progresso_voz": lambda f: self.fila.put(
                              ("jf_analise", (0.5 + f * 0.5, f"Baixando a voz \"{o.voz_dublagem}\": {int(f * 100)}%")))}
             try:
-                usa_piper = (not gemini and not cloud) or (gemini and any(str(i.video) not in premium for i in itens))
+                usa_piper = (not gemini and not cloud and not local) or (gemini and any(str(i.video) not in premium
+                                                                                        for i in itens))
                 if usa_piper:
                     self.fila.put(("jf_analise", (0.0, "Preparando o Piper (só na 1ª vez baixa)...")))
                 piper = automacao.motor_piper(o, **progresso) if usa_piper else None
-                motor = automacao.preparar_motor(o) if (gemini and premium) or cloud else piper
+                motor = automacao.preparar_motor(o) if (gemini and premium) or cloud or local else piper
             except (ErroDublagem, automacao.FaltaConfiguracao) as erro:
                 self.fila.put(("msg", ("Dublar filmes", f"Não deu para preparar a voz: {erro}", "erro")))
                 return

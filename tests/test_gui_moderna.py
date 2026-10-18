@@ -5495,3 +5495,58 @@ def test_importar_voz_pelas_configuracoes(app, tmp_path, monkeypatch):
     app.bt_remover_voz_importada.invoke()
     assert "cadu" not in app.menu_voz_piper.cget("values") and app.var_jf_voz_dublagem.get() == "faber"
     assert not (config.ARQUIVO.parent / "vozes" / "cadu.onnx").exists()
+
+
+def test_motor_de_vozes_xtts_pela_tela(app, tmp_path, monkeypatch):
+    """Configurações > Dublagem > XTTS-v2: instalar (de mentira) oferece trocar o motor; a voz escolhida vai para as
+    opções; "Ouvir" fala pelo servidor (de mentira); a dublagem usa o MotorLocal, com o gênero medido pelo tom; e
+    "Remover do PC" volta para o Piper."""
+    import os
+
+    from jellyfin_tools import microfone, voz_local
+    from tests.test_voz_local import pacote_falso
+    from videoscraper import automacao
+    if os.name == "nt":
+        pytest.skip("o python falso usa um atalho (symlink)")
+    app.mostrar_aba(app.ABA_CONFIG)
+    app._botoes_config["Dublagem"].invoke()
+    assert "Ainda não instalado" in app.lb_motor_local.cget("text")
+    assert app.bt_ouvir_local.cget("state") == "disabled" and app.bt_remover_motor_local.cget("state") == "disabled"
+    assert "XTTS-v2" in app.NOMES_MODO_VOZ.values() and "local" in app._cartoes_modo_voz
+    pedidos = []
+
+    def instalar(pasta, gpu=None, parar=None, ao_progresso=None):
+        pedidos.append(gpu)
+        ao_progresso(0.5, "Baixando o PyTorch...")
+        pacote_falso(Path(pasta))
+        return {"gpu": gpu}
+    monkeypatch.setattr(voz_local, "tem_placa_nvidia", lambda *a: True)
+    monkeypatch.setattr(voz_local, "instalar", instalar)
+    app.bt_instalar_motor_local.invoke()
+    esperar(app)
+    for _ in range(20):                                              # a pergunta "usar agora?" vem logo depois
+        app.update()
+        time.sleep(0.01)
+    assert pedidos == [True] and "Instalado (com a placa de vídeo" in app.lb_motor_local.cget("text")
+    assert app.var_jf_motor_voz.get() == app.MOTORES_VOZ[3] and app.var_jf_modo_voz.get() == "local"
+    assert app.bt_ouvir_local.cget("state") == "normal"
+    app.var_jf_voz_local.set("Ana Florence (feminina, adulta)")
+    o = app.obter_opcoes_jellyfin()
+    assert (o.motor_voz, o.voz_local) == (voz_local.NOME, "Ana Florence")
+    # ouvir a frase de teste: o servidor (de mentira) fala com a voz escolhida
+    tocados = []
+    monkeypatch.setattr(microfone, "tocar", lambda arquivo: tocados.append(Path(arquivo)))
+    app.bt_ouvir_local.invoke()
+    esperar(app)
+    assert tocados and tocados[0].is_file(), app.caixas[-1:]
+    import json
+    assert json.loads(Path(str(tocados[0]) + ".json").read_text(encoding="utf-8"))["voz"] == "Ana Florence"
+    # a dublagem: o MotorLocal, a voz do outro gênero e o gênero de cada fala medido no PC (sem o Gemini)
+    motor = automacao.preparar_motor(o)
+    assert isinstance(motor, voz_local.MotorLocal) and motor.voz == "Ana Florence"
+    assert automacao.vozes_por_genero(o, motor) == {"f": "Ana Florence", "m": voz_local.VOZ_PADRAO}
+    assert automacao.ouvinte_de_tons(o, tmp_path / "filme.mkv", motor) is not None
+    # remover do PC: apaga o pacote e volta para o Piper
+    app.bt_remover_motor_local.invoke()
+    assert not automacao.pasta_motor_local().exists() and app.var_jf_motor_voz.get() == app.MOTORES_VOZ[0]
+    assert "Ainda não instalado" in app.lb_motor_local.cget("text")

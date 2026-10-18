@@ -24,7 +24,7 @@ from tkinter import filedialog, ttk
 
 import customtkinter as ctk
 
-from jellyfin_tools import voz_clonada, voz_cloud, vozes_importadas
+from jellyfin_tools import voz_clonada, voz_cloud, voz_local, vozes_importadas
 
 from . import icone
 
@@ -152,6 +152,8 @@ class OpcoesJellyfin:
     voz_dublagem: str = "faber"      # dublagem por IA: a voz sintética do Piper
     motor_voz: str = "Piper (grátis, no PC)"   # ou "Gemini (premium, Google AI Studio)"
     voz_gemini: str = "Charon"       # voz do Gemini: pronta ("Kore") ou clonada com consentimento ("clone:Izael")
+    voz_local: str = "Damien Black"  # XTTS-v2 no PC: voz pronta ("Ana Florence") ou importada ("imp:izael")
+    conferir_falas: bool = True      # XTTS-v2: o Whisper ouve cada fala gerada (corta a sobra do fim, refaz a embolada)
     chave_gemini: str = ""           # Google AI Studio > Get API key (vazio = variável GEMINI_API_KEY)
     encurtar_falas: bool = True      # dublagem: o Claude reescreve mais curtas as falas que não cabem no tempo
     voz_por_personagem: bool = False  # Gemini: ouve o filme, separa quem fala e dá uma voz para cada personagem
@@ -1371,6 +1373,8 @@ def valor_da_voz(texto: str) -> str:
     clonada = voz_clonada.valor_do_menu(texto)
     if clonada:
         return clonada
+    if texto.startswith("XTTS: "):                       # "XTTS: Ana Florence (feminina, adulta)" -> "Ana Florence"
+        return voz_local.valor_do_menu(texto[len("XTTS: "):])
     partes = texto.split()
     if not partes:
         return ""
@@ -3361,7 +3365,8 @@ class JanelaModerna(ctk.CTk):
     ORDEM_TELA_JF = ("n", "status", "atual", "novo", "fonte", "legenda", "progresso")
     MODELOS_WHISPER = ("tiny", "base", "small", "medium", "large-v3", "turbo")
     VOZES_DUBLAGEM = ("faber", "edresson")
-    MOTORES_VOZ = ("Piper (grátis, no PC)", "Gemini (premium, Google AI Studio)", "Google Cloud TTS (cota grátis)")
+    MOTORES_VOZ = ("Piper (grátis, no PC)", "Gemini (premium, Google AI Studio)", "Google Cloud TTS (cota grátis)",
+                   voz_local.NOME)
     # as mesmas de jellyfin_tools.voz_gemini.VOZES (um teste confere), com a descrição para o menu
     VOZES_GEMINI = ("Charon (masculina, informativa)", "Orus (masculina, firme)", "Puck (masculina, animada)",
                     "Fenrir (masculina, empolgada)", "Iapetus (masculina, clara)", "Algieba (masculina, suave)",
@@ -4091,7 +4096,7 @@ class JanelaModerna(ctk.CTk):
         self.lb_resumo_config.configure(text="   ·   ".join(partes))
 
     # ---- Dublagem: o motor (Piper, Gemini ou Misto) e o que cada um usa
-    NOMES_MODO_VOZ = {"piper": "Piper", "cloud": "Google Cloud TTS", "gemini": "Gemini",
+    NOMES_MODO_VOZ = {"piper": "Piper", "local": "XTTS-v2", "cloud": "Google Cloud TTS", "gemini": "Gemini",
                       "misto": "Misto (Gemini + Piper)"}
 
     def _montar_config_dublagem(self, lateral) -> None:
@@ -4105,6 +4110,8 @@ class JanelaModerna(ctk.CTk):
         self._cartoes_modo_voz: dict[str, ctk.CTkFrame] = {}
         for valor, titulo, texto in (
                 ("piper", "Piper", "Grátis, no seu PC. Voz mais robótica; uma voz para o filme todo."),
+                ("local", "XTTS-v2", "Grátis, no seu PC. Voz natural (e as vozes importadas); usa a placa de "
+                                     "vídeo. Instale o motor uma vez (~3 GB)."),
                 ("cloud", "Google Cloud TTS", "Neural2, WaveNet, Standard ou Studio. Cota grátis por mês; "
                                               "acima dela, por caractere."),
                 ("gemini", "Gemini (premium)", "Voz natural, com emoção. Pago por uso (Google AI Studio)."),
@@ -4216,6 +4223,8 @@ class JanelaModerna(ctk.CTk):
                      fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(0, 4), **p)
         self._botao(lateral, "📜 Roteiro de um vídeo...", self.ao_roteiro_de_um_video, "fantasma",
                     largura=210).pack(anchor="w", pady=(2, 4), **p)
+
+        self._montar_motor_local(lateral)
 
         # --- Google Cloud TTS: o tipo de voz (preço e cota grátis de cada um) e a voz
         self._rotulo(lateral, "Google Cloud TTS", suave=False, fonte=self.f_secao).pack(anchor="w", pady=(16, 4), **p)
@@ -4421,6 +4430,84 @@ class JanelaModerna(ctk.CTk):
         self.lb_vozes_importadas.pack(anchor="w", pady=(6, 0), **p)
         self.atualizar_vozes_importadas(self._vozes_importadas)
 
+    # ---- XTTS-v2: o motor de vozes grátis no PC (instalar, a voz principal e ouvir)
+    def _montar_motor_local(self, lateral) -> None:
+        p = dict(padx=18)
+        self._rotulo(lateral, "XTTS-v2 (grátis, no PC)", suave=False, fonte=self.f_secao).pack(anchor="w",
+                                                                                               pady=(16, 4), **p)
+        self._rotulo(lateral, "A voz natural sem custo, no lugar do Gemini: roda no seu PC (com a placa de vídeo "
+                              "NVIDIA, 1 minuto de fala sai em segundos). Instale uma vez: ~3 GB (Python + PyTorch) e, "
+                              "na 1ª fala, o modelo (~1,8 GB). Licença do modelo (CPML da Coqui): só uso pessoal, não "
+                              "comercial. A fala de mulher sai com voz feminina e a de homem, masculina: o tom de cada "
+                              "fala do original é medido no PC, sem o Gemini.",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(0, 6), **p)
+        self.lb_motor_local = ctk.CTkLabel(lateral, text="", font=self.f_rotulo, text_color=Tema.TEXTO_FRACO,
+                                           anchor="w", justify="left")
+        self.lb_motor_local.pack(anchor="w", pady=(0, 6), **p)
+        linha = ctk.CTkFrame(lateral, fg_color="transparent")
+        linha.pack(fill="x", **p)
+        self.bt_instalar_motor_local = self._botao(linha, "⬇  Instalar o motor de vozes", self.ao_instalar_motor_local,
+                                                   "secundario")
+        self.bt_instalar_motor_local.pack(side="left")
+        self.bt_remover_motor_local = self._botao(linha, "Remover do PC...", self.ao_remover_motor_local, "fantasma")
+        self.bt_remover_motor_local.pack(side="left", padx=(8, 0))
+        self._rotulo(lateral, "Voz principal do XTTS-v2 (as prontas e as que você importou):").pack(
+            anchor="w", pady=(8, 2), **p)
+        linha = ctk.CTkFrame(lateral, fg_color="transparent")
+        linha.pack(fill="x", **p)
+        self.var_jf_voz_local = tk.StringVar(self, value=voz_local.texto_do_menu(voz_local.VOZ_PADRAO))
+        self.menu_voz_local = self._menu_opcoes(linha, self.var_jf_voz_local, self.vozes_locais_do_menu())
+        self.menu_voz_local.configure(width=320)
+        self.menu_voz_local.pack(side="left")
+        self.bt_ouvir_local = self._botao(linha, "▶  Ouvir uma frase de teste", self.ao_ouvir_voz_local, "fantasma")
+        self.bt_ouvir_local.pack(side="left", padx=(8, 0))
+        self.var_jf_conferir_falas = tk.BooleanVar(self, value=True)
+        self._checkbox(lateral, "Conferir cada fala com o Whisper (no PC): o XTTS-v2 às vezes inventa uma sílaba no "
+                                "fim ou embola uma palavra; a sobra é cortada e a embolada, gerada de novo (um pouco "
+                                "mais lento)", self.var_jf_conferir_falas)
+        self.atualizar_motor_local(self._motor_local)
+
+    _motor_local: dict | None = None
+
+    def vozes_locais_do_menu(self) -> tuple:
+        """As vozes do XTTS-v2: as prontas (com o gênero) e, depois, as gravações importadas."""
+        return tuple(voz_local.texto_do_menu(v) for v in voz_local.VOZES_PRONTAS) + tuple(
+            voz_local.menu_da_importada(v) for v in getattr(self, "_vozes_importadas", ())
+            if v.tipo == vozes_importadas.GRAVACAO)
+
+    def atualizar_motor_local(self, info: dict | None) -> None:
+        """info: o que está instalado ({"gpu": True}) ou None."""
+        self._motor_local = info
+        if not hasattr(self, "lb_motor_local"):
+            return
+        if info:
+            self.lb_motor_local.configure(text="✓ Instalado " + ("(com a placa de vídeo NVIDIA)" if info.get("gpu")
+                                                                 else "(processador: sem placa NVIDIA, mais lento)"),
+                                          text_color=Tema.SUCESSO)
+        else:
+            self.lb_motor_local.configure(text="Ainda não instalado neste PC.", text_color=Tema.TEXTO_FRACO)
+        self.bt_instalar_motor_local.configure(text="↻  Reinstalar / atualizar" if info else
+                                               "⬇  Instalar o motor de vozes")
+        self.bt_remover_motor_local.configure(state="normal" if info else "disabled")
+        self.bt_ouvir_local.configure(state="normal" if info else "disabled")
+
+    def _atualizar_menu_voz_local(self) -> None:
+        if not hasattr(self, "menu_voz_local"):
+            return
+        opcoes = self.vozes_locais_do_menu()
+        self.menu_voz_local.configure(values=list(opcoes))
+        if self.var_jf_voz_local.get() not in opcoes:     # a importada escolhida foi removida: volta à padrão
+            self.var_jf_voz_local.set(voz_local.texto_do_menu(voz_local.VOZ_PADRAO))
+
+    def ao_instalar_motor_local(self) -> None:          # o app faz (baixa e instala numa tarefa)
+        pass
+
+    def ao_remover_motor_local(self) -> None:
+        pass
+
+    def ao_ouvir_voz_local(self) -> None:
+        pass
+
     def vozes_piper_do_menu(self) -> tuple:
         """As vozes do Piper: as que vêm com o Maestro + os modelos do Piper importados."""
         return self.VOZES_DUBLAGEM + tuple(v.id for v in getattr(self, "_vozes_importadas", ())
@@ -4438,6 +4525,7 @@ class JanelaModerna(ctk.CTk):
         self.menu_voz_piper.configure(values=list(opcoes))
         if self.var_jf_voz_dublagem.get() not in opcoes:     # a escolhida foi removida: volta à padrão
             self.var_jf_voz_dublagem.set(self.VOZES_DUBLAGEM[0])
+        self._atualizar_menu_voz_local()
 
     def ao_escolher_arquivo_voz(self) -> None:
         caminho = filedialog.askopenfilename(parent=self, title="Escolha a voz (modelo do Piper ou gravação)",
@@ -4652,8 +4740,8 @@ class JanelaModerna(ctk.CTk):
     def _ao_escolher_modo_voz(self) -> None:
         """O cartão escolhido (Piper / Cloud / Gemini / Misto) vira o motor e a opção dos figurantes."""
         modo = self.var_jf_modo_voz.get()
-        self.var_jf_motor_voz.set({"piper": self.MOTORES_VOZ[0], "cloud": self.MOTORES_VOZ[2]}.get(
-            modo, self.MOTORES_VOZ[1]))
+        self.var_jf_motor_voz.set({"piper": self.MOTORES_VOZ[0], "cloud": self.MOTORES_VOZ[2],
+                                   "local": self.MOTORES_VOZ[3]}.get(modo, self.MOTORES_VOZ[1]))
         self.var_jf_figurantes_piper.set(modo == "misto")
 
     def _sincronizar_modo_voz(self) -> None:
@@ -4661,7 +4749,7 @@ class JanelaModerna(ctk.CTk):
         motor = self.var_jf_motor_voz.get()
         gemini = motor.startswith("Gemini")
         modo = (("misto" if self.var_jf_figurantes_piper.get() else "gemini") if gemini
-                else "cloud" if motor.startswith("Google Cloud") else "piper")
+                else "cloud" if motor.startswith("Google Cloud") else "local" if motor.startswith("XTTS") else "piper")
         if self.var_jf_modo_voz.get() != modo:
             self.var_jf_modo_voz.set(modo)
         for valor, cartao in getattr(self, "_cartoes_modo_voz", {}).items():
@@ -5108,6 +5196,8 @@ class JanelaModerna(ctk.CTk):
             modelo_whisper=self.var_jf_modelo_whisper.get(), whisper_gpu=self.var_jf_whisper_gpu.get(),
             voz_dublagem=self.var_jf_voz_dublagem.get(), motor_voz=self.var_jf_motor_voz.get(),
             voz_gemini=valor_da_voz(self.var_jf_voz_gemini.get()), chave_gemini=self.var_jf_chave_gemini.get().strip(),
+            voz_local=voz_local.valor_do_menu(self.var_jf_voz_local.get()),
+            conferir_falas=self.var_jf_conferir_falas.get(),
             encurtar_falas=self.var_jf_encurtar_falas.get(), emocao_da_cena=self.var_jf_emocao_da_cena.get(),
             pronuncias=self.var_jf_pronuncias.get().strip(),
             voz_por_personagem=self.var_jf_voz_por_personagem.get(),
@@ -5237,6 +5327,7 @@ class JanelaModerna(ctk.CTk):
                   "pasta_avulsos": self.var_jf_pasta_avulsos, "chave_cloud_tts": self.var_jf_chave_cloud,
                   "inicio_teste": self.var_inicio_teste(), "pronuncias": self.var_jf_pronuncias}
         marcas = {"tmdb": self.var_jf_tmdb, "incluir_tmdbid": self.var_jf_tmdbid,
+                  "conferir_falas": self.var_jf_conferir_falas,
                   "exigir_catalogo": self.var_jf_exigir, "legendas": self.var_jf_legendas,
                   "limpar_lixo": self.var_jf_lixo, "imagens_tmdb": self.var_jf_imagens,
                   "apagar_pasta_origem": self.var_jf_apagar_pasta, "nomes_episodios": self.var_jf_nomes_ep,
@@ -5277,6 +5368,10 @@ class JanelaModerna(ctk.CTk):
         if dados.get("voz_gemini"):                      # salvo só o nome ("Kore", "clone:Izael"); o menu mostra
             self.var_jf_voz_gemini.set(next((v for v in self.vozes_gemini_do_menu()  # com a descrição
                                              if valor_da_voz(v) == dados["voz_gemini"]), self.VOZES_GEMINI[0]))
+        if dados.get("voz_local"):                       # salvo "Ana Florence" ou "imp:izael"; o menu mostra o perfil
+            self.var_jf_voz_local.set(next((v for v in self.vozes_locais_do_menu()
+                                            if voz_local.valor_do_menu(v) == dados["voz_local"]),
+                                           voz_local.texto_do_menu(voz_local.VOZ_PADRAO)))
         if dados.get("minutos_teste"):
             self.campo_minutos_teste.set(float(dados["minutos_teste"]))
         if dados.get("player_video"):
@@ -5870,6 +5965,8 @@ class JanelaModerna(ctk.CTk):
     def pedir_vozes(self, filme: str, linhas: list[str], rotulos: list[str], sugestao: dict) -> dict | None:
         """Janela "Vozes dos personagens" (ver DialogoVozes)."""
         vozes = self.vozes_gemini_do_menu() + tuple(f"Piper {v} (grátis, no PC)" for v in self.vozes_piper_do_menu())
+        if self.var_jf_motor_voz.get().startswith("XTTS"):     # XTTS-v2: as vozes dele no lugar das do Gemini
+            vozes = tuple(f"XTTS: {v}" for v in self.vozes_locais_do_menu()) + vozes[len(self.vozes_gemini_do_menu()):]
         if self.var_jf_figurantes_cloud.get():               # figurantes no Google Cloud (cota grátis)
             vozes += tuple(f"Google Cloud {v} (cota grátis)" for v in voz_cloud.vozes_do_tipo(self.tipo_cloud_escolhido()))
         dialogo = DialogoVozes(self, filme, linhas, rotulos, sugestao, vozes)

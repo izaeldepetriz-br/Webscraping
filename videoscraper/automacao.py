@@ -74,6 +74,7 @@ from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, ClienteTV, carregar_canais, 
                                        salvar_historico)
 from jellyfin_tools import cotacao, gastos, personagens, tom, vigia, voz_clonada, voz_cloud, voz_gemini
 from jellyfin_tools import vozes_importadas as vozes_importadas_mod
+from jellyfin_tools import genero_local, voz_local
 from jellyfin_tools.adaptacao import Adaptador
 from jellyfin_tools.vigia import filtro_prontos
 
@@ -231,6 +232,29 @@ def usa_cloud(o: OpcoesJellyfin) -> bool:
     return o.motor_voz.startswith("Google Cloud")
 
 
+def usa_local(o: OpcoesJellyfin) -> bool:
+    """O XTTS-v2 (grátis, no PC) no lugar do Gemini."""
+    return o.motor_voz.startswith("XTTS")
+
+
+def pasta_motor_local() -> Path:
+    """O pacote do motor de vozes (Python + PyTorch + XTTS-v2), junto das configurações."""
+    return config.ARQUIVO.parent / "motor_vozes"
+
+
+def motor_local(o: OpcoesJellyfin, avisar=None):
+    if not voz_local.instalado(pasta_motor_local()):
+        raise FaltaConfiguracao("O motor de vozes XTTS-v2 (grátis, no PC) ainda não está instalado: Configurações > "
+                                "Dublagem > \"Instalar o motor de vozes\" (uma vez, ~3 GB).")
+    conferir = None
+    if getattr(o, "conferir_falas", True):            # o Whisper "base" (rápido) ouve cada fala gerada
+        conferir = voz_local.ConferidorWhisper(Transcritor(modelo="base", usar_gpu=o.whisper_gpu,
+                                                           pasta_modelos=str(config.ARQUIVO.parent / "modelos_whisper")))
+    return voz_local.MotorLocal(pasta_motor_local(), getattr(o, "voz_local", "") or voz_local.VOZ_PADRAO,
+                                vozes_importadas(), config.ARQUIVO.parent, conferir=conferir,
+                                avisar=avisar or (lambda texto: obter_logger().info("Dublagem: %s", texto)))
+
+
 def chave_cloud(o: OpcoesJellyfin) -> str:
     """A chave do Google Cloud (Text-to-Speech): a do campo ou, vazio, a variável GOOGLE_TTS_API_KEY."""
     return o.chave_cloud_tts or os.environ.get("GOOGLE_TTS_API_KEY", "")
@@ -347,6 +371,8 @@ def preparar_motor(o: OpcoesJellyfin, progresso_piper=None, progresso_voz=None):
     figurantes no Piper (mista), um MotorMisto: cada fala vai para o motor da voz dela."""
     if usa_cloud(o):
         return motor_cloud(o)
+    if usa_local(o):
+        return motor_local(o)
     if usa_gemini(o):
         if not chave_gemini(o):
             raise FaltaConfiguracao("Para a voz premium do Gemini, crie a chave em aistudio.google.com (Get API key) "
@@ -376,9 +402,22 @@ def ouvinte_de_tons(o: OpcoesJellyfin, video: str | Path, motor, log: logging.Lo
     para a voz repetir a interpretação. Com o Piper ou o Google Cloud (não interpretam): só os sons sem fala, se
     eles forem voltar (separação das vozes e "Manter os sons" ligados). None: sem a chave do Gemini, ou nos robôs
     "só com o Piper (sem custo)"."""
+    video = Path(video)
+    if isinstance(getattr(motor, "premium", motor), voz_local.MotorLocal):    # XTTS-v2: o gênero pelo tom, no PC
+
+        def pelo_tom(falas, ids, pasta, parar):
+            ffmpeg = localizar_ffmpeg()
+            if not ffmpeg:
+                raise ErroDublagem("falta o ffmpeg (pip install imageio-ffmpeg)")
+            ouvidas = genero_local.ouvir_generos(video, falas, ids, ffmpeg, Path(pasta) / "generos.json", parar=parar)
+            if log:
+                generos = Counter(x.genero for x in ouvidas.values())
+                log.info("Dublagem: o tom de %d falas foi medido no PC (%d de mulher, %d de homem, %d sem saber: "
+                         "ficam com a voz principal)", len(ouvidas), generos["f"], generos["m"], generos["?"])
+            return ouvidas
+        return pelo_tom
     if not chave_gemini(o) or getattr(o, "sem_gemini", False):
         return None
-    video = Path(video)
     if not motor_expressivo(motor):                   # Piper / Google Cloud: só os sons sem fala (se forem voltar)
         if not (getattr(o, "manter_sons", True) and getattr(o, "separar_vozes", False)):
             return None
@@ -421,6 +460,12 @@ def vozes_por_genero(o: OpcoesJellyfin, motor) -> dict | None:
     """{"m": voz, "f": voz}: a voz escolhida fica com o gênero dela, e o outro gênero ganha uma voz pronta do Gemini
     (a fala de mulher não sai com voz de homem). None: sem a escuta do original ou com uma voz clonada (é a SUA voz,
     escolhida para tudo)."""
+    if isinstance(getattr(motor, "premium", motor), voz_local.MotorLocal):    # XTTS-v2: as vozes dele
+        principal = getattr(o, "voz_local", "") or voz_local.VOZ_PADRAO
+        perfil = voz_local.perfil_da_voz(principal, vozes_importadas())
+        if perfil.startswith("feminina"):
+            return {"f": principal, "m": voz_local.VOZ_PADRAO}
+        return {"m": principal, "f": voz_local.vozes_por_genero("feminina")[0]}
     if not chave_gemini(o) or not motor_expressivo(motor):
         return None
     voz = o.voz_gemini if o.voz_gemini in voz_gemini.VOZES else ("" if o.voz_gemini.startswith("clone:")
