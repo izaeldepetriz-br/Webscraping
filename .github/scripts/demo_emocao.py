@@ -41,8 +41,9 @@ CENA = [
     ("m", "Get down! Now!", "Abaixa! Agora!", "grito"),
     ("m", "It's over. We're safe now.", "Acabou. Agora a gente está seguro.", "normal"),
 ]
-VOZ_ORIGINAL = {"m": "Viktor Eka", "f": "Ana Florence"}          # o "original" em inglês
-VOZ_DUBLAGEM = {"m": "Gilberto Mathias", "f": "Narelle Moon"}     # a dublagem (a principal é a masculina)
+# o "original" em inglês: a voz dela bem aguda (uma de 160 a 185 Hz fica "sem saber" e vai com a voz principal)
+VOZ_ORIGINAL = {"m": "Viktor Eka", "f": "Narelle Moon"}
+VOZ_DUBLAGEM = {"m": "Gilberto Mathias", "f": "Ana Florence"}     # a dublagem (a principal é a masculina)
 NORMAL_RMS, GRITO_RMS, SUSSURRO_RMS = 0.05, 0.2, 0.01
 
 pasta, saida = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
