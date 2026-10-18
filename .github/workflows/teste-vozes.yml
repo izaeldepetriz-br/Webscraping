@@ -28,11 +28,12 @@ jobs:
       - name: XTTS-v2 lendo o texto de referência (a voz-alvo)
         run: |
           set -o pipefail
-          { pip install torch torchaudio --index-url $TORCH_CPU && pip install coqui-tts \
+          { pip install torch==2.8.0 torchaudio==2.8.0 --index-url $TORCH_CPU \
+            && pip install coqui-tts==0.27.5 "transformers>=4.57,<5" \
             && python .github/scripts/vozes_xtts.py saida referencia; } 2>&1 | tee registro_referencia.txt
       - name: Mostrar o erro
         if: failure()
-        run: echo "::error title=referencia::$(tail -n 40 registro_referencia.txt | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+        run: echo "::error title=referencia::$(grep -v -E 'Downloading|━|Collecting|Requirement already|Using cached|Successfully|Installing collected|Building wheel|Created wheel|Stored in' registro_referencia.txt | tail -n 25 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -52,11 +53,12 @@ jobs:
       - name: XTTS-v2 (cena + catálogo das vozes prontas)
         run: |
           set -o pipefail
-          { pip install torch torchaudio --index-url $TORCH_CPU && pip install coqui-tts \
+          { pip install torch==2.8.0 torchaudio==2.8.0 --index-url $TORCH_CPU \
+            && pip install coqui-tts==0.27.5 "transformers>=4.57,<5" \
             && python .github/scripts/vozes_xtts.py saida tudo; } 2>&1 | tee registro_xtts.txt
       - name: Mostrar o erro
         if: failure()
-        run: echo "::error title=xtts::$(tail -n 40 registro_xtts.txt | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+        run: echo "::error title=xtts::$(grep -v -E 'Downloading|━|Collecting|Requirement already|Using cached|Successfully|Installing collected|Building wheel|Created wheel|Stored in' registro_xtts.txt | tail -n 25 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -85,7 +87,7 @@ jobs:
             && python .github/scripts/vozes_chatterbox.py saida ref/saida/ref_alvo.wav; } 2>&1 | tee registro_chatterbox.txt
       - name: Mostrar o erro
         if: failure()
-        run: echo "::error title=chatterbox::$(tail -n 40 registro_chatterbox.txt | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+        run: echo "::error title=chatterbox::$(grep -v -E 'Downloading|━|Collecting|Requirement already|Using cached|Successfully|Installing collected|Building wheel|Created wheel|Stored in' registro_chatterbox.txt | tail -n 25 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -127,7 +129,7 @@ jobs:
           } 2>&1 | tee registro_openvoice.txt
       - name: Mostrar o erro
         if: failure()
-        run: echo "::error title=openvoice::$(tail -n 40 registro_openvoice.txt | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+        run: echo "::error title=openvoice::$(grep -v -E 'Downloading|━|Collecting|Requirement already|Using cached|Successfully|Installing collected|Building wheel|Created wheel|Stored in' registro_openvoice.txt | tail -n 25 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -159,7 +161,7 @@ jobs:
             && python .github/scripts/comparar_vozes.py resultados; } 2>&1 | tee resultados/registro_comparar.txt
       - name: Mostrar o erro
         if: failure()
-        run: echo "::error title=comparar::$(tail -n 40 resultados/registro_comparar.txt | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+        run: echo "::error title=comparar::$(grep -v -E 'Downloading|━|Collecting|Requirement already|Using cached|Successfully|Installing collected|Building wheel|Created wheel|Stored in' resultados/registro_comparar.txt | tail -n 25 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
       - name: Guardar os áudios num ramo de resultados
         if: always()
         run: |
