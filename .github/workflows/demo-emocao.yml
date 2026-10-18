@@ -1,0 +1,42 @@
+# Demonstração (temporária) da emoção no XTTS-v2: a cena de exemplo dublada antes e depois; os áudios vão para o
+# ramo "audios-demo-emocao-<execução>".
+name: Demo emoção
+
+on:
+  push:
+    branches: [demo-emocao]
+
+permissions:
+  contents: write
+
+jobs:
+  demo:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cena antes e depois
+        run: |
+          set -o pipefail
+          { pip install -r requirements.txt scipy && python .github/scripts/demo_emocao.py "$RUNNER_TEMP/motor" saida; } 2>&1 | tee registro_demo.txt
+      - name: Mostrar o erro
+        if: failure()
+        run: |
+          echo "::error title=demo::$(grep -v -E 'Downloading|━|Collecting|Requirement already|Using cached|Successfully|Installing collected' registro_demo.txt | tail -n 25 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+          echo "::error title=registro do XTTS::$(tail -n 20 "$RUNNER_TEMP/motor/registro.txt" 2>/dev/null | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+          echo "::error title=registro do Chatterbox::$(tail -n 20 "$RUNNER_TEMP/motor/chatterbox/registro.txt" 2>/dev/null | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+      - name: Guardar os áudios num ramo
+        if: always()
+        run: |
+          mkdir -p resultados && cp -r saida registro_demo.txt resultados/ 2>/dev/null || true
+          rm -rf resultados/saida/whisper
+          cd resultados
+          git init -q -b audios-demo-emocao-${{ github.run_id }}
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Demo emoção (execução ${{ github.run_id }})"
+          git push -q "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD
