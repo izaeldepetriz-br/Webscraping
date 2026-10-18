@@ -240,6 +240,28 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.21.0
+
+- **Aba nova "🎮 Jogos": aplicar o patch de fãs (tradução, dublagem) na ISO do SEU disco**, numa cópia que roda em
+  qualquer lugar: no PS2 pelo **OPL**, no **PCSX2**, no celular (NetherSX2/AetherSX2) ou num DVD gravado. Tudo fica
+  DENTRO da ISO nova (o OPL não tem "pasta de mods": é o único jeito que vale em todo lugar). Os grupos distribuem só o
+  patch (a lista das diferenças), nunca o jogo; o Maestro não baixa jogos.
+  - **1. Jogo**: a ISO do seu disco (.iso; .bin de CD). O Maestro lê o **código do jogo** do SYSTEM.CNF
+    ("SLUS-20946 · EUA · PS2 · versão 1.00") e confere a **impressão digital** (CRC32/MD5/SHA-1: muda se um único
+    byte mudar; na ISO de DVD, ~1 minuto).
+  - **2. Patch**: **.xdelta/.vcdiff** (pelo **xdelta3 oficial**, baixado uma vez, ~0,2 MB, conferido pela impressão
+    digital do download) ou **.ppf** 1.0/2.0/3.0 (aplicado pelo próprio Maestro). O **leia-me ao lado** do patch (e o
+    FILE_ID.DIZ de dentro do .ppf) diz a impressão digital da ISO certa: o Maestro mostra **"✓ encaixa"** ou **"✗ não
+    encaixa"** e **não aplica na versão errada** (o patch da versão americana estraga a europeia). **"🔎 Procurar na
+    comunidade"** abre no navegador a busca de patches do jogo pelo código (PO.B.R.E e Romhacking.net): o download é
+    na página do grupo, com os créditos.
+  - **3. Aplicar**: numa **cópia** (a ISO original não muda; a nova só ganha o nome no fim, sem ISO pela metade), com o
+    **nome no padrão do OPL** se quiser ("SLUS_209.46.Meu Jogo PT-BR.iso"), conferindo o espaço no disco antes. ISO
+    de mais de 4 GB: o aviso de dividir (USBUtil) ou usar exFAT no pendrive.
+  - **Compartilhar a sua tradução**: com a ISO original e a modificada (a sua tradução ou dublagem já dentro), o
+    Maestro cria o **.xdelta** (só as diferenças, sem o jogo) e um **leia-me com a impressão digital da original**,
+    para quem for aplicar conferir.
+
 ### Novidades da v2.20.0
 
 - **Motor de vozes grátis no PC: XTTS-v2, no lugar do Gemini** (Configurações > Dublagem > "Quem lê as falas" >

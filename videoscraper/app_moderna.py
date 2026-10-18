@@ -76,6 +76,7 @@ from .gui_moderna import (DialogoCompletar, PainelEspelhos, JanelaModerna, Janel
                           OpcoesInterface, Tema)
 from .tv_moderna import TVAoVivo
 from .audio_moderna import TrocaDeAudio
+from .jogos_moderna import PatchDeJogos
 from .vozes_moderna import ImportarVozes
 from .navegador import PERFIL_PADRAO, PlaywrightAusente
 from .rede import pode_ignorar_robots, site_de
@@ -182,7 +183,7 @@ STATUS_LEGENDA = {"baixada": ("baixada", "ok"), "ja_existe": ("já existia", Non
                   "sem_video": ("sem vídeo", None)}
 
 
-class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, JanelaModerna):
+class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaModerna):
     def __init__(self):
         super().__init__(pasta_padrao=PASTA_PADRAO)
         self._abandonadas: set[int] = set()          # tarefas que não obedeceram ao Parar a tempo
@@ -223,6 +224,7 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, JanelaModerna):
         self._bandeja = None                    # ícone perto do relógio (quando escondida)
         self._iniciar_tv_ao_vivo()
         self._iniciar_troca_audio()
+        self._iniciar_jogos()
         self._saindo = False
         self._espelhos_salvos = {}
         self._vigia_conferindo = False
@@ -793,6 +795,8 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, JanelaModerna):
             self._tocar(dado)
         elif tipo == "audio":                          # aba 🎧 Áudio: faixas lidas, encaixe, ondas, amostra, troca
             self._mensagem_audio(*dado)
+        elif tipo == "jogos":                          # aba 🎮 Jogos: impressão digital, patch aplicado, criado
+            self._mensagem_jogos(*dado)
         elif tipo == "abrir_amostra":
             self.after(50, lambda d=dado: self._mostrar_amostra(*d))
         elif tipo == "gemini_estado":

@@ -31,10 +31,10 @@ jobs:
           pip install -r requirements.txt pytest pytest-github-actions-annotate-failures
       # ffmpeg do sistema: o do pacote imageio-ffmpeg no Linux é "estático" e fecha sozinho (Segmentation fault)
       # ao ler um streaming (.m3u8) pela rede. O programa usa o do sistema quando existe.
-      - name: Instalar a tela virtual (testes da janela), o ffmpeg e o Chromium (testes do modo navegador)
+      - name: Instalar a tela virtual (testes da janela), o ffmpeg, o xdelta3 (patch de jogos) e o Chromium (modo navegador)
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb ffmpeg
+          sudo apt-get install -y xvfb ffmpeg xdelta3
           python -m playwright install --with-deps chromium
       # As duas janelas (moderna e clássica) rodam em processos separados: o Tk não aceita as duas juntas.
       - name: Testes sem janela (organizador, espelhos, TV, tradução, comandos de robô...)
