@@ -10,6 +10,7 @@ on:
       - jellyfin_tools/voz_local.py
       - jellyfin_tools/voz_emocao.py
       - jellyfin_tools/emocoes.py
+      - jellyfin_tools/atuacao.py
       - .github/scripts/testar_motor_local.py
       - .github/workflows/testar-motor-local.yml
   workflow_dispatch:

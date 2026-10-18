@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 from .dublagem import ErroDublagem, _baixar
-from .emocoes import CHATTERBOX, EMOCOES
+from .emocoes import EMOCOES, NORMAL, intensidade_chatterbox
 from .voz_local import (INDICE_CPU, ServidorDeVoz, _etapas, conferir_espaco, espaco_livre, frases_para_falar,
                         instalar_pacote, python_do_motor, tem_placa_nvidia)
 
@@ -52,6 +52,14 @@ def responder(dados):
     canal.flush()
 
 
+def memoria_da_placa():
+    """GB da placa de vídeo (None se não deu para saber: só informa, não decide o plano B)."""
+    try:
+        return round(torch.cuda.get_device_properties(0).total_memory / 1024 ** 3, 1)
+    except Exception:
+        return None
+
+
 def erro_da_placa(erro):
     texto = f"{type(erro).__name__} {erro}".lower()
     return "cuda" in texto or "out of memory" in texto or "cublas" in texto or "cudnn" in texto
@@ -62,11 +70,12 @@ try:
     import soundfile as sf
     import torch
     from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-    dispositivo, placa, aviso = "cpu", "", ""
+    dispositivo, placa, aviso, memoria = "cpu", "", "", None
     if torch.cuda.is_available():
         try:
             modelo = ChatterboxMultilingualTTS.from_pretrained(device="cuda")
             dispositivo, placa = "cuda", torch.cuda.get_device_name(0)
+            memoria = memoria_da_placa()
         except Exception as erro:            # plano B: a placa não aguentou, vai pelo processador
             print(f"a placa de vídeo não aguentou ({type(erro).__name__}: {erro}); vai pelo processador",
                   file=sys.stderr)
@@ -74,7 +83,7 @@ try:
             aviso = f"a placa de vídeo não aguentou o modelo ({type(erro).__name__}); vai pelo processador"
     if dispositivo == "cpu":
         modelo = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
-    responder({"pronto": True, "dispositivo": dispositivo, "placa": placa, "aviso": aviso})
+    responder({"pronto": True, "dispositivo": dispositivo, "placa": placa, "aviso": aviso, "memoria": memoria})
 except Exception as erro:
     responder({"erro": f"{type(erro).__name__}: {erro}"})
     sys.exit(1)
@@ -187,12 +196,15 @@ class MotorEmocao(ServidorDeVoz):
                              parar)
 
     def falar(self, texto: str, saida: str | Path, referencia: str | Path, emocao: str, parar=None,
-              idioma: str = "pt") -> None:
+              idioma: str = "pt", forca: float = 0.0) -> None:
+        """A fala com a emoção. Com a força da interpretação (> 0), mais intensa e no jeito da emoção (as pausas do
+        choro, o "!" da raiva)."""
         if emocao not in EMOCOES:
             raise ErroDublagem(f"emoção desconhecida: {emocao}")
         self.iniciar(parar)
-        exaggeration, cfg = CHATTERBOX[emocao]
-        resposta = self._pedir({"texto": texto, "frases": frases_para_falar(texto), "idioma": idioma,
+        exaggeration, cfg = intensidade_chatterbox(emocao, forca)
+        frases = frases_para_falar(texto, emocao if forca > 0 else NORMAL)
+        resposta = self._pedir({"texto": texto, "frases": frases, "idioma": idioma,
                                 "saida": str(Path(saida).absolute()),           # caminhos completos: o servidor
                                 "referencia": str(Path(referencia).absolute()),  # trabalha em outra pasta
                                 "exaggeration": exaggeration, "cfg": cfg}, parar)

@@ -31,18 +31,21 @@ jobs:
           pip install -r requirements.txt pytest pytest-github-actions-annotate-failures
       # ffmpeg do sistema: o do pacote imageio-ffmpeg no Linux é "estático" e fecha sozinho (Segmentation fault)
       # ao ler um streaming (.m3u8) pela rede. O programa usa o do sistema quando existe.
-      - name: Instalar a tela virtual (testes da janela), o ffmpeg e o Chromium (testes do modo navegador)
+      - name: Instalar a tela virtual (testes da janela), o ffmpeg, o xdelta3 (patch de jogos) e o Chromium (modo navegador)
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb ffmpeg
+          sudo apt-get install -y xvfb ffmpeg xdelta3
           python -m playwright install --with-deps chromium
       # As duas janelas (moderna e clássica) rodam em processos separados: o Tk não aceita as duas juntas.
       - name: Testes sem janela (organizador, espelhos, TV, tradução, comandos de robô...)
         run: python -m pytest tests -q --ignore=tests/test_gui_moderna.py --ignore=tests/test_gui.py
+      # Em 3 partes, cada uma num processo novo: com ~180 janelas abertas e fechadas no mesmo processo, o Tk passou a
+      # derrubar o Python ao fechar a janela (Segmentation fault). Ver .github/scripts/pytest_em_partes.py
       - name: Testes da janela moderna
         run: |
           set -o pipefail
-          xvfb-run -a python -m pytest tests/test_gui_moderna.py -q -rfE --durations=10 2>&1 | tee saida-janela.txt
+          xvfb-run -a python .github/scripts/pytest_em_partes.py tests/test_gui_moderna.py 3 -q -rfE --durations=10 \
+            2>&1 | tee saida-janela.txt
       # Se o pytest fechar sem anotar o teste (ex.: o Tk caiu), o fim da saída vira um aviso no resumo da execução.
       - name: Mostrar o fim da saída da janela (só quando falha)
         if: failure()

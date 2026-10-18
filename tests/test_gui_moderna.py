@@ -4399,7 +4399,7 @@ def test_aba_avulsos_olhar_adicionar_e_processar(app, tmp_path, monkeypatch):
     from videoscraper import automacao
     monkeypatch.setattr(automacao, "videos_para_dublar", app_moderna.videos_para_dublar)
     assert app.seletor_aba.cget("values") == ["Vídeos", "Jellyfin", "Jellyfin TV", "Jellyfin Espelhos", "Avulsos",
-                                              "🎧 Áudio", app.ABA_CONFIG]
+                                              "🎧 Áudio", "🎮 Jogos", app.ABA_CONFIG]
     assert not hasattr(app, "bt_avulsos")                          # saiu da barra da aba Jellyfin
     caixa = tmp_path / "Para Dublar"
     caixa.mkdir()
@@ -5595,3 +5595,75 @@ def test_motor_de_vozes_xtts_pela_tela(app, tmp_path, monkeypatch):
     app.bt_remover_motor_local.invoke()
     assert not automacao.pasta_motor_local().exists() and app.var_jf_motor_voz.get() == app.MOTORES_VOZ[0]
     assert "Ainda não instalado" in app.lb_motor_local.cget("text")
+
+
+def test_aba_jogos_aplica_o_patch_numa_copia(app, tmp_path, monkeypatch):
+    """🎮 Jogos: a ISO do disco (o código do jogo), o patch e o leia-me (o que ele pede), a impressão digital
+    (encaixa ou não), aplicar numa cópia com o nome do OPL, a versão errada recusada, a busca na comunidade e o
+    patch da sua tradução."""
+    import shutil
+
+    from tests.test_patch_jogo import iso_de_teste, ppf
+    from videoscraper import jogos_moderna
+    app.mostrar_aba("🎮 Jogos")
+    p = app.painel_jogos
+    assert p is not None and app.lb_titulo.cget("text") == "Traduzir jogos com patch de fãs"
+    assert p.bt_aplicar_patch.cget("state") == "disabled"
+    iso = iso_de_teste(tmp_path / "Meu Jogo.iso")
+    escolhas = {"arquivo": str(iso)}
+    monkeypatch.setattr(jogos_moderna.filedialog, "askopenfilename", lambda **k: escolhas["arquivo"])
+    p.bt_escolher_iso.invoke()
+    assert "SLUS-20946 · EUA · PS2" in p.info_jogo["jogo"].cget("text")
+    pasta = tmp_path / "patch"
+    pasta.mkdir()
+    patch = pasta / "Meu Jogo PT-BR.ppf"
+    patch.write_bytes(ppf(3, [(41000, b"OLA MUNDO")], iso))
+    from jellyfin_tools import patch_jogo as pj
+    certa = pj.impressao_digital(iso)
+    (pasta / "leia-me.txt").write_text(f"Meu Jogo PT-BR (SLUS-20946)\nCRC32: {certa.crc32}\n", encoding="utf-8")
+    escolhas["arquivo"] = str(patch)
+    p.bt_escolher_patch.invoke()
+    assert "PPF 3.0" in p.info_patch["patch"].cget("text") and certa.crc32 in p.info_patch["pede"].cget("text")
+    assert p.info_patch["bate"].cget("text").startswith("? confira")
+    p.bt_conferir_iso.invoke()
+    esperar(app)
+    assert p.info_patch["bate"].cget("text").startswith("✓ encaixa") and certa.crc32 in \
+        p.info_jogo["digital"].cget("text")
+    assert p.nome_final() == "SLUS_209.46.Meu Jogo PT-BR.iso" and "SLUS_209.46.Meu Jogo PT-BR.iso" in \
+        p.lb_nome_final.cget("text")
+    p.var_pasta_saida.set(str(tmp_path / "OPL" / "DVD"))
+    p.bt_aplicar_patch.invoke()
+    esperar(app)
+    nova = tmp_path / "OPL" / "DVD" / "SLUS_209.46.Meu Jogo PT-BR.iso"
+    assert app.caixas[-1][0] == "sucesso", app.caixas[-1]
+    assert nova.read_bytes()[41000:41009] == b"OLA MUNDO" and b"OLA MUNDO" not in iso.read_bytes()
+    assert "✓ Pronta" in p.lb_resultado_patch.cget("text") and p.bt_abrir_pasta_jogo.cget("state") == "normal"
+    # outra versão do jogo (outra impressão digital): confere ANTES e não aplica
+    outra = iso_de_teste(tmp_path / "Meu Jogo (Europa).iso", "SLUS_209.46", semente=9)
+    escolhas["arquivo"] = str(outra)
+    p.bt_escolher_iso.invoke()
+    p.var_nome_opl.set(False)
+    p.var_nome_saida.set("Europa PT-BR")
+    p.bt_aplicar_patch.invoke()
+    esperar(app)
+    assert app.caixas[-1][0] == "aviso" and "não é a versão do patch" in app.caixas[-1][2]
+    assert p.info_patch["bate"].cget("text").startswith("✗ não encaixa")
+    assert not (tmp_path / "OPL" / "DVD" / "Europa PT-BR.iso").exists()
+    # procurar na comunidade: a busca de patches com o código do jogo
+    abertos = []
+    monkeypatch.setattr(jogos_moderna.webbrowser, "open", abertos.append)
+    p.bt_procurar_patch.invoke()
+    assert abertos and "SLUS-20946" in abertos[0]
+    # compartilhar a sua tradução: o .xdelta (com o xdelta3 de verdade, se instalado)
+    if shutil.which("xdelta3"):
+        p.var_criar_original.set(str(iso))
+        p.var_criar_modificada.set(str(nova))
+        p.var_criar_descricao.set("Meu Jogo PT-BR v1.0")
+        monkeypatch.setattr(jogos_moderna.filedialog, "asksaveasfilename",
+                            lambda **k: str(tmp_path / "compartilhar" / "Meu Jogo PT-BR v1.0.xdelta"))
+        p.bt_criar_patch.invoke()
+        esperar(app)
+        assert app.caixas[-1][0] == "sucesso", app.caixas[-1]
+        assert (tmp_path / "compartilhar" / "Meu Jogo PT-BR v1.0.xdelta").is_file()
+        assert (tmp_path / "compartilhar" / "Meu Jogo PT-BR v1.0 - leia-me.txt").is_file()
+        assert "✓ Patch criado" in p.lb_criado.cget("text")

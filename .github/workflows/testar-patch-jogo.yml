@@ -1,0 +1,35 @@
+# Teste de verdade do patch de jogos (aba 🎮 Jogos) num Windows, como no PC de quem usa o Maestro: baixa o xdelta3
+# oficial, cria e aplica um .xdelta e um .ppf em ISOs de mentira. Roda quando o patch muda (ou pelo "Run workflow").
+name: Patch de jogos no Windows
+
+on:
+  push:
+    paths:
+      - jellyfin_tools/patch_jogo.py
+      - .github/scripts/testar_patch_jogo.py
+      - .github/workflows/testar-patch-jogo.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Criar e aplicar patches
+        shell: bash
+        run: |
+          set -o pipefail
+          { python -m pip install --upgrade pip && pip install -r requirements.txt pytest \
+            && python .github/scripts/testar_patch_jogo.py "$RUNNER_TEMP/patch"; } 2>&1 | tee registro.txt
+      - name: Mostrar o erro
+        if: failure()
+        shell: bash
+        run: |
+          echo "::error title=patch de jogos::$(grep -v -E 'Downloading|━|Collecting|Requirement already|Using cached|Successfully|Installing collected' registro.txt | tail -n 25 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"

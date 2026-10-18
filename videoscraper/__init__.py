@@ -10,4 +10,4 @@ Módulos (cada um com UMA responsabilidade):
   menu       -> menu interativo para quem não quer decorar comandos
 """
 
-__version__ = "2.20.0"   # o .exe do GitHub usa versao_build.txt (a versão publicada em Releases)
+__version__ = "2.22.0"   # o .exe do GitHub usa versao_build.txt (a versão publicada em Releases)

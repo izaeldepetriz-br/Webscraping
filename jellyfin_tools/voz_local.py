@@ -24,7 +24,8 @@ A EMOÇÃO (emocoes.py): a fala com nota de direção ("Nesta fala: gritando") v
 importada, se houver; senão, com o Chatterbox (voz_emocao.py, opcional), imitando a mesma voz; sem os dois, neutra.
 
 Placa de vídeo que não aguenta (pouca memória, ou nova demais para este PyTorch): o servidor passa para o
-processador sozinho (mais devagar, mas termina) e avisa.
+processador sozinho (mais devagar, mas termina) e avisa. E na placa de até 12 GB (a RTX 4060 tem 8), o XTTS-v2 e o
+Chatterbox não ficam abertos juntos (os dois somam ~7-8 GB): primeiro as falas normais, depois as com emoção.
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ from collections import Counter
 from pathlib import Path
 
 from .dublagem import SEM_JANELA, ErroDublagem, _baixar
-from .emocoes import NORMAL, emocao_da_nota
+from .emocoes import NORMAL, emocao_da_nota, nome_da_emocao
 
 NOME = "XTTS-v2 (grátis, no PC)"
 VERSAO_UV = "0.13.1"
@@ -58,6 +59,7 @@ PACOTES = ["coqui-tts==0.27.5", "transformers>=4.57,<5"]   # o transformers 5 qu
 MODELO = "tts_models/multilingual/multi-dataset/xtts_v2"
 PREFIXO_IMPORTADA = "imp:"
 TEMPO_PARA_CARREGAR = 3600      # segundos: na 1ª vez o servidor baixa o modelo (~1,8 GB) antes de ficar pronto
+JUNTOS_NA_PLACA_GB = 12.0       # com menos memória que isso, XTTS-v2 e Chatterbox usam a placa um de cada vez
 FRASE_DE_TESTE = "Olá! Esta é a voz que vai dublar os seus vídeos, aqui no seu computador, sem custo."
 # a fala que o Chatterbox imita para fazer uma voz PRONTA com emoção (gerada uma vez pelo XTTS-v2, em referencias/)
 FRASE_DE_REFERENCIA = ("Olá! Hoje o dia está bonito. Vou fazer um café e ver um filme. Você quer vir junto? Vai ser "
@@ -144,6 +146,14 @@ def responder(dados):
     canal.flush()
 
 
+def memoria_da_placa():
+    """GB da placa de vídeo (None se não deu para saber: só informa, não decide o plano B)."""
+    try:
+        return round(torch.cuda.get_device_properties(0).total_memory / 1024 ** 3, 1)
+    except Exception:
+        return None
+
+
 def erro_da_placa(erro):
     """Falta de memória na placa de vídeo, ou placa nova demais para este PyTorch ("no kernel image")."""
     texto = f"{type(erro).__name__} {erro}".lower()
@@ -155,18 +165,19 @@ try:
     import torch
     from TTS.api import TTS
     tts = TTS(os.environ.get("MAESTRO_MODELO", "tts_models/multilingual/multi-dataset/xtts_v2"))
-    dispositivo, placa, aviso = "cpu", "", ""
+    dispositivo, placa, aviso, memoria = "cpu", "", "", None
     if torch.cuda.is_available():
         try:
             tts = tts.to("cuda")
             dispositivo, placa = "cuda", torch.cuda.get_device_name(0)
+            memoria = memoria_da_placa()
         except Exception as erro:            # plano B: a placa não aguentou, vai pelo processador
             print(f"a placa de vídeo não aguentou ({type(erro).__name__}: {erro}); vai pelo processador",
                   file=sys.stderr)
             tts = tts.to("cpu")
             torch.cuda.empty_cache()
             aviso = f"a placa de vídeo não aguentou o modelo ({type(erro).__name__}); vai pelo processador"
-    responder({"pronto": True, "dispositivo": dispositivo, "placa": placa, "aviso": aviso,
+    responder({"pronto": True, "dispositivo": dispositivo, "placa": placa, "aviso": aviso, "memoria": memoria,
                "vozes": list(tts.speakers or [])})
 except Exception as erro:
     responder({"erro": f"{type(erro).__name__}: {erro}"})
@@ -216,8 +227,15 @@ for linha in sys.stdin:
 PAUSA_PONTO, PAUSA_PERGUNTA = 0.30, 0.35
 
 
-def frases_para_falar(texto: str) -> list[list]:
-    """'E cuidado. Tem algo ali?' -> [['E cuidado', 0.3], ['Tem algo ali?', 0.0]] (a última sem pausa)."""
+# o jeito de falar de cada emoção: o choro, o medo e a tristeza falam aos pedaços (cada vírgula vira uma pausa; o choro
+# puxa o ar nelas) (pausa da frase, pausa da vírgula); a raiva e o grito terminam as frases com "!"
+PAUSAS_DA_EMOCAO = {"choro": (0.55, 0.4), "medo": (0.4, 0.3), "triste": (0.5, 0.3)}
+EXCLAMAR = ("brava", "grito")
+
+
+def frases_para_falar(texto: str, emocao: str = NORMAL) -> list[list]:
+    """'E cuidado. Tem algo ali?' -> [['E cuidado', 0.3], ['Tem algo ali?', 0.0]] (a última sem pausa). Com a
+    emoção: chorando, 'Por favor, não vai.' -> [['Por favor', 0.4], ['não vai', 0.0]]; com raiva, 'Sai.' -> 'Sai!'."""
     import re
     texto = " ".join(texto.replace("...", "…").split())
     texto = re.sub(r"\s*[;:]\s*", ", ", texto)
@@ -228,7 +246,22 @@ def frases_para_falar(texto: str) -> list[list]:
         frase = parte.rstrip(".…").rstrip(" ,")
         if not re.search(r"\w", frase):
             continue
-        frases.append([frase, PAUSA_PERGUNTA if parte.endswith(("?", "!")) else PAUSA_PONTO])
+        if emocao in EXCLAMAR and not frase.endswith(("?", "!")):
+            frase += "!"
+        pausa = PAUSA_PERGUNTA if frase.endswith(("?", "!")) else PAUSA_PONTO
+        if emocao in PAUSAS_DA_EMOCAO:
+            na_frase, na_virgula = PAUSAS_DA_EMOCAO[emocao]
+            pedacos = []
+            for pedaco in (p.strip() for p in frase.split(",")):
+                if pedacos and len(pedacos[-1].split()) < 2:          # pedaço de 1 palavra vai junto do próximo
+                    pedacos[-1] = f"{pedacos[-1]}, {pedaco}"
+                elif re.search(r"\w", pedaco):
+                    pedacos.append(pedaco)
+            if len(pedacos) > 1 and len(pedacos[-1].split()) < 2:     # e a última palavra sozinha, do anterior
+                pedacos[-2:] = [f"{pedacos[-2]}, {pedacos[-1]}"]
+            frases += [[pedaco, na_virgula] for pedaco in pedacos[:-1]] + [[pedacos[-1], na_frase]]
+            continue
+        frases.append([frase, pausa])
     if frases:
         frases[-1][1] = 0.0
     return frases or [[texto, 0.0]]
@@ -502,16 +535,19 @@ class ServidorDeVoz:
         self._processo = None
         self._respostas: queue.Queue = queue.Queue()
         self.dispositivo = self.placa = ""
+        self.memoria: float | None = None          # GB da placa de vídeo (None: processador ou não informou)
 
-    def _ler_saida(self, saida) -> None:
+    def _ler_saida(self, saida, respostas: queue.Queue) -> None:
+        """Lê as respostas de UM processo para a fila DELE (o recado "fechou" de um processo já fechado não pode
+        cair na fila do novo, quando o servidor é aberto de novo)."""
         for linha in saida:
             linha = linha.strip()
             if linha.startswith("{"):
                 try:
-                    self._respostas.put(json.loads(linha))
+                    respostas.put(json.loads(linha))
                 except ValueError:
                     pass
-        self._respostas.put({"erro": f"{self.nome} fechou sozinho (veja o {self.registro})"})
+        respostas.put({"erro": f"{self.nome} fechou sozinho (veja o {self.registro})"})
 
     def _resposta(self, limite: float, parar=None) -> dict:
         fim = limite
@@ -539,7 +575,8 @@ class ServidorDeVoz:
                                      stdout=subprocess.PIPE, stderr=registro, text=True, encoding="utf-8",
                                      env=ambiente, cwd=str(pasta), **SEM_JANELA)
         registro.close()
-        threading.Thread(target=self._ler_saida, args=(self._processo.stdout,), daemon=True).start()
+        self._respostas = queue.Queue()
+        threading.Thread(target=self._ler_saida, args=(self._processo.stdout, self._respostas), daemon=True).start()
         if self.avisar:
             self.avisar(carregando)
         pronto = self._resposta(TEMPO_PARA_CARREGAR, parar)
@@ -547,10 +584,12 @@ class ServidorDeVoz:
             self.fechar()
             raise ErroDublagem(f"{self.nome} não abriu: {pronto.get('erro', 'sem resposta')}")
         self.dispositivo, self.placa = pronto.get("dispositivo", ""), pronto.get("placa", "")
+        self.memoria = pronto.get("memoria")
         if self.avisar:
             if pronto.get("aviso"):
                 self.avisar(f"{self.nome}: {pronto['aviso']} (mais devagar, mas termina)")
-            self.avisar(f"{self.nome} pronto ({'placa de vídeo ' + self.placa if self.placa else 'processador'})")
+            memoria = f", {self.memoria:g} GB" if self.placa and self.memoria else ""
+            self.avisar(f"{self.nome} pronto ({'placa de vídeo ' + self.placa + memoria if self.placa else 'processador'})")
         return pronto
 
     def _pedir(self, pedido: dict, parar=None, limite: float = 600) -> dict:
@@ -592,18 +631,28 @@ class MotorLocal(ServidorDeVoz):
 
     expressiva = False                  # não interpreta o tom da cena como o Gemini: a emoção vai pela gravação
     modelo = "xtts_v2"
-    estilo = ""
 
     def __init__(self, pasta: str | Path, voz: str = VOZ_PADRAO, importadas: list = (), pasta_importadas=None,
-                 abrir=subprocess.Popen, avisar=None, idioma: str = "pt", conferir=None, emocao=None):
+                 abrir=subprocess.Popen, avisar=None, idioma: str = "pt", conferir=None, emocao=None,
+                 forca_emocao: float = 1.0, ffmpeg: str | None = None):
         super().__init__(abrir, avisar)
         self.pasta, self.voz, self.idioma = Path(pasta), voz or VOZ_PADRAO, idioma
         self.conferir = conferir                 # ConferidorWhisper (ou None: sem conferir)
         self.emocao = emocao                     # voz_emocao.MotorEmocao (o Chatterbox) ou None
+        self.forca = forca_emocao                # a interpretação (atuacao.py): 0 = desligada, 1 = "Forte"
+        self.ffmpeg = ffmpeg                     # (só para subir ou descer o tom; None = o do sistema)
         self.cortadas = self.refeitas = 0
         self.com_emocao: Counter = Counter()     # "gravação" / "chatterbox": quantas falas foram com emoção
+        self.interpretadas: Counter = Counter()  # emoção -> quantas falas a interpretação mudou
+        self.como_ficou: dict[str, str] = {}     # emoção -> o que a interpretação fez (para o registro)
         self.importadas, self.pasta_importadas = list(importadas), pasta_importadas
         self.pedidos = 0
+
+    @property
+    def estilo(self) -> str:
+        """Entra no nome das falas guardadas (dublagem._assinatura): trocar a força da emoção gera as falas de novo
+        (na "Desligada", os mesmos nomes da v2.20)."""
+        return f"interpretação {self.forca:g}" if self.forca > 0 else ""
 
     # --- o servidor
     def iniciar(self, parar=None) -> None:
@@ -646,8 +695,14 @@ class MotorLocal(ServidorDeVoz):
     def _voz_do_pedido(self, voz: str) -> dict:
         return self._resolver(voz)[0]
 
-    def _falar(self, texto: str, saida: Path, voz: dict, parar) -> None:
-        pedido = {"texto": texto, "frases": frases_para_falar(texto), "saida": str(Path(saida).absolute()),
+    def _jeito(self, emocao: str) -> str:
+        """A emoção que muda o jeito de falar (as pausas, o "!"): nenhuma com a interpretação desligada."""
+        return emocao if self.forca > 0 else NORMAL
+
+    def _falar(self, texto: str, saida: Path, voz: dict, parar, emocao: str = NORMAL) -> None:
+        self.iniciar(parar)                    # (fechado para o Chatterbox usar a placa: abre de novo)
+        pedido = {"texto": texto, "frases": frases_para_falar(texto, self._jeito(emocao)),
+                  "saida": str(Path(saida).absolute()),
                   "idioma": self.idioma, **voz}          # caminho completo: o servidor trabalha em outra pasta
         resposta = self._pedir(pedido, parar)
         if not resposta.get("ok"):
@@ -665,8 +720,9 @@ class MotorLocal(ServidorDeVoz):
             temporario.replace(destino)
         return destino
 
-    def _como_falar(self, voz: str, emocao: str, parar):
-        """falar(texto, saida) da fala: com a gravação da emoção, com o Chatterbox ou neutra (o XTTS-v2 normal)."""
+    def _como_falar(self, voz: str, emocao: str, parar) -> tuple[str, object]:
+        """(modo, falar(texto, saida)) da fala: "gravação" (a gravação da emoção, pelo XTTS-v2), "chatterbox" ou
+        "xtts" (neutra). A fala de referência que o Chatterbox imita já sai aqui (com o XTTS-v2 aberto)."""
         from .vozes_importadas import arquivo_da_emocao
         xtts, importada = self._resolver(voz)
         if emocao != NORMAL:
@@ -674,18 +730,20 @@ class MotorLocal(ServidorDeVoz):
                         if importada is not None and self.pasta_importadas is not None else None)
             if gravacao is not None:
                 self.com_emocao["gravação"] += 1
-                return lambda texto, saida: self._falar(texto, saida, {"referencia": str(gravacao)}, parar)
+                return "gravação", lambda texto, saida: self._falar(texto, saida, {"referencia": str(gravacao)},
+                                                                     parar, emocao)
             if self.emocao is not None:
                 referencia = xtts.get("referencia") or str(self.referencia_da_pronta(xtts["voz"], parar))
                 self.com_emocao["chatterbox"] += 1
-                return lambda texto, saida: self._falar_com_emocao(texto, saida, referencia, emocao, xtts, parar)
-        return lambda texto, saida: self._falar(texto, saida, xtts, parar)
+                return "chatterbox", lambda texto, saida: self._falar_com_emocao(texto, saida, referencia, emocao,
+                                                                                xtts, parar)
+        return "xtts", lambda texto, saida: self._falar(texto, saida, xtts, parar, emocao)
 
     def _falar_com_emocao(self, texto: str, saida: Path, referencia: str, emocao: str, xtts: dict, parar) -> None:
         """Pelo Chatterbox; se ele falhar (não abriu, sem memória...), o resto segue neutro pelo XTTS-v2."""
         if self.emocao is not None:
             try:
-                self.emocao.falar(texto, saida, referencia, emocao, parar, idioma=self.idioma)
+                self.emocao.falar(texto, saida, referencia, emocao, parar, idioma=self.idioma, forca=self.forca)
                 self.pedidos += 1
                 return
             except ErroDublagem as erro:
@@ -696,7 +754,7 @@ class MotorLocal(ServidorDeVoz):
                                 "XTTS-v2")
                 self.emocao.fechar()
                 self.emocao = None
-        self._falar(texto, saida, xtts, parar)
+        self._falar(texto, saida, xtts, parar, emocao)
 
     def _falar_conferindo(self, texto: str, wav: Path, falar) -> None:
         """Gera; com o conferidor, corta a sobra do fim ou gera de novo a embolada (fica a de melhor nota)."""
@@ -730,15 +788,59 @@ class MotorLocal(ServidorDeVoz):
         for sobra in wav.parent.glob(f"{wav.stem}-tentativa*.wav"):
             sobra.unlink(missing_ok=True)
 
+    def _interpretar(self, wav: Path, emocao: str) -> None:
+        """A interpretação da emoção (atuacao.py) na fala já conferida: o choro treme, a raiva rasga..."""
+        if emocao == NORMAL or self.forca <= 0:
+            return
+        from . import atuacao
+        if self.ffmpeg is None:
+            from .dublagem import localizar_ffmpeg
+            self.ffmpeg = localizar_ffmpeg() or ""
+        feito = atuacao.interpretar(wav, emocao, self.forca, self.ffmpeg or None)
+        if feito:
+            self.interpretadas[emocao] += 1
+            self.como_ficou[emocao] = atuacao.resumo(feito)
+
+    def um_de_cada_vez(self) -> bool:
+        """Na placa de vídeo com pouca memória (até 12 GB; a RTX 4060 tem 8), o XTTS-v2 e o Chatterbox não ficam
+        abertos juntos (somam ~7-8 GB e estourariam: o plano B mandaria o Chatterbox para o processador, lento)."""
+        return self.dispositivo == "cuda" and (self.memoria is None or self.memoria < JUNTOS_NA_PLACA_GB)
+
     def sintetizar(self, pedidos: list, parar=None, ao_progresso=None) -> None:
+        """As falas. Na placa pequena, em duas passadas: todas as do XTTS-v2 (e as falas de referência que o
+        Chatterbox imita); fecha o XTTS-v2; depois as com emoção pelo Chatterbox."""
+        if self.emocao is not None and self.emocao.aberto() and self.um_de_cada_vez():
+            self.emocao.fechar()                 # a vez é do XTTS-v2 (o Chatterbox ficou aberto da vez anterior)
         self.iniciar(parar)
-        for n, p in enumerate(pedidos, 1):
+        total, feitas, depois = max(1, len(pedidos)), 0, []
+        for p in pedidos:
             if parar and parar():
                 raise ErroDublagem("interrompido (botão Parar)")
             voz, nota = (p[2] if len(p) > 2 and p[2] else ""), (p[3] if len(p) > 3 else "")
-            self._falar_conferindo(p[0], Path(p[1]), self._como_falar(voz, emocao_da_nota(nota), parar))
+            emocao = emocao_da_nota(nota)
+            modo, falar = self._como_falar(voz, emocao, parar)
+            if modo == "chatterbox" and self.um_de_cada_vez():
+                depois.append((p[0], Path(p[1]), falar, emocao))
+                continue
+            self._falar_conferindo(p[0], Path(p[1]), falar)
+            self._interpretar(Path(p[1]), emocao)
+            feitas += 1
             if ao_progresso:
-                ao_progresso(n / len(pedidos))
+                ao_progresso(feitas / total)
+        if depois:
+            if self.avisar:
+                memoria = f" ({self.memoria:g} GB)" if self.memoria else ""
+                self.avisar(f"um de cada vez na placa{memoria}: fechando o XTTS-v2 para o Chatterbox fazer as "
+                            f"{len(depois)} fala(s) com emoção")
+            ServidorDeVoz.fechar(self)           # só o XTTS-v2 (o Chatterbox abre agora)
+            for texto, wav, falar, emocao in depois:
+                if parar and parar():
+                    raise ErroDublagem("interrompido (botão Parar)")
+                self._falar_conferindo(texto, wav, falar)
+                self._interpretar(wav, emocao)
+                feitas += 1
+                if ao_progresso:
+                    ao_progresso(feitas / total)
         if (self.cortadas or self.refeitas) and self.avisar:
             self.avisar(f"conferência pelo Whisper: {self.cortadas} fala(s) com sobra no fim cortada(s), "
                         f"{self.refeitas} gerada(s) de novo")
@@ -746,3 +848,7 @@ class MotorLocal(ServidorDeVoz):
             self.avisar(f"emoção: {self.com_emocao['gravação']} fala(s) com a gravação de emoção da voz, "
                         f"{self.com_emocao['chatterbox']} pelo Chatterbox")
             self.com_emocao.clear()
+        if self.interpretadas and self.avisar:
+            self.avisar("interpretação da emoção: " + "; ".join(
+                f"{n} fala(s) {nome_da_emocao(e).lower()} ({self.como_ficou[e]})" for e, n in self.interpretadas.items()))
+            self.interpretadas.clear()

@@ -128,6 +128,9 @@ def test_chatterbox_fala_com_a_intensidade_da_emocao(tmp_path, monkeypatch):
     with wave.open(str(tmp_path / "a.wav")) as w:                               # 2 frases + a pausa do "!"
         assert w.getnframes() == 2 * 2400 + int(24000 * vl.PAUSA_PERGUNTA)
     assert motor.dispositivo == "cpu" and any("processador" in a for a in avisos) and motor.pedidos == 2
+    motor.falar("Sai daqui. Agora.", tmp_path / "c.wav", tmp_path / "ref.wav", "brava", forca=1.0)   # "Forte"
+    forte = [json.loads(x) for x in (tmp_path / "anotado.jsonl").read_text(encoding="utf-8").splitlines()][3:]
+    assert [a[0] for a in forte] == ["Sai daqui!", "Agora!"] and forte[0][3:5] == [1.49, 0.4]
     with pytest.raises(ErroDublagem, match="emoção desconhecida"):
         motor.falar("Oi.", tmp_path / "c.wav", tmp_path / "ref.wav", "normal")
     motor.fechar()

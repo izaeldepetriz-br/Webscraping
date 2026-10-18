@@ -74,7 +74,7 @@ from jellyfin_tools.tv_ao_vivo import (VELOCIDADES, ClienteTV, carregar_canais, 
                                        salvar_historico)
 from jellyfin_tools import cotacao, gastos, personagens, tom, vigia, voz_clonada, voz_cloud, voz_gemini
 from jellyfin_tools import vozes_importadas as vozes_importadas_mod
-from jellyfin_tools import genero_local, voz_emocao, voz_local
+from jellyfin_tools import emocoes, genero_local, voz_emocao, voz_local
 from jellyfin_tools.adaptacao import Adaptador
 from jellyfin_tools.vigia import filtro_prontos
 
@@ -256,7 +256,8 @@ def motor_local(o: OpcoesJellyfin, avisar=None):
         emocao = voz_emocao.MotorEmocao(pasta_motor_local(), avisar=avisar)    # as falas com emoção (abre só se houver)
     return voz_local.MotorLocal(pasta_motor_local(), getattr(o, "voz_local", "") or voz_local.VOZ_PADRAO,
                                 vozes_importadas(), config.ARQUIVO.parent, conferir=conferir, avisar=avisar,
-                                emocao=emocao)
+                                emocao=emocao, forca_emocao=emocoes.forca_do_menu(
+                                    getattr(o, "forca_emocao", emocoes.FORCA_PADRAO)))
 
 
 def chave_cloud(o: OpcoesJellyfin) -> str:

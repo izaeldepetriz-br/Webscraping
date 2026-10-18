@@ -240,6 +240,66 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.22.0
+
+- **Emoção com interpretação de verdade (choro trêmulo, raiva rasgada)**: o Chatterbox punha a emoção "de leve" (o
+  choro sem a voz tremendo, a raiva sem o excesso). Agora, depois da voz, o Maestro faz o que o ator faz com ela
+  (Configurações > Dublagem > **"Força da emoção"**: Desligada, Leve, Média ou **Forte**, a padrão):
+  - **choro**: a voz **treme** (o tom oscila umas 6 vezes por segundo, irregular, mais forte no fim das frases),
+    **quebra** para o agudo por um instante, sai com **ar** (soprada), **falha** (embarga) e **puxa o ar nas pausas**,
+    às vezes entrecortado (o soluço); a fala sai aos pedaços (cada vírgula vira uma pausa);
+  - **raiva** e **grito**: a voz **forçada e rasgada** (mais agudos de 2 a 4 kHz, a aspereza e a saturação do grito),
+    mais aguda, o tom **batendo nas sílabas fortes** e as frases terminando com "!"; o Chatterbox fica até 35% mais
+    intenso;
+  - **medo** (treme rápido, com ar), **tristeza** (tremor leve, mais grave e escura), **alegria** (mais aguda e
+    brilhante) e **sussurro** (a voz vira ar de verdade, sem a vibração).
+  Vale com ou sem o Chatterbox (só o XTTS-v2 também ganha a interpretação) e não muda a duração da fala.
+- **O grito continua mais alto na trilha**: a trilha deixava todas as falas no mesmo volume, e o grito ficava na
+  altura da conversa. Agora o volume segue a emoção (grito +6 dB, raiva +3 dB, sussurro −9 dB...), para todos os
+  motores de voz.
+- **Vozes otimizadas para placas de vídeo de 8 GB** (como a RTX 4060 de notebook): **um motor de cada vez na placa**.
+  O XTTS-v2 (~2–3 GB) e o Chatterbox (~4–5 GB) juntos, com o Whisper conferindo as falas, passam dos 8 GB e o
+  Windows começa a usar a memória do sistema (fica muito mais lento) ou dá falta de memória. Agora, em placas com
+  **menos de 12 GB**, o Maestro faz primeiro todas as falas normais pelo XTTS-v2, **fecha** o XTTS-v2 e só então abre
+  o Chatterbox para as falas com emoção (o registro avisa: "um de cada vez na placa (8 GB): fechando o XTTS-v2...").
+  Em placas de 12 GB ou mais, os dois continuam abertos juntos. Os motores informam a memória da placa ao abrir
+  ("XTTS-v2 pronto (placa de vídeo NVIDIA GeForce RTX 4060 Laptop GPU, 8 GB)").
+- **Correção**: ao reabrir o motor de vozes depois de fechado, uma mensagem antiga ("não abriu: fechou sozinho")
+  podia ser lida como se fosse a resposta nova. Cada abertura agora tem a sua própria fila de respostas.
+- **Base para dublar dentro do jogo (próxima etapa da aba 🎮 Jogos)**: o módulo novo `audio_jogo` grava a fala dublada
+  **no mesmo formato e com a mesma duração da fala original do jogo**, para caber no mesmo lugar da ISO:
+  - **WAV**, **VAG** (o áudio de fala do PS2, "VAGp") e **ADS** (o áudio de cena do PS2, "SShd/SSbd", em
+    estéreo intercalado), com o **PS-ADPCM** (o "compactador" de áudio do PS2: 28 amostras em 16 bytes) feito pelo
+    próprio Maestro;
+  - **duração exata, em amostras**: se a fala dublada ficou mais comprida, acelera até **35%** sem mudar o tom; se
+    ainda passar, corta com um **fim suave** (20 ms, sem estalo); se ficou curta, completa com silêncio;
+  - VAG e ADS saem **com o mesmo tamanho em bytes** da original (o nome interno do VAG e o resto do cabeçalho são
+    mantidos).
+  A extração e a reinserção dos arquivos de áudio dependem de cada jogo (ferramentas da comunidade, como o
+  QuickBMS) e entram quando escolhermos o jogo para testar.
+
+### Novidades da v2.21.0
+
+- **Aba nova "🎮 Jogos": aplicar o patch de fãs (tradução, dublagem) na ISO do SEU disco**, numa cópia que roda em
+  qualquer lugar: no PS2 pelo **OPL**, no **PCSX2**, no celular (NetherSX2/AetherSX2) ou num DVD gravado. Tudo fica
+  DENTRO da ISO nova (o OPL não tem "pasta de mods": é o único jeito que vale em todo lugar). Os grupos distribuem só o
+  patch (a lista das diferenças), nunca o jogo; o Maestro não baixa jogos.
+  - **1. Jogo**: a ISO do seu disco (.iso; .bin de CD). O Maestro lê o **código do jogo** do SYSTEM.CNF
+    ("SLUS-20946 · EUA · PS2 · versão 1.00") e confere a **impressão digital** (CRC32/MD5/SHA-1: muda se um único
+    byte mudar; na ISO de DVD, ~1 minuto).
+  - **2. Patch**: **.xdelta/.vcdiff** (pelo **xdelta3 oficial**, baixado uma vez, ~0,2 MB, conferido pela impressão
+    digital do download) ou **.ppf** 1.0/2.0/3.0 (aplicado pelo próprio Maestro). O **leia-me ao lado** do patch (e o
+    FILE_ID.DIZ de dentro do .ppf) diz a impressão digital da ISO certa: o Maestro mostra **"✓ encaixa"** ou **"✗ não
+    encaixa"** e **não aplica na versão errada** (o patch da versão americana estraga a europeia). **"🔎 Procurar na
+    comunidade"** abre no navegador a busca de patches do jogo pelo código (PO.B.R.E e Romhacking.net): o download é
+    na página do grupo, com os créditos.
+  - **3. Aplicar**: numa **cópia** (a ISO original não muda; a nova só ganha o nome no fim, sem ISO pela metade), com o
+    **nome no padrão do OPL** se quiser ("SLUS_209.46.Meu Jogo PT-BR.iso"), conferindo o espaço no disco antes. ISO
+    de mais de 4 GB: o aviso de dividir (USBUtil) ou usar exFAT no pendrive.
+  - **Compartilhar a sua tradução**: com a ISO original e a modificada (a sua tradução ou dublagem já dentro), o
+    Maestro cria o **.xdelta** (só as diferenças, sem o jogo) e um **leia-me com a impressão digital da original**,
+    para quem for aplicar conferir.
+
 ### Novidades da v2.20.0
 
 - **Motor de vozes grátis no PC: XTTS-v2, no lugar do Gemini** (Configurações > Dublagem > "Quem lê as falas" >

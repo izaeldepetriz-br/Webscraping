@@ -155,6 +155,7 @@ class OpcoesJellyfin:
     voz_local: str = "Damien Black"  # XTTS-v2 no PC: voz pronta ("Ana Florence") ou importada ("imp:izael")
     conferir_falas: bool = True      # XTTS-v2: o Whisper ouve cada fala gerada (corta a sobra do fim, refaz a embolada)
     emocao_chatterbox: bool = True   # XTTS-v2: as falas com emoção vão pelo Chatterbox (se instalado e sem a gravação)
+    forca_emocao: str = emocoes.FORCA_PADRAO   # XTTS-v2: a interpretação (choro trêmulo, raiva rasgada); "Desligada"
     chave_gemini: str = ""           # Google AI Studio > Get API key (vazio = variável GEMINI_API_KEY)
     encurtar_falas: bool = True      # dublagem: o Claude reescreve mais curtas as falas que não cabem no tempo
     voz_por_personagem: bool = False  # Gemini: ouve o filme, separa quem fala e dá uma voz para cada personagem
@@ -2868,9 +2869,10 @@ class JanelaModerna(ctk.CTk):
         self.aba_espelhos = ctk.CTkFrame(self, fg_color="transparent")   # "Jellyfin Espelhos" (os .strm)
         self.aba_avulsos = ctk.CTkFrame(self, fg_color="transparent")
         self.aba_audio = ctk.CTkFrame(self, fg_color="transparent")      # "🎧 Áudio" (trocar o áudio entre versões)
+        self.aba_jogos = ctk.CTkFrame(self, fg_color="transparent")      # "🎮 Jogos" (patch de fãs na ISO do disco)
         self.aba_config = ctk.CTkFrame(self, fg_color="transparent")
         for aba in (self.aba_videos, self.aba_jellyfin, self.aba_tv, self.aba_espelhos, self.aba_avulsos,
-                    self.aba_audio, self.aba_config):
+                    self.aba_audio, self.aba_jogos, self.aba_config):
             aba.grid(row=1, column=0, sticky="nsew")
             aba.grid_columnconfigure(0, weight=1)
         self.aba_videos.grid_rowconfigure(2, weight=1)
@@ -2878,6 +2880,7 @@ class JanelaModerna(ctk.CTk):
         self.aba_tv.grid_rowconfigure(0, weight=1)        # o painel dos canais entra na 1ª vez que a aba abre
         self.aba_espelhos.grid_rowconfigure(0, weight=1)  # o dos espelhos também
         self.aba_audio.grid_rowconfigure(0, weight=1)     # e o da troca de áudio
+        self.aba_jogos.grid_rowconfigure(0, weight=1)     # e o dos jogos
         # ⚙ Configurações primeiro: as outras abas põem as opções delas nas categorias de lá
         self._montar_aba_config(self.aba_config)
         self._montar_endereco(self.aba_videos)
@@ -2935,6 +2938,7 @@ class JanelaModerna(ctk.CTk):
         "Avulsos": "1) Escolha a caixa de entrada ou adicione vídeos    2) Clique em Olhar    3) Confira e clique em "
                    "Processar",
         "🎧 Áudio": "1) Escolha a origem e a faixa    2) Escolha o destino    3) Confira o encaixe e clique em Inserir",
+        "🎮 Jogos": "1) Escolha a ISO do seu disco    2) Escolha o patch    3) Confira e clique em Aplicar",
         "⚙ Configurações": "Tudo o que muda o jeito do programa trabalhar fica aqui. Vale na hora e fica salvo.",
     }
     TITULOS = {"Vídeos": "Extrair e baixar vídeos públicos",
@@ -2943,6 +2947,7 @@ class JanelaModerna(ctk.CTk):
                "Jellyfin Espelhos": "Espelhos (.strm) no Jellyfin",
                "Avulsos": "Legendar e dublar vídeos avulsos",
                "🎧 Áudio": "Trocar o áudio entre versões de um filme",
+               "🎮 Jogos": "Traduzir jogos com patch de fãs",
                "⚙ Configurações": "Configurações"}
 
     def _montar_cabecalho(self) -> None:
@@ -2970,7 +2975,7 @@ class JanelaModerna(ctk.CTk):
                                      anchor="w", justify="left", wraplength=1100)   # muita coisa: quebra a linha
         self.seletor_aba = ctk.CTkSegmentedButton(
             topo, values=["Vídeos", "Jellyfin", "Jellyfin TV", "Jellyfin Espelhos", "Avulsos", "🎧 Áudio",
-                          "⚙ Configurações"],
+                          "🎮 Jogos", "⚙ Configurações"],
             command=self.mostrar_aba, height=38,
             corner_radius=Tema.RAIO_CONTROLE, font=self.f_botao, fg_color=Tema.CARTAO,
             selected_color=Tema.PRIMARIA, selected_hover_color=Tema.PRIMARIA_HOVER,
@@ -3024,10 +3029,11 @@ class JanelaModerna(ctk.CTk):
     ABAS_COM_SAUDE = ("Jellyfin", "Jellyfin TV", "Jellyfin Espelhos", "⚙ Configurações")
 
     def mostrar_aba(self, nome: str) -> None:
-        """'Vídeos', 'Jellyfin', 'Jellyfin TV', 'Jellyfin Espelhos', 'Avulsos', '🎧 Áudio' ou '⚙ Configurações'."""
+        """'Vídeos', 'Jellyfin', 'Jellyfin TV', 'Jellyfin Espelhos', 'Avulsos', '🎧 Áudio', '🎮 Jogos' ou
+        '⚙ Configurações'."""
         abas = {"Vídeos": self.aba_videos, "Jellyfin": self.aba_jellyfin, "Jellyfin TV": self.aba_tv,
                 "Jellyfin Espelhos": self.aba_espelhos, "Avulsos": self.aba_avulsos, "🎧 Áudio": self.aba_audio,
-                self.ABA_CONFIG: self.aba_config}
+                "🎮 Jogos": self.aba_jogos, self.ABA_CONFIG: self.aba_config}
         saindo_da_config = self.seletor_aba.get() == self.ABA_CONFIG and nome != self.ABA_CONFIG
         for outro, aba in abas.items():
             if outro != nome:
@@ -3047,6 +3053,8 @@ class JanelaModerna(ctk.CTk):
             self.ao_abrir_aba_tv()
         if nome == "Jellyfin Espelhos":
             self.ao_abrir_aba_espelhos()
+        if nome == "🎮 Jogos":
+            self.ao_abrir_aba_jogos()
         if nome == "🎧 Áudio":
             self.ao_abrir_aba_audio()
         elif getattr(self, "painel_audio", None) is not None and self.painel_audio.winfo_exists():
@@ -4497,6 +4505,14 @@ class JanelaModerna(ctk.CTk):
         self.var_jf_emocao_chatterbox = tk.BooleanVar(self, value=True)
         self._checkbox(lateral, "Usar o Chatterbox nas falas com emoção que não têm a gravação da emoção",
                        self.var_jf_emocao_chatterbox)
+        self._rotulo(lateral, "Força da emoção").pack(anchor="w", pady=(10, 2), **p)
+        self.var_jf_forca_emocao = tk.StringVar(self, value=emocoes.FORCA_PADRAO)
+        self._menu_opcoes(lateral, self.var_jf_forca_emocao, emocoes.FORCAS).pack(fill="x", **p)
+        self._rotulo(lateral, "Depois da voz, a interpretação: no choro a voz treme, quebra e puxa o ar entre as "
+                              "frases; na raiva sai forçada e rasgada, mais alta e batendo nas sílabas fortes (também "
+                              "medo, tristeza, alegria e sussurro). Vale com ou sem o Chatterbox. \"Desligada\": "
+                              "como na v2.20.",
+                     fonte=ctk.CTkFont(Tema.FAMILIA, 11)).pack(anchor="w", pady=(4, 6), **p)
         self.atualizar_motor_local(self._motor_local)
 
     _motor_local: dict | None = None
@@ -5259,6 +5275,7 @@ class JanelaModerna(ctk.CTk):
             voz_gemini=valor_da_voz(self.var_jf_voz_gemini.get()), chave_gemini=self.var_jf_chave_gemini.get().strip(),
             voz_local=voz_local.valor_do_menu(self.var_jf_voz_local.get()),
             conferir_falas=self.var_jf_conferir_falas.get(), emocao_chatterbox=self.var_jf_emocao_chatterbox.get(),
+            forca_emocao=self.var_jf_forca_emocao.get(),
             encurtar_falas=self.var_jf_encurtar_falas.get(), emocao_da_cena=self.var_jf_emocao_da_cena.get(),
             pronuncias=self.var_jf_pronuncias.get().strip(),
             voz_por_personagem=self.var_jf_voz_por_personagem.get(),
@@ -5386,7 +5403,8 @@ class JanelaModerna(ctk.CTk):
                   "jellyfin_api_key": self.var_jf_chave_jellyfin, "discord_webhook": self.var_jf_discord,
                   "telegram_token": self.var_jf_telegram_token, "telegram_chat_id": self.var_jf_telegram_chat,
                   "pasta_avulsos": self.var_jf_pasta_avulsos, "chave_cloud_tts": self.var_jf_chave_cloud,
-                  "inicio_teste": self.var_inicio_teste(), "pronuncias": self.var_jf_pronuncias}
+                  "inicio_teste": self.var_inicio_teste(), "pronuncias": self.var_jf_pronuncias,
+                  "forca_emocao": self.var_jf_forca_emocao}
         marcas = {"tmdb": self.var_jf_tmdb, "incluir_tmdbid": self.var_jf_tmdbid,
                   "conferir_falas": self.var_jf_conferir_falas, "emocao_chatterbox": self.var_jf_emocao_chatterbox,
                   "exigir_catalogo": self.var_jf_exigir, "legendas": self.var_jf_legendas,
@@ -6235,6 +6253,9 @@ class JanelaModerna(ctk.CTk):
         self.mostrar_aba("Jellyfin TV")
 
     def ao_abrir_aba_tv(self) -> None:                  # o app faz: monta o painel dos canais e lê a lista
+        pass
+
+    def ao_abrir_aba_jogos(self) -> None:               # o app faz: monta o painel dos jogos
         pass
 
     def ao_abrir_aba_audio(self) -> None:               # o app faz: monta o painel da troca de áudio
