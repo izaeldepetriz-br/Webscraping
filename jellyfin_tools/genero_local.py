@@ -142,7 +142,9 @@ def ouvir_generos(video: str | Path, falas: list, ids: list[int], ffmpeg: str, a
         for k in grupo:
             a, b = horarios(falas[k][0].tempo)
             f0, volume, vozeado = medir(audio[int((a - inicio) * TAXA):int((b - inicio) * TAXA)])
-            resultado[k] = Ouvida(genero=genero_pelo_tom(f0))
+            # quase sem "vibração" (sussurro, ruído): o tom que sobra é de pedacinhos soltos e engana (um homem
+            # sussurrando "virava" mulher): não sabe, e a fala fica com a voz principal
+            resultado[k] = Ouvida(genero=genero_pelo_tom(f0) if vozeado >= SUSSURRO_VOZEADO else "?")
             guardado[str(k)] = {"texto": falas[k][1], "genero": resultado[k].genero,
                                 "f0": round(f0, 1) if f0 else None, "db": round(volume, 1) if volume else None,
                                 "vozeado": round(vozeado, 2)}

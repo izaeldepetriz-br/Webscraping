@@ -66,6 +66,7 @@ def test_emocao_pelo_volume_grito_e_sussurro(tmp_path):
                                emocao=True)
     assert (ouvidas[10].tom, ouvidas[11].tom, ouvidas[12].tom) == (gl.TOM_GRITO, gl.TOM_SUSSURRO, gl.TOM_GRITO)
     assert all(ouvidas[k].tom == "" for k in range(10)) and ouvidas[10].genero == "m"
+    assert ouvidas[11].genero == "?"                                   # sussurro: sem tom confiável, voz principal
     assert "Nesta fala: gritando" in ouvidas[10].nota()
     sem = gl.ouvir_generos("filme.mkv", falas, [10, 11], "ffmpeg", tmp_path / "g.json", ler=ler)   # desligada
     assert sem[10].tom == "" and sem[11].tom == ""
