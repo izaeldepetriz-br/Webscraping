@@ -1,0 +1,597 @@
+{
+ "alvo": "Damien Black",
+ "vozes": [
+  "Claribel Dervla",
+  "Daisy Studious",
+  "Gracie Wise",
+  "Tammie Ema",
+  "Alison Dietlinde",
+  "Ana Florence",
+  "Annmarie Nele",
+  "Asya Anara",
+  "Brenda Stern",
+  "Gitta Nikolina",
+  "Henriette Usha",
+  "Sofia Hellen",
+  "Tammy Grit",
+  "Tanja Adelina",
+  "Vjollca Johnnie",
+  "Andrew Chipper",
+  "Badr Odhiambo",
+  "Dionisio Schuyler",
+  "Royston Min",
+  "Viktor Eka",
+  "Abrahan Mack",
+  "Adde Michal",
+  "Baldur Sanjin",
+  "Craig Gutsy",
+  "Damien Black",
+  "Gilberto Mathias",
+  "Ilkin Urbano",
+  "Kazuhiko Atallah",
+  "Ludvig Milivoj",
+  "Suad Qasim",
+  "Torcull Diarmuid",
+  "Viktor Menelaos",
+  "Zacharie Aimilios",
+  "Nova Hogarth",
+  "Maja Ruoho",
+  "Uta Obando",
+  "Lidiya Szekeres",
+  "Chandra MacFarland",
+  "Szofi Granger",
+  "Camilla Holmström",
+  "Lilya Stainthorpe",
+  "Zofija Kendrick",
+  "Narelle Moon",
+  "Barbora MacLean",
+  "Alexandra Hisakawa",
+  "Alma María",
+  "Rosemary Okafor",
+  "Ige Behringer",
+  "Filip Traverse",
+  "Damjan Chapman",
+  "Wulf Carlevaro",
+  "Aaron Dreschner",
+  "Kumar Dahl",
+  "Eugenio Mataracı",
+  "Ferran Simen",
+  "Xavier Hayasaka",
+  "Luis Moray",
+  "Marcos Rudaski"
+ ],
+ "falas": [
+  {
+   "arquivo": "cena_damien_en_0.wav",
+   "voz": "Damien Black",
+   "texto": "Hey! You there! The gate is closed after sunset.",
+   "idioma": "en",
+   "segundos_para_gerar": 7.46
+  },
+  {
+   "arquivo": "cena_damien_pt_0.wav",
+   "voz": "Damien Black",
+   "texto": "Ei, você! O portão fecha ao anoitecer.",
+   "idioma": "pt",
+   "segundos_para_gerar": 5.05
+  },
+  {
+   "arquivo": "cena_damien_en_1.wav",
+   "voz": "Damien Black",
+   "texto": "If you want to cross the forest, talk to the elder first.",
+   "idioma": "en",
+   "segundos_para_gerar": 5.49
+  },
+  {
+   "arquivo": "cena_damien_pt_1.wav",
+   "voz": "Damien Black",
+   "texto": "Quer cruzar a floresta? Fale antes com o ancião.",
+   "idioma": "pt",
+   "segundos_para_gerar": 6.61
+  },
+  {
+   "arquivo": "cena_damien_en_2.wav",
+   "voz": "Damien Black",
+   "texto": "And be careful. Something has been moving between the trees.",
+   "idioma": "en",
+   "segundos_para_gerar": 5.61
+  },
+  {
+   "arquivo": "cena_damien_pt_2.wav",
+   "voz": "Damien Black",
+   "texto": "E cuidado. Tem algo se mexendo nas árvores.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.19
+  },
+  {
+   "arquivo": "cena_gilberto_en_0.wav",
+   "voz": "Gilberto Mathias",
+   "texto": "Hey! You there! The gate is closed after sunset.",
+   "idioma": "en",
+   "segundos_para_gerar": 6.93
+  },
+  {
+   "arquivo": "cena_gilberto_pt_0.wav",
+   "voz": "Gilberto Mathias",
+   "texto": "Ei, você! O portão fecha ao anoitecer.",
+   "idioma": "pt",
+   "segundos_para_gerar": 6.74
+  },
+  {
+   "arquivo": "cena_gilberto_en_1.wav",
+   "voz": "Gilberto Mathias",
+   "texto": "If you want to cross the forest, talk to the elder first.",
+   "idioma": "en",
+   "segundos_para_gerar": 5.16
+  },
+  {
+   "arquivo": "cena_gilberto_pt_1.wav",
+   "voz": "Gilberto Mathias",
+   "texto": "Quer cruzar a floresta? Fale antes com o ancião.",
+   "idioma": "pt",
+   "segundos_para_gerar": 5.73
+  },
+  {
+   "arquivo": "cena_gilberto_en_2.wav",
+   "voz": "Gilberto Mathias",
+   "texto": "And be careful. Something has been moving between the trees.",
+   "idioma": "en",
+   "segundos_para_gerar": 6.61
+  },
+  {
+   "arquivo": "cena_gilberto_pt_2.wav",
+   "voz": "Gilberto Mathias",
+   "texto": "E cuidado. Tem algo se mexendo nas árvores.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.0
+  },
+  {
+   "arquivo": "cena_luis_en_0.wav",
+   "voz": "Luis Moray",
+   "texto": "Hey! You there! The gate is closed after sunset.",
+   "idioma": "en",
+   "segundos_para_gerar": 7.14
+  },
+  {
+   "arquivo": "cena_luis_pt_0.wav",
+   "voz": "Luis Moray",
+   "texto": "Ei, você! O portão fecha ao anoitecer.",
+   "idioma": "pt",
+   "segundos_para_gerar": 6.24
+  },
+  {
+   "arquivo": "cena_luis_en_1.wav",
+   "voz": "Luis Moray",
+   "texto": "If you want to cross the forest, talk to the elder first.",
+   "idioma": "en",
+   "segundos_para_gerar": 4.74
+  },
+  {
+   "arquivo": "cena_luis_pt_1.wav",
+   "voz": "Luis Moray",
+   "texto": "Quer cruzar a floresta? Fale antes com o ancião.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.98
+  },
+  {
+   "arquivo": "cena_luis_en_2.wav",
+   "voz": "Luis Moray",
+   "texto": "And be careful. Something has been moving between the trees.",
+   "idioma": "en",
+   "segundos_para_gerar": 5.75
+  },
+  {
+   "arquivo": "cena_luis_pt_2.wav",
+   "voz": "Luis Moray",
+   "texto": "E cuidado. Tem algo se mexendo nas árvores.",
+   "idioma": "pt",
+   "segundos_para_gerar": 6.95
+  },
+  {
+   "arquivo": "catalogo_00.wav",
+   "voz": "Claribel Dervla",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 6.71
+  },
+  {
+   "arquivo": "catalogo_01.wav",
+   "voz": "Daisy Studious",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.66
+  },
+  {
+   "arquivo": "catalogo_02.wav",
+   "voz": "Gracie Wise",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 6.99
+  },
+  {
+   "arquivo": "catalogo_03.wav",
+   "voz": "Tammie Ema",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.18
+  },
+  {
+   "arquivo": "catalogo_04.wav",
+   "voz": "Alison Dietlinde",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.51
+  },
+  {
+   "arquivo": "catalogo_05.wav",
+   "voz": "Ana Florence",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.29
+  },
+  {
+   "arquivo": "catalogo_06.wav",
+   "voz": "Annmarie Nele",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.8
+  },
+  {
+   "arquivo": "catalogo_07.wav",
+   "voz": "Asya Anara",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 9.16
+  },
+  {
+   "arquivo": "catalogo_08.wav",
+   "voz": "Brenda Stern",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.54
+  },
+  {
+   "arquivo": "catalogo_09.wav",
+   "voz": "Gitta Nikolina",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.52
+  },
+  {
+   "arquivo": "catalogo_10.wav",
+   "voz": "Henriette Usha",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 9.0
+  },
+  {
+   "arquivo": "catalogo_11.wav",
+   "voz": "Sofia Hellen",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.86
+  },
+  {
+   "arquivo": "catalogo_12.wav",
+   "voz": "Tammy Grit",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 6.64
+  },
+  {
+   "arquivo": "catalogo_13.wav",
+   "voz": "Tanja Adelina",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.32
+  },
+  {
+   "arquivo": "catalogo_14.wav",
+   "voz": "Vjollca Johnnie",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.63
+  },
+  {
+   "arquivo": "catalogo_15.wav",
+   "voz": "Andrew Chipper",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.96
+  },
+  {
+   "arquivo": "catalogo_16.wav",
+   "voz": "Badr Odhiambo",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 6.62
+  },
+  {
+   "arquivo": "catalogo_17.wav",
+   "voz": "Dionisio Schuyler",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 10.43
+  },
+  {
+   "arquivo": "catalogo_18.wav",
+   "voz": "Royston Min",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.19
+  },
+  {
+   "arquivo": "catalogo_19.wav",
+   "voz": "Viktor Eka",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.32
+  },
+  {
+   "arquivo": "catalogo_20.wav",
+   "voz": "Abrahan Mack",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 9.05
+  },
+  {
+   "arquivo": "catalogo_21.wav",
+   "voz": "Adde Michal",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.16
+  },
+  {
+   "arquivo": "catalogo_22.wav",
+   "voz": "Baldur Sanjin",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.47
+  },
+  {
+   "arquivo": "catalogo_23.wav",
+   "voz": "Craig Gutsy",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.03
+  },
+  {
+   "arquivo": "catalogo_24.wav",
+   "voz": "Damien Black",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.34
+  },
+  {
+   "arquivo": "catalogo_25.wav",
+   "voz": "Gilberto Mathias",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.94
+  },
+  {
+   "arquivo": "catalogo_26.wav",
+   "voz": "Ilkin Urbano",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 10.22
+  },
+  {
+   "arquivo": "catalogo_27.wav",
+   "voz": "Kazuhiko Atallah",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.64
+  },
+  {
+   "arquivo": "catalogo_28.wav",
+   "voz": "Ludvig Milivoj",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.36
+  },
+  {
+   "arquivo": "catalogo_29.wav",
+   "voz": "Suad Qasim",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.96
+  },
+  {
+   "arquivo": "catalogo_30.wav",
+   "voz": "Torcull Diarmuid",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.86
+  },
+  {
+   "arquivo": "catalogo_31.wav",
+   "voz": "Viktor Menelaos",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.98
+  },
+  {
+   "arquivo": "catalogo_32.wav",
+   "voz": "Zacharie Aimilios",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.9
+  },
+  {
+   "arquivo": "catalogo_33.wav",
+   "voz": "Nova Hogarth",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.54
+  },
+  {
+   "arquivo": "catalogo_34.wav",
+   "voz": "Maja Ruoho",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.88
+  },
+  {
+   "arquivo": "catalogo_35.wav",
+   "voz": "Uta Obando",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 9.07
+  },
+  {
+   "arquivo": "catalogo_36.wav",
+   "voz": "Lidiya Szekeres",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 6.92
+  },
+  {
+   "arquivo": "catalogo_37.wav",
+   "voz": "Chandra MacFarland",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.79
+  },
+  {
+   "arquivo": "catalogo_38.wav",
+   "voz": "Szofi Granger",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.46
+  },
+  {
+   "arquivo": "catalogo_39.wav",
+   "voz": "Camilla Holmström",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.36
+  },
+  {
+   "arquivo": "catalogo_40.wav",
+   "voz": "Lilya Stainthorpe",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.0
+  },
+  {
+   "arquivo": "catalogo_41.wav",
+   "voz": "Zofija Kendrick",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 9.83
+  },
+  {
+   "arquivo": "catalogo_42.wav",
+   "voz": "Narelle Moon",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 9.26
+  },
+  {
+   "arquivo": "catalogo_43.wav",
+   "voz": "Barbora MacLean",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.9
+  },
+  {
+   "arquivo": "catalogo_44.wav",
+   "voz": "Alexandra Hisakawa",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 9.04
+  },
+  {
+   "arquivo": "catalogo_45.wav",
+   "voz": "Alma María",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.14
+  },
+  {
+   "arquivo": "catalogo_46.wav",
+   "voz": "Rosemary Okafor",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.62
+  },
+  {
+   "arquivo": "catalogo_47.wav",
+   "voz": "Ige Behringer",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.44
+  },
+  {
+   "arquivo": "catalogo_48.wav",
+   "voz": "Filip Traverse",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.6
+  },
+  {
+   "arquivo": "catalogo_49.wav",
+   "voz": "Damjan Chapman",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.23
+  },
+  {
+   "arquivo": "catalogo_50.wav",
+   "voz": "Wulf Carlevaro",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.15
+  },
+  {
+   "arquivo": "catalogo_51.wav",
+   "voz": "Aaron Dreschner",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.08
+  },
+  {
+   "arquivo": "catalogo_52.wav",
+   "voz": "Kumar Dahl",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 9.18
+  },
+  {
+   "arquivo": "catalogo_53.wav",
+   "voz": "Eugenio Mataracı",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.32
+  },
+  {
+   "arquivo": "catalogo_54.wav",
+   "voz": "Ferran Simen",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 9.88
+  },
+  {
+   "arquivo": "catalogo_55.wav",
+   "voz": "Xavier Hayasaka",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 7.43
+  },
+  {
+   "arquivo": "catalogo_56.wav",
+   "voz": "Luis Moray",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 8.34
+  },
+  {
+   "arquivo": "catalogo_57.wav",
+   "voz": "Marcos Rudaski",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "idioma": "pt",
+   "segundos_para_gerar": 12.48
+  }
+ ]
+}

@@ -1,0 +1,422 @@
+Looking in indexes: https://download.pytorch.org/whl/cpu
+Collecting torch==2.6.0
+  Downloading torch-2.6.0%2Bcpu-cp311-cp311-linux_x86_64.whl.metadata (26 kB)
+Collecting torchaudio==2.6.0
+  Downloading torchaudio-2.6.0%2Bcpu-cp311-cp311-linux_x86_64.whl.metadata (6.6 kB)
+Collecting filelock (from torch==2.6.0)
+  Downloading filelock-3.32.3-py3-none-any.whl.metadata (2.0 kB)
+Collecting typing-extensions>=4.10.0 (from torch==2.6.0)
+  Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting networkx (from torch==2.6.0)
+  Downloading networkx-3.6.1-py3-none-any.whl.metadata (6.8 kB)
+Collecting jinja2 (from torch==2.6.0)
+  Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+Collecting fsspec (from torch==2.6.0)
+  Downloading fsspec-2026.7.0-py3-none-any.whl.metadata (10 kB)
+Collecting sympy==1.13.1 (from torch==2.6.0)
+  Downloading sympy-1.13.1-py3-none-any.whl.metadata (12 kB)
+Collecting mpmath<1.4,>=1.1.0 (from sympy==1.13.1->torch==2.6.0)
+  Downloading mpmath-1.3.0-py3-none-any.whl.metadata (8.6 kB)
+Collecting MarkupSafe>=2.0 (from jinja2->torch==2.6.0)
+  Downloading markupsafe-3.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+Downloading torch-2.6.0%2Bcpu-cp311-cp311-linux_x86_64.whl (178.7 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 178.7/178.7 MB 245.0 MB/s  0:00:00
+Downloading torchaudio-2.6.0%2Bcpu-cp311-cp311-linux_x86_64.whl (1.7 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.7/1.7 MB 182.9 MB/s  0:00:00
+Downloading sympy-1.13.1-py3-none-any.whl (6.2 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.2/6.2 MB 117.6 MB/s  0:00:00
+Downloading mpmath-1.3.0-py3-none-any.whl (536 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 536.2/536.2 kB 101.5 MB/s  0:00:00
+Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+Downloading filelock-3.32.3-py3-none-any.whl (98 kB)
+Downloading fsspec-2026.7.0-py3-none-any.whl (206 kB)
+Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+Downloading markupsafe-3.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+Downloading networkx-3.6.1-py3-none-any.whl (2.1 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.1/2.1 MB 211.3 MB/s  0:00:00
+Installing collected packages: mpmath, typing-extensions, sympy, networkx, MarkupSafe, fsspec, filelock, jinja2, torch, torchaudio
+
+Successfully installed MarkupSafe-3.0.3 filelock-3.32.3 fsspec-2026.7.0 jinja2-3.1.6 mpmath-1.3.0 networkx-3.6.1 sympy-1.13.1 torch-2.6.0+cpu torchaudio-2.6.0+cpu typing-extensions-4.16.0
+Collecting chatterbox-tts
+  Downloading chatterbox_tts-0.1.7-py3-none-any.whl.metadata (12 kB)
+Collecting numpy<2.0.0,>=1.24.0 (from chatterbox-tts)
+  Downloading numpy-1.26.4-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (61 kB)
+Collecting librosa==0.11.0 (from chatterbox-tts)
+  Downloading librosa-0.11.0-py3-none-any.whl.metadata (8.7 kB)
+Collecting s3tokenizer (from chatterbox-tts)
+  Downloading s3tokenizer-0.3.0-py3-none-any.whl.metadata (7.2 kB)
+Requirement already satisfied: torch==2.6.0 in /opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages (from chatterbox-tts) (2.6.0+cpu)
+Requirement already satisfied: torchaudio==2.6.0 in /opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages (from chatterbox-tts) (2.6.0+cpu)
+Collecting transformers==5.2.0 (from chatterbox-tts)
+  Downloading transformers-5.2.0-py3-none-any.whl.metadata (32 kB)
+Collecting diffusers==0.29.0 (from chatterbox-tts)
+  Downloading diffusers-0.29.0-py3-none-any.whl.metadata (19 kB)
+Collecting resemble-perth>=1.0.0 (from chatterbox-tts)
+  Downloading resemble_perth-1.0.1-py3-none-any.whl.metadata (4.8 kB)
+Collecting conformer==0.3.2 (from chatterbox-tts)
+  Downloading conformer-0.3.2-py3-none-any.whl.metadata (631 bytes)
+Collecting safetensors==0.5.3 (from chatterbox-tts)
+  Downloading safetensors-0.5.3-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (3.8 kB)
+Collecting spacy-pkuseg (from chatterbox-tts)
+  Downloading spacy_pkuseg-1.0.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (13 kB)
+Collecting pykakasi==2.3.0 (from chatterbox-tts)
+  Downloading pykakasi-2.3.0-py3-none-any.whl.metadata (5.9 kB)
+Collecting gradio==6.8.0 (from chatterbox-tts)
+  Downloading gradio-6.8.0-py3-none-any.whl.metadata (16 kB)
+Collecting pyloudnorm (from chatterbox-tts)
+  Downloading pyloudnorm-0.2.0-py3-none-any.whl.metadata (6.6 kB)
+Collecting omegaconf (from chatterbox-tts)
+  Downloading omegaconf-2.4.0-py3-none-any.whl.metadata (4.9 kB)
+Collecting einops>=0.6.1 (from conformer==0.3.2->chatterbox-tts)
+  Downloading einops-0.8.2-py3-none-any.whl.metadata (13 kB)
+Collecting importlib-metadata (from diffusers==0.29.0->chatterbox-tts)
+  Downloading importlib_metadata-9.0.1-py3-none-any.whl.metadata (4.5 kB)
+Requirement already satisfied: filelock in /opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages (from diffusers==0.29.0->chatterbox-tts) (3.32.3)
+Collecting huggingface-hub>=0.23.2 (from diffusers==0.29.0->chatterbox-tts)
+  Downloading huggingface_hub-2.2.0-py3-none-any.whl.metadata (16 kB)
+Collecting regex!=2019.12.17 (from diffusers==0.29.0->chatterbox-tts)
+  Downloading regex-2026.9.29-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (40 kB)
+Collecting requests (from diffusers==0.29.0->chatterbox-tts)
+  Downloading requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+Collecting Pillow (from diffusers==0.29.0->chatterbox-tts)
+  Downloading pillow-13.0.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (9.1 kB)
+Collecting aiofiles<25.0,>=22.0 (from gradio==6.8.0->chatterbox-tts)
+  Downloading aiofiles-24.1.0-py3-none-any.whl.metadata (10 kB)
+Collecting anyio<5.0,>=3.0 (from gradio==6.8.0->chatterbox-tts)
+  Downloading anyio-4.15.1-py3-none-any.whl.metadata (4.7 kB)
+Collecting brotli>=1.1.0 (from gradio==6.8.0->chatterbox-tts)
+  Downloading brotli-1.2.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (6.1 kB)
+Collecting fastapi<1.0,>=0.115.2 (from gradio==6.8.0->chatterbox-tts)
+  Downloading fastapi-0.143.3-py3-none-any.whl.metadata (26 kB)
+Collecting ffmpy (from gradio==6.8.0->chatterbox-tts)
+  Downloading ffmpy-1.0.0-py3-none-any.whl.metadata (3.0 kB)
+Collecting gradio-client==2.2.0 (from gradio==6.8.0->chatterbox-tts)
+  Downloading gradio_client-2.2.0-py3-none-any.whl.metadata (7.1 kB)
+Collecting groovy~=0.1 (from gradio==6.8.0->chatterbox-tts)
+  Downloading groovy-0.1.2-py3-none-any.whl.metadata (6.1 kB)
+Collecting httpx<1.0,>=0.24.1 (from gradio==6.8.0->chatterbox-tts)
+  Downloading httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+Collecting huggingface-hub>=0.23.2 (from diffusers==0.29.0->chatterbox-tts)
+  Downloading huggingface_hub-1.33.0-py3-none-any.whl.metadata (16 kB)
+Requirement already satisfied: jinja2<4.0 in /opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages (from gradio==6.8.0->chatterbox-tts) (3.1.6)
+Requirement already satisfied: markupsafe<4.0,>=2.0 in /opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages (from gradio==6.8.0->chatterbox-tts) (3.0.3)
+Collecting orjson~=3.0 (from gradio==6.8.0->chatterbox-tts)
+  Downloading orjson-3.13.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (42 kB)
+Collecting packaging (from gradio==6.8.0->chatterbox-tts)
+  Downloading packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+Collecting pandas<4.0,>=1.0 (from gradio==6.8.0->chatterbox-tts)
+  Downloading pandas-3.0.6-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl.metadata (79 kB)
+Collecting Pillow (from diffusers==0.29.0->chatterbox-tts)
+  Downloading pillow-12.3.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (9.1 kB)
+Collecting pydantic<=3.0,>=2.0 (from gradio==6.8.0->chatterbox-tts)
+  Downloading pydantic-2.14.1-py3-none-any.whl.metadata (133 kB)
+Collecting pydub (from gradio==6.8.0->chatterbox-tts)
+  Downloading pydub-0.25.1-py2.py3-none-any.whl.metadata (1.4 kB)
+Collecting python-multipart>=0.0.18 (from gradio==6.8.0->chatterbox-tts)
+  Downloading python_multipart-0.0.32-py3-none-any.whl.metadata (2.1 kB)
+Collecting pytz>=2017.2 (from gradio==6.8.0->chatterbox-tts)
+  Downloading pytz-2026.5-py2.py3-none-any.whl.metadata (22 kB)
+Collecting pyyaml<7.0,>=5.0 (from gradio==6.8.0->chatterbox-tts)
+  Downloading pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+Collecting safehttpx<0.2.0,>=0.1.7 (from gradio==6.8.0->chatterbox-tts)
+  Downloading safehttpx-0.1.7-py3-none-any.whl.metadata (4.2 kB)
+Collecting semantic-version~=2.0 (from gradio==6.8.0->chatterbox-tts)
+  Downloading semantic_version-2.10.0-py2.py3-none-any.whl.metadata (9.7 kB)
+Collecting starlette<1.0,>=0.40.0 (from gradio==6.8.0->chatterbox-tts)
+  Downloading starlette-0.52.1-py3-none-any.whl.metadata (6.3 kB)
+Collecting tomlkit<0.14.0,>=0.12.0 (from gradio==6.8.0->chatterbox-tts)
+  Downloading tomlkit-0.13.3-py3-none-any.whl.metadata (2.8 kB)
+Collecting typer<1.0,>=0.12 (from gradio==6.8.0->chatterbox-tts)
+  Downloading typer-0.27.3-py3-none-any.whl.metadata (16 kB)
+Requirement already satisfied: typing-extensions~=4.0 in /opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages (from gradio==6.8.0->chatterbox-tts) (4.16.0)
+Collecting uvicorn>=0.14.0 (from gradio==6.8.0->chatterbox-tts)
+  Downloading uvicorn-0.54.0-py3-none-any.whl.metadata (6.6 kB)
+Requirement already satisfied: fsspec in /opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages (from gradio-client==2.2.0->gradio==6.8.0->chatterbox-tts) (2026.7.0)
+Collecting audioread>=2.1.9 (from librosa==0.11.0->chatterbox-tts)
+  Downloading audioread-3.1.0-py3-none-any.whl.metadata (9.0 kB)
+Collecting numba>=0.51.0 (from librosa==0.11.0->chatterbox-tts)
+  Downloading numba-0.68.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (2.8 kB)
+Collecting scipy>=1.6.0 (from librosa==0.11.0->chatterbox-tts)
+  Downloading scipy-1.17.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (62 kB)
+Collecting scikit-learn>=1.1.0 (from librosa==0.11.0->chatterbox-tts)
+  Downloading scikit_learn-1.9.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (9.3 kB)
+Collecting joblib>=1.0 (from librosa==0.11.0->chatterbox-tts)
+  Downloading joblib-1.6.0-py3-none-any.whl.metadata (6.5 kB)
+Collecting decorator>=4.3.0 (from librosa==0.11.0->chatterbox-tts)
+  Downloading decorator-5.3.1-py3-none-any.whl.metadata (3.9 kB)
+Collecting soundfile>=0.12.1 (from librosa==0.11.0->chatterbox-tts)
+  Downloading soundfile-0.14.0-py2.py3-none-manylinux_2_28_x86_64.whl.metadata (18 kB)
+Collecting pooch>=1.1 (from librosa==0.11.0->chatterbox-tts)
+  Downloading pooch-1.9.0-py3-none-any.whl.metadata (10 kB)
+Collecting soxr>=0.3.2 (from librosa==0.11.0->chatterbox-tts)
+  Downloading soxr-1.1.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (5.8 kB)
+Collecting lazy_loader>=0.1 (from librosa==0.11.0->chatterbox-tts)
+  Downloading lazy_loader-0.6-py3-none-any.whl.metadata (6.0 kB)
+Collecting msgpack>=1.0 (from librosa==0.11.0->chatterbox-tts)
+  Downloading msgpack-1.2.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (8.3 kB)
+Collecting jaconv (from pykakasi==2.3.0->chatterbox-tts)
+  Downloading jaconv-0.5.0-py3-none-any.whl.metadata (8.9 kB)
+Collecting deprecated (from pykakasi==2.3.0->chatterbox-tts)
+  Downloading deprecated-1.3.1-py2.py3-none-any.whl.metadata (5.9 kB)
+Requirement already satisfied: networkx in /opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages (from torch==2.6.0->chatterbox-tts) (3.6.1)
+Requirement already satisfied: sympy==1.13.1 in /opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages (from torch==2.6.0->chatterbox-tts) (1.13.1)
+Requirement already satisfied: mpmath<1.4,>=1.1.0 in /opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages (from sympy==1.13.1->torch==2.6.0->chatterbox-tts) (1.3.0)
+Collecting tokenizers<=0.23.0,>=0.22.0 (from transformers==5.2.0->chatterbox-tts)
+  Downloading tokenizers-0.22.2-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (7.3 kB)
+Collecting typer-slim (from transformers==5.2.0->chatterbox-tts)
+  Downloading typer_slim-0.24.0-py3-none-any.whl.metadata (4.2 kB)
+Collecting tqdm>=4.27 (from transformers==5.2.0->chatterbox-tts)
+  Downloading tqdm-4.70.1-py3-none-any.whl.metadata (57 kB)
+Collecting idna>=2.8 (from anyio<5.0,>=3.0->gradio==6.8.0->chatterbox-tts)
+  Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+Collecting typing-inspection>=0.4.2 (from fastapi<1.0,>=0.115.2->gradio==6.8.0->chatterbox-tts)
+  Downloading typing_inspection-0.4.4-py3-none-any.whl.metadata (2.6 kB)
+Collecting annotated-doc>=0.0.2 (from fastapi<1.0,>=0.115.2->gradio==6.8.0->chatterbox-tts)
+  Downloading annotated_doc-0.0.5-py3-none-any.whl.metadata (6.5 kB)
+Collecting opentelemetry-api>=1.44.0 (from fastapi<1.0,>=0.115.2->gradio==6.8.0->chatterbox-tts)
+  Downloading opentelemetry_api-1.45.1-py3-none-any.whl.metadata (1.4 kB)
+Collecting certifi (from httpx<1.0,>=0.24.1->gradio==6.8.0->chatterbox-tts)
+  Downloading certifi-2026.7.22-py3-none-any.whl.metadata (2.5 kB)
+Collecting httpcore==1.* (from httpx<1.0,>=0.24.1->gradio==6.8.0->chatterbox-tts)
+  Downloading httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+Collecting h11>=0.16 (from httpcore==1.*->httpx<1.0,>=0.24.1->gradio==6.8.0->chatterbox-tts)
+  Downloading h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+Collecting click<9.0.0,>=8.4.2 (from huggingface-hub>=0.23.2->diffusers==0.29.0->chatterbox-tts)
+  Downloading click-8.5.0-py3-none-any.whl.metadata (2.6 kB)
+Collecting hf-xet<2.0.0,>=1.6.0 (from huggingface-hub>=0.23.2->diffusers==0.29.0->chatterbox-tts)
+  Downloading hf_xet-1.7.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (4.9 kB)
+Collecting python-dateutil>=2.8.2 (from pandas<4.0,>=1.0->gradio==6.8.0->chatterbox-tts)
+  Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl.metadata (8.4 kB)
+Collecting annotated-types>=0.6.0 (from pydantic<=3.0,>=2.0->gradio==6.8.0->chatterbox-tts)
+  Downloading annotated_types-0.8.0-py3-none-any.whl.metadata (15 kB)
+Collecting pydantic-core==2.50.1 (from pydantic<=3.0,>=2.0->gradio==6.8.0->chatterbox-tts)
+  Downloading pydantic_core-2.50.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.5 kB)
+Collecting shellingham>=1.3.0 (from typer<1.0,>=0.12->gradio==6.8.0->chatterbox-tts)
+  Downloading shellingham-1.5.4-py2.py3-none-any.whl.metadata (3.5 kB)
+Collecting rich>=13.8.0 (from typer<1.0,>=0.12->gradio==6.8.0->chatterbox-tts)
+  Downloading rich-15.0.0-py3-none-any.whl.metadata (18 kB)
+Collecting cloudpickle>=3.0 (from joblib>=1.0->librosa==0.11.0->chatterbox-tts)
+  Downloading cloudpickle-3.1.2-py3-none-any.whl.metadata (7.1 kB)
+Collecting llvmlite<0.51,>=0.50.0dev0 (from numba>=0.51.0->librosa==0.11.0->chatterbox-tts)
+  Downloading llvmlite-0.50.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (5.1 kB)
+Collecting platformdirs>=2.5.0 (from pooch>=1.1->librosa==0.11.0->chatterbox-tts)
+  Downloading platformdirs-4.13.4-py3-none-any.whl.metadata (5.5 kB)
+Collecting six>=1.5 (from python-dateutil>=2.8.2->pandas<4.0,>=1.0->gradio==6.8.0->chatterbox-tts)
+  Downloading six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+Collecting charset_normalizer<4,>=2 (from requests->diffusers==0.29.0->chatterbox-tts)
+  Downloading charset_normalizer-3.5.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (46 kB)
+Collecting urllib3<3,>=1.26 (from requests->diffusers==0.29.0->chatterbox-tts)
+  Downloading urllib3-2.8.0-py3-none-any.whl.metadata (7.4 kB)
+Collecting markdown-it-py>=2.2.0 (from rich>=13.8.0->typer<1.0,>=0.12->gradio==6.8.0->chatterbox-tts)
+  Downloading markdown_it_py-4.2.0-py3-none-any.whl.metadata (7.4 kB)
+Collecting pygments<3.0.0,>=2.13.0 (from rich>=13.8.0->typer<1.0,>=0.12->gradio==6.8.0->chatterbox-tts)
+  Downloading pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+Collecting mdurl~=0.1 (from markdown-it-py>=2.2.0->rich>=13.8.0->typer<1.0,>=0.12->gradio==6.8.0->chatterbox-tts)
+  Downloading mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+Collecting narwhals>=2.0.1 (from scikit-learn>=1.1.0->librosa==0.11.0->chatterbox-tts)
+  Downloading narwhals-2.27.1-py3-none-any.whl.metadata (15 kB)
+Collecting threadpoolctl>=3.5.0 (from scikit-learn>=1.1.0->librosa==0.11.0->chatterbox-tts)
+  Downloading threadpoolctl-3.7.0-py3-none-any.whl.metadata (24 kB)
+Collecting cffi>=1.0 (from soundfile>=0.12.1->librosa==0.11.0->chatterbox-tts)
+  Downloading cffi-2.1.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (2.5 kB)
+Collecting pycparser (from cffi>=1.0->soundfile>=0.12.1->librosa==0.11.0->chatterbox-tts)
+  Downloading pycparser-3.11-py3-none-any.whl.metadata (8.2 kB)
+Collecting wrapt<3,>=1.10 (from deprecated->pykakasi==2.3.0->chatterbox-tts)
+  Downloading wrapt-2.5.1-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (7.6 kB)
+Collecting zipp>=3.20 (from importlib-metadata->diffusers==0.29.0->chatterbox-tts)
+  Downloading zipp-4.1.1-py3-none-any.whl.metadata (3.6 kB)
+Collecting pre-commit (from s3tokenizer->chatterbox-tts)
+  Downloading pre_commit-4.7.0-py2.py3-none-any.whl.metadata (1.2 kB)
+Collecting onnx (from s3tokenizer->chatterbox-tts)
+  Downloading onnx-1.23.2-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (8.7 kB)
+Collecting protobuf>=6.31.1 (from onnx->s3tokenizer->chatterbox-tts)
+  Downloading protobuf-7.36.2-cp310-abi3-manylinux2014_x86_64.whl.metadata (595 bytes)
+Collecting ml_dtypes>=0.5.4 (from onnx->s3tokenizer->chatterbox-tts)
+  Downloading ml_dtypes-0.6.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (8.8 kB)
+INFO: pip is looking at multiple versions of ml-dtypes to determine which version is compatible with other requirements. This could take a while.
+  Downloading ml_dtypes-0.5.4-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (8.9 kB)
+Collecting cfgv>=2.0.0 (from pre-commit->s3tokenizer->chatterbox-tts)
+  Downloading cfgv-3.5.0-py2.py3-none-any.whl.metadata (8.9 kB)
+Collecting identify>=1.0.0 (from pre-commit->s3tokenizer->chatterbox-tts)
+  Downloading identify-2.6.20-py2.py3-none-any.whl.metadata (4.4 kB)
+Collecting nodeenv>=0.11.1 (from pre-commit->s3tokenizer->chatterbox-tts)
+  Downloading nodeenv-1.11.0-py2.py3-none-any.whl.metadata (40 kB)
+Collecting virtualenv>=20.10.0 (from pre-commit->s3tokenizer->chatterbox-tts)
+  Downloading virtualenv-21.14.10-py3-none-any.whl.metadata (4.1 kB)
+Collecting distlib<1,>=0.4.3 (from virtualenv>=20.10.0->pre-commit->s3tokenizer->chatterbox-tts)
+  Downloading distlib-0.4.4-py2.py3-none-any.whl.metadata (5.3 kB)
+Collecting python-discovery>=1.6.1 (from virtualenv>=20.10.0->pre-commit->s3tokenizer->chatterbox-tts)
+  Downloading python_discovery-1.6.3-py3-none-any.whl.metadata (5.1 kB)
+Collecting srsly<3.0.0,>=2.3.0 (from spacy-pkuseg->chatterbox-tts)
+  Downloading srsly-2.5.4-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (19 kB)
+Collecting catalogue<2.1.0,>=2.0.3 (from srsly<3.0.0,>=2.3.0->spacy-pkuseg->chatterbox-tts)
+  Downloading catalogue-2.0.10-py3-none-any.whl.metadata (14 kB)
+Downloading chatterbox_tts-0.1.7-py3-none-any.whl (108 kB)
+Downloading conformer-0.3.2-py3-none-any.whl (4.3 kB)
+Downloading diffusers-0.29.0-py3-none-any.whl (2.2 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.2/2.2 MB 74.2 MB/s  0:00:00
+Downloading gradio-6.8.0-py3-none-any.whl (24.2 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 24.2/24.2 MB 136.8 MB/s  0:00:00
+Downloading gradio_client-2.2.0-py3-none-any.whl (58 kB)
+Downloading librosa-0.11.0-py3-none-any.whl (260 kB)
+Downloading pykakasi-2.3.0-py3-none-any.whl (2.4 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.4/2.4 MB 211.9 MB/s  0:00:00
+Downloading safetensors-0.5.3-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (471 kB)
+Downloading transformers-5.2.0-py3-none-any.whl (10.4 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 10.4/10.4 MB 160.7 MB/s  0:00:00
+Downloading aiofiles-24.1.0-py3-none-any.whl (15 kB)
+Downloading anyio-4.15.1-py3-none-any.whl (132 kB)
+Downloading fastapi-0.143.3-py3-none-any.whl (144 kB)
+Downloading groovy-0.1.2-py3-none-any.whl (14 kB)
+Downloading httpx-0.28.1-py3-none-any.whl (73 kB)
+Downloading httpcore-1.0.9-py3-none-any.whl (78 kB)
+Downloading huggingface_hub-1.33.0-py3-none-any.whl (846 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 846.4/846.4 kB 175.9 MB/s  0:00:00
+Downloading click-8.5.0-py3-none-any.whl (125 kB)
+Downloading hf_xet-1.7.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (4.2 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.2/4.2 MB 347.2 MB/s  0:00:00
+Downloading numpy-1.26.4-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (18.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 18.3/18.3 MB 303.0 MB/s  0:00:00
+Downloading orjson-3.13.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (130 kB)
+Downloading pandas-3.0.6-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl (11.1 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 11.1/11.1 MB 318.7 MB/s  0:00:00
+Downloading pillow-12.3.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (6.9 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.9/6.9 MB 149.9 MB/s  0:00:00
+Downloading pydantic-2.14.1-py3-none-any.whl (488 kB)
+Downloading pydantic_core-2.50.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.2 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.2/2.2 MB 320.1 MB/s  0:00:00
+Downloading pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (806 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 806.6/806.6 kB 183.1 MB/s  0:00:00
+Downloading safehttpx-0.1.7-py3-none-any.whl (9.0 kB)
+Downloading semantic_version-2.10.0-py2.py3-none-any.whl (15 kB)
+Downloading starlette-0.52.1-py3-none-any.whl (74 kB)
+Downloading tokenizers-0.22.2-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (3.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.3/3.3 MB 358.3 MB/s  0:00:00
+Downloading tomlkit-0.13.3-py3-none-any.whl (38 kB)
+Downloading typer-0.27.3-py3-none-any.whl (123 kB)
+Downloading annotated_doc-0.0.5-py3-none-any.whl (5.3 kB)
+Downloading annotated_types-0.8.0-py3-none-any.whl (13 kB)
+Downloading audioread-3.1.0-py3-none-any.whl (23 kB)
+Downloading brotli-1.2.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (1.4 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.4/1.4 MB 268.3 MB/s  0:00:00
+Downloading decorator-5.3.1-py3-none-any.whl (10 kB)
+Downloading einops-0.8.2-py3-none-any.whl (65 kB)
+Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+Downloading idna-3.20-py3-none-any.whl (69 kB)
+Downloading joblib-1.6.0-py3-none-any.whl (306 kB)
+Downloading cloudpickle-3.1.2-py3-none-any.whl (22 kB)
+Downloading lazy_loader-0.6-py3-none-any.whl (8.8 kB)
+Downloading msgpack-1.2.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (477 kB)
+Downloading numba-0.68.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (3.8 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.8/3.8 MB 146.8 MB/s  0:00:00
+Downloading llvmlite-0.50.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (59.7 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 59.7/59.7 MB 127.3 MB/s  0:00:00
+Downloading opentelemetry_api-1.45.1-py3-none-any.whl (60 kB)
+Downloading packaging-26.3-py3-none-any.whl (129 kB)
+Downloading pooch-1.9.0-py3-none-any.whl (67 kB)
+Downloading platformdirs-4.13.4-py3-none-any.whl (32 kB)
+Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+Downloading python_multipart-0.0.32-py3-none-any.whl (30 kB)
+Downloading pytz-2026.5-py2.py3-none-any.whl (506 kB)
+Downloading regex-2026.9.29-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (804 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 805.0/805.0 kB 137.0 MB/s  0:00:00
+Downloading requests-2.34.2-py3-none-any.whl (73 kB)
+Downloading charset_normalizer-3.5.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (269 kB)
+Downloading urllib3-2.8.0-py3-none-any.whl (135 kB)
+Downloading certifi-2026.7.22-py3-none-any.whl (136 kB)
+Downloading resemble_perth-1.0.1-py3-none-any.whl (34.4 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 34.4/34.4 MB 162.7 MB/s  0:00:00
+Downloading rich-15.0.0-py3-none-any.whl (310 kB)
+Downloading pygments-2.21.0-py3-none-any.whl (1.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.3/1.3 MB 237.2 MB/s  0:00:00
+Downloading markdown_it_py-4.2.0-py3-none-any.whl (91 kB)
+Downloading mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+Downloading scikit_learn-1.9.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (9.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 9.3/9.3 MB 187.8 MB/s  0:00:00
+Downloading narwhals-2.27.1-py3-none-any.whl (483 kB)
+Downloading scipy-1.17.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (35.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 35.3/35.3 MB 285.6 MB/s  0:00:00
+Downloading shellingham-1.5.4-py2.py3-none-any.whl (9.8 kB)
+Downloading six-1.17.0-py2.py3-none-any.whl (11 kB)
+Downloading soundfile-0.14.0-py2.py3-none-manylinux_2_28_x86_64.whl (1.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.3/1.3 MB 202.3 MB/s  0:00:00
+Downloading cffi-2.1.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (217 kB)
+Downloading soxr-1.1.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (245 kB)
+Downloading threadpoolctl-3.7.0-py3-none-any.whl (26 kB)
+Downloading tqdm-4.70.1-py3-none-any.whl (80 kB)
+Downloading typing_inspection-0.4.4-py3-none-any.whl (14 kB)
+Downloading uvicorn-0.54.0-py3-none-any.whl (87 kB)
+Downloading deprecated-1.3.1-py2.py3-none-any.whl (11 kB)
+Downloading wrapt-2.5.1-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (240 kB)
+Downloading ffmpy-1.0.0-py3-none-any.whl (5.6 kB)
+Downloading importlib_metadata-9.0.1-py3-none-any.whl (27 kB)
+Downloading zipp-4.1.1-py3-none-any.whl (10 kB)
+Downloading jaconv-0.5.0-py3-none-any.whl (16 kB)
+Downloading omegaconf-2.4.0-py3-none-any.whl (254 kB)
+Downloading pycparser-3.11-py3-none-any.whl (51 kB)
+Downloading pydub-0.25.1-py2.py3-none-any.whl (32 kB)
+Downloading pyloudnorm-0.2.0-py3-none-any.whl (10 kB)
+Downloading s3tokenizer-0.3.0-py3-none-any.whl (226 kB)
+Downloading onnx-1.23.2-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (8.9 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 8.9/8.9 MB 48.2 MB/s  0:00:00
+Downloading ml_dtypes-0.5.4-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (5.0 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5.0/5.0 MB 144.6 MB/s  0:00:00
+Downloading protobuf-7.36.2-cp310-abi3-manylinux2014_x86_64.whl (343 kB)
+Downloading pre_commit-4.7.0-py2.py3-none-any.whl (226 kB)
+Downloading cfgv-3.5.0-py2.py3-none-any.whl (7.4 kB)
+Downloading identify-2.6.20-py2.py3-none-any.whl (99 kB)
+Downloading nodeenv-1.11.0-py2.py3-none-any.whl (34 kB)
+Downloading virtualenv-21.14.10-py3-none-any.whl (5.5 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5.5/5.5 MB 366.6 MB/s  0:00:00
+Downloading distlib-0.4.4-py2.py3-none-any.whl (472 kB)
+Downloading python_discovery-1.6.3-py3-none-any.whl (39 kB)
+Downloading spacy_pkuseg-1.0.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (4.2 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.2/4.2 MB 245.6 MB/s  0:00:00
+Downloading srsly-2.5.4-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (1.2 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.2/1.2 MB 208.6 MB/s  0:00:00
+Downloading catalogue-2.0.10-py3-none-any.whl (17 kB)
+Downloading typer_slim-0.24.0-py3-none-any.whl (3.4 kB)
+Installing collected packages: pytz, pydub, jaconv, distlib, brotli, zipp, wrapt, urllib3, typing-inspection, tqdm, tomlkit, threadpoolctl, six, shellingham, semantic-version, safetensors, resemble-perth, regex, pyyaml, python-multipart, python-discovery, pygments, pydantic-core, pycparser, protobuf, platformdirs, Pillow, packaging, orjson, opentelemetry-api, numpy, nodeenv, narwhals, msgpack, mdurl, llvmlite, idna, identify, hf-xet, h11, groovy, ffmpy, einops, decorator, cloudpickle, click, charset_normalizer, cfgv, certifi, catalogue, audioread, annotated-types, annotated-doc, aiofiles, virtualenv, uvicorn, srsly, soxr, scipy, requests, python-dateutil, pydantic, omegaconf, numba, ml_dtypes, markdown-it-py, lazy_loader, joblib, importlib-metadata, httpcore, deprecated, cffi, anyio, starlette, spacy-pkuseg, soundfile, scikit-learn, rich, pyloudnorm, pykakasi, pre-commit, pooch, pandas, onnx, httpx, conformer, typer, safehttpx, s3tokenizer, librosa, huggingface-hub, fastapi, typer-slim, tokenizers, gradio-client, diffusers, transformers, gradio, chatterbox-tts
+
+Successfully installed Pillow-12.3.0 aiofiles-24.1.0 annotated-doc-0.0.5 annotated-types-0.8.0 anyio-4.15.1 audioread-3.1.0 brotli-1.2.0 catalogue-2.0.10 certifi-2026.7.22 cffi-2.1.1 cfgv-3.5.0 charset_normalizer-3.5.2 chatterbox-tts-0.1.7 click-8.5.0 cloudpickle-3.1.2 conformer-0.3.2 decorator-5.3.1 deprecated-1.3.1 diffusers-0.29.0 distlib-0.4.4 einops-0.8.2 fastapi-0.143.3 ffmpy-1.0.0 gradio-6.8.0 gradio-client-2.2.0 groovy-0.1.2 h11-0.16.0 hf-xet-1.7.0 httpcore-1.0.9 httpx-0.28.1 huggingface-hub-1.33.0 identify-2.6.20 idna-3.20 importlib-metadata-9.0.1 jaconv-0.5.0 joblib-1.6.0 lazy_loader-0.6 librosa-0.11.0 llvmlite-0.50.0 markdown-it-py-4.2.0 mdurl-0.1.2 ml_dtypes-0.5.4 msgpack-1.2.3 narwhals-2.27.1 nodeenv-1.11.0 numba-0.68.0 numpy-1.26.4 omegaconf-2.4.0 onnx-1.23.2 opentelemetry-api-1.45.1 orjson-3.13.0 packaging-26.3 pandas-3.0.6 platformdirs-4.13.4 pooch-1.9.0 pre-commit-4.7.0 protobuf-7.36.2 pycparser-3.11 pydantic-2.14.1 pydantic-core-2.50.1 pydub-0.25.1 pygments-2.21.0 pykakasi-2.3.0 pyloudnorm-0.2.0 python-dateutil-2.9.0.post0 python-discovery-1.6.3 python-multipart-0.0.32 pytz-2026.5 pyyaml-6.0.3 regex-2026.9.29 requests-2.34.2 resemble-perth-1.0.1 rich-15.0.0 s3tokenizer-0.3.0 safehttpx-0.1.7 safetensors-0.5.3 scikit-learn-1.9.1 scipy-1.17.1 semantic-version-2.10.0 shellingham-1.5.4 six-1.17.0 soundfile-0.14.0 soxr-1.1.0 spacy-pkuseg-1.0.1 srsly-2.5.4 starlette-0.52.1 threadpoolctl-3.7.0 tokenizers-0.22.2 tomlkit-0.13.3 tqdm-4.70.1 transformers-5.2.0 typer-0.27.3 typer-slim-0.24.0 typing-inspection-0.4.4 urllib3-2.8.0 uvicorn-0.54.0 virtualenv-21.14.10 wrapt-2.5.1 zipp-4.1.1
+Fetching 6 files:   0%|          | 0/6 [00:00<?, ?it/s]Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Fetching 6 files:  17%|█▋        | 1/6 [00:00<00:00,  7.87it/s]Fetching 6 files:  50%|█████     | 3/6 [00:00<00:00,  3.47it/s]Fetching 6 files:  67%|██████▋   | 4/6 [00:06<00:04,  2.17s/it]Fetching 6 files:  83%|████████▎ | 5/6 [00:10<00:02,  2.61s/it]Fetching 6 files: 100%|██████████| 6/6 [00:38<00:00, 10.85s/it]Fetching 6 files: 100%|██████████| 6/6 [00:38<00:00,  6.39s/it]
+/opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages/diffusers/models/lora.py:393: FutureWarning: `LoRACompatibleLinear` is deprecated and will be removed in version 1.0.0. Use of `LoRACompatibleLinear` is deprecated. Please switch to PEFT backend by installing PEFT: `pip install peft`.
+  deprecate("LoRACompatibleLinear", "1.0.0", deprecation_message)
+Downloading: "https://github.com/explosion/spacy-pkuseg/releases/download/v0.0.26/spacy_ontonotes.zip" to /home/runner/.pkuseg/spacy_ontonotes.zip
+  0%|          | 0/34567143 [00:00<?, ?it/s] 10%|█         | 3538944/34567143 [00:00<00:00, 35209326.37it/s] 30%|███       | 10493952/34567143 [00:00<00:00, 45289409.44it/s] 61%|██████    | 20979712/34567143 [00:00<00:00, 63941405.42it/s] 91%|█████████ | 31465472/34567143 [00:00<00:00, 54596080.13it/s]100%|██████████| 34567143/34567143 [00:00<00:00, 57798475.54it/s]
+loaded PerthNet (Implicit) at step 250,000
+modelo carregado em 49 s
+/opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/contextlib.py:105: FutureWarning: `torch.backends.cuda.sdp_kernel()` is deprecated. In the future, this context manager will be removed. Please see `torch.nn.attention.sdpa_kernel()` for the new context manager, with updated signature.
+  self.gen = func(*args, **kwds)
+The following generation flags are not valid and may be ignored: ['output_attentions']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+WARNING:transformers.generation.configuration_utils:The following generation flags are not valid and may be ignored: ['output_attentions']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+Sampling:   0%|          | 0/1000 [00:00<?, ?it/s]Sampling:   0%|          | 1/1000 [00:00<02:42,  6.15it/s]Sampling:   0%|          | 2/1000 [00:00<02:41,  6.17it/s]Sampling:   0%|          | 3/1000 [00:00<02:41,  6.17it/s]Sampling:   0%|          | 4/1000 [00:00<02:41,  6.17it/s]Sampling:   0%|          | 5/1000 [00:00<02:41,  6.15it/s]Sampling:   1%|          | 6/1000 [00:00<02:42,  6.13it/s]Sampling:   1%|          | 7/1000 [00:01<02:42,  6.11it/s]Sampling:   1%|          | 8/1000 [00:01<02:41,  6.14it/s]Sampling:   1%|          | 9/1000 [00:01<02:41,  6.15it/s]Sampling:   1%|          | 10/1000 [00:01<02:40,  6.16it/s]Sampling:   1%|          | 11/1000 [00:01<02:40,  6.15it/s]Sampling:   1%|          | 12/1000 [00:01<02:41,  6.13it/s]Sampling:   1%|▏         | 13/1000 [00:02<02:41,  6.11it/s]Sampling:   1%|▏         | 14/1000 [00:02<02:40,  6.12it/s]Sampling:   2%|▏         | 15/1000 [00:02<02:41,  6.11it/s]Sampling:   2%|▏         | 16/1000 [00:02<02:41,  6.11it/s]Sampling:   2%|▏         | 17/1000 [00:02<02:41,  6.10it/s]Sampling:   2%|▏         | 18/1000 [00:02<02:40,  6.10it/s]Sampling:   2%|▏         | 19/1000 [00:03<02:40,  6.10it/s]Sampling:   2%|▏         | 20/1000 [00:03<02:40,  6.11it/s]Sampling:   2%|▏         | 21/1000 [00:03<02:40,  6.10it/s]Sampling:   2%|▏         | 22/1000 [00:03<02:40,  6.10it/s]Sampling:   2%|▏         | 23/1000 [00:03<02:40,  6.07it/s]Sampling:   2%|▏         | 24/1000 [00:03<02:40,  6.07it/s]Sampling:   2%|▎         | 25/1000 [00:04<02:40,  6.08it/s]Sampling:   3%|▎         | 26/1000 [00:04<02:40,  6.08it/s]Sampling:   3%|▎         | 27/1000 [00:04<02:39,  6.10it/s]Sampling:   3%|▎         | 28/1000 [00:04<02:39,  6.10it/s]Sampling:   3%|▎         | 29/1000 [00:04<02:38,  6.12it/s]Sampling:   3%|▎         | 30/1000 [00:04<02:38,  6.12it/s]Sampling:   3%|▎         | 31/1000 [00:05<02:38,  6.12it/s]Sampling:   3%|▎         | 32/1000 [00:05<02:38,  6.12it/s]Sampling:   3%|▎         | 33/1000 [00:05<02:37,  6.12it/s]Sampling:   3%|▎         | 34/1000 [00:05<02:37,  6.13it/s]Sampling:   4%|▎         | 35/1000 [00:05<02:37,  6.12it/s]Sampling:   4%|▎         | 36/1000 [00:05<02:37,  6.11it/s]Sampling:   4%|▎         | 37/1000 [00:06<02:37,  6.10it/s]Sampling:   4%|▍         | 38/1000 [00:06<02:39,  6.03it/s]Sampling:   4%|▍         | 39/1000 [00:06<02:40,  6.01it/s]Sampling:   4%|▍         | 40/1000 [00:06<02:41,  5.94it/s]Sampling:   4%|▍         | 41/1000 [00:06<02:43,  5.85it/s]Sampling:   4%|▍         | 42/1000 [00:06<02:44,  5.83it/s]Sampling:   4%|▍         | 43/1000 [00:07<02:42,  5.89it/s]Sampling:   4%|▍         | 44/1000 [00:07<02:40,  5.95it/s]Sampling:   4%|▍         | 45/1000 [00:07<02:38,  6.01it/s]Sampling:   5%|▍         | 46/1000 [00:07<02:37,  6.05it/s]Sampling:   5%|▍         | 47/1000 [00:07<02:37,  6.07it/s]Sampling:   5%|▍         | 48/1000 [00:07<02:36,  6.09it/s]Sampling:   5%|▍         | 49/1000 [00:08<02:36,  6.10it/s]Sampling:   5%|▌         | 50/1000 [00:08<02:35,  6.11it/s]Sampling:   5%|▌         | 51/1000 [00:08<02:35,  6.12it/s]Sampling:   5%|▌         | 52/1000 [00:08<02:34,  6.13it/s]Sampling:   5%|▌         | 53/1000 [00:08<02:34,  6.11it/s]Sampling:   5%|▌         | 54/1000 [00:08<02:35,  6.08it/s]Sampling:   6%|▌         | 55/1000 [00:09<02:36,  6.04it/s]Sampling:   6%|▌         | 56/1000 [00:09<02:36,  6.03it/s]Sampling:   6%|▌         | 57/1000 [00:09<02:37,  6.00it/s]Sampling:   6%|▌         | 58/1000 [00:09<02:36,  6.01it/s]Sampling:   6%|▌         | 59/1000 [00:09<02:36,  6.01it/s]Sampling:   6%|▌         | 60/1000 [00:09<02:36,  6.00it/s]Sampling:   6%|▌         | 61/1000 [00:10<02:36,  6.00it/s]Sampling:   6%|▌         | 62/1000 [00:10<02:36,  6.01it/s]Sampling:   6%|▋         | 63/1000 [00:10<02:35,  6.01it/s]Sampling:   6%|▋         | 64/1000 [00:10<02:35,  6.02it/s]Sampling:   6%|▋         | 65/1000 [00:10<02:36,  5.97it/s]Sampling:   7%|▋         | 66/1000 [00:10<02:37,  5.94it/s]Sampling:   7%|▋         | 67/1000 [00:11<02:36,  5.95it/s]Sampling:   7%|▋         | 68/1000 [00:11<02:35,  5.98it/s]Sampling:   7%|▋         | 69/1000 [00:11<02:35,  6.00it/s]Sampling:   7%|▋         | 70/1000 [00:11<02:38,  5.87it/s]Sampling:   7%|▋         | 71/1000 [00:11<02:36,  5.92it/s]Sampling:   7%|▋         | 72/1000 [00:11<02:35,  5.96it/s]Sampling:   7%|▋         | 73/1000 [00:12<02:35,  5.95it/s]Sampling:   7%|▋         | 74/1000 [00:12<02:34,  5.98it/s]Sampling:   8%|▊         | 75/1000 [00:12<02:33,  6.01it/s]Sampling:   8%|▊         | 76/1000 [00:12<02:33,  6.01it/s]Sampling:   8%|▊         | 77/1000 [00:12<02:33,  6.01it/s]Sampling:   8%|▊         | 78/1000 [00:12<02:32,  6.03it/s]Sampling:   8%|▊         | 79/1000 [00:13<02:32,  6.05it/s]Sampling:   8%|▊         | 80/1000 [00:13<02:32,  6.04it/s]WARNING:chatterbox.models.t3.inference.alignment_stream_analyzer:forcing EOS token, long_tail=tensor(True), alignment_repetition=tensor(False), token_repetition=False
+Sampling:   8%|▊         | 80/1000 [00:13<02:32,  6.05it/s]
+{"arquivo": "chatterbox_padrao_pt_0.wav", "texto": "Ei, você! O portão fecha ao anoitecer.", "segundos_para_gerar": 38.8}
+/opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/contextlib.py:105: FutureWarning: `torch.backends.cuda.sdp_kernel()` is deprecated. In the future, this context manager will be removed. Please see `torch.nn.attention.sdpa_kernel()` for the new context manager, with updated signature.
+  self.gen = func(*args, **kwds)
+Sampling:   0%|          | 0/1000 [00:00<?, ?it/s]Sampling:   0%|          | 1/1000 [00:00<02:41,  6.20it/s]Sampling:   0%|          | 2/1000 [00:00<02:42,  6.15it/s]Sampling:   0%|          | 3/1000 [00:00<02:41,  6.17it/s]Sampling:   0%|          | 4/1000 [00:00<02:41,  6.15it/s]Sampling:   0%|          | 5/1000 [00:00<02:43,  6.10it/s]Sampling:   1%|          | 6/1000 [00:00<02:42,  6.13it/s]Sampling:   1%|          | 7/1000 [00:01<02:41,  6.13it/s]Sampling:   1%|          | 8/1000 [00:01<02:41,  6.16it/s]Sampling:   1%|          | 9/1000 [00:01<02:40,  6.16it/s]Sampling:   1%|          | 10/1000 [00:01<02:40,  6.18it/s]Sampling:   1%|          | 11/1000 [00:01<02:40,  6.17it/s]Sampling:   1%|          | 12/1000 [00:01<02:40,  6.17it/s]Sampling:   1%|▏         | 13/1000 [00:02<02:39,  6.18it/s]Sampling:   1%|▏         | 14/1000 [00:02<02:39,  6.17it/s]Sampling:   2%|▏         | 15/1000 [00:02<02:39,  6.17it/s]Sampling:   2%|▏         | 16/1000 [00:02<02:39,  6.17it/s]Sampling:   2%|▏         | 17/1000 [00:02<02:39,  6.18it/s]Sampling:   2%|▏         | 18/1000 [00:02<02:39,  6.17it/s]Sampling:   2%|▏         | 19/1000 [00:03<02:39,  6.16it/s]Sampling:   2%|▏         | 20/1000 [00:03<02:39,  6.14it/s]Sampling:   2%|▏         | 21/1000 [00:03<02:39,  6.15it/s]Sampling:   2%|▏         | 22/1000 [00:03<02:38,  6.17it/s]Sampling:   2%|▏         | 23/1000 [00:03<02:38,  6.17it/s]Sampling:   2%|▏         | 24/1000 [00:03<02:38,  6.16it/s]Sampling:   2%|▎         | 25/1000 [00:04<02:38,  6.16it/s]Sampling:   3%|▎         | 26/1000 [00:04<02:38,  6.14it/s]Sampling:   3%|▎         | 27/1000 [00:04<02:38,  6.15it/s]Sampling:   3%|▎         | 28/1000 [00:04<02:37,  6.16it/s]Sampling:   3%|▎         | 29/1000 [00:04<02:37,  6.17it/s]Sampling:   3%|▎         | 30/1000 [00:04<02:37,  6.16it/s]Sampling:   3%|▎         | 31/1000 [00:05<02:37,  6.16it/s]Sampling:   3%|▎         | 32/1000 [00:05<02:37,  6.16it/s]Sampling:   3%|▎         | 33/1000 [00:05<02:36,  6.16it/s]Sampling:   3%|▎         | 34/1000 [00:05<02:36,  6.16it/s]Sampling:   4%|▎         | 35/1000 [00:05<02:36,  6.15it/s]Sampling:   4%|▎         | 36/1000 [00:05<02:36,  6.14it/s]Sampling:   4%|▎         | 37/1000 [00:06<02:36,  6.15it/s]Sampling:   4%|▍         | 38/1000 [00:06<02:36,  6.14it/s]Sampling:   4%|▍         | 39/1000 [00:06<02:36,  6.14it/s]Sampling:   4%|▍         | 40/1000 [00:06<02:36,  6.14it/s]Sampling:   4%|▍         | 41/1000 [00:06<02:36,  6.12it/s]Sampling:   4%|▍         | 42/1000 [00:06<02:36,  6.12it/s]Sampling:   4%|▍         | 43/1000 [00:06<02:36,  6.11it/s]Sampling:   4%|▍         | 44/1000 [00:07<02:36,  6.09it/s]Sampling:   4%|▍         | 45/1000 [00:07<02:36,  6.08it/s]Sampling:   5%|▍         | 46/1000 [00:07<02:36,  6.10it/s]Sampling:   5%|▍         | 47/1000 [00:07<02:35,  6.12it/s]Sampling:   5%|▍         | 48/1000 [00:07<02:35,  6.11it/s]Sampling:   5%|▍         | 49/1000 [00:07<02:35,  6.10it/s]Sampling:   5%|▌         | 50/1000 [00:08<02:35,  6.09it/s]Sampling:   5%|▌         | 51/1000 [00:08<02:35,  6.09it/s]Sampling:   5%|▌         | 52/1000 [00:08<02:35,  6.09it/s]Sampling:   5%|▌         | 53/1000 [00:08<02:35,  6.10it/s]Sampling:   5%|▌         | 54/1000 [00:08<02:34,  6.12it/s]Sampling:   6%|▌         | 55/1000 [00:08<02:34,  6.12it/s]Sampling:   6%|▌         | 56/1000 [00:09<02:34,  6.11it/s]Sampling:   6%|▌         | 57/1000 [00:09<02:34,  6.11it/s]Sampling:   6%|▌         | 58/1000 [00:09<02:34,  6.11it/s]Sampling:   6%|▌         | 59/1000 [00:09<02:33,  6.11it/s]Sampling:   6%|▌         | 60/1000 [00:09<02:33,  6.11it/s]Sampling:   6%|▌         | 61/1000 [00:09<02:34,  6.09it/s]Sampling:   6%|▌         | 62/1000 [00:10<02:34,  6.09it/s]Sampling:   6%|▋         | 63/1000 [00:10<02:33,  6.09it/s]Sampling:   6%|▋         | 64/1000 [00:10<02:33,  6.09it/s]Sampling:   6%|▋         | 65/1000 [00:10<02:33,  6.11it/s]Sampling:   7%|▋         | 66/1000 [00:10<02:32,  6.11it/s]Sampling:   7%|▋         | 67/1000 [00:10<02:32,  6.10it/s]Sampling:   7%|▋         | 68/1000 [00:11<02:33,  6.08it/s]Sampling:   7%|▋         | 69/1000 [00:11<02:33,  6.06it/s]Sampling:   7%|▋         | 70/1000 [00:11<02:33,  6.05it/s]Sampling:   7%|▋         | 71/1000 [00:11<02:33,  6.06it/s]Sampling:   7%|▋         | 72/1000 [00:11<02:32,  6.08it/s]Sampling:   7%|▋         | 73/1000 [00:11<02:32,  6.08it/s]Sampling:   7%|▋         | 74/1000 [00:12<02:32,  6.08it/s]Sampling:   8%|▊         | 75/1000 [00:12<02:32,  6.07it/s]Sampling:   8%|▊         | 76/1000 [00:12<02:33,  6.00it/s]Sampling:   8%|▊         | 77/1000 [00:12<02:35,  5.94it/s]Sampling:   8%|▊         | 78/1000 [00:12<02:36,  5.89it/s]Sampling:   8%|▊         | 79/1000 [00:12<02:38,  5.82it/s]Sampling:   8%|▊         | 80/1000 [00:13<02:37,  5.82it/s]Sampling:   8%|▊         | 81/1000 [00:13<02:36,  5.89it/s]Sampling:   8%|▊         | 82/1000 [00:13<02:34,  5.94it/s]Sampling:   8%|▊         | 83/1000 [00:13<02:33,  5.97it/s]Sampling:   8%|▊         | 84/1000 [00:13<02:32,  6.01it/s]Sampling:   8%|▊         | 85/1000 [00:13<02:31,  6.03it/s]Sampling:   9%|▊         | 86/1000 [00:14<02:31,  6.05it/s]Sampling:   9%|▊         | 87/1000 [00:14<02:31,  6.05it/s]Sampling:   9%|▉         | 88/1000 [00:14<02:30,  6.06it/s]Sampling:   9%|▉         | 89/1000 [00:14<02:29,  6.08it/s]Sampling:   9%|▉         | 90/1000 [00:14<02:29,  6.07it/s]Sampling:   9%|▉         | 91/1000 [00:14<02:29,  6.06it/s]Sampling:   9%|▉         | 92/1000 [00:15<02:29,  6.06it/s]Sampling:   9%|▉         | 93/1000 [00:15<02:29,  6.05it/s]Sampling:   9%|▉         | 94/1000 [00:15<02:29,  6.06it/s]Sampling:  10%|▉         | 95/1000 [00:15<02:28,  6.08it/s]Sampling:  10%|▉         | 96/1000 [00:15<02:28,  6.08it/s]Sampling:  10%|▉         | 97/1000 [00:15<02:28,  6.07it/s]Sampling:  10%|▉         | 98/1000 [00:16<02:28,  6.06it/s]Sampling:  10%|▉         | 99/1000 [00:16<02:28,  6.05it/s]Sampling:  10%|█         | 100/1000 [00:16<02:28,  6.06it/s]Sampling:  10%|█         | 101/1000 [00:16<02:28,  6.06it/s]Sampling:  10%|█         | 102/1000 [00:16<02:27,  6.08it/s]Sampling:  10%|█         | 103/1000 [00:16<02:28,  6.05it/s]Sampling:  10%|█         | 104/1000 [00:17<02:28,  6.02it/s]Sampling:  10%|█         | 105/1000 [00:17<02:28,  6.01it/s]Sampling:  11%|█         | 106/1000 [00:17<02:29,  6.00it/s]Sampling:  11%|█         | 107/1000 [00:17<02:28,  6.02it/s]Sampling:  11%|█         | 108/1000 [00:17<02:27,  6.03it/s]Sampling:  11%|█         | 109/1000 [00:17<02:27,  6.03it/s]Sampling:  11%|█         | 110/1000 [00:18<02:27,  6.04it/s]Sampling:  11%|█         | 111/1000 [00:18<02:27,  6.02it/s]Sampling:  11%|█         | 112/1000 [00:18<02:27,  6.01it/s]Sampling:  11%|█▏        | 113/1000 [00:18<02:27,  6.01it/s]Sampling:  11%|█▏        | 114/1000 [00:18<02:27,  6.00it/s]Sampling:  12%|█▏        | 115/1000 [00:18<02:27,  6.02it/s]Sampling:  12%|█▏        | 116/1000 [00:19<02:26,  6.04it/s]Sampling:  12%|█▏        | 117/1000 [00:19<02:26,  6.05it/s]Sampling:  12%|█▏        | 118/1000 [00:19<02:25,  6.05it/s]Sampling:  12%|█▏        | 119/1000 [00:19<02:25,  6.05it/s]Sampling:  12%|█▏        | 120/1000 [00:19<02:25,  6.06it/s]Sampling:  12%|█▏        | 121/1000 [00:19<02:26,  6.02it/s]Sampling:  12%|█▏        | 122/1000 [00:20<02:27,  5.95it/s]Sampling:  12%|█▏        | 123/1000 [00:20<02:26,  5.98it/s]Sampling:  12%|█▏        | 124/1000 [00:20<02:26,  5.98it/s]Sampling:  12%|█▎        | 125/1000 [00:20<02:25,  6.00it/s]Sampling:  13%|█▎        | 126/1000 [00:20<02:25,  6.01it/s]Sampling:  13%|█▎        | 127/1000 [00:20<02:25,  6.02it/s]Sampling:  13%|█▎        | 128/1000 [00:21<02:24,  6.03it/s]Sampling:  13%|█▎        | 129/1000 [00:21<02:24,  6.03it/s]Sampling:  13%|█▎        | 130/1000 [00:21<02:25,  5.99it/s]Sampling:  13%|█▎        | 131/1000 [00:21<02:24,  6.03it/s]Sampling:  13%|█▎        | 132/1000 [00:21<02:23,  6.04it/s]Sampling:  13%|█▎        | 133/1000 [00:21<02:23,  6.03it/s]Sampling:  13%|█▎        | 134/1000 [00:22<02:23,  6.01it/s]Sampling:  14%|█▎        | 135/1000 [00:22<02:24,  5.99it/s]Sampling:  14%|█▎        | 136/1000 [00:22<02:24,  5.98it/s]Sampling:  14%|█▎        | 137/1000 [00:22<02:23,  5.99it/s]Sampling:  14%|█▍        | 138/1000 [00:22<02:23,  6.01it/s]Sampling:  14%|█▍        | 139/1000 [00:22<02:23,  6.00it/s]Sampling:  14%|█▍        | 140/1000 [00:23<02:23,  6.00it/s]Sampling:  14%|█▍        | 141/1000 [00:23<02:23,  5.98it/s]Sampling:  14%|█▍        | 142/1000 [00:23<02:23,  5.98it/s]Sampling:  14%|█▍        | 143/1000 [00:23<02:23,  5.98it/s]Sampling:  14%|█▍        | 144/1000 [00:23<02:23,  5.96it/s]Sampling:  14%|█▍        | 145/1000 [00:23<02:23,  5.96it/s]Sampling:  15%|█▍        | 146/1000 [00:24<02:23,  5.97it/s]Sampling:  15%|█▍        | 147/1000 [00:24<02:22,  5.97it/s]Sampling:  15%|█▍        | 148/1000 [00:24<02:23,  5.95it/s]Sampling:  15%|█▍        | 149/1000 [00:24<02:22,  5.96it/s]Sampling:  15%|█▌        | 150/1000 [00:24<02:22,  5.95it/s]Sampling:  15%|█▌        | 151/1000 [00:24<02:22,  5.95it/s]Sampling:  15%|█▌        | 152/1000 [00:25<02:22,  5.96it/s]Sampling:  15%|█▌        | 153/1000 [00:25<02:22,  5.95it/s]Sampling:  15%|█▌        | 154/1000 [00:25<02:21,  5.96it/s]Sampling:  16%|█▌        | 155/1000 [00:25<02:21,  5.96it/s]Sampling:  16%|█▌        | 156/1000 [00:25<02:21,  5.96it/s]Sampling:  16%|█▌        | 157/1000 [00:25<02:21,  5.97it/s]Sampling:  16%|█▌        | 158/1000 [00:26<02:21,  5.95it/s]Sampling:  16%|█▌        | 159/1000 [00:26<02:21,  5.93it/s]Sampling:  16%|█▌        | 160/1000 [00:26<02:21,  5.93it/s]Sampling:  16%|█▌        | 161/1000 [00:26<02:21,  5.92it/s]Sampling:  16%|█▌        | 162/1000 [00:26<02:21,  5.92it/s]Sampling:  16%|█▋        | 163/1000 [00:26<02:22,  5.88it/s]Sampling:  16%|█▋        | 164/1000 [00:27<02:22,  5.88it/s]Sampling:  16%|█▋        | 165/1000 [00:27<02:22,  5.87it/s]Sampling:  17%|█▋        | 166/1000 [00:27<02:23,  5.83it/s]Sampling:  17%|█▋        | 167/1000 [00:27<02:24,  5.77it/s]Sampling:  17%|█▋        | 168/1000 [00:27<02:25,  5.71it/s]Sampling:  17%|█▋        | 169/1000 [00:27<02:27,  5.63it/s]Sampling:  17%|█▋        | 170/1000 [00:28<02:26,  5.67it/s]Sampling:  17%|█▋        | 171/1000 [00:28<02:24,  5.73it/s]Sampling:  17%|█▋        | 172/1000 [00:28<02:23,  5.77it/s]Sampling:  17%|█▋        | 173/1000 [00:28<02:22,  5.81it/s]Sampling:  17%|█▋        | 174/1000 [00:28<02:21,  5.84it/s]Sampling:  18%|█▊        | 175/1000 [00:29<02:21,  5.84it/s]Sampling:  18%|█▊        | 176/1000 [00:29<02:21,  5.83it/s]Sampling:  18%|█▊        | 177/1000 [00:29<02:20,  5.84it/s]Sampling:  18%|█▊        | 178/1000 [00:29<02:19,  5.89it/s]Sampling:  18%|█▊        | 179/1000 [00:29<02:18,  5.92it/s]Sampling:  18%|█▊        | 180/1000 [00:29<02:18,  5.92it/s]Sampling:  18%|█▊        | 181/1000 [00:30<02:18,  5.93it/s]Sampling:  18%|█▊        | 182/1000 [00:30<02:18,  5.92it/s]Sampling:  18%|█▊        | 183/1000 [00:30<02:17,  5.92it/s]Sampling:  18%|█▊        | 184/1000 [00:30<02:17,  5.92it/s]Sampling:  18%|█▊        | 185/1000 [00:30<02:17,  5.91it/s]Sampling:  19%|█▊        | 186/1000 [00:30<02:17,  5.91it/s]Sampling:  19%|█▊        | 187/1000 [00:31<02:17,  5.91it/s]Sampling:  19%|█▉        | 188/1000 [00:31<02:17,  5.89it/s]Sampling:  19%|█▉        | 189/1000 [00:31<02:17,  5.90it/s]Sampling:  19%|█▉        | 190/1000 [00:31<02:17,  5.90it/s]Sampling:  19%|█▉        | 191/1000 [00:31<02:16,  5.91it/s]Sampling:  19%|█▉        | 192/1000 [00:31<02:16,  5.90it/s]Sampling:  19%|█▉        | 193/1000 [00:32<02:17,  5.88it/s]Sampling:  19%|█▉        | 194/1000 [00:32<02:17,  5.86it/s]Sampling:  20%|█▉        | 195/1000 [00:32<02:16,  5.88it/s]Sampling:  20%|█▉        | 196/1000 [00:32<02:21,  5.67it/s]Sampling:  20%|█▉        | 197/1000 [00:32<02:21,  5.69it/s]Sampling:  20%|█▉        | 198/1000 [00:32<02:19,  5.73it/s]Sampling:  20%|█▉        | 199/1000 [00:33<02:19,  5.75it/s]Sampling:  20%|██        | 200/1000 [00:33<02:18,  5.76it/s]Sampling:  20%|██        | 201/1000 [00:33<02:18,  5.79it/s]Sampling:  20%|██        | 202/1000 [00:33<02:18,  5.76it/s]Sampling:  20%|██        | 203/1000 [00:33<02:17,  5.79it/s]Sampling:  20%|██        | 204/1000 [00:33<02:17,  5.79it/s]Sampling:  20%|██        | 205/1000 [00:34<02:16,  5.81it/s]Sampling:  21%|██        | 206/1000 [00:34<02:16,  5.83it/s]Sampling:  21%|██        | 207/1000 [00:34<02:15,  5.83it/s]Sampling:  21%|██        | 208/1000 [00:34<02:15,  5.84it/s]Sampling:  21%|██        | 209/1000 [00:34<02:15,  5.85it/s]Sampling:  21%|██        | 210/1000 [00:34<02:15,  5.85it/s]Sampling:  21%|██        | 211/1000 [00:35<02:14,  5.85it/s]WARNING:chatterbox.models.t3.inference.alignment_stream_analyzer:forcing EOS token, long_tail=tensor(False), alignment_repetition=tensor(True), token_repetition=False
+Sampling:  21%|██        | 211/1000 [00:35<02:11,  6.00it/s]
+{"arquivo": "chatterbox_padrao_pt_1.wav", "texto": "Quer cruzar a floresta? Fale antes com o ancião.", "segundos_para_gerar": 61.35}
+Sampling:   0%|          | 0/1000 [00:00<?, ?it/s]Sampling:   0%|          | 1/1000 [00:00<02:42,  6.15it/s]Sampling:   0%|          | 2/1000 [00:00<02:41,  6.16it/s]Sampling:   0%|          | 3/1000 [00:00<02:42,  6.15it/s]Sampling:   0%|          | 4/1000 [00:00<02:42,  6.14it/s]Sampling:   0%|          | 5/1000 [00:00<02:42,  6.14it/s]Sampling:   1%|          | 6/1000 [00:00<02:42,  6.12it/s]Sampling:   1%|          | 7/1000 [00:01<02:42,  6.09it/s]Sampling:   1%|          | 8/1000 [00:01<02:42,  6.10it/s]Sampling:   1%|          | 9/1000 [00:01<02:41,  6.12it/s]Sampling:   1%|          | 10/1000 [00:01<02:42,  6.11it/s]Sampling:   1%|          | 11/1000 [00:01<02:42,  6.08it/s]Sampling:   1%|          | 12/1000 [00:01<02:42,  6.07it/s]Sampling:   1%|▏         | 13/1000 [00:02<02:43,  6.05it/s]Sampling:   1%|▏         | 14/1000 [00:02<02:42,  6.08it/s]Sampling:   2%|▏         | 15/1000 [00:02<02:41,  6.10it/s]Sampling:   2%|▏         | 16/1000 [00:02<02:41,  6.10it/s]Sampling:   2%|▏         | 17/1000 [00:02<02:41,  6.10it/s]Sampling:   2%|▏         | 18/1000 [00:02<02:40,  6.12it/s]Sampling:   2%|▏         | 19/1000 [00:03<02:40,  6.12it/s]Sampling:   2%|▏         | 20/1000 [00:03<02:40,  6.12it/s]Sampling:   2%|▏         | 21/1000 [00:03<02:40,  6.11it/s]Sampling:   2%|▏         | 22/1000 [00:03<02:40,  6.10it/s]Sampling:   2%|▏         | 23/1000 [00:03<02:40,  6.09it/s]Sampling:   2%|▏         | 24/1000 [00:03<02:40,  6.09it/s]Sampling:   2%|▎         | 25/1000 [00:04<02:40,  6.09it/s]Sampling:   3%|▎         | 26/1000 [00:04<02:39,  6.10it/s]Sampling:   3%|▎         | 27/1000 [00:04<02:39,  6.10it/s]Sampling:   3%|▎         | 28/1000 [00:04<02:39,  6.09it/s]Sampling:   3%|▎         | 29/1000 [00:04<02:39,  6.08it/s]Sampling:   3%|▎         | 30/1000 [00:04<02:39,  6.08it/s]Sampling:   3%|▎         | 31/1000 [00:05<02:39,  6.08it/s]Sampling:   3%|▎         | 32/1000 [00:05<02:39,  6.08it/s]Sampling:   3%|▎         | 33/1000 [00:05<02:39,  6.08it/s]Sampling:   3%|▎         | 34/1000 [00:05<02:39,  6.06it/s]Sampling:   4%|▎         | 35/1000 [00:05<02:39,  6.07it/s]Sampling:   4%|▎         | 36/1000 [00:05<02:39,  6.05it/s]Sampling:   4%|▎         | 37/1000 [00:06<02:39,  6.05it/s]Sampling:   4%|▍         | 38/1000 [00:06<02:38,  6.07it/s]Sampling:   4%|▍         | 39/1000 [00:06<02:38,  6.07it/s]Sampling:   4%|▍         | 40/1000 [00:06<02:38,  6.06it/s]Sampling:   4%|▍         | 41/1000 [00:06<02:39,  6.03it/s]Sampling:   4%|▍         | 42/1000 [00:06<02:39,  6.02it/s]Sampling:   4%|▍         | 43/1000 [00:07<02:38,  6.03it/s]Sampling:   4%|▍         | 44/1000 [00:07<02:38,  6.03it/s]Sampling:   4%|▍         | 45/1000 [00:07<02:37,  6.05it/s]Sampling:   5%|▍         | 46/1000 [00:07<02:37,  6.05it/s]Sampling:   5%|▍         | 47/1000 [00:07<02:37,  6.05it/s]Sampling:   5%|▍         | 48/1000 [00:07<02:37,  6.04it/s]Sampling:   5%|▍         | 49/1000 [00:08<02:37,  6.03it/s]Sampling:   5%|▌         | 50/1000 [00:08<02:37,  6.05it/s]Sampling:   5%|▌         | 51/1000 [00:08<02:36,  6.06it/s]Sampling:   5%|▌         | 52/1000 [00:08<02:36,  6.05it/s]Sampling:   5%|▌         | 53/1000 [00:08<02:36,  6.06it/s]Sampling:   5%|▌         | 54/1000 [00:08<02:36,  6.04it/s]Sampling:   6%|▌         | 55/1000 [00:09<02:36,  6.06it/s]Sampling:   6%|▌         | 56/1000 [00:09<02:36,  6.05it/s]Sampling:   6%|▌         | 57/1000 [00:09<02:35,  6.06it/s]Sampling:   6%|▌         | 58/1000 [00:09<02:35,  6.06it/s]Sampling:   6%|▌         | 59/1000 [00:09<02:36,  6.03it/s]Sampling:   6%|▌         | 60/1000 [00:09<02:36,  6.01it/s]Sampling:   6%|▌         | 61/1000 [00:10<02:35,  6.02it/s]Sampling:   6%|▌         | 62/1000 [00:10<02:36,  6.00it/s]Sampling:   6%|▋         | 63/1000 [00:10<02:35,  6.02it/s]Sampling:   6%|▋         | 64/1000 [00:10<02:35,  6.03it/s]Sampling:   6%|▋         | 65/1000 [00:10<02:34,  6.04it/s]Sampling:   7%|▋         | 66/1000 [00:10<02:35,  6.02it/s]Sampling:   7%|▋         | 67/1000 [00:11<02:35,  6.00it/s]Sampling:   7%|▋         | 68/1000 [00:11<02:36,  5.97it/s]Sampling:   7%|▋         | 69/1000 [00:11<02:38,  5.87it/s]Sampling:   7%|▋         | 70/1000 [00:11<02:39,  5.82it/s]Sampling:   7%|▋         | 71/1000 [00:11<02:40,  5.78it/s]Sampling:   7%|▋         | 72/1000 [00:11<02:39,  5.83it/s]Sampling:   7%|▋         | 73/1000 [00:12<02:37,  5.90it/s]Sampling:   7%|▋         | 74/1000 [00:12<02:36,  5.94it/s]Sampling:   8%|▊         | 75/1000 [00:12<02:35,  5.94it/s]Sampling:   8%|▊         | 76/1000 [00:12<02:34,  5.97it/s]WARNING:chatterbox.models.t3.inference.alignment_stream_analyzer:forcing EOS token, long_tail=tensor(True), alignment_repetition=tensor(False), token_repetition=False
+Sampling:   8%|▊         | 76/1000 [00:12<02:32,  6.04it/s]
+{"arquivo": "chatterbox_padrao_pt_2.wav", "texto": "E cuidado. Tem algo se mexendo nas árvores.", "segundos_para_gerar": 27.14}
+WARNING:root:Reference mel length is not equal to 2 * reference token length.
+
+/opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/contextlib.py:105: FutureWarning: `torch.backends.cuda.sdp_kernel()` is deprecated. In the future, this context manager will be removed. Please see `torch.nn.attention.sdpa_kernel()` for the new context manager, with updated signature.
+  self.gen = func(*args, **kwds)
+Sampling:   0%|          | 0/1000 [00:00<?, ?it/s]Sampling:   0%|          | 1/1000 [00:00<02:42,  6.14it/s]Sampling:   0%|          | 2/1000 [00:00<02:42,  6.14it/s]Sampling:   0%|          | 3/1000 [00:00<02:43,  6.10it/s]Sampling:   0%|          | 4/1000 [00:00<02:43,  6.09it/s]Sampling:   0%|          | 5/1000 [00:00<02:43,  6.09it/s]Sampling:   1%|          | 6/1000 [00:00<02:43,  6.07it/s]Sampling:   1%|          | 7/1000 [00:01<02:45,  5.99it/s]Sampling:   1%|          | 8/1000 [00:01<02:49,  5.84it/s]Sampling:   1%|          | 9/1000 [00:01<02:49,  5.84it/s]Sampling:   1%|          | 10/1000 [00:01<02:47,  5.92it/s]Sampling:   1%|          | 11/1000 [00:01<02:45,  5.96it/s]Sampling:   1%|          | 12/1000 [00:02<02:44,  6.01it/s]Sampling:   1%|▏         | 13/1000 [00:02<02:43,  6.04it/s]Sampling:   1%|▏         | 14/1000 [00:02<02:42,  6.06it/s]Sampling:   2%|▏         | 15/1000 [00:02<02:42,  6.08it/s]Sampling:   2%|▏         | 16/1000 [00:02<02:41,  6.10it/s]Sampling:   2%|▏         | 17/1000 [00:02<02:40,  6.12it/s]Sampling:   2%|▏         | 18/1000 [00:02<02:40,  6.13it/s]Sampling:   2%|▏         | 19/1000 [00:03<02:39,  6.13it/s]Sampling:   2%|▏         | 20/1000 [00:03<02:38,  6.17it/s]Sampling:   2%|▏         | 21/1000 [00:03<02:38,  6.16it/s]Sampling:   2%|▏         | 22/1000 [00:03<02:38,  6.16it/s]Sampling:   2%|▏         | 23/1000 [00:03<02:38,  6.17it/s]Sampling:   2%|▏         | 24/1000 [00:03<02:38,  6.17it/s]Sampling:   2%|▎         | 25/1000 [00:04<02:37,  6.17it/s]Sampling:   3%|▎         | 26/1000 [00:04<02:37,  6.17it/s]Sampling:   3%|▎         | 27/1000 [00:04<02:37,  6.18it/s]Sampling:   3%|▎         | 28/1000 [00:04<02:38,  6.15it/s]Sampling:   3%|▎         | 29/1000 [00:04<02:38,  6.13it/s]Sampling:   3%|▎         | 30/1000 [00:04<02:38,  6.12it/s]Sampling:   3%|▎         | 31/1000 [00:05<02:38,  6.12it/s]Sampling:   3%|▎         | 32/1000 [00:05<02:37,  6.14it/s]Sampling:   3%|▎         | 33/1000 [00:05<02:38,  6.11it/s]Sampling:   3%|▎         | 34/1000 [00:05<02:38,  6.10it/s]Sampling:   4%|▎         | 35/1000 [00:05<02:38,  6.09it/s]Sampling:   4%|▎         | 36/1000 [00:05<02:38,  6.09it/s]Sampling:   4%|▎         | 37/1000 [00:06<02:37,  6.10it/s]Sampling:   4%|▍         | 38/1000 [00:06<02:37,  6.10it/s]Sampling:   4%|▍         | 39/1000 [00:06<02:37,  6.12it/s]Sampling:   4%|▍         | 40/1000 [00:06<02:37,  6.10it/s]Sampling:   4%|▍         | 41/1000 [00:06<02:37,  6.08it/s]Sampling:   4%|▍         | 42/1000 [00:06<02:37,  6.08it/s]Sampling:   4%|▍         | 43/1000 [00:07<02:37,  6.07it/s]Sampling:   4%|▍         | 44/1000 [00:07<02:37,  6.07it/s]Sampling:   4%|▍         | 45/1000 [00:07<02:37,  6.08it/s]Sampling:   5%|▍         | 46/1000 [00:07<02:37,  6.07it/s]Sampling:   5%|▍         | 47/1000 [00:07<02:36,  6.08it/s]Sampling:   5%|▍         | 48/1000 [00:07<02:36,  6.08it/s]Sampling:   5%|▍         | 49/1000 [00:08<02:36,  6.07it/s]Sampling:   5%|▌         | 50/1000 [00:08<02:36,  6.08it/s]Sampling:   5%|▌         | 51/1000 [00:08<02:35,  6.10it/s]Sampling:   5%|▌         | 52/1000 [00:08<02:35,  6.08it/s]Sampling:   5%|▌         | 53/1000 [00:08<02:35,  6.10it/s]Sampling:   5%|▌         | 54/1000 [00:08<02:35,  6.08it/s]Sampling:   6%|▌         | 55/1000 [00:09<02:35,  6.08it/s]Sampling:   6%|▌         | 56/1000 [00:09<02:35,  6.05it/s]Sampling:   6%|▌         | 57/1000 [00:09<02:35,  6.07it/s]Sampling:   6%|▌         | 58/1000 [00:09<02:35,  6.06it/s]Sampling:   6%|▌         | 59/1000 [00:09<02:35,  6.06it/s]Sampling:   6%|▌         | 60/1000 [00:09<02:34,  6.07it/s]Sampling:   6%|▌         | 61/1000 [00:10<02:35,  6.04it/s]Sampling:   6%|▌         | 62/1000 [00:10<02:35,  6.05it/s]Sampling:   6%|▋         | 63/1000 [00:10<02:34,  6.05it/s]Sampling:   6%|▋         | 64/1000 [00:10<02:34,  6.06it/s]Sampling:   6%|▋         | 65/1000 [00:10<02:34,  6.04it/s]Sampling:   7%|▋         | 66/1000 [00:10<02:35,  5.99it/s]Sampling:   7%|▋         | 67/1000 [00:11<02:37,  5.92it/s]Sampling:   7%|▋         | 68/1000 [00:11<02:39,  5.83it/s]Sampling:   7%|▋         | 69/1000 [00:11<02:40,  5.79it/s]Sampling:   7%|▋         | 70/1000 [00:11<02:44,  5.65it/s]Sampling:   7%|▋         | 71/1000 [00:11<02:43,  5.68it/s]Sampling:   7%|▋         | 72/1000 [00:11<02:41,  5.74it/s]Sampling:   7%|▋         | 73/1000 [00:12<02:39,  5.81it/s]Sampling:   7%|▋         | 74/1000 [00:12<02:38,  5.83it/s]Sampling:   8%|▊         | 75/1000 [00:12<02:37,  5.86it/s]Sampling:   8%|▊         | 76/1000 [00:12<02:37,  5.88it/s]Sampling:   8%|▊         | 77/1000 [00:12<02:35,  5.92it/s]Sampling:   8%|▊         | 78/1000 [00:12<02:35,  5.92it/s]Sampling:   8%|▊         | 79/1000 [00:13<02:35,  5.92it/s]Sampling:   8%|▊         | 80/1000 [00:13<02:34,  5.94it/s]Sampling:   8%|▊         | 81/1000 [00:13<02:34,  5.95it/s]Sampling:   8%|▊         | 82/1000 [00:13<02:34,  5.94it/s]Sampling:   8%|▊         | 83/1000 [00:13<02:34,  5.93it/s]WARNING:chatterbox.models.t3.inference.alignment_stream_analyzer:forcing EOS token, long_tail=tensor(True), alignment_repetition=tensor(False), token_repetition=False
+Sampling:   8%|▊         | 83/1000 [00:13<02:32,  6.03it/s]
+{"arquivo": "chatterbox_clone_pt_0.wav", "texto": "Ei, você! O portão fecha ao anoitecer.", "segundos_para_gerar": 37.79}
+WARNING:root:Reference mel length is not equal to 2 * reference token length.
+
+Sampling:   0%|          | 0/1000 [00:00<?, ?it/s]Sampling:   0%|          | 1/1000 [00:00<02:47,  5.96it/s]Sampling:   0%|          | 2/1000 [00:00<02:45,  6.02it/s]Sampling:   0%|          | 3/1000 [00:00<02:45,  6.03it/s]Sampling:   0%|          | 4/1000 [00:00<02:44,  6.05it/s]Sampling:   0%|          | 5/1000 [00:00<02:44,  6.05it/s]Sampling:   1%|          | 6/1000 [00:00<02:44,  6.04it/s]Sampling:   1%|          | 7/1000 [00:01<02:44,  6.03it/s]Sampling:   1%|          | 8/1000 [00:01<02:44,  6.02it/s]Sampling:   1%|          | 9/1000 [00:01<02:44,  6.03it/s]Sampling:   1%|          | 10/1000 [00:01<02:43,  6.04it/s]Sampling:   1%|          | 11/1000 [00:01<02:44,  6.03it/s]Sampling:   1%|          | 12/1000 [00:01<02:44,  5.99it/s]Sampling:   1%|▏         | 13/1000 [00:02<02:45,  5.98it/s]Sampling:   1%|▏         | 14/1000 [00:02<02:44,  5.98it/s]Sampling:   2%|▏         | 15/1000 [00:02<02:44,  6.00it/s]Sampling:   2%|▏         | 16/1000 [00:02<02:44,  6.00it/s]Sampling:   2%|▏         | 17/1000 [00:02<02:44,  5.99it/s]Sampling:   2%|▏         | 18/1000 [00:02<02:43,  6.00it/s]Sampling:   2%|▏         | 19/1000 [00:03<02:44,  5.96it/s]Sampling:   2%|▏         | 20/1000 [00:03<02:44,  5.97it/s]Sampling:   2%|▏         | 21/1000 [00:03<02:43,  5.99it/s]Sampling:   2%|▏         | 22/1000 [00:03<02:43,  5.99it/s]Sampling:   2%|▏         | 23/1000 [00:03<02:44,  5.95it/s]Sampling:   2%|▏         | 24/1000 [00:04<02:44,  5.93it/s]Sampling:   2%|▎         | 25/1000 [00:04<02:43,  5.95it/s]Sampling:   3%|▎         | 26/1000 [00:04<02:43,  5.94it/s]Sampling:   3%|▎         | 27/1000 [00:04<02:43,  5.96it/s]Sampling:   3%|▎         | 28/1000 [00:04<02:44,  5.91it/s]Sampling:   3%|▎         | 29/1000 [00:04<02:44,  5.89it/s]Sampling:   3%|▎         | 30/1000 [00:05<02:44,  5.88it/s]Sampling:   3%|▎         | 31/1000 [00:05<02:46,  5.81it/s]Sampling:   3%|▎         | 32/1000 [00:05<02:47,  5.76it/s]Sampling:   3%|▎         | 33/1000 [00:05<02:50,  5.68it/s]Sampling:   3%|▎         | 34/1000 [00:05<02:53,  5.57it/s]Sampling:   4%|▎         | 35/1000 [00:05<02:53,  5.55it/s]Sampling:   4%|▎         | 36/1000 [00:06<02:51,  5.63it/s]Sampling:   4%|▎         | 37/1000 [00:06<02:49,  5.68it/s]Sampling:   4%|▍         | 38/1000 [00:06<02:48,  5.72it/s]Sampling:   4%|▍         | 39/1000 [00:06<02:47,  5.73it/s]Sampling:   4%|▍         | 40/1000 [00:06<02:45,  5.78it/s]Sampling:   4%|▍         | 41/1000 [00:06<02:44,  5.82it/s]Sampling:   4%|▍         | 42/1000 [00:07<02:44,  5.81it/s]Sampling:   4%|▍         | 43/1000 [00:07<02:43,  5.85it/s]Sampling:   4%|▍         | 44/1000 [00:07<02:42,  5.90it/s]Sampling:   4%|▍         | 45/1000 [00:07<02:41,  5.92it/s]Sampling:   5%|▍         | 46/1000 [00:07<02:40,  5.94it/s]Sampling:   5%|▍         | 47/1000 [00:07<02:39,  5.97it/s]Sampling:   5%|▍         | 48/1000 [00:08<02:39,  5.98it/s]Sampling:   5%|▍         | 49/1000 [00:08<02:38,  6.00it/s]Sampling:   5%|▌         | 50/1000 [00:08<02:37,  6.02it/s]Sampling:   5%|▌         | 51/1000 [00:08<02:37,  6.01it/s]Sampling:   5%|▌         | 52/1000 [00:08<02:37,  6.00it/s]Sampling:   5%|▌         | 53/1000 [00:08<02:37,  5.99it/s]Sampling:   5%|▌         | 54/1000 [00:09<02:37,  6.00it/s]Sampling:   6%|▌         | 55/1000 [00:09<02:37,  6.00it/s]Sampling:   6%|▌         | 56/1000 [00:09<02:37,  5.99it/s]Sampling:   6%|▌         | 57/1000 [00:09<02:37,  5.99it/s]Sampling:   6%|▌         | 58/1000 [00:09<02:38,  5.96it/s]Sampling:   6%|▌         | 59/1000 [00:09<02:37,  5.97it/s]Sampling:   6%|▌         | 60/1000 [00:10<02:36,  5.99it/s]Sampling:   6%|▌         | 61/1000 [00:10<02:36,  6.00it/s]Sampling:   6%|▌         | 62/1000 [00:10<02:36,  6.01it/s]Sampling:   6%|▋         | 63/1000 [00:10<02:35,  6.03it/s]Sampling:   6%|▋         | 64/1000 [00:10<02:35,  6.02it/s]Sampling:   6%|▋         | 65/1000 [00:10<02:35,  6.02it/s]Sampling:   7%|▋         | 66/1000 [00:11<02:35,  6.01it/s]Sampling:   7%|▋         | 67/1000 [00:11<02:35,  6.00it/s]Sampling:   7%|▋         | 68/1000 [00:11<02:41,  5.78it/s]Sampling:   7%|▋         | 69/1000 [00:11<02:44,  5.67it/s]Sampling:   7%|▋         | 70/1000 [00:11<02:41,  5.77it/s]Sampling:   7%|▋         | 71/1000 [00:12<02:39,  5.81it/s]Sampling:   7%|▋         | 72/1000 [00:12<02:38,  5.86it/s]Sampling:   7%|▋         | 73/1000 [00:12<02:37,  5.90it/s]Sampling:   7%|▋         | 74/1000 [00:12<02:35,  5.94it/s]Sampling:   8%|▊         | 75/1000 [00:12<02:36,  5.90it/s]Sampling:   8%|▊         | 76/1000 [00:12<02:36,  5.92it/s]Sampling:   8%|▊         | 77/1000 [00:13<02:35,  5.94it/s]Sampling:   8%|▊         | 78/1000 [00:13<02:34,  5.96it/s]Sampling:   8%|▊         | 79/1000 [00:13<02:34,  5.98it/s]Sampling:   8%|▊         | 80/1000 [00:13<02:33,  6.01it/s]Sampling:   8%|▊         | 81/1000 [00:13<02:32,  6.01it/s]Sampling:   8%|▊         | 82/1000 [00:13<02:33,  5.99it/s]Sampling:   8%|▊         | 83/1000 [00:14<02:32,  6.00it/s]Sampling:   8%|▊         | 84/1000 [00:14<02:34,  5.95it/s]Sampling:   8%|▊         | 85/1000 [00:14<02:34,  5.93it/s]Sampling:   9%|▊         | 86/1000 [00:14<02:33,  5.96it/s]Sampling:   9%|▊         | 87/1000 [00:14<02:32,  5.97it/s]Sampling:   9%|▉         | 88/1000 [00:14<02:33,  5.95it/s]Sampling:   9%|▉         | 89/1000 [00:15<02:33,  5.94it/s]Sampling:   9%|▉         | 90/1000 [00:15<02:33,  5.91it/s]Sampling:   9%|▉         | 91/1000 [00:15<02:33,  5.92it/s]Sampling:   9%|▉         | 92/1000 [00:15<02:32,  5.94it/s]Sampling:   9%|▉         | 93/1000 [00:15<02:32,  5.93it/s]Sampling:   9%|▉         | 94/1000 [00:15<02:32,  5.93it/s]Sampling:  10%|▉         | 95/1000 [00:16<02:32,  5.93it/s]Sampling:  10%|▉         | 96/1000 [00:16<02:32,  5.92it/s]Sampling:  10%|▉         | 97/1000 [00:16<02:31,  5.94it/s]Sampling:  10%|▉         | 98/1000 [00:16<02:32,  5.91it/s]Sampling:  10%|▉         | 99/1000 [00:16<02:32,  5.91it/s]Sampling:  10%|█         | 100/1000 [00:16<02:31,  5.92it/s]Sampling:  10%|█         | 101/1000 [00:17<02:31,  5.92it/s]Sampling:  10%|█         | 102/1000 [00:17<02:31,  5.91it/s]Sampling:  10%|█         | 103/1000 [00:17<02:31,  5.92it/s]Sampling:  10%|█         | 104/1000 [00:17<02:31,  5.92it/s]Sampling:  10%|█         | 105/1000 [00:17<02:31,  5.92it/s]Sampling:  11%|█         | 106/1000 [00:17<02:31,  5.91it/s]Sampling:  11%|█         | 107/1000 [00:18<02:30,  5.91it/s]Sampling:  11%|█         | 108/1000 [00:18<02:30,  5.93it/s]Sampling:  11%|█         | 109/1000 [00:18<02:30,  5.93it/s]Sampling:  11%|█         | 110/1000 [00:18<02:29,  5.94it/s]Sampling:  11%|█         | 111/1000 [00:18<02:29,  5.96it/s]Sampling:  11%|█         | 112/1000 [00:18<02:29,  5.93it/s]Sampling:  11%|█▏        | 113/1000 [00:19<02:29,  5.92it/s]Sampling:  11%|█▏        | 114/1000 [00:19<02:29,  5.91it/s]Sampling:  12%|█▏        | 115/1000 [00:19<02:29,  5.91it/s]Sampling:  12%|█▏        | 116/1000 [00:19<02:29,  5.92it/s]Sampling:  12%|█▏        | 117/1000 [00:19<02:29,  5.91it/s]Sampling:  12%|█▏        | 118/1000 [00:19<02:28,  5.92it/s]Sampling:  12%|█▏        | 119/1000 [00:20<02:28,  5.93it/s]WARNING:chatterbox.models.t3.inference.alignment_stream_analyzer:forcing EOS token, long_tail=tensor(True), alignment_repetition=tensor(False), token_repetition=False
+Sampling:  12%|█▏        | 119/1000 [00:20<02:28,  5.93it/s]
+{"arquivo": "chatterbox_clone_pt_1.wav", "texto": "Quer cruzar a floresta? Fale antes com o ancião.", "segundos_para_gerar": 45.68}
+WARNING:root:Reference mel length is not equal to 2 * reference token length.
+
+Sampling:   0%|          | 0/1000 [00:00<?, ?it/s]Sampling:   0%|          | 1/1000 [00:00<02:43,  6.11it/s]Sampling:   0%|          | 2/1000 [00:00<02:42,  6.12it/s]Sampling:   0%|          | 3/1000 [00:00<02:43,  6.09it/s]Sampling:   0%|          | 4/1000 [00:00<02:44,  6.07it/s]Sampling:   0%|          | 5/1000 [00:00<02:43,  6.08it/s]Sampling:   1%|          | 6/1000 [00:00<02:43,  6.07it/s]Sampling:   1%|          | 7/1000 [00:01<02:43,  6.07it/s]Sampling:   1%|          | 8/1000 [00:01<02:45,  6.00it/s]Sampling:   1%|          | 9/1000 [00:01<02:44,  6.03it/s]Sampling:   1%|          | 10/1000 [00:01<02:44,  6.04it/s]Sampling:   1%|          | 11/1000 [00:01<02:43,  6.05it/s]Sampling:   1%|          | 12/1000 [00:01<02:42,  6.08it/s]Sampling:   1%|▏         | 13/1000 [00:02<02:42,  6.06it/s]Sampling:   1%|▏         | 14/1000 [00:02<02:42,  6.05it/s]Sampling:   2%|▏         | 15/1000 [00:02<02:42,  6.06it/s]Sampling:   2%|▏         | 16/1000 [00:02<02:42,  6.06it/s]Sampling:   2%|▏         | 17/1000 [00:02<02:42,  6.07it/s]Sampling:   2%|▏         | 18/1000 [00:02<02:41,  6.07it/s]Sampling:   2%|▏         | 19/1000 [00:03<02:42,  6.05it/s]Sampling:   2%|▏         | 20/1000 [00:03<02:41,  6.05it/s]Sampling:   2%|▏         | 21/1000 [00:03<02:42,  6.04it/s]Sampling:   2%|▏         | 22/1000 [00:03<02:42,  6.01it/s]Sampling:   2%|▏         | 23/1000 [00:03<02:41,  6.03it/s]Sampling:   2%|▏         | 24/1000 [00:03<02:41,  6.05it/s]Sampling:   2%|▎         | 25/1000 [00:04<02:41,  6.05it/s]Sampling:   3%|▎         | 26/1000 [00:04<02:41,  6.04it/s]Sampling:   3%|▎         | 27/1000 [00:04<02:40,  6.06it/s]Sampling:   3%|▎         | 28/1000 [00:04<02:41,  6.02it/s]Sampling:   3%|▎         | 29/1000 [00:04<02:42,  5.99it/s]Sampling:   3%|▎         | 30/1000 [00:04<02:44,  5.91it/s]Sampling:   3%|▎         | 31/1000 [00:05<02:45,  5.86it/s]Sampling:   3%|▎         | 32/1000 [00:05<02:45,  5.84it/s]Sampling:   3%|▎         | 33/1000 [00:05<02:44,  5.90it/s]Sampling:   3%|▎         | 34/1000 [00:05<02:42,  5.96it/s]Sampling:   4%|▎         | 35/1000 [00:05<02:40,  6.00it/s]Sampling:   4%|▎         | 36/1000 [00:05<02:39,  6.05it/s]Sampling:   4%|▎         | 37/1000 [00:06<02:38,  6.06it/s]Sampling:   4%|▍         | 38/1000 [00:06<02:38,  6.05it/s]Sampling:   4%|▍         | 39/1000 [00:06<02:38,  6.06it/s]Sampling:   4%|▍         | 40/1000 [00:06<02:38,  6.06it/s]Sampling:   4%|▍         | 41/1000 [00:06<02:37,  6.08it/s]Sampling:   4%|▍         | 42/1000 [00:06<02:36,  6.11it/s]Sampling:   4%|▍         | 43/1000 [00:07<02:37,  6.09it/s]Sampling:   4%|▍         | 44/1000 [00:07<02:37,  6.09it/s]Sampling:   4%|▍         | 45/1000 [00:07<02:37,  6.08it/s]Sampling:   5%|▍         | 46/1000 [00:07<02:37,  6.05it/s]Sampling:   5%|▍         | 47/1000 [00:07<02:37,  6.06it/s]Sampling:   5%|▍         | 48/1000 [00:07<02:36,  6.07it/s]Sampling:   5%|▍         | 49/1000 [00:08<02:36,  6.07it/s]Sampling:   5%|▌         | 50/1000 [00:08<02:37,  6.03it/s]Sampling:   5%|▌         | 51/1000 [00:08<02:37,  6.02it/s]Sampling:   5%|▌         | 52/1000 [00:08<02:38,  6.00it/s]Sampling:   5%|▌         | 53/1000 [00:08<02:37,  6.02it/s]Sampling:   5%|▌         | 54/1000 [00:08<02:37,  6.02it/s]Sampling:   6%|▌         | 55/1000 [00:09<02:36,  6.04it/s]Sampling:   6%|▌         | 56/1000 [00:09<02:36,  6.03it/s]Sampling:   6%|▌         | 57/1000 [00:09<02:36,  6.03it/s]Sampling:   6%|▌         | 58/1000 [00:09<02:36,  6.03it/s]Sampling:   6%|▌         | 59/1000 [00:09<02:36,  6.03it/s]Sampling:   6%|▌         | 60/1000 [00:09<02:35,  6.05it/s]Sampling:   6%|▌         | 61/1000 [00:10<02:35,  6.05it/s]Sampling:   6%|▌         | 62/1000 [00:10<02:34,  6.06it/s]Sampling:   6%|▋         | 63/1000 [00:10<02:34,  6.07it/s]Sampling:   6%|▋         | 64/1000 [00:10<02:34,  6.06it/s]Sampling:   6%|▋         | 65/1000 [00:10<02:34,  6.07it/s]Sampling:   7%|▋         | 66/1000 [00:10<02:33,  6.07it/s]Sampling:   7%|▋         | 67/1000 [00:11<02:34,  6.02it/s]Sampling:   7%|▋         | 68/1000 [00:11<02:34,  6.02it/s]Sampling:   7%|▋         | 69/1000 [00:11<02:34,  6.02it/s]Sampling:   7%|▋         | 70/1000 [00:11<02:34,  6.02it/s]Sampling:   7%|▋         | 71/1000 [00:11<02:34,  6.02it/s]Sampling:   7%|▋         | 72/1000 [00:11<02:33,  6.03it/s]Sampling:   7%|▋         | 73/1000 [00:12<02:33,  6.02it/s]Sampling:   7%|▋         | 74/1000 [00:12<02:33,  6.03it/s]Sampling:   8%|▊         | 75/1000 [00:12<02:33,  6.03it/s]Sampling:   8%|▊         | 76/1000 [00:12<02:33,  6.04it/s]Sampling:   8%|▊         | 77/1000 [00:12<02:32,  6.04it/s]Sampling:   8%|▊         | 78/1000 [00:12<02:32,  6.04it/s]Sampling:   8%|▊         | 79/1000 [00:13<02:32,  6.04it/s]Sampling:   8%|▊         | 80/1000 [00:13<02:33,  6.01it/s]Sampling:   8%|▊         | 81/1000 [00:13<02:32,  6.01it/s]Sampling:   8%|▊         | 82/1000 [00:13<02:32,  6.01it/s]Sampling:   8%|▊         | 83/1000 [00:13<02:33,  5.98it/s]Sampling:   8%|▊         | 84/1000 [00:13<02:33,  5.97it/s]Sampling:   8%|▊         | 85/1000 [00:14<02:33,  5.97it/s]Sampling:   9%|▊         | 86/1000 [00:14<02:32,  5.98it/s]Sampling:   9%|▊         | 87/1000 [00:14<02:33,  5.96it/s]Sampling:   9%|▉         | 88/1000 [00:14<02:32,  5.99it/s]Sampling:   9%|▉         | 89/1000 [00:14<02:31,  6.01it/s]Sampling:   9%|▉         | 90/1000 [00:14<02:31,  6.01it/s]Sampling:   9%|▉         | 91/1000 [00:15<02:30,  6.03it/s]Sampling:   9%|▉         | 92/1000 [00:15<02:30,  6.02it/s]Sampling:   9%|▉         | 93/1000 [00:15<02:30,  6.01it/s]WARNING:chatterbox.models.t3.inference.alignment_stream_analyzer:forcing EOS token, long_tail=tensor(True), alignment_repetition=tensor(False), token_repetition=False
+Sampling:   9%|▉         | 93/1000 [00:15<02:30,  6.03it/s]
+{"arquivo": "chatterbox_clone_pt_2.wav", "texto": "E cuidado. Tem algo se mexendo nas árvores.", "segundos_para_gerar": 38.2}
+pronto em 298 s

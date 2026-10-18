@@ -1,0 +1,32 @@
+[
+ {
+  "arquivo": "chatterbox_padrao_pt_0.wav",
+  "texto": "Ei, você! O portão fecha ao anoitecer.",
+  "segundos_para_gerar": 38.8
+ },
+ {
+  "arquivo": "chatterbox_padrao_pt_1.wav",
+  "texto": "Quer cruzar a floresta? Fale antes com o ancião.",
+  "segundos_para_gerar": 61.35
+ },
+ {
+  "arquivo": "chatterbox_padrao_pt_2.wav",
+  "texto": "E cuidado. Tem algo se mexendo nas árvores.",
+  "segundos_para_gerar": 27.14
+ },
+ {
+  "arquivo": "chatterbox_clone_pt_0.wav",
+  "texto": "Ei, você! O portão fecha ao anoitecer.",
+  "segundos_para_gerar": 37.79
+ },
+ {
+  "arquivo": "chatterbox_clone_pt_1.wav",
+  "texto": "Quer cruzar a floresta? Fale antes com o ancião.",
+  "segundos_para_gerar": 45.68
+ },
+ {
+  "arquivo": "chatterbox_clone_pt_2.wav",
+  "texto": "E cuidado. Tem algo se mexendo nas árvores.",
+  "segundos_para_gerar": 38.2
+ }
+]

@@ -1,0 +1,250 @@
+piper_saida/faber_pt_0.wav
+piper_saida/faber_pt_1.wav
+piper_saida/faber_pt_2.wav
+piper_saida/edresson_pt_0.wav
+piper_saida/edresson_pt_1.wav
+piper_saida/edresson_pt_2.wav
+piper_saida/faber_ref.wav
+['edresson_pt_0.wav', 'edresson_pt_1.wav', 'edresson_pt_2.wav', 'faber_pt_0.wav', 'faber_pt_1.wav', 'faber_pt_2.wav', 'faber_ref.wav']
+Looking in indexes: https://download.pytorch.org/whl/cpu
+Collecting torch
+  Downloading torch-2.14.1%2Bcpu-cp311-cp311-manylinux_2_28_x86_64.whl.metadata (37 kB)
+Collecting torchaudio
+  Downloading torchaudio-2.11.0%2Bcpu-cp311-cp311-manylinux_2_28_x86_64.whl.metadata (6.9 kB)
+Collecting filelock (from torch)
+  Downloading filelock-3.32.3-py3-none-any.whl.metadata (2.0 kB)
+Collecting typing-extensions>=4.10.0 (from torch)
+  Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+Requirement already satisfied: setuptools>=77.0.3 in /opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages (from torch) (79.0.1)
+Collecting sympy>=1.13.3 (from torch)
+  Downloading sympy-1.14.0-py3-none-any.whl.metadata (12 kB)
+Collecting networkx>=2.5.1 (from torch)
+  Downloading networkx-3.6.1-py3-none-any.whl.metadata (6.8 kB)
+Collecting jinja2 (from torch)
+  Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+Collecting fsspec>=0.8.5 (from torch)
+  Downloading fsspec-2026.7.0-py3-none-any.whl.metadata (10 kB)
+Collecting mpmath<1.4,>=1.1.0 (from sympy>=1.13.3->torch)
+  Downloading mpmath-1.3.0-py3-none-any.whl.metadata (8.6 kB)
+Collecting MarkupSafe>=2.0 (from jinja2->torch)
+  Downloading markupsafe-3.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+Downloading torch-2.14.1%2Bcpu-cp311-cp311-manylinux_2_28_x86_64.whl (196.2 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 196.2/196.2 MB 89.6 MB/s  0:00:02
+Downloading torchaudio-2.11.0%2Bcpu-cp311-cp311-manylinux_2_28_x86_64.whl (341 kB)
+Downloading fsspec-2026.7.0-py3-none-any.whl (206 kB)
+Downloading networkx-3.6.1-py3-none-any.whl (2.1 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.1/2.1 MB 62.4 MB/s  0:00:00
+Downloading sympy-1.14.0-py3-none-any.whl (6.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.3/6.3 MB 112.2 MB/s  0:00:00
+Downloading mpmath-1.3.0-py3-none-any.whl (536 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 536.2/536.2 kB 117.5 MB/s  0:00:00
+Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+Downloading filelock-3.32.3-py3-none-any.whl (98 kB)
+Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+Downloading markupsafe-3.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+Installing collected packages: torchaudio, mpmath, typing-extensions, sympy, networkx, MarkupSafe, fsspec, filelock, jinja2, torch
+
+Successfully installed MarkupSafe-3.0.3 filelock-3.32.3 fsspec-2026.7.0 jinja2-3.1.6 mpmath-1.3.0 networkx-3.6.1 sympy-1.14.0 torch-2.14.1+cpu torchaudio-2.11.0+cpu typing-extensions-4.16.0
+Collecting librosa
+  Downloading librosa-0.11.0-py3-none-any.whl.metadata (8.7 kB)
+Collecting soundfile
+  Downloading soundfile-0.14.0-py2.py3-none-manylinux_2_28_x86_64.whl.metadata (18 kB)
+Collecting huggingface_hub
+  Downloading huggingface_hub-2.2.0-py3-none-any.whl.metadata (16 kB)
+Collecting eng_to_ipa
+  Downloading eng_to_ipa-0.0.2.tar.gz (2.8 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.8/2.8 MB 47.6 MB/s  0:00:00
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'done'
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Collecting inflect
+  Downloading inflect-7.5.0-py3-none-any.whl.metadata (24 kB)
+Collecting unidecode
+  Downloading Unidecode-1.4.0-py3-none-any.whl.metadata (13 kB)
+Collecting pypinyin
+  Downloading pypinyin-0.55.0-py2.py3-none-any.whl.metadata (12 kB)
+Collecting jieba
+  Downloading jieba-0.42.1.tar.gz (19.2 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 19.2/19.2 MB 85.8 MB/s  0:00:00
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'done'
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Collecting cn2an
+  Downloading cn2an-0.5.24-py3-none-any.whl.metadata (10 kB)
+Collecting audioread>=2.1.9 (from librosa)
+  Downloading audioread-3.1.0-py3-none-any.whl.metadata (9.0 kB)
+Collecting numba>=0.51.0 (from librosa)
+  Downloading numba-0.68.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (2.8 kB)
+Collecting numpy>=1.22.3 (from librosa)
+  Downloading numpy-2.4.6-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (6.6 kB)
+Collecting scipy>=1.6.0 (from librosa)
+  Downloading scipy-1.17.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (62 kB)
+Collecting scikit-learn>=1.1.0 (from librosa)
+  Downloading scikit_learn-1.9.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (9.3 kB)
+Collecting joblib>=1.0 (from librosa)
+  Downloading joblib-1.6.0-py3-none-any.whl.metadata (6.5 kB)
+Collecting decorator>=4.3.0 (from librosa)
+  Downloading decorator-5.3.1-py3-none-any.whl.metadata (3.9 kB)
+Collecting pooch>=1.1 (from librosa)
+  Downloading pooch-1.9.0-py3-none-any.whl.metadata (10 kB)
+Collecting soxr>=0.3.2 (from librosa)
+  Downloading soxr-1.1.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (5.8 kB)
+Requirement already satisfied: typing_extensions>=4.1.1 in /opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages (from librosa) (4.16.0)
+Collecting lazy_loader>=0.1 (from librosa)
+  Downloading lazy_loader-0.6-py3-none-any.whl.metadata (6.0 kB)
+Collecting msgpack>=1.0 (from librosa)
+  Downloading msgpack-1.2.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (8.3 kB)
+Collecting cffi>=1.0 (from soundfile)
+  Downloading cffi-2.1.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (2.5 kB)
+Collecting click<9.0.0,>=8.4.2 (from huggingface_hub)
+  Downloading click-8.5.0-py3-none-any.whl.metadata (2.6 kB)
+Requirement already satisfied: filelock>=3.10.0 in /opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages (from huggingface_hub) (3.32.3)
+Requirement already satisfied: fsspec>=2023.5.0 in /opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages (from huggingface_hub) (2026.7.0)
+Collecting hf-xet<2.0.0,>=1.6.0 (from huggingface_hub)
+  Downloading hf_xet-1.7.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (4.9 kB)
+Collecting httpx2<3,>=2.0.0 (from huggingface_hub)
+  Downloading httpx2-2.13.1-py3-none-any.whl.metadata (9.8 kB)
+Collecting packaging>=20.9 (from huggingface_hub)
+  Downloading packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+Collecting pyyaml>=5.1 (from huggingface_hub)
+  Downloading pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+Collecting tqdm>=4.42.1 (from huggingface_hub)
+  Downloading tqdm-4.70.1-py3-none-any.whl.metadata (57 kB)
+Collecting anyio>=4.10 (from httpx2<3,>=2.0.0->huggingface_hub)
+  Downloading anyio-4.15.1-py3-none-any.whl.metadata (4.7 kB)
+Collecting httpcore2==2.13.1 (from httpx2<3,>=2.0.0->huggingface_hub)
+  Downloading httpcore2-2.13.1-py3-none-any.whl.metadata (26 kB)
+Collecting idna>=3.18 (from httpx2<3,>=2.0.0->huggingface_hub)
+  Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+Collecting truststore>=0.10 (from httpx2<3,>=2.0.0->huggingface_hub)
+  Downloading truststore-0.10.5-py3-none-any.whl.metadata (4.5 kB)
+Collecting h11>=0.16 (from httpcore2==2.13.1->httpx2<3,>=2.0.0->huggingface_hub)
+  Downloading h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+Collecting more_itertools>=8.5.0 (from inflect)
+  Downloading more_itertools-11.2.1-py3-none-any.whl.metadata (42 kB)
+Collecting typeguard>=4.0.1 (from inflect)
+  Downloading typeguard-4.6.0-py3-none-any.whl.metadata (3.7 kB)
+Collecting proces>=0.1.7 (from cn2an)
+  Downloading proces-0.1.7-py3-none-any.whl.metadata (3.3 kB)
+Collecting pycparser (from cffi>=1.0->soundfile)
+  Downloading pycparser-3.11-py3-none-any.whl.metadata (8.2 kB)
+Collecting cloudpickle>=3.0 (from joblib>=1.0->librosa)
+  Downloading cloudpickle-3.1.2-py3-none-any.whl.metadata (7.1 kB)
+Collecting llvmlite<0.51,>=0.50.0dev0 (from numba>=0.51.0->librosa)
+  Downloading llvmlite-0.50.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (5.1 kB)
+Collecting platformdirs>=2.5.0 (from pooch>=1.1->librosa)
+  Downloading platformdirs-4.13.4-py3-none-any.whl.metadata (5.5 kB)
+Collecting requests>=2.19.0 (from pooch>=1.1->librosa)
+  Downloading requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+Collecting charset_normalizer<4,>=2 (from requests>=2.19.0->pooch>=1.1->librosa)
+  Downloading charset_normalizer-3.5.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (46 kB)
+Collecting urllib3<3,>=1.26 (from requests>=2.19.0->pooch>=1.1->librosa)
+  Downloading urllib3-2.8.0-py3-none-any.whl.metadata (7.4 kB)
+Collecting certifi>=2023.5.7 (from requests>=2.19.0->pooch>=1.1->librosa)
+  Downloading certifi-2026.7.22-py3-none-any.whl.metadata (2.5 kB)
+Collecting narwhals>=2.0.1 (from scikit-learn>=1.1.0->librosa)
+  Downloading narwhals-2.27.1-py3-none-any.whl.metadata (15 kB)
+Collecting threadpoolctl>=3.5.0 (from scikit-learn>=1.1.0->librosa)
+  Downloading threadpoolctl-3.7.0-py3-none-any.whl.metadata (24 kB)
+Downloading librosa-0.11.0-py3-none-any.whl (260 kB)
+Downloading soundfile-0.14.0-py2.py3-none-manylinux_2_28_x86_64.whl (1.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.3/1.3 MB 46.9 MB/s  0:00:00
+Downloading huggingface_hub-2.2.0-py3-none-any.whl (839 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 839.9/839.9 kB 89.2 MB/s  0:00:00
+Downloading click-8.5.0-py3-none-any.whl (125 kB)
+Downloading hf_xet-1.7.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (4.2 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.2/4.2 MB 116.1 MB/s  0:00:00
+Downloading httpx2-2.13.1-py3-none-any.whl (95 kB)
+Downloading httpcore2-2.13.1-py3-none-any.whl (83 kB)
+Downloading inflect-7.5.0-py3-none-any.whl (35 kB)
+Downloading Unidecode-1.4.0-py3-none-any.whl (235 kB)
+Downloading pypinyin-0.55.0-py2.py3-none-any.whl (840 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 840.2/840.2 kB 127.4 MB/s  0:00:00
+Downloading cn2an-0.5.24-py3-none-any.whl (227 kB)
+Downloading anyio-4.15.1-py3-none-any.whl (132 kB)
+Downloading audioread-3.1.0-py3-none-any.whl (23 kB)
+Downloading cffi-2.1.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (217 kB)
+Downloading decorator-5.3.1-py3-none-any.whl (10 kB)
+Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+Downloading idna-3.20-py3-none-any.whl (69 kB)
+Downloading joblib-1.6.0-py3-none-any.whl (306 kB)
+Downloading cloudpickle-3.1.2-py3-none-any.whl (22 kB)
+Downloading lazy_loader-0.6-py3-none-any.whl (8.8 kB)
+Downloading more_itertools-11.2.1-py3-none-any.whl (74 kB)
+Downloading msgpack-1.2.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (477 kB)
+Downloading numba-0.68.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (3.8 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.8/3.8 MB 110.3 MB/s  0:00:00
+Downloading llvmlite-0.50.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (59.7 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 59.7/59.7 MB 95.9 MB/s  0:00:00
+Downloading numpy-2.4.6-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (16.9 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 16.9/16.9 MB 102.1 MB/s  0:00:00
+Downloading packaging-26.3-py3-none-any.whl (129 kB)
+Downloading pooch-1.9.0-py3-none-any.whl (67 kB)
+Downloading platformdirs-4.13.4-py3-none-any.whl (32 kB)
+Downloading proces-0.1.7-py3-none-any.whl (137 kB)
+Downloading pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (806 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 806.6/806.6 kB 135.2 MB/s  0:00:00
+Downloading requests-2.34.2-py3-none-any.whl (73 kB)
+Downloading charset_normalizer-3.5.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (269 kB)
+Downloading urllib3-2.8.0-py3-none-any.whl (135 kB)
+Downloading certifi-2026.7.22-py3-none-any.whl (136 kB)
+Downloading scikit_learn-1.9.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (9.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 9.3/9.3 MB 111.4 MB/s  0:00:00
+Downloading narwhals-2.27.1-py3-none-any.whl (483 kB)
+Downloading scipy-1.17.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (35.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 35.3/35.3 MB 99.5 MB/s  0:00:00
+Downloading soxr-1.1.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (245 kB)
+Downloading threadpoolctl-3.7.0-py3-none-any.whl (26 kB)
+Downloading tqdm-4.70.1-py3-none-any.whl (80 kB)
+Downloading truststore-0.10.5-py3-none-any.whl (19 kB)
+Downloading typeguard-4.6.0-py3-none-any.whl (36 kB)
+Downloading pycparser-3.11-py3-none-any.whl (51 kB)
+Building wheels for collected packages: eng_to_ipa, jieba
+  Building wheel for eng_to_ipa (pyproject.toml): started
+  Building wheel for eng_to_ipa (pyproject.toml): finished with status 'done'
+  Created wheel for eng_to_ipa: filename=eng_to_ipa-0.0.2-py3-none-any.whl size=2822631 sha256=7365fbdcd79934d4c176df0d81c04bdcdc98c56205fa66e27bc11c804bf68852
+  Stored in directory: /home/runner/.cache/pip/wheels/69/75/b5/36c8992667b90bb473ad62a84214a8b62454f17c3dbac615a9
+  Building wheel for jieba (pyproject.toml): started
+  Building wheel for jieba (pyproject.toml): finished with status 'done'
+  Created wheel for jieba: filename=jieba-0.42.1-py3-none-any.whl size=19314509 sha256=fc3694864d2a1b8477c1f15245c216a4140127a4cd8ebff68da19c985e770d47
+  Stored in directory: /home/runner/.cache/pip/wheels/ac/60/cf/538a1f183409caf1fc136b5d2c2dee329001ef6da2c5084bef
+Successfully built eng_to_ipa jieba
+Installing collected packages: jieba, eng_to_ipa, urllib3, unidecode, typeguard, truststore, tqdm, threadpoolctl, pyyaml, pypinyin, pycparser, proces, platformdirs, packaging, numpy, narwhals, msgpack, more_itertools, llvmlite, idna, hf-xet, h11, decorator, cloudpickle, click, charset_normalizer, certifi, audioread, soxr, scipy, requests, numba, lazy_loader, joblib, inflect, httpcore2, cn2an, cffi, anyio, soundfile, scikit-learn, pooch, httpx2, librosa, huggingface_hub
+
+Successfully installed anyio-4.15.1 audioread-3.1.0 certifi-2026.7.22 cffi-2.1.1 charset_normalizer-3.5.2 click-8.5.0 cloudpickle-3.1.2 cn2an-0.5.24 decorator-5.3.1 eng_to_ipa-0.0.2 h11-0.16.0 hf-xet-1.7.0 httpcore2-2.13.1 httpx2-2.13.1 huggingface_hub-2.2.0 idna-3.20 inflect-7.5.0 jieba-0.42.1 joblib-1.6.0 lazy_loader-0.6 librosa-0.11.0 llvmlite-0.50.0 more_itertools-11.2.1 msgpack-1.2.3 narwhals-2.27.1 numba-0.68.0 numpy-2.4.6 packaging-26.3 platformdirs-4.13.4 pooch-1.9.0 proces-0.1.7 pycparser-3.11 pypinyin-0.55.0 pyyaml-6.0.3 requests-2.34.2 scikit-learn-1.9.1 scipy-1.17.1 soundfile-0.14.0 soxr-1.1.0 threadpoolctl-3.7.0 tqdm-4.70.1 truststore-0.10.5 typeguard-4.6.0 unidecode-1.4.0 urllib3-2.8.0
+Collecting git+https://github.com/myshell-ai/OpenVoice.git
+  Cloning https://github.com/myshell-ai/OpenVoice.git to /tmp/pip-req-build-y9c_w5v0
+  Running command git clone --filter=blob:none --quiet https://github.com/myshell-ai/OpenVoice.git /tmp/pip-req-build-y9c_w5v0
+  Resolved https://github.com/myshell-ai/OpenVoice.git to commit 74a1d147b17a8c3092dd5430504bd83ef6c7eb23
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'done'
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: MyShell-OpenVoice
+  Building wheel for MyShell-OpenVoice (pyproject.toml): started
+  Building wheel for MyShell-OpenVoice (pyproject.toml): finished with status 'done'
+  Created wheel for MyShell-OpenVoice: filename=myshell_openvoice-0.0.0-py3-none-any.whl size=36180 sha256=8cfb05f402fca57880ef11fa5491273457a4a313ab549a40f2ea977b572c1594
+  Stored in directory: /tmp/pip-ephem-wheel-cache-4w09zy6d/wheels/ac/90/c7/093caec84b2a4e77f54c16c1a124cacfed82d5124a066bdc3a
+Successfully built MyShell-OpenVoice
+Installing collected packages: MyShell-OpenVoice
+Successfully installed MyShell-OpenVoice-0.0.0
+/opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages/torch/jit/_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+  warnings.warn(
+/opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages/torch/jit/_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+  warnings.warn(
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Traceback (most recent call last):
+  File "/home/runner/work/Webscraping/Webscraping/.github/scripts/vozes_openvoice.py", line 23, in <module>
+    conversor = ToneColorConverter(config, device="cpu", enable_watermark=False)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.11.17/x64/lib/python3.11/site-packages/openvoice/api.py", line 103, in __init__
+    super().__init__(*args, **kwargs)
+TypeError: OpenVoiceBaseClass.__init__() got an unexpected keyword argument 'enable_watermark'
