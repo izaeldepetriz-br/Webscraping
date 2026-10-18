@@ -60,7 +60,9 @@ for motor, pasta in (("xtts", REFS), ("chatterbox", OUTROS)):          # os outr
 for chave, emocao, texto, genero, _, _ in EMOCOES:
     t0, partes = time.time(), []
     for frase, pausa in frases_para_falar(texto):
-        wav, taxa, _ = modelo.infer(ref_file=str(REFS / f"ref_{genero}.wav"), ref_text=REFERENCIA, gen_text=frase,
+        # o leia-me do modelo pede texto em minúsculas (e números por extenso)
+        wav, taxa, _ = modelo.infer(ref_file=str(REFS / f"ref_{genero}.wav"), ref_text=REFERENCIA.lower(),
+                                    gen_text=frase.lower(),
                                     show_info=lambda *a, **k: None, progress=None, seed=7)
         partes.append(np.asarray(wav, dtype=np.float32))
         if pausa:
