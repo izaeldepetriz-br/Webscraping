@@ -1,0 +1,14 @@
+[
+ {
+  "arquivo": "openvoice_pt_0.wav",
+  "segundos_para_gerar": 1.49
+ },
+ {
+  "arquivo": "openvoice_pt_1.wav",
+  "segundos_para_gerar": 1.5
+ },
+ {
+  "arquivo": "openvoice_pt_2.wav",
+  "segundos_para_gerar": 1.43
+ }
+]

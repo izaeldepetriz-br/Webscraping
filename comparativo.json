@@ -1,0 +1,843 @@
+{
+ "conjuntos": [
+  {
+   "nome": "Piper edresson (o mais simples)",
+   "media": {
+    "entendido": 0.977,
+    "naturalidade": 2.713
+   },
+   "falas": [
+    {
+     "arquivo": "edresson_pt_0.wav",
+     "texto": "Ei, você! O portão fecha ao anoitecer.",
+     "whisper": "E você? O portão fecha ao anoitecer!",
+     "entendido": 0.986,
+     "naturalidade": 2.22,
+     "segundos": 3.74
+    },
+    {
+     "arquivo": "edresson_pt_1.wav",
+     "texto": "Quer cruzar a floresta? Fale antes com o ancião.",
+     "whisper": "que é cruzar a floresta. Vale antes com o Ancião.",
+     "entendido": 0.946,
+     "naturalidade": 3.01,
+     "segundos": 3.62
+    },
+    {
+     "arquivo": "edresson_pt_2.wav",
+     "texto": "E cuidado. Tem algo se mexendo nas árvores.",
+     "whisper": "E cuidado, tem algo se mexendo nas árvores.",
+     "entendido": 1.0,
+     "naturalidade": 2.91,
+     "segundos": 4.48
+    },
+    {
+     "arquivo": "edresson_pt_0.wav",
+     "texto": "Ei, você! O portão fecha ao anoitecer.",
+     "whisper": "E você? O portão fecha ao anoitecer!",
+     "entendido": 0.986,
+     "naturalidade": 2.22,
+     "segundos": 3.74
+    },
+    {
+     "arquivo": "edresson_pt_1.wav",
+     "texto": "Quer cruzar a floresta? Fale antes com o ancião.",
+     "whisper": "que é cruzar a floresta. Vale antes com o Ancião.",
+     "entendido": 0.946,
+     "naturalidade": 3.01,
+     "segundos": 3.62
+    },
+    {
+     "arquivo": "edresson_pt_2.wav",
+     "texto": "E cuidado. Tem algo se mexendo nas árvores.",
+     "whisper": "E cuidado, tem algo se mexendo nas árvores.",
+     "entendido": 1.0,
+     "naturalidade": 2.91,
+     "segundos": 4.48
+    }
+   ]
+  },
+  {
+   "nome": "Piper faber (o padrão do Maestro)",
+   "media": {
+    "entendido": 0.973,
+    "naturalidade": 3.773
+   },
+   "falas": [
+    {
+     "arquivo": "faber_pt_0.wav",
+     "texto": "Ei, você! O portão fecha ao anoitecer.",
+     "whisper": "E você? O portão fecha ao anoitecer.",
+     "entendido": 0.986,
+     "naturalidade": 3.72,
+     "segundos": 2.97
+    },
+    {
+     "arquivo": "faber_pt_1.wav",
+     "texto": "Quer cruzar a floresta? Fale antes com o ancião.",
+     "whisper": "quer cruzar a floresta, valiantes como ancião.",
+     "entendido": 0.933,
+     "naturalidade": 3.82,
+     "segundos": 3.17
+    },
+    {
+     "arquivo": "faber_pt_2.wav",
+     "texto": "E cuidado. Tem algo se mexendo nas árvores.",
+     "whisper": "E cuidado, tem algo se mexendo nas árvores.",
+     "entendido": 1.0,
+     "naturalidade": 3.78,
+     "segundos": 3.06
+    },
+    {
+     "arquivo": "faber_pt_0.wav",
+     "texto": "Ei, você! O portão fecha ao anoitecer.",
+     "whisper": "E você? O portão fecha ao anoitecer.",
+     "entendido": 0.986,
+     "naturalidade": 3.72,
+     "segundos": 2.97
+    },
+    {
+     "arquivo": "faber_pt_1.wav",
+     "texto": "Quer cruzar a floresta? Fale antes com o ancião.",
+     "whisper": "quer cruzar a floresta, valiantes como ancião.",
+     "entendido": 0.933,
+     "naturalidade": 3.82,
+     "segundos": 3.17
+    },
+    {
+     "arquivo": "faber_pt_2.wav",
+     "texto": "E cuidado. Tem algo se mexendo nas árvores.",
+     "whisper": "E cuidado, tem algo se mexendo nas árvores.",
+     "entendido": 1.0,
+     "naturalidade": 3.78,
+     "segundos": 3.06
+    }
+   ]
+  },
+  {
+   "nome": "OpenVoice V2 (Piper faber + timbre do alvo)",
+   "media": {
+    "entendido": 0.925,
+    "naturalidade": 3.94,
+    "parecida": 0.719
+   },
+   "falas": [
+    {
+     "arquivo": "openvoice_pt_0.wav",
+     "texto": "Ei, você! O portão fecha ao anoitecer.",
+     "whisper": "E você, o portão fecha a noite de ser.",
+     "entendido": 0.873,
+     "naturalidade": 3.97,
+     "segundos": 2.96,
+     "parecida": 0.722
+    },
+    {
+     "arquivo": "openvoice_pt_1.wav",
+     "texto": "Quer cruzar a floresta? Fale antes com o ancião.",
+     "whisper": "quem é cruzar a floresta, paliantes com o ancião.",
+     "entendido": 0.903,
+     "naturalidade": 4.0,
+     "segundos": 3.17,
+     "parecida": 0.748
+    },
+    {
+     "arquivo": "openvoice_pt_2.wav",
+     "texto": "E cuidado. Tem algo se mexendo nas árvores.",
+     "whisper": "E cuidado, tem algo se mexendo nas árvores.",
+     "entendido": 1.0,
+     "naturalidade": 3.85,
+     "segundos": 3.05,
+     "parecida": 0.687
+    }
+   ]
+  },
+  {
+   "nome": "Chatterbox (voz padrão)",
+   "media": {
+    "entendido": 0.933,
+    "naturalidade": 3.69
+   },
+   "falas": [
+    {
+     "arquivo": "chatterbox_padrao_pt_0.wav",
+     "texto": "Ei, você! O portão fecha ao anoitecer.",
+     "whisper": "Ei, você, o portão fecha uma noite a ser.",
+     "entendido": 0.877,
+     "naturalidade": 3.99,
+     "segundos": 3.04
+    },
+    {
+     "arquivo": "chatterbox_padrao_pt_1.wav",
+     "texto": "Quer cruzar a floresta? Fale antes com o ancião.",
+     "whisper": "Quer cruzar a floresta? Vale antes com o oceão.",
+     "entendido": 0.923,
+     "naturalidade": 3.02,
+     "segundos": 3.8
+    },
+    {
+     "arquivo": "chatterbox_padrao_pt_2.wav",
+     "texto": "E cuidado. Tem algo se mexendo nas árvores.",
+     "whisper": "E cuidado, tem algo se mexendo nas árvores.",
+     "entendido": 1.0,
+     "naturalidade": 4.06,
+     "segundos": 3.2
+    }
+   ]
+  },
+  {
+   "nome": "Chatterbox (imitando o alvo)",
+   "media": {
+    "entendido": 0.986,
+    "naturalidade": 3.677,
+    "parecida": 0.909
+   },
+   "falas": [
+    {
+     "arquivo": "chatterbox_clone_pt_0.wav",
+     "texto": "Ei, você! O portão fecha ao anoitecer.",
+     "whisper": "Ei você, o portão fecha o anoidecer.",
+     "entendido": 0.957,
+     "naturalidade": 3.57,
+     "segundos": 3.44,
+     "parecida": 0.917
+    },
+    {
+     "arquivo": "chatterbox_clone_pt_1.wav",
+     "texto": "Quer cruzar a floresta? Fale antes com o ancião.",
+     "whisper": "quer cruzar a floresta? Fale antes com o Ancião.",
+     "entendido": 1.0,
+     "naturalidade": 3.45,
+     "segundos": 4.44,
+     "parecida": 0.911
+    },
+    {
+     "arquivo": "chatterbox_clone_pt_2.wav",
+     "texto": "E cuidado. Tem algo se mexendo nas árvores.",
+     "whisper": "e cuidado, tem algo se mexendo nas árvores.",
+     "entendido": 1.0,
+     "naturalidade": 4.01,
+     "segundos": 4.0,
+     "parecida": 0.899
+    }
+   ]
+  },
+  {
+   "nome": "XTTS-v2 (a própria voz-alvo, pronta)",
+   "media": {
+    "entendido": 0.954,
+    "naturalidade": 3.197,
+    "parecida": 0.942
+   },
+   "falas": [
+    {
+     "arquivo": "cena_damien_pt_0.wav",
+     "texto": "Ei, você! O portão fecha ao anoitecer.",
+     "whisper": "Ei você, o portão fecha ao anoitecer?",
+     "entendido": 1.0,
+     "naturalidade": 3.24,
+     "segundos": 4.44,
+     "parecida": 0.954
+    },
+    {
+     "arquivo": "cena_damien_pt_1.wav",
+     "texto": "Quer cruzar a floresta? Fale antes com o ancião.",
+     "whisper": "Quer cruzar a floresta? Fale antes com o ancião.",
+     "entendido": 1.0,
+     "naturalidade": 3.0,
+     "segundos": 4.26,
+     "parecida": 0.927
+    },
+    {
+     "arquivo": "cena_damien_pt_2.wav",
+     "texto": "E cuidado. Tem algo se mexendo nas árvores.",
+     "whisper": "E cuidado ponto, tem algo se mexendo nas árvores pontos.",
+     "entendido": 0.863,
+     "naturalidade": 3.35,
+     "segundos": 5.24,
+     "parecida": 0.945
+    }
+   ]
+  },
+  {
+   "nome": "XTTS-v2 (outras vozes prontas)",
+   "media": {
+    "entendido": 0.905,
+    "naturalidade": 3.275
+   },
+   "falas": [
+    {
+     "arquivo": "cena_gilberto_pt_0.wav",
+     "texto": "Ei, você! O portão fecha ao anoitecer.",
+     "whisper": "Ei você, o portão fecha ao anotecer.prote.",
+     "entendido": 0.907,
+     "naturalidade": 3.71,
+     "segundos": 5.28
+    },
+    {
+     "arquivo": "cena_gilberto_pt_1.wav",
+     "texto": "Quer cruzar a floresta? Fale antes com o ancião.",
+     "whisper": "Quer cruzar a floresta? Vale antes com o ancião. ponto",
+     "entendido": 0.918,
+     "naturalidade": 3.03,
+     "segundos": 5.38
+    },
+    {
+     "arquivo": "cena_gilberto_pt_2.wav",
+     "texto": "E cuidado. Tem algo se mexendo nas árvores.",
+     "whisper": "e cuidado.tenha algo se mexendo nas árvores.eau.",
+     "entendido": 0.909,
+     "naturalidade": 3.54,
+     "segundos": 6.39
+    },
+    {
+     "arquivo": "cena_luis_pt_0.wav",
+     "texto": "Ei, você! O portão fecha ao anoitecer.",
+     "whisper": "Ei você! O portão fecha ao anoitecer.",
+     "entendido": 1.0,
+     "naturalidade": 2.77,
+     "segundos": 4.72
+    },
+    {
+     "arquivo": "cena_luis_pt_1.wav",
+     "texto": "Quer cruzar a floresta? Fale antes com o ancião.",
+     "whisper": "Quer cruzar a floresta? Vale antes com o ancião.",
+     "entendido": 0.978,
+     "naturalidade": 3.2,
+     "segundos": 5.0
+    },
+    {
+     "arquivo": "cena_luis_pt_2.wav",
+     "texto": "E cuidado. Tem algo se mexendo nas árvores.",
+     "whisper": "E cuidado, ponto I, no ponto motion, tem algo se mexendo nas árvores ponto O.",
+     "entendido": 0.719,
+     "naturalidade": 3.4,
+     "segundos": 7.15
+    }
+   ]
+  }
+ ],
+ "catalogo": [
+  {
+   "arquivo": "catalogo_00.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.52,
+   "segundos": 5.52,
+   "voz": "Claribel Dervla"
+  },
+  {
+   "arquivo": "catalogo_01.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 2.73,
+   "segundos": 5.14,
+   "voz": "Daisy Studious"
+  },
+  {
+   "arquivo": "catalogo_02.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.22,
+   "segundos": 5.7,
+   "voz": "Gracie Wise"
+  },
+  {
+   "arquivo": "catalogo_03.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.i",
+   "entendido": 0.984,
+   "naturalidade": 3.44,
+   "segundos": 6.11,
+   "voz": "Tammie Ema"
+  },
+  {
+   "arquivo": "catalogo_04.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.34,
+   "segundos": 5.7,
+   "voz": "Alison Dietlinde"
+  },
+  {
+   "arquivo": "catalogo_05.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 4.0,
+   "segundos": 5.79,
+   "voz": "Ana Florence"
+  },
+  {
+   "arquivo": "catalogo_06.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.98,
+   "segundos": 5.78,
+   "voz": "Annmarie Nele"
+  },
+  {
+   "arquivo": "catalogo_07.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.19,
+   "segundos": 5.7,
+   "voz": "Asya Anara"
+  },
+  {
+   "arquivo": "catalogo_08.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.08,
+   "segundos": 5.75,
+   "voz": "Brenda Stern"
+  },
+  {
+   "arquivo": "catalogo_09.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.84,
+   "segundos": 6.22,
+   "voz": "Gitta Nikolina"
+  },
+  {
+   "arquivo": "catalogo_10.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.3,
+   "segundos": 6.16,
+   "voz": "Henriette Usha"
+  },
+  {
+   "arquivo": "catalogo_11.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português, do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.25,
+   "segundos": 6.35,
+   "voz": "Sofia Hellen"
+  },
+  {
+   "arquivo": "catalogo_12.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.91,
+   "segundos": 5.19,
+   "voz": "Tammy Grit"
+  },
+  {
+   "arquivo": "catalogo_13.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.45,
+   "segundos": 4.91,
+   "voz": "Tanja Adelina"
+  },
+  {
+   "arquivo": "catalogo_14.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 4.1,
+   "segundos": 5.28,
+   "voz": "Vjollca Johnnie"
+  },
+  {
+   "arquivo": "catalogo_15.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá, esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 2.64,
+   "segundos": 6.39,
+   "voz": "Andrew Chipper"
+  },
+  {
+   "arquivo": "catalogo_16.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 2.93,
+   "segundos": 6.17,
+   "voz": "Badr Odhiambo"
+  },
+  {
+   "arquivo": "catalogo_17.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil. Ponto!",
+   "entendido": 0.955,
+   "naturalidade": 3.51,
+   "segundos": 8.07,
+   "voz": "Dionisio Schuyler"
+  },
+  {
+   "arquivo": "catalogo_18.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá. Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.7,
+   "segundos": 5.56,
+   "voz": "Royston Min"
+  },
+  {
+   "arquivo": "catalogo_19.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 2.53,
+   "segundos": 6.63,
+   "voz": "Viktor Eka"
+  },
+  {
+   "arquivo": "catalogo_20.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.27,
+   "segundos": 5.93,
+   "voz": "Abrahan Mack"
+  },
+  {
+   "arquivo": "catalogo_21.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.8,
+   "segundos": 5.88,
+   "voz": "Adde Michal"
+  },
+  {
+   "arquivo": "catalogo_22.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português, do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.59,
+   "segundos": 7.09,
+   "voz": "Baldur Sanjin"
+  },
+  {
+   "arquivo": "catalogo_23.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.31,
+   "segundos": 6.16,
+   "voz": "Craig Gutsy"
+  },
+  {
+   "arquivo": "catalogo_24.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.43,
+   "segundos": 5.79,
+   "voz": "Damien Black"
+  },
+  {
+   "arquivo": "catalogo_25.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá, esta é uma das vozes prontas, falando em português do Brasil, ponto.",
+   "entendido": 0.955,
+   "naturalidade": 3.92,
+   "segundos": 6.07,
+   "voz": "Gilberto Mathias"
+  },
+  {
+   "arquivo": "catalogo_26.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá. Que... Esta é uma das vozes prontas, falando em português do Brasil.q...",
+   "entendido": 0.955,
+   "naturalidade": 3.17,
+   "segundos": 7.56,
+   "voz": "Ilkin Urbano"
+  },
+  {
+   "arquivo": "catalogo_27.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil. Pontos.",
+   "entendido": 0.947,
+   "naturalidade": 3.66,
+   "segundos": 6.43,
+   "voz": "Kazuhiko Atallah"
+  },
+  {
+   "arquivo": "catalogo_28.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta, é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.64,
+   "segundos": 6.03,
+   "voz": "Ludvig Milivoj"
+  },
+  {
+   "arquivo": "catalogo_29.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.32,
+   "segundos": 5.42,
+   "voz": "Suad Qasim"
+  },
+  {
+   "arquivo": "catalogo_30.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.82,
+   "segundos": 5.84,
+   "voz": "Torcull Diarmuid"
+  },
+  {
+   "arquivo": "catalogo_31.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas falando em português do brasil.ca",
+   "entendido": 0.977,
+   "naturalidade": 2.94,
+   "segundos": 6.81,
+   "voz": "Viktor Menelaos"
+  },
+  {
+   "arquivo": "catalogo_32.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.25,
+   "segundos": 5.38,
+   "voz": "Zacharie Aimilios"
+  },
+  {
+   "arquivo": "catalogo_33.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá, esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.7,
+   "segundos": 5.88,
+   "voz": "Nova Hogarth"
+  },
+  {
+   "arquivo": "catalogo_34.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá, esta é uma das vozes prontas falando em português do Brasil, ponto.",
+   "entendido": 0.955,
+   "naturalidade": 3.24,
+   "segundos": 5.93,
+   "voz": "Maja Ruoho"
+  },
+  {
+   "arquivo": "catalogo_35.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.6,
+   "segundos": 5.89,
+   "voz": "Uta Obando"
+  },
+  {
+   "arquivo": "catalogo_36.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.o.",
+   "entendido": 0.984,
+   "naturalidade": 3.22,
+   "segundos": 6.17,
+   "voz": "Lidiya Szekeres"
+  },
+  {
+   "arquivo": "catalogo_37.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.95,
+   "segundos": 6.86,
+   "voz": "Chandra MacFarland"
+  },
+  {
+   "arquivo": "catalogo_38.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil, ponto.",
+   "entendido": 0.955,
+   "naturalidade": 3.56,
+   "segundos": 6.35,
+   "voz": "Szofi Granger"
+  },
+  {
+   "arquivo": "catalogo_39.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.39,
+   "segundos": 5.42,
+   "voz": "Camilla Holmström"
+  },
+  {
+   "arquivo": "catalogo_40.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.07,
+   "segundos": 5.38,
+   "voz": "Lilya Stainthorpe"
+  },
+  {
+   "arquivo": "catalogo_41.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá, esta é uma das vozes prontas falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.22,
+   "segundos": 5.43,
+   "voz": "Zofija Kendrick"
+  },
+  {
+   "arquivo": "catalogo_42.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá? Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.92,
+   "segundos": 5.42,
+   "voz": "Narelle Moon"
+  },
+  {
+   "arquivo": "catalogo_43.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.72,
+   "segundos": 4.53,
+   "voz": "Barbora MacLean"
+  },
+  {
+   "arquivo": "catalogo_44.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá, esta é uma das vozes prontas falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.76,
+   "segundos": 5.79,
+   "voz": "Alexandra Hisakawa"
+  },
+  {
+   "arquivo": "catalogo_45.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.1,
+   "segundos": 5.32,
+   "voz": "Alma María"
+  },
+  {
+   "arquivo": "catalogo_46.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil, ponto chip.",
+   "entendido": 0.92,
+   "naturalidade": 3.82,
+   "segundos": 6.49,
+   "voz": "Rosemary Okafor"
+  },
+  {
+   "arquivo": "catalogo_47.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá, esta é uma das vozes prontas falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.8,
+   "segundos": 5.0,
+   "voz": "Ige Behringer"
+  },
+  {
+   "arquivo": "catalogo_48.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil, ponto.",
+   "entendido": 0.955,
+   "naturalidade": 3.55,
+   "segundos": 5.88,
+   "voz": "Filip Traverse"
+  },
+  {
+   "arquivo": "catalogo_49.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.65,
+   "segundos": 5.97,
+   "voz": "Damjan Chapman"
+  },
+  {
+   "arquivo": "catalogo_50.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.48,
+   "segundos": 6.58,
+   "voz": "Wulf Carlevaro"
+  },
+  {
+   "arquivo": "catalogo_51.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta, é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.78,
+   "segundos": 5.61,
+   "voz": "Aaron Dreschner"
+  },
+  {
+   "arquivo": "catalogo_52.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.e.",
+   "entendido": 0.984,
+   "naturalidade": 3.3,
+   "segundos": 6.07,
+   "voz": "Kumar Dahl"
+  },
+  {
+   "arquivo": "catalogo_53.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá, esta é uma das vozes prontas falando em português do Brasil, ponto.",
+   "entendido": 0.955,
+   "naturalidade": 3.38,
+   "segundos": 6.76,
+   "voz": "Eugenio Mataracı"
+  },
+  {
+   "arquivo": "catalogo_54.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá, esta é uma das vozes prontas falando em português do Brasil, ponto O.",
+   "entendido": 0.94,
+   "naturalidade": 3.79,
+   "segundos": 7.41,
+   "voz": "Ferran Simen"
+  },
+  {
+   "arquivo": "catalogo_55.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.81,
+   "segundos": 5.61,
+   "voz": "Xavier Hayasaka"
+  },
+  {
+   "arquivo": "catalogo_56.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá. Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.27,
+   "segundos": 6.9,
+   "voz": "Luis Moray"
+  },
+  {
+   "arquivo": "catalogo_57.wav",
+   "texto": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "whisper": "Olá! Esta é uma das vozes prontas, falando em português do Brasil.",
+   "entendido": 1.0,
+   "naturalidade": 3.66,
+   "segundos": 5.05,
+   "voz": "Marcos Rudaski"
+  }
+ ]
+}
