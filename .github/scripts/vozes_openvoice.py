@@ -13,14 +13,18 @@ import time
 from pathlib import Path
 
 from huggingface_hub import hf_hub_download
-from openvoice.api import ToneColorConverter
+from openvoice import api
+
+# defeito do OpenVoice: o ToneColorConverter repassa "enable_watermark" para a classe de base, que não aceita
+_base = api.OpenVoiceBaseClass.__init__
+api.OpenVoiceBaseClass.__init__ = lambda self, config_path, device="cuda:0", **_: _base(self, config_path, device)
 
 SAIDA, REF, PIPER = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
 SAIDA.mkdir(parents=True, exist_ok=True)
 inicio = time.time()
 config = hf_hub_download("myshell-ai/OpenVoiceV2", "converter/config.json")
 pesos = hf_hub_download("myshell-ai/OpenVoiceV2", "converter/checkpoint.pth")
-conversor = ToneColorConverter(config, device="cpu", enable_watermark=False)
+conversor = api.ToneColorConverter(config, device="cpu", enable_watermark=False)
 conversor.load_ckpt(pesos)
 origem = conversor.extract_se([str(PIPER / "faber_ref.wav")])     # o timbre do Piper
 alvo = conversor.extract_se([REF])                                 # o timbre que queremos
