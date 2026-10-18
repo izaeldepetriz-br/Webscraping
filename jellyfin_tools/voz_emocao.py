@@ -27,7 +27,7 @@ from pathlib import Path
 
 from .dublagem import ErroDublagem, _baixar
 from .emocoes import EMOCOES, NORMAL, intensidade_chatterbox
-from .voz_local import (INDICE_CPU, ServidorDeVoz, _etapas, conferir_espaco, espaco_livre, frases_para_falar,
+from .voz_local import (EXCLAMAR, INDICE_CPU, ServidorDeVoz, _etapas, conferir_espaco, espaco_livre, frases_para_falar,
                         instalar_pacote, python_do_motor, tem_placa_nvidia)
 
 NOME = "Chatterbox (emoção, grátis, no PC)"
@@ -197,13 +197,14 @@ class MotorEmocao(ServidorDeVoz):
 
     def falar(self, texto: str, saida: str | Path, referencia: str | Path, emocao: str, parar=None,
               idioma: str = "pt", forca: float = 0.0) -> None:
-        """A fala com a emoção. Com a força da interpretação (> 0), mais intensa e no jeito da emoção (as pausas do
-        choro, o "!" da raiva)."""
+        """A fala com a emoção. Com a força da interpretação (> 0), a raiva e o grito terminam as frases com "!". As
+        pausas do choro (a frase picada nas vírgulas) ficam só no XTTS-v2: no Chatterbox, os pedaços curtos o faziam
+        inventar palavras."""
         if emocao not in EMOCOES:
             raise ErroDublagem(f"emoção desconhecida: {emocao}")
         self.iniciar(parar)
         exaggeration, cfg = intensidade_chatterbox(emocao, forca)
-        frases = frases_para_falar(texto, emocao if forca > 0 else NORMAL)
+        frases = frases_para_falar(texto, emocao if forca > 0 and emocao in EXCLAMAR else NORMAL)
         resposta = self._pedir({"texto": texto, "frases": frases, "idioma": idioma,
                                 "saida": str(Path(saida).absolute()),           # caminhos completos: o servidor
                                 "referencia": str(Path(referencia).absolute()),  # trabalha em outra pasta

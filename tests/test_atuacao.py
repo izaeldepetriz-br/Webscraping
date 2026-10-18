@@ -91,9 +91,8 @@ def test_forca_e_receitas():
     assert at.receita("choro", 0.5).tremor == 45 and at.receita("choro", 0.5).tremor_hz == 6.0
     assert at.receita("normal") is None and at.receita("choro", 0) is None and at.receita("???") is None
     assert set(at.RECEITAS) == set(em.EMOCOES)                             # toda emoção tem a sua interpretação
-    assert em.intensidade_chatterbox("choro") == em.CHATTERBOX["choro"]     # força 0: como na v2.20
-    assert em.intensidade_chatterbox("brava", 1.0) == (round(1.1 * 1.35, 2), 0.4)
-    assert em.intensidade_chatterbox("grito", 1.0)[0] == em.EXAGERO_MAX     # sem passar do limite
+    assert em.intensidade_chatterbox("choro") == em.intensidade_chatterbox("choro", 1.0) == em.CHATTERBOX["choro"]
+    # (mais intenso, o Chatterbox inventava palavras: a força fica com a interpretação depois da voz)
 
 
 def gravar(caminho, som, largura=2):

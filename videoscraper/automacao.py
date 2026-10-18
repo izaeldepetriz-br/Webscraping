@@ -648,8 +648,9 @@ def quem_fala(o: OpcoesJellyfin, video: Path, falas: list, cliente=None, ao_prog
         if ao_progresso:
             ao_progresso(1.0)
         return lista
+    extra = {chave: valor for chave, valor in (("arquivo", arquivo), ("ids", ids)) if valor is not None}
     return ouvir_personagens(o, video, falas, cliente=cliente, ao_progresso=ao_progresso, parar=parar, serie=serie,
-                             arquivo=arquivo, ids=ids)
+                             **extra)
 
 
 def elenco_por_personagem(o: OpcoesJellyfin, lista: list, falas: list, fixas: dict | None = None,

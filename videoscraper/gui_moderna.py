@@ -6067,7 +6067,8 @@ class JanelaModerna(ctk.CTk):
             variantes = tuple(voz_local.VARIANTES)
         if self.var_jf_figurantes_cloud.get():               # figurantes no Google Cloud (cota grátis)
             vozes += tuple(f"Google Cloud {v} (cota grátis)" for v in voz_cloud.vozes_do_tipo(self.tipo_cloud_escolhido()))
-        dialogo = DialogoVozes(self, filme, linhas, rotulos, sugestao, vozes, variantes)
+        dialogo = DialogoVozes(self, filme, linhas, rotulos, sugestao, vozes,
+                               **({"variantes": variantes} if variantes else {}))
         self.wait_window(dialogo)
         return dialogo.resultado
 

@@ -247,10 +247,10 @@ primeira falha (antes esperava o tempo limite em cada filme).
   (Configurações > Dublagem > **"Força da emoção"**: Desligada, Leve, Média ou **Forte**, a padrão):
   - **choro**: a voz **treme** (o tom oscila umas 6 vezes por segundo, irregular, mais forte no fim das frases),
     **quebra** para o agudo por um instante, sai com **ar** (soprada), **falha** (embarga) e **puxa o ar nas pausas**,
-    às vezes entrecortado (o soluço); a fala sai aos pedaços (cada vírgula vira uma pausa);
+    às vezes entrecortado (o soluço); no XTTS-v2, a fala sai aos pedaços (cada vírgula vira uma pausa);
   - **raiva** e **grito**: a voz **forçada e rasgada** (mais agudos de 2 a 4 kHz, a aspereza e a saturação do grito),
-    mais aguda, o tom **batendo nas sílabas fortes** e as frases terminando com "!"; o Chatterbox fica até 35% mais
-    intenso;
+    mais aguda, o tom **batendo nas sílabas fortes** e as frases terminando com "!" (o Chatterbox continua na
+    intensidade de antes: testado 35% mais intenso, ele inventava palavras no meio da fala chorada);
   - **medo** (treme rápido, com ar), **tristeza** (tremor leve, mais grave e escura), **alegria** (mais aguda e
     brilhante) e **sussurro** (a voz vira ar de verdade, sem a vibração).
   Vale com ou sem o Chatterbox (só o XTTS-v2 também ganha a interpretação) e não muda a duração da fala.
