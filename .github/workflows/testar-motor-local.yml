@@ -27,7 +27,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          { python -m pip install --upgrade pip && pip install requests faster-whisper \
+          { python -m pip install --upgrade pip && pip install -r requirements.txt \
             && python .github/scripts/testar_motor_local.py "$RUNNER_TEMP/motor_vozes" "$RUNNER_TEMP/falas"; } 2>&1 \
             | tee registro.txt
       - name: Mostrar o erro

@@ -240,6 +240,33 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.20.0
+
+- **Motor de vozes grátis no PC: XTTS-v2, no lugar do Gemini** (Configurações > Dublagem > "Quem lê as falas" >
+  **XTTS-v2**). Voz natural em português, sem custo e sem chave, rodando no seu PC (com a placa de vídeo NVIDIA, 1
+  minuto de fala sai em segundos; sem ela, pelo processador, mais devagar).
+  - **"⬇ Instalar o motor de vozes"**: uma vez só, ~3 GB com a placa de vídeo (o Python 3.12, o PyTorch e o XTTS-v2,
+    baixados pelo *uv* numa pasta das configurações; "Remover do PC" apaga tudo) e, na 1ª fala, o modelo (~1,8 GB).
+    Licença do modelo (CPML da Coqui): **só uso pessoal, não comercial** (o Maestro pede para aceitar).
+  - **57 vozes prontas** (genéricas, de estúdio) com o gênero ao lado ("Ana Florence (feminina, adulta)") e as **vozes
+    importadas** (abaixo). "▶ Ouvir uma frase de teste" toca a voz escolhida.
+  - **A fala de mulher sai com voz feminina e a de homem, masculina, sem o Gemini**: o Maestro mede o **tom de cada
+    fala do original** (a altura da voz) no PC. No meio do caminho (homem gritando, mulher de voz grave) a fala fica
+    com a voz principal. É uma aproximação: confira no teste antes do filme inteiro.
+  - **Conferir cada fala com o Whisper** (marcada): o XTTS-v2 às vezes inventa uma sílaba no fim ("nas árvores.u.")
+    ou embola uma palavra. O Whisper ouve cada fala gerada: a sobra do fim é **cortada** e a embolada é **gerada de
+    novo** (até 2 vezes, fica a melhor).
+  - Por que o XTTS-v2: no teste de comparação (a mesma cena com XTTS-v2, Chatterbox e OpenVoice, medida pelo Whisper,
+    pela nota de naturalidade UTMOS e pela semelhança de voz), ele foi o mais equilibrado: entende bem o português
+    (97%), tem dezenas de vozes prontas e imita uma gravação curta. O Chatterbox soou um pouco mais natural, mas a voz
+    padrão dele "inventou" frases inteiras; o OpenVoice só troca o timbre do Piper (o ritmo continua robótico).
+- **"Importar voz"** (Configurações > Dublagem): o arquivo, o **nome**, o **gênero** e a **idade** da voz.
+  - **Modelo do Piper** (.onnx, com o .onnx.json ao lado): mais uma voz grátis no menu "Voz do Piper" e na tabela dos
+    personagens (há várias em huggingface.co/rhasspy/piper-voices; em português: cadu, jeff...).
+  - **Gravação de voz** (.wav, .mp3, .m4a..., de 6 a 60 s de fala): o XTTS-v2 fala com esse timbre. Pede só a
+    declaração de que a voz é sua ou de quem autorizou; áudio de filmes, séries ou jogos não é aceito (a voz seria de
+    atores).
+
 ### Novidades da v2.19.0
 
 Esta versão traz também **todas as novidades da v2.18.12** (logo abaixo: Testes feitos guardados e com seleção,
