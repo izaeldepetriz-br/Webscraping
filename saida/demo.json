@@ -1,0 +1,76 @@
+{
+ "cena": [
+  [
+   0.5,
+   2.5,
+   "Ana",
+   "Você pegou o meu carro de novo?"
+  ],
+  [
+   2.8,
+   4.8,
+   "Bruno",
+   "Peguei, e daí? Eu precisava dele!"
+  ],
+  [
+   4.0,
+   6.0,
+   "Ana",
+   "Você nem pediu! Você nunca pede nada!"
+  ],
+  [
+   4.6,
+   6.6,
+   "Carlos",
+   "Ei, ei, calma, vocês dois!"
+  ],
+  [
+   7.2,
+   9.4,
+   "Bruno",
+   "- Fica fora disso, Carlos!\n- Não fico, não!"
+  ],
+  [
+   9.8,
+   11.8,
+   "Ana",
+   "Chega. Me dá a chave agora."
+  ],
+  [
+   10.9,
+   12.6,
+   "Bruno",
+   "Toma, toma a chave!"
+  ]
+ ],
+ "vozes": {
+  "Ana": "Ana Florence",
+  "Bruno": "Damien Black",
+  "Carlos": "Gilberto Mathias"
+ },
+ "duracao": 14.0,
+ "resultados": {
+  "agora": {
+   "segundos": 118.7,
+   "avisos": [
+    "carregando o motor de vozes XTTS-v2 (na 1ª vez baixa o modelo, ~1,8 GB)",
+    "o motor de vozes pronto (processador)",
+    "conferência pelo Whisper: 0 fala(s) com sobra no fim cortada(s), 1 gerada(s) de novo",
+    "diálogo: 1 bloco(s) com travessões falados por duas vozes (uma para cada pessoa)",
+    "discussão: 3 fala(s) ao mesmo tempo que a anterior (pessoas diferentes falando juntas)"
+   ],
+   "cortadas": 1,
+   "aceleradas": 3
+  },
+  "antes": {
+   "segundos": 82.1,
+   "avisos": [
+    "carregando o motor de vozes XTTS-v2 (na 1ª vez baixa o modelo, ~1,8 GB)",
+    "o motor de vozes pronto (processador)",
+    "conferência pelo Whisper: 0 fala(s) com sobra no fim cortada(s), 1 gerada(s) de novo"
+   ],
+   "cortadas": 4,
+   "aceleradas": 5
+  }
+ }
+}
