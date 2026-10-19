@@ -211,17 +211,35 @@ def _verificar_tela() -> int:
         getattr(leitor, "fechar", lambda: None)()
         janelas = tj.janelas_abertas()
         foto = tj.capturar((0, 0, 320, 200))
-        bibliotecas = []
-        for nome in ("soundcard", "pycaw.pycaw"):
-            try:
-                importlib.import_module(nome)
-                bibliotecas.append(f"{nome} ok")
-            except Exception as erro:
-                bibliotecas.append(f"{nome} FALTOU ({erro})")
+        import threading
+
+        def importar(nome: str) -> str:
+            """Cada biblioteca na sua tarefa, como no Maestro (o COM do Windows tem um modo por tarefa)."""
+            erros = []
+
+            def tentar():
+                try:
+                    if nome.startswith("pycaw"):
+                        sys.coinit_flags = 0                 # (o mesmo que o volume do jogo faz)
+                    importlib.import_module(nome)
+                except Exception as erro:
+                    erros.append(erro)
+            fio = threading.Thread(target=tentar)
+            fio.start()
+            fio.join(120)
+            return f"{nome} ok" if not erros else f"{nome} FALTOU ({erros[0]})"
+        bibliotecas = [importar(nome) for nome in ("soundcard", "pycaw.pycaw")]
+        from jellyfin_tools import legenda_ao_vivo as lv
+        try:
+            captura = lv.CapturaDoSom()
+            som = f"som do PC: {captura.nome}"
+            captura.fechar()
+        except lv.ErroLegenda as erro:                       # (o GitHub não tem placa de som: só informa)
+            som = f"som do PC: {erro}"
         ok = "START" in texto.upper() and "CONTINUE" in texto.upper() and foto.size == (320, 200) and \
             all(b.endswith(" ok") for b in bibliotecas)
         relatorio.write_text(f"leitor: {leitor.nome} | leu: {texto} | {len(janelas)} janelas abertas | foto "
-                             f"{foto.size[0]}x{foto.size[1]} | {' · '.join(bibliotecas)}", encoding="utf-8")
+                             f"{foto.size[0]}x{foto.size[1]} | {' · '.join(bibliotecas)} | {som}", encoding="utf-8")
     except Exception:
         relatorio.write_text(traceback.format_exc()[-1500:], encoding="utf-8")
         return 1

@@ -13,6 +13,7 @@ ouve a própria voz (senão traduziria a si mesmo).
 
 from __future__ import annotations
 
+import contextlib
 import queue
 import threading
 import time
@@ -69,9 +70,24 @@ class Cortador:
 
 
 class CapturaDoSom:
-    """O som que sai do PC, pelo "loopback" do alto-falante padrão (biblioteca soundcard). ler() -> pedaço."""
+    """O som que sai do PC, pelo "loopback" do alto-falante padrão (biblioteca soundcard). ler() -> pedaço.
 
-    def __init__(self, taxa: int = TAXA):
+    A gravação fica numa tarefa só dela: o soundcard deixa a tarefa no modo "multi" do COM do Windows, e a da tela
+    (Tk) e a do volume do jogo (pycaw) precisam do modo "único" ("Cannot change thread mode")."""
+
+    def __init__(self, taxa: int = TAXA, abrir=None):
+        self._abrir = abrir or self._abrir_soundcard
+        self._pedacos: queue.Queue = queue.Queue(maxsize=400)
+        self._parar = threading.Event()
+        self.nome = ""
+        pronto: queue.Queue = queue.Queue()
+        threading.Thread(target=self._gravar, args=(taxa, pronto), daemon=True, name="som-do-pc").start()
+        erro = pronto.get(timeout=60)
+        if erro is not None:
+            raise erro
+
+    def _abrir_soundcard(self, taxa: int):
+        """(nome, gravar() -> pedaço, fechar()), dentro da tarefa da gravação."""
         try:
             import soundcard
         except Exception as erro:                     # (sem a biblioteca, ou sem placa de som)
@@ -79,20 +95,44 @@ class CapturaDoSom:
         alto_falante = soundcard.default_speaker()
         if alto_falante is None:
             raise ErroLegenda("não achei o alto-falante do PC")
-        self.nome = alto_falante.name
-        self._microfone = soundcard.get_microphone(id=str(alto_falante.name), include_loopback=True)
-        self._gravador = self._microfone.recorder(samplerate=taxa, channels=1, blocksize=int(taxa * PEDACO))
-        self._gravador.__enter__()
+        microfone = soundcard.get_microphone(id=str(alto_falante.name), include_loopback=True)
+        gravador = microfone.recorder(samplerate=taxa, channels=1, blocksize=int(taxa * PEDACO))
+        gravador.__enter__()
+        return (alto_falante.name, lambda: gravador.record(numframes=int(taxa * PEDACO)),
+                lambda: gravador.__exit__(None, None, None))
+
+    def _gravar(self, taxa: int, pronto: queue.Queue) -> None:
+        try:
+            self.nome, gravar, fechar = self._abrir(taxa)
+        except ErroLegenda as erro:
+            pronto.put(erro)
+            return
+        except Exception as erro:
+            pronto.put(ErroLegenda(f"não deu para ouvir o som do PC ({erro})"))
+            return
+        pronto.put(None)
+        try:
+            while not self._parar.is_set():
+                pedaco = np.asarray(gravar(), dtype=np.float32).reshape(-1)
+                try:
+                    self._pedacos.put(pedaco, timeout=1)
+                except queue.Full:                    # ninguém lendo: descarta o mais velho
+                    with contextlib.suppress(queue.Empty):
+                        self._pedacos.get_nowait()
+        except Exception as erro:                     # (a placa sumiu, o fone foi tirado...)
+            self._pedacos.put(ErroLegenda(f"o som do PC parou ({erro})"))
+        finally:
+            with contextlib.suppress(Exception):
+                fechar()
 
     def ler(self) -> np.ndarray:
-        dados = self._gravador.record(numframes=int(TAXA * PEDACO))
-        return np.asarray(dados, dtype=np.float32).reshape(-1)
+        pedaco = self._pedacos.get(timeout=10)
+        if isinstance(pedaco, Exception):
+            raise pedaco
+        return pedaco
 
     def fechar(self) -> None:
-        try:
-            self._gravador.__exit__(None, None, None)
-        except Exception:
-            pass
+        self._parar.set()
 
 
 class VolumeDoJogo:
@@ -106,8 +146,10 @@ class VolumeDoJogo:
 
     def _sessoes_do_jogo(self) -> list:
         try:
+            import sys
+            sys.coinit_flags = 0                      # o comtypes no modo "multi", como o soundcard e o winrt
             import comtypes
-            comtypes.CoInitialize()                   # nesta tarefa
+            comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)     # nesta tarefa
         except Exception:
             pass
         try:

@@ -141,3 +141,32 @@ def test_leitor_do_windows_numa_tarefa_so_dele_e_volume_na_tarefa_que_fala():
     fio.start()
     fio.join()
     assert procuradas == [fio] and Sessao.SimpleAudioVolume.valor == 0.8 and volume.funciona
+
+
+def test_som_do_pc_numa_tarefa_so_dele():
+    """O soundcard também muda o modo do COM: a gravação do som do PC abre e grava numa tarefa só dela; ler() pega os
+    pedaços; sem placa de som, o erro chega na hora (para a tela avisar); a placa sumindo vira erro no ler()."""
+    import threading
+
+    import pytest
+    quem, pedacos = [], [np.full(4, 0.1, np.float32), np.full(4, 0.2, np.float32)]
+
+    def abrir(taxa):
+        quem.append(threading.current_thread())
+
+        def gravar():
+            if not pedacos:
+                raise OSError("placa removida")
+            return pedacos.pop(0)
+        return "Alto-falantes (teste)", gravar, lambda: quem.append("fechou")
+    captura = lv.CapturaDoSom(abrir=abrir)
+    assert captura.nome == "Alto-falantes (teste)" and quem[0] is not threading.current_thread()
+    assert float(captura.ler()[0]) == pytest.approx(0.1) and float(captura.ler()[0]) == pytest.approx(0.2)
+    with pytest.raises(lv.ErroLegenda, match="o som do PC parou"):
+        captura.ler()
+    assert quem[-1] == "fechou"
+
+    def sem_placa(taxa):
+        raise lv.ErroLegenda("não achei o alto-falante do PC")
+    with pytest.raises(lv.ErroLegenda, match="alto-falante"):
+        lv.CapturaDoSom(abrir=sem_placa)

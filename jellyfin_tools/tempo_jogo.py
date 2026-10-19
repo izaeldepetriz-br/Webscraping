@@ -133,7 +133,7 @@ def estimar(velocidades: Velocidades, *, segundos_sem_texto: float = 0.0, textos
         else:
             chave, quem = f"dublar:{motor}", motor
         pedidos += [("dublar", chave, quem, falas), ("entregar", "entregar", "no seu PC", falas)]
-    if iso_mb > 0 and falas > 0:
+    if iso_mb > 0:                      # (iso_mb = 0 quando não há ISO para montar ou ela já está montada)
         pedidos.append(("montar", "montar", "no seu PC", iso_mb))
     etapas = []
     for etapa, chave, quem, unidades in pedidos:

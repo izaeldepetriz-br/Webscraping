@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import time
 from pathlib import Path
 from tkinter import filedialog
 
@@ -19,6 +20,7 @@ from jellyfin_tools import iso_jogo as ij
 from jellyfin_tools import patch_jogo as pj
 from jellyfin_tools import personagens, voz_gemini, voz_local
 from jellyfin_tools import roteiro_jogo as rj
+from jellyfin_tools import tempo_jogo as tj
 from jellyfin_tools.dublagem import localizar_ffmpeg
 
 from . import automacao, config
@@ -37,6 +39,9 @@ class DublagemDeJogos:
         self.painel_dublar_jogo = None
         self._memoria_jogo: dict = {}
         self._fixas_jogo: dict = {}
+        self._velocidades_jogo: tj.Velocidades | None = None
+        self._placa_nvidia: bool | None = None
+        self._auto_jogo: dict | None = None            # o 🤖 Automático em andamento (as etapas que faltam)
 
     def painel_do_modo_dublar(self) -> PainelDublarJogo:
         if self.painel_dublar_jogo is None or not self.painel_dublar_jogo.winfo_exists():
@@ -48,9 +53,12 @@ class DublagemDeJogos:
                 "trocar_voz": self.d_trocar_voz, "dublar": self.d_dublar, "dublar_teste": lambda: self.d_dublar(5),
                 "ouvir": self.d_ouvir, "editar_fala": self.d_editar_fala, "escolher_saida": self.d_escolher_saida,
                 "entregar": self.d_entregar, "abrir_saida": self.d_abrir_saida, "montar": self.d_montar,
-                "criar_patch": self.d_criar_patch})
-            self.painel_dublar_jogo.var_iso.trace_add("write", lambda *_: self.painel_dublar_jogo.atualizar())
-            self.painel_dublar_jogo.mostrar_estimativas(motor=self._estado_do_motor())
+                "criar_patch": self.d_criar_patch, "automatico": self.d_automatico})
+            p = self.painel_dublar_jogo
+            p.var_iso.trace_add("write", lambda *_: p.atualizar())
+            for var in (p.var_quem_traduz, p.var_motor, p.var_ouvir):
+                var.trace_add("write", lambda *_: self._atualizar_tempo_jogo())
+            p.mostrar_estimativas(motor=self._estado_do_motor())
         return self.painel_dublar_jogo
 
     # ------------------------------------------------------------------ ajudantes
@@ -166,12 +174,16 @@ class DublagemDeJogos:
             letras = (roteiro.letras() if roteiro else 0) + sum(len(f.texto) for f in falas if f.ouvida)
             textos = (len(roteiro.com_texto) if roteiro else 0) + sum(1 for f in falas if f.ouvida)
             p.mostrar_estimativas(self._custo_da_traducao(letras, textos), self._estado_do_motor())
+            self._atualizar_tempo_jogo()
         elif tipo == "d_traduzido":
             p.mostrar_traducao(dados[0])
             self._refazer_elenco()
             p.atualizar()
+            self._atualizar_tempo_jogo()
         elif tipo == "d_andamento":
             p.mostrar_andamento(*dados)
+        elif tipo == "d_eta":
+            p.mostrar_tempo_jogo(dados[0])
         elif tipo == "d_dublado":
             r, = dados
             texto = f"{r.dubladas} falas dubladas" + (f" · {r.puladas} já estavam prontas" if r.puladas else "") + \
@@ -179,6 +191,7 @@ class DublagemDeJogos:
             p.mostrar_andamento(1.0, "")
             p.mostrar_dublagem(texto, not r.erros)
             self._refazer_elenco()
+            self._atualizar_tempo_jogo()
         elif tipo == "d_entregue":
             arquivos, saida = dados
             p.mostrar_entrega("✓ Pronto em " + str(saida) + ": " + ", ".join(a.name for a in arquivos) +
@@ -189,6 +202,164 @@ class DublagemDeJogos:
             p.mostrar_entrega(f"✓ ISO em português: {m.destino.name} ({m.trocadas} falas trocadas no mesmo lugar" +
                               (f"; {len(m.puladas)} puladas, veja o log" if m.puladas else "") + "). A original não "
                               "mudou.", not m.puladas)
+            self._atualizar_tempo_jogo()
+
+    # ------------------------------------------------------------------ ⏱ o tempo deste jogo
+    def _velocidades(self) -> tj.Velocidades:
+        if self._velocidades_jogo is None:
+            self._velocidades_jogo = tj.Velocidades(config.ARQUIVO.parent / tj.ARQUIVO)
+        return self._velocidades_jogo
+
+    def _xtts_na_placa(self) -> bool:
+        info = voz_local.instalado(automacao.pasta_motor_local())
+        if info:
+            return bool(info.get("gpu"))
+        if self._placa_nvidia is None:                  # (ainda não instalado: o que vai ser instalado)
+            self._placa_nvidia = voz_local.tem_placa_nvidia()
+        return self._placa_nvidia
+
+    def _ja_dubladas(self) -> set:
+        saida = self._saida_jogo()
+        if saida is None:
+            return set()
+        try:
+            return set(json.loads((saida / dj.PASTA_TRABALHO / dj.ARQUIVO_FEITAS).read_text(encoding="utf-8")))
+        except (OSError, ValueError, TypeError):
+            return set()
+
+    def _etapas_do_jogo(self) -> list:
+        """O que ainda falta neste jogo, com o tempo de cada etapa (lê a tela: só na tarefa principal)."""
+        p = self.painel_dublar_jogo
+        o = self.obter_opcoes_jellyfin()
+        ouvir = p.var_ouvir.get()
+        sem_texto = [f for f in p.falas if f.formato is not None and not f.texto.strip()] if ouvir else []
+        pendentes = [e for e in (p.roteiro.com_texto if p.roteiro is not None else []) if not e.traducao]
+        ouvidas = [f for f in p.falas if f.ouvida and not f.traducao]
+        textos = len(pendentes) + len(ouvidas) + len(sem_texto)
+        feitas = self._ja_dubladas()
+        falas = sum(1 for f in p.falas if f.formato is not None and f.relativo not in feitas
+                    and (f.traducao or f.texto.strip() or ouvir))
+        iso = Path(p.var_iso.get().strip()) if p.var_iso.get().strip() else None
+        montada = p.iso_montada is not None and Path(p.iso_montada).is_file() and not falas
+        iso_mb = iso.stat().st_size / 1e6 if p.tem_mapa and iso is not None and iso.is_file() and not montada else 0.0
+        quem = ("Claude", "Gemini", "Argos")[QUEM_TRADUZ.index(p.var_quem_traduz.get())]
+        motor = ("XTTS-v2", "Gemini", "Google Cloud", "Piper")[MOTORES.index(p.var_motor.get())]
+        custos = {"traduzir": "grátis" if quem == "Argos" else "grátis (chave grátis)" if quem == "Gemini" else "pago",
+                  "dublar": {"Gemini": "pago", "Google Cloud": "cota grátis"}.get(motor, "grátis")}
+        if quem == "Claude" and textos:
+            from jellyfin_tools.traducao import estimar_custo
+            letras = sum(len(e.texto) for e in pendentes) + sum(len(f.texto) for f in ouvidas) + 60 * len(sem_texto)
+            custo = estimar_custo(max(1, letras), textos, o.modelo_traducao)[2]
+            if custo is not None:
+                custos["traduzir"] = f"≈ US$ {custo:.2f}".replace(".", ",")
+        return tj.estimar(self._velocidades(), segundos_sem_texto=sum(f.formato.segundos for f in sem_texto),
+                          textos=textos, falas=falas, iso_mb=iso_mb, quem_traduz=quem, motor=motor,
+                          placa=self._xtts_na_placa() if motor == "XTTS-v2" else False,
+                          whisper_placa=bool(getattr(o, "whisper_gpu", False)), custos=custos)
+
+    def _atualizar_tempo_jogo(self) -> None:
+        p = self.painel_dublar_jogo
+        if p is None or not p.winfo_exists() or self._auto_jogo is not None:
+            return
+        if p.roteiro is None and not p.falas:
+            p.mostrar_tempo_jogo("abra o roteiro ou tire as falas da ISO para ver quanto tempo leva")
+            return
+        try:
+            etapas = self._etapas_do_jogo()
+        except (OSError, ValueError) as erro:
+            self._log.info("Tempo do jogo: %s", erro)
+            return
+        p.mostrar_tempo_jogo(tj.resumo(etapas) if etapas else "✓ nada falta: tudo traduzido e dublado")
+
+    def _cronometro_jogo(self, *chaves: str) -> tuple:
+        """(Cronometro destas etapas, o começo do texto, {etapa: chave da velocidade}). No 🤖 Automático, o tempo
+        das etapas que ainda vêm depois entra no "faltam". Só na tarefa principal (lê a tela)."""
+        etapas = {e.chave: e for e in self._etapas_do_jogo()}
+        estimado = sum(etapas[c].segundos for c in chaves if c in etapas)
+        depois, prefixo = 0.0, ""
+        auto = self._auto_jogo
+        if auto is not None:
+            restantes = [c for passo in auto["passos"] for c in (("ouvir", "traduzir") if passo == "traduzir"
+                                                                    else (passo,))]
+            depois = sum(auto["etapas"][c].segundos for c in restantes if c in auto["etapas"])
+            prefixo = f"🤖 Automático {auto['feito']} de {auto['total']} · {tj.NOMES[auto['atual']]} · "
+        return tj.Cronometro(estimado, depois), prefixo, {c: e.velocidade for c, e in etapas.items()}
+
+    def _eta(self, crono, prefixo: str, fracao: float) -> None:
+        """Na tarefa: o "faltam ≈ ... · termina por volta das ..." na faixa do tempo."""
+        self.fila.put(("jogos", ("d_eta", prefixo + crono.texto(fracao))))
+
+    # ------------------------------------------------------------------ 🤖 Automático: as etapas em sequência
+    def d_automatico(self) -> None:
+        from .janela_automatico_jogo import JanelaAutomaticoJogo
+        p = self.painel_dublar_jogo
+        if p.roteiro is None and not p.falas:
+            self.mostrar_mensagem("🤖 Automático", "Abra primeiro o roteiro do jogo ou tire as falas da ISO (1. Roteiro "
+                                  "do jogo): o Automático faz o resto.", "aviso")
+            return
+        if self.trabalhando or self._auto_jogo is not None:
+            self.mostrar_mensagem("🤖 Automático", "Espere a tarefa de agora terminar.", "aviso")
+            return
+        etapas = self._etapas_do_jogo()
+        if not etapas:
+            self.mostrar_mensagem("🤖 Automático", "Nada falta neste jogo: tudo já foi traduzido e dublado.", "info")
+            return
+        jogo = p.info["jogo"].cget("text") if "jogo" in p.info else ""
+        self.janela_automatico_jogo = JanelaAutomaticoJogo(
+            self, jogo if jogo and jogo != "—" else (self._pasta_jogo().name if self._pasta_jogo() else "jogo"),
+            etapas, lambda marcadas: self._comecar_automatico_jogo(marcadas, etapas))
+
+    def _comecar_automatico_jogo(self, marcadas: list, etapas: list) -> None:
+        p = self.painel_dublar_jogo
+        if self.trabalhando:
+            self.mostrar_mensagem("🤖 Automático", "Espere a tarefa de agora terminar.", "aviso")
+            return
+        p.var_ouvir.set("ouvir" in marcadas)
+        passos = [e for e in ("traduzir", "dublar", "entregar", "montar")
+                  if e in marcadas or (e == "traduzir" and "ouvir" in marcadas)]
+        if not passos:
+            return
+        self._auto_jogo = {"passos": passos, "total": len(passos), "feito": 0, "atual": passos[0],
+                           "inicio": time.monotonic(), "estimado": tj.total(etapas, marcadas),
+                           "etapas": {e.chave: e for e in etapas}, "parou": False}
+        self._log.info("🤖 Automático do jogo: %s (≈ %s)", ", ".join(tj.NOMES[e] for e in passos),
+                       tj.legivel(self._auto_jogo["estimado"]))
+        self._proximo_passo_automatico()
+
+    def _proximo_passo_automatico(self) -> None:
+        auto = self._auto_jogo
+        if auto is None:
+            return
+        if auto["feito"] and self.evento_parar.is_set():           # o "Parar" da janela
+            self._fim_do_automatico(parou=True)
+            return
+        if not auto["passos"]:
+            self._fim_do_automatico(parou=False)
+            return
+        passo = auto["passos"].pop(0)
+        auto["atual"], auto["feito"] = passo, auto["feito"] + 1
+        {"traduzir": self.d_traduzir, "dublar": self.d_dublar, "entregar": self.d_entregar,
+         "montar": self.d_montar}[passo]()
+        if not self.trabalhando:                    # não começou (faltava algo: a mensagem já apareceu)
+            self._fim_do_automatico(parou=True)
+            return
+        self._quando_livre(self._proximo_passo_automatico)
+
+    def _fim_do_automatico(self, parou: bool) -> None:
+        auto, self._auto_jogo = self._auto_jogo, None
+        if auto is None:
+            return
+        gasto = time.monotonic() - auto["inicio"]
+        if parou:
+            texto = (f"O Automático parou na etapa {auto['feito']} de {auto['total']} ({tj.NOMES[auto['atual']]}). O "
+                     "que ficou pronto está guardado: o próximo Automático continua de onde parou.")
+            self._log.warning("🤖 Automático do jogo: parou em %s", tj.NOMES[auto["atual"]])
+        else:
+            texto = (f"Pronto em {tj.legivel(gasto)} (o previsto era ≈ {tj.legivel(auto['estimado'])}): "
+                     f"{auto['total']} etapa(s) feitas uma depois da outra.")
+            self._log.info("🤖 Automático do jogo: pronto em %s", tj.legivel(gasto))
+        self._atualizar_tempo_jogo()
+        self.mostrar_mensagem("🤖 Automático", texto, "aviso" if parou else "sucesso")
 
     def _quando_livre(self, fazer) -> None:
         """Faz assim que a tarefa em andamento terminar (a mensagem chega antes do "fim" dela)."""
@@ -363,18 +534,29 @@ class DublagemDeJogos:
         roteiro, falas = p.roteiro, p.falas
         glossario, sem_acentos, ouvir = self._glossario(), p.var_sem_acentos.get(), p.var_ouvir.get()
         saida = self._saida_jogo()
+        crono, prefixo, chaves = self._cronometro_jogo(*(("ouvir", "traduzir") if ouvir else ("traduzir",)))
+        velocidades = self._velocidades()
+
+        def andamento(f, texto):
+            self.fila.put(("jf_analise", (f, texto)))
+            if not so:                                  # (o teste das 20 primeiras não vale para o jogo todo)
+                self._eta(crono, prefixo, f)
 
         def tarefa():
-            andamento = lambda f, texto: self.fila.put(("jf_analise", (f, texto)))   # noqa: E731
             try:
                 sem_texto = [f for f in falas if f.formato is not None and not f.texto.strip()]
                 if ouvir and sem_texto and saida is not None:
                     from jellyfin_tools.transcricao import Transcritor
+                    inicio = time.monotonic()
                     transcritor = Transcritor(modelo=o.modelo_whisper, usar_gpu=o.whisper_gpu,
                                               pasta_modelos=str(config.ARQUIVO.parent / "modelos_whisper"))
                     alvo = sem_texto[:so] if so else sem_texto
                     dj.ouvir(alvo, transcritor, saida / dj.PASTA_TRABALHO, None, self.evento_parar.is_set,
                              lambda f: andamento(0.3 * f, f"O Whisper ouvindo as falas sem texto: {f:.0%}"))
+                    if "ouvir" in chaves and not self.evento_parar.is_set():
+                        velocidades.medir(chaves["ouvir"], sum(f.formato.segundos for f in alvo),
+                                          time.monotonic() - inicio)
+                inicio_traducao = time.monotonic()
                 resumo = rj.ResumoTraducao()
                 if roteiro is not None:
                     resumo = rj.traduzir_roteiro(roteiro, tradutor, glossario, sem_acentos, self._memoria_jogo, so,
@@ -389,6 +571,8 @@ class DublagemDeJogos:
                     resumo.traduzidas += r2.traduzidas
                     resumo.encurtadas += r2.encurtadas
                 resumo.custo = getattr(tradutor, "custo", None)
+                if "traduzir" in chaves and not self.evento_parar.is_set():
+                    velocidades.medir(chaves["traduzir"], resumo.unicas, time.monotonic() - inicio_traducao)
             except Exception as erro:                    # (ErroTraducao, sem internet...): o que já foi fica guardado
                 self._guardar_memoria_jogo(saida)
                 self._log.warning("Traduzir o jogo: %s", erro)
@@ -502,6 +686,14 @@ class DublagemDeJogos:
             return
         formato, duracao = p.var_formato.get(), p.var_duracao.get()
         com_emocao = p.var_emocao.get() == EMOCOES[0]
+        crono, prefixo, chaves = self._cronometro_jogo("dublar")
+        velocidades, uma_parte = self._velocidades(), so is not None or falas_so is not None
+
+        def andamento(f, total):
+            self.fila.put(("jf_analise", (f, f"Dublando: {f:.0%}")))
+            self.fila.put(("jogos", ("d_andamento", f, f"{round(f * total)} de {total} falas · {f:.0%}")))
+            if not uma_parte:
+                self._eta(crono, prefixo, f)
 
         def tarefa():
             ffmpeg = localizar_ffmpeg()
@@ -516,13 +708,12 @@ class DublagemDeJogos:
             total = len(alvo if alvo is not None else [f for f in falas if f.formato is not None and f.traducao])
             try:
                 r = dj.dublar(falas, motor, saida, ffmpeg, formato, duracao, com_emocao, refazer, alvo,
-                              self.evento_parar.is_set,
-                              lambda f: (self.fila.put(("jf_analise", (f, f"Dublando: {f:.0%}"))),
-                                         self.fila.put(("jogos", ("d_andamento", f, f"{round(f * total)} de {total} "
-                                                                  f"falas · {f:.0%}")))))
+                              self.evento_parar.is_set, lambda f: andamento(f, total))
             finally:
                 if hasattr(motor, "fechar"):
                     motor.fechar()
+            if "dublar" in chaves and not uma_parte and not self.evento_parar.is_set():
+                velocidades.medir(chaves["dublar"], r.dubladas, crono.passou)   # a velocidade deste PC
             for relativo, erro in r.erros[:20]:
                 self._log.warning("Dublar %s: %s", relativo, erro)
             self._log.info("Jogo dublado: %d falas (%d já prontas, %d aceleradas, %d cortadas no fim)", r.dubladas,
@@ -601,17 +792,24 @@ class DublagemDeJogos:
             self.mostrar_mensagem("Montar a ISO", str(erro), "aviso")
             return
         destino = saida / pj.nome_para_o_opl(info, f"{iso.stem} PT-BR")
+        crono, prefixo, chaves = self._cronometro_jogo("montar")
+        velocidades = self._velocidades()
+
+        def andamento(f):
+            self.fila.put(("jf_analise", (f, f"Montando a ISO em português: {f:.0%}")))
+            self._eta(crono, prefixo, f)
 
         def tarefa():
             try:
-                m = ij.montar(iso, pasta, saida / dj.PASTA_SAIDA_AUDIO, destino, self.evento_parar.is_set,
-                              lambda f: self.fila.put(("jf_analise", (f, f"Montando a ISO em português: {f:.0%}"))))
+                m = ij.montar(iso, pasta, saida / dj.PASTA_SAIDA_AUDIO, destino, self.evento_parar.is_set, andamento)
             except (pj.ErroPatch, OSError) as erro:
                 self.fila.put(("msg", ("Montar a ISO", f"Não montei: {erro}", "aviso")))
                 return
             for relativo, motivo in m.puladas:
                 self._log.warning("Montar a ISO: %s pulada (%s)", relativo, motivo)
             self._log.info("ISO em português: %s (%d falas trocadas)", m.destino, m.trocadas)
+            if "montar" in chaves:
+                velocidades.medir(chaves["montar"], iso.stat().st_size / 1e6, crono.passou)
             pj.registrar_aplicado(self.arquivo_aplicados, iso, saida, m.destino, "montada pelo Maestro")
             self.fila.put(("jogos", ("d_montado", m)))
 

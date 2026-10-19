@@ -5892,6 +5892,71 @@ def test_aba_jogos_traduzir_e_dublar(app, tmp_path, monkeypatch):
     assert p.lb_entrega.cget("text").startswith("✓ ISO em português") and p.iso_montada == montada
 
 
+def test_aba_jogos_tempo_e_automatico(app, tmp_path, monkeypatch):
+    """🎮 Jogos, "Traduzir e dublar": o ⏱ Tempo deste jogo (cada etapa, o total e a que horas termina) e o 🤖
+    Automático, que traduz, dubla, entrega e monta a ISO uma etapa depois da outra, com o "faltam ≈" na faixa."""
+    from jellyfin_tools import roteiro_jogo as rj
+    from tests.test_dublar_jogo import MotorFalso
+    from tests.test_iso_jogo import disco
+    from tests.test_roteiro_jogo import ClienteJogo
+    from videoscraper import dublar_jogos_moderna as dm
+    from videoscraper import jogos_moderna
+    if not dm.localizar_ffmpeg():
+        pytest.skip("sem ffmpeg")
+    app.mostrar_aba("🎮 Jogos")
+    app.mostrar_modo_jogos(jogos_moderna.MODO_DUBLAR)
+    p = app.painel_dublar_jogo
+    assert "abra o roteiro" in p.lb_tempo_jogo.cget("text") and p.bt_automatico.cget("state") == "disabled"
+    iso, _ = disco(tmp_path)
+    p.var_iso.set(str(iso))
+    p.bt_analisar.invoke()
+    esperar(app)
+    p.bt_extrair.invoke()
+    esperar(app)
+    for _ in range(30):                               # a leitura da pasta começa quando a extração termina
+        app.update()
+        time.sleep(0.05)
+    esperar(app)
+    pasta = tmp_path / "Burnout 3 - Takedown - extraído"
+    vags = sorted(f.relativo for f in p.falas)
+    (pasta / "roteiro.csv").write_text("id;texto;audio;personagem;limite\n"
+                                       f"1;Open the gate!;{vags[0]};Kael;\n"
+                                       f"2;Thanks, {{NAME}}. The forest is safe now.;{vags[1]};Kael;\n"
+                                       "3;Save your game?;;;16\n", encoding="utf-8")
+    p.var_ouvir.set(False)
+    p.bt_ler.invoke()
+    esperar(app)
+    tempo = p.lb_tempo_jogo.cget("text")
+    assert tempo.startswith("≈ ") and "traduzir" in tempo and "dublar" in tempo and "montar" in tempo
+    assert "termina por volta das" in tempo and p.bt_automatico.cget("state") == "normal"
+    # o 🤖 Automático: as etapas que faltam, quem faz, o custo e o tempo; "Fazer tudo" faz uma depois da outra
+    monkeypatch.setattr(dm.DublagemDeJogos, "_tradutor_do_jogo", lambda self, o: rj.TradutorJogo(
+        cliente=ClienteJogo()))
+    monkeypatch.setattr(dm.DublagemDeJogos, "_motor_do_jogo", lambda self, o: MotorFalso())
+    faixa = []
+    mostrar = p.mostrar_tempo_jogo
+    monkeypatch.setattr(p, "mostrar_tempo_jogo", lambda texto, ok=True: (faixa.append(texto), mostrar(texto, ok)))
+    p.bt_automatico.invoke()
+    janela = app.janela_automatico_jogo
+    assert list(janela.marcar) == ["traduzir", "dublar", "entregar", "montar"]
+    assert janela.lb_total.cget("text").startswith("Total marcado: ≈ ")
+    janela.caixas["montar"].toggle()
+    assert janela.marcadas() == ["traduzir", "dublar", "entregar"]
+    janela.caixas["montar"].toggle()
+    janela.fazer_tudo()
+    for _ in range(400):
+        app.update()
+        if app._auto_jogo is None and not app.trabalhando:
+            break
+        time.sleep(0.05)
+    assert app._auto_jogo is None and app.caixas[-1][0] == "sucesso", app.caixas[-1:]
+    assert app.caixas[-1][2].startswith("Pronto em ") and "4 etapa(s)" in app.caixas[-1][2]
+    saida = tmp_path / "Burnout 3 - Takedown - PT-BR"
+    assert (saida / "roteiro_ptbr.csv").is_file() and (saida / "SLUS_210.50.Burnout 3 - Takedown PT-BR.iso").is_file()
+    assert any(texto.startswith("🤖 Automático 2 de 4 · Dublar as falas · faltam ≈ ") for texto in faixa), faixa
+    assert p.lb_tempo_jogo.cget("text") == "✓ nada falta: tudo traduzido e dublado"
+
+
 def test_aba_jogos_enquanto_joga(app, tmp_path, monkeypatch):
     """🎮 Jogos, modo "Enquanto joga" (como no protótipo): a janela do jogo (o emulador primeiro) e a prévia com a
     caixa roxa, marcar a área da caixa de diálogo, o tradutor de tela ligado (a tradução aparece na janelinha por
