@@ -72,6 +72,16 @@ class Entrada:
     personagem: str = ""
     limite: int | None = None        # o espaço máximo (letras), se o roteiro diz
     avisos: list = field(default_factory=list)   # o que conferir ("passou do limite", "faltou {NAME}")
+    longa: str = ""                  # a 1ª tradução, que não cabia (a usada é a sugestão do Claude, mais curta)
+
+    def espaco(self) -> str:
+        """'✓ 14 de 16', '⚠ 21 de 16' ou '14 letras' (sem limite no roteiro), da tradução usada."""
+        n = len(self.traducao)
+        if not self.traducao:
+            return ""
+        if not self.limite:
+            return f"{n} letras"
+        return f"{'✓' if n <= self.limite else '⚠'} {n} de {self.limite}"
 
 
 @dataclass
@@ -425,9 +435,11 @@ class ResumoTraducao:
 
 def traduzir_textos(textos: list[str], tradutor, limites: list | None = None, glossario: tuple = (),
                     tirar_acentos: bool = False, memoria: dict | None = None, titulo: str = "", parar=None,
-                    ao_progresso=None) -> tuple[list[str], list[list[str]], ResumoTraducao]:
+                    ao_progresso=None, longas: list | None = None) -> tuple[list[str], list[list[str]],
+                                                                             ResumoTraducao]:
     """(traduções, avisos de cada uma, resumo). O tradutor é o do Claude (TradutorJogo) ou o grátis no PC
-    (TradutorLocal): os dois têm traduzir_falas. A memória ({original: tradução}) evita traduzir de novo."""
+    (TradutorLocal): os dois têm traduzir_falas. A memória ({original: tradução}) evita traduzir de novo. longas
+    (uma lista vazia): recebe, de cada texto, a 1ª tradução que não cabia no espaço ("" se coube de primeira)."""
     limites = list(limites or [None] * len(textos))
     memoria = memoria if memoria is not None else {}
     resumo = ResumoTraducao()
@@ -444,7 +456,7 @@ def traduzir_textos(textos: list[str], tradutor, limites: list | None = None, gl
     for t, lim in zip(textos, limites):
         if lim and t in unicos:
             limite_de[t] = min(lim, limite_de.get(t, lim))
-    if isinstance(tradutor, TradutorJogo):            # o "max" de cada texto, já descontado o tamanho dos códigos
+    if hasattr(tradutor, "limites"):                  # o "max" de cada texto, já descontado o tamanho dos códigos
         tradutor.limites = {i: max(1, limite_de[t] - sum(len(p) - len(MARCA.format(n)) for n, p in
                                                          enumerate(protegidos[i][1], 1)))
                             for i, t in enumerate(lista) if t in limite_de}
@@ -455,19 +467,26 @@ def traduzir_textos(textos: list[str], tradutor, limites: list | None = None, gl
         # o que passou do espaço: o Claude encurta (uma vez)
         longos = {i: traduzidos[i] for i, t in enumerate(lista)
                   if t in limite_de and len(restaurar(traduzidos[i], protegidos[i][1])[0]) > limite_de[t]}
-        if longos and isinstance(tradutor, TradutorJogo):
+        if longos and hasattr(tradutor, "encurtar"):
             novos = tradutor.encurtar(longos, {i: tradutor.limites[i] for i in longos})
             for i, texto in novos.items():
                 if i in longos and len(restaurar(texto, protegidos[i][1])[0]) < \
                         len(restaurar(traduzidos[i], protegidos[i][1])[0]):
+                    memoria.setdefault("\0longas", {})[lista[i]] = traduzidos[i]
                     traduzidos[i] = texto
                     resumo.encurtadas += 1
         for i, original in enumerate(lista):
             memoria[original] = traduzidos[i]
             memoria.setdefault("\0pecas", {})[original] = protegidos[i][1]
     saida, avisos = [], []
-    pecas_de = memoria.get("\0pecas", {})
+    pecas_de, longas_de = memoria.get("\0pecas", {}), memoria.get("\0longas", {})
     for texto, limite in zip(textos, limites):
+        if longas is not None:
+            longa = ""
+            if texto in longas_de and texto not in finais:
+                longa = restaurar(longas_de[texto], pecas_de.get(texto) or proteger(texto, glossario)[1])[0]
+                longa = sem_acentos(longa) if tirar_acentos else longa
+            longas.append(longa)
         if not texto.strip():
             saida.append(texto)
             avisos.append([])
@@ -499,11 +518,12 @@ def traduzir_roteiro(roteiro: Roteiro, tradutor, glossario: tuple = (), tirar_ac
                      ao_progresso=None) -> ResumoTraducao:
     """Traduz o roteiro (ou só os `so` primeiros textos: o teste) e guarda em cada Entrada a tradução e os avisos."""
     alvo = roteiro.com_texto[:so] if so else roteiro.com_texto
+    longas: list[str] = []
     traduzidas, avisos, resumo = traduzir_textos(
         [e.texto for e in alvo], tradutor, [e.limite for e in alvo], glossario, tirar_acentos, memoria,
-        roteiro.arquivo.stem, parar, ao_progresso)
-    for entrada, texto, aviso in zip(alvo, traduzidas, avisos):
-        entrada.traducao, entrada.avisos = texto, aviso
+        roteiro.arquivo.stem, parar, ao_progresso, longas)
+    for entrada, texto, aviso, longa in zip(alvo, traduzidas, avisos, longas):
+        entrada.traducao, entrada.avisos, entrada.longa = texto, aviso, longa
     return resumo
 
 
@@ -514,7 +534,7 @@ def carregar_memoria(arquivo: str | Path) -> dict:
     except (OSError, ValueError):
         return {}
     memoria = dict(dados.get("traducoes", {}))
-    for chave, nome in (("\0pecas", "pecas"), ("\0finais", "corrigidas")):
+    for chave, nome in (("\0pecas", "pecas"), ("\0finais", "corrigidas"), ("\0longas", "longas")):
         if dados.get(nome):
             memoria[chave] = dados[nome]
     return memoria
@@ -529,7 +549,8 @@ def salvar_memoria(arquivo: str | Path, memoria: dict) -> None:
     arquivo = Path(arquivo)
     arquivo.parent.mkdir(parents=True, exist_ok=True)
     dados = {"traducoes": {k: v for k, v in memoria.items() if not k.startswith("\0")},
-             "pecas": memoria.get("\0pecas", {}), "corrigidas": memoria.get("\0finais", {})}
+             "pecas": memoria.get("\0pecas", {}), "corrigidas": memoria.get("\0finais", {}),
+             "longas": memoria.get("\0longas", {})}
     temporario = arquivo.with_suffix(".tmp")
     temporario.write_text(json.dumps(dados, ensure_ascii=False, indent=1), encoding="utf-8")
     temporario.replace(arquivo)

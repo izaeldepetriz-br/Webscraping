@@ -95,6 +95,8 @@ def test_traduz_com_os_codigos_o_espaco_e_a_memoria(tmp_path):
     assert t["1"] == t["5"] == "Abra o portão!"                                 # a mesma frase, uma vez só
     assert t["2"] == "Obrigado, {NAME}.<br>A floresta está segura agora."
     assert t["3"] == "Salvar o jogo?" and resumo.encurtadas == 1               # passava de 16: o Claude encurtou
+    assert r.entradas[2].longa == "Você deseja salvar o seu jogo agora?" and r.entradas[2].espaco() == "✓ 14 de 16"
+    assert r.entradas[0].longa == "" and r.entradas[0].espaco() == "14 letras"
     assert t["4"] == "Você pegou a [cor]Chave Antiga[/cor]."
     assert t["6"] == "Bem-vindo a Kael!{NAME}" and r.entradas[5].avisos == ["faltou {NAME} (posto no fim)"]
     assert resumo.unicas == 5 and resumo.traduzidas == 6 and resumo.sem_codigo == 1 and resumo.passaram == 0
@@ -112,6 +114,7 @@ def test_traduz_com_os_codigos_o_espaco_e_a_memoria(tmp_path):
     assert len(cliente.pedidos) == antes and resumo.reaproveitadas == 6
     t = {e.chave: e.traducao for e in r.entradas}
     assert t["1"] == t["5"] == "Abram o portao!" and t["2"] == "Obrigado, {NAME}.<br>A floresta esta segura agora."
+    assert r.entradas[2].longa == "Voce deseja salvar o seu jogo agora?"            # a memória guarda a 1ª também
 
 
 def test_o_que_ainda_passa_do_espaco_fica_marcado():
@@ -145,3 +148,32 @@ def test_grava_com_as_mesmas_colunas(tmp_path):
     r = rj.ler_roteiro(txt)
     r.entradas[1].traducao = "Sair"
     assert rj.gravar_roteiro(r, tmp_path / "menu_ptbr.txt").read_text(encoding="utf-8") == "New game\nSair\n"
+
+
+def test_gemini_flash_traduz_com_as_mesmas_regras():
+    """O Gemini (chave grátis do AI Studio): as marcas e o "max" vão no pedido, o JSON volta (mesmo dentro de
+    ```json), o que não voltou é pedido de novo e o que passou do espaço ele encurta."""
+    from jellyfin_tools import traducao_gemini as tg
+
+    class Interacoes:
+        def __init__(self):
+            self.pedidos = []
+
+        def create(self, model, input):
+            self.pedidos.append(input)
+            if rj._ENCURTAR in input:
+                itens = json.loads(input.split(rj._ENCURTAR + "\n", 1)[1].split("\n\nResponda")[0])
+                volta = [{"id": x["id"], "texto": CURTAS.get(x["texto"], x["texto"])} for x in itens]
+            else:
+                itens = json.loads(input.split("Textos do jogo:\n", 1)[1].split("\n\nResponda")[0])
+                volta = [{"id": x["id"], "texto": TRADUCOES.get(x["texto"], "PT: " + x["texto"])} for x in itens
+                         if len(self.pedidos) > 1 or x["id"] != 1]                 # o id 1 some na 1ª vez
+            return SimpleNamespace(output_text="```json\n" + json.dumps({"falas": volta}) + "\n```", usage=None)
+
+    interacoes = Interacoes()
+    tradutor = tg.TradutorGemini("", cliente=SimpleNamespace(interactions=interacoes))
+    textos, avisos, resumo = rj.traduzir_textos(["Open the gate!", "Save your game?", "Thanks, {NAME}."], tradutor,
+                                                [None, 16, None])
+    assert textos == ["Abra o portão!", "Salvar o jogo?", "PT: Thanks, {NAME}."] and resumo.encurtadas == 1
+    assert '"max": 16' in interacoes.pedidos[0] and "{NAME}" not in interacoes.pedidos[0]
+    assert len(interacoes.pedidos) == 3 and tradutor.custo > 0                # 1ª, o que faltou e o encurtar

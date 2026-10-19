@@ -222,3 +222,97 @@ def test_nome_do_opl_e_busca_na_comunidade(tmp_path):
     url = pj.busca_na_comunidade(info, "Meu Jogo")
     assert url.startswith("https://www.google.com/search?q=") and "SLUS-20946" in url and "romhackers.org" in url
     assert pj.tamanho_legivel(4_700_000_000) == "4,38 GB"
+
+
+def _numero(n: int) -> bytes:
+    """O número do BPS (o contrário de patch_jogo._numero_bps)."""
+    saida = bytearray()
+    while True:
+        x = n & 0x7F
+        n >>= 7
+        if n == 0:
+            saida.append(0x80 | x)
+            return bytes(saida)
+        saida.append(x)
+        n -= 1
+
+
+def bps(original: bytes, nova: bytes, acoes: list) -> bytes:
+    """Um .bps de verdade: acoes = [(0, n) mesmo pedaço | (1, bytes) novos | (2, desloc, n) da original |
+    (3, desloc, n) do que já saiu]."""
+    corpo = b"BPS1" + _numero(len(original)) + _numero(len(nova)) + _numero(0)
+    for acao in acoes:
+        if acao[0] == 0:
+            corpo += _numero(((acao[1] - 1) << 2) | 0)
+        elif acao[0] == 1:
+            corpo += _numero(((len(acao[1]) - 1) << 2) | 1) + acao[1]
+        else:
+            tipo, desloc, n = acao
+            corpo += _numero(((n - 1) << 2) | tipo) + _numero((abs(desloc) << 1) | (1 if desloc < 0 else 0))
+    corpo += struct.pack("<II", zlib.crc32(original), zlib.crc32(nova))
+    return corpo + struct.pack("<I", zlib.crc32(corpo))
+
+
+def test_ips_e_bps(tmp_path):
+    iso = iso_de_teste(tmp_path / "Meu Jogo.iso")
+    original = iso.read_bytes()
+    # IPS: uma troca normal e uma sequência do mesmo byte (RLE)
+    ips = b"PATCH" + (41000).to_bytes(3, "big") + (9).to_bytes(2, "big") + b"OLA MUNDO" + \
+        (42000).to_bytes(3, "big") + (0).to_bytes(2, "big") + (300).to_bytes(2, "big") + b"\x2a" + b"EOF"
+    (tmp_path / "p").mkdir()
+    patch = tmp_path / "p" / "Meu Jogo PT-BR.ips"
+    patch.write_bytes(ips)
+    assert pj.tipo_do_patch(patch) == pj.IPS
+    r = pj.aplicar(iso, patch, tmp_path / "ips.iso", tmp_path / "ferramentas")
+    nova = r.destino.read_bytes()
+    assert nova[41000:41009] == b"OLA MUNDO" and nova[42000:42300] == b"\x2a" * 300 and len(nova) == len(original)
+    assert r.conferido == "sem como conferir" and iso.read_bytes() == original
+    # BPS: todas as ações (igual, novo, da original em outro lugar, repetindo o que já saiu)
+    alvo = bytearray(original)
+    alvo[41000:41009] = b"OLA MUNDO"
+    alvo[41009:41012] = original[100:103]
+    alvo[41012:41018] = b"ABABAB"
+    acoes = [(0, 41000), (1, b"OLA MUNDO"), (2, 100, 3), (1, b"AB"), (3, 41012, 4),
+             (0, len(original) - 41018)]
+    patch_bps = tmp_path / "p" / "Meu Jogo PT-BR.bps"
+    patch_bps.write_bytes(bps(original, bytes(alvo), acoes))
+    assert pj.tipo_do_patch(patch_bps) == pj.BPS and pj.info_bps(patch_bps)["destino"] == len(alvo)
+    r = pj.aplicar(iso, patch_bps, tmp_path / "bps.iso", tmp_path / "ferramentas")
+    assert r.destino.read_bytes() == bytes(alvo) and r.conferido == "o próprio patch conferiu"
+    outra = iso_de_teste(tmp_path / "Outra.iso", semente=7)                  # outra versão: não aplica
+    with pytest.raises(pj.ErroPatch, match="não é a versão do patch"):
+        pj.aplicar(outra, patch_bps, tmp_path / "bps2.iso", tmp_path / "ferramentas")
+    assert not (tmp_path / "bps2.iso").exists()
+
+
+def test_leia_me_o_que_traz_e_creditos(tmp_path):
+    pasta = tmp_path / "patch"
+    pasta.mkdir()
+    patch = pasta / "Meu Jogo PT-BR v1.2.xdelta"
+    patch.write_bytes(pj.MAGICA_VCDIFF + bytes(20))
+    (pasta / "LEIA-ME.txt").write_text("Meu Jogo - Tradução PT-BR\nTradução por: Grupo Exemplo\nVersão 1.2\n"
+                                       "Traduzimos os textos e os menus, com acentuação completa, e a dublagem "
+                                       "das cenas.\nCRC32: 1A2B3C4D\n", encoding="utf-8")
+    info = pj.leia_me(patch)
+    assert info.arquivo.name == "LEIA-ME.txt"
+    assert info.o_que_traz == ["textos", "menus", "vozes dubladas", "letras com ç e acentos"]
+    assert info.creditos == "Grupo Exemplo · versão 1.2"
+
+
+def test_pcsx2_e_patches_aplicados(tmp_path, monkeypatch):
+    exe = tmp_path / "PCSX2" / "pcsx2-qt.exe"
+    exe.parent.mkdir()
+    exe.write_bytes(b"")
+    assert pj.achar_pcsx2(str(exe)) == exe
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+    monkeypatch.setattr(pj.shutil, "which", lambda nome: None)
+    assert pj.achar_pcsx2("", sistema="win32") == exe and pj.achar_pcsx2("", sistema="linux") is None
+    abertos = []
+    pj.abrir_no_pcsx2(tmp_path / "jogo.iso", exe, abrir=abertos.append)
+    assert abertos == [[str(exe), str(tmp_path / "jogo.iso")]]
+    arquivo = tmp_path / "aplicados.json"
+    pj.registrar_aplicado(arquivo, Path("a.iso"), Path("p.xdelta"), Path("A PT.iso"), "bateu com o leia-me")
+    lista = pj.registrar_aplicado(arquivo, Path("b.iso"), Path("q.ppf"), Path("B PT.iso"), "sem como conferir")
+    pj.registrar_aplicado(arquivo, Path("a.iso"), Path("p2.xdelta"), Path("A PT.iso"), "o próprio patch conferiu")
+    lista = pj.carregar_aplicados(arquivo)
+    assert [d["destino"] for d in lista] == ["A PT.iso", "B PT.iso"] and lista[0]["patch"] == "p2.xdelta"

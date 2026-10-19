@@ -17,6 +17,7 @@ compartilhar o jogo.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -36,8 +37,8 @@ VERSAO_XDELTA = "3.1.0"
 URL_XDELTA = (f"https://github.com/jmacd/xdelta-gpl/releases/download/v{VERSAO_XDELTA}/"
               f"xdelta3-{VERSAO_XDELTA}-x86_64.exe.zip")
 SHA256_XDELTA = "b10e0d1df3e212e5a2d37d5c088d2f72ecec760bc3c26caeca51499c3118b93a"   # o .zip oficial (conferido)
-XDELTA, PPF = "xdelta", "ppf"
-EXTENSOES_PATCH = (".xdelta", ".vcdiff", ".xd3", ".delta", ".ppf")
+XDELTA, PPF, IPS, BPS = "xdelta", "ppf", "ips", "bps"
+EXTENSOES_PATCH = (".xdelta", ".vcdiff", ".xd3", ".delta", ".ppf", ".ips", ".bps")
 EXTENSOES_ISO = (".iso", ".bin", ".img")
 MAGICA_VCDIFF = b"\xd6\xc3\xc4"
 BLOCO = 8 * 1024 * 1024                  # leitura de 8 MB por vez (a ISO de DVD tem 4 GB)
@@ -249,10 +250,143 @@ def tipo_do_patch(patch: str | Path) -> str:
         return XDELTA
     if inicio in (b"PPF10", b"PPF20", b"PPF30"):
         return PPF
+    if inicio == b"PATCH":
+        return IPS
+    if inicio[:4] == b"BPS1":
+        return BPS
     if patch.suffix.lower() in EXTENSOES_ISO or patch.stat().st_size > 1024 ** 3:
-        raise ErroPatch("isso parece um jogo inteiro, não um patch. O patch é um arquivo pequeno (.xdelta ou .ppf) "
-                        "que o grupo de tradução distribui")
-    raise ErroPatch(f"{patch.name} não é um patch .xdelta nem .ppf (se veio num .zip/.rar/.7z, extraia antes)")
+        raise ErroPatch("isso parece um jogo inteiro, não um patch. O patch é um arquivo pequeno (.xdelta, .ppf, "
+                        ".ips ou .bps) que o grupo de tradução distribui")
+    raise ErroPatch(f"{patch.name} não é um patch .xdelta, .ppf, .ips nem .bps (se veio num .zip/.rar/.7z, extraia "
+                    "antes)")
+
+
+# ---- IPS (o formato mais antigo: trocas de até 16 MB do começo do arquivo) e BPS (com a impressão da original)
+def aplicar_ips(patch: str | Path, destino: str | Path, ao_progresso=None, parar=None) -> None:
+    """Aplica o .ips no destino (já uma CÓPIA da ISO): cada troca diz onde (3 bytes) e quanto (2 bytes); tamanho 0
+    é uma sequência do mesmo byte (RLE). No fim, "EOF" e, às vezes, o tamanho final (corta o arquivo)."""
+    dados = Path(patch).read_bytes()
+    if dados[:5] != b"PATCH":
+        raise ErroPatch(f"{Path(patch).name}: não é um .ips")
+    pos, trocas = 5, 0
+    with open(destino, "r+b") as d:
+        while pos + 3 <= len(dados):
+            if dados[pos:pos + 3] == b"EOF" and pos + 3 in (len(dados), len(dados) - 3):
+                if pos + 6 == len(dados):
+                    d.truncate(int.from_bytes(dados[pos + 3:pos + 6], "big"))
+                break
+            if pos + 5 > len(dados):
+                raise ErroPatch("o .ips está cortado (baixe de novo)")
+            onde, n = int.from_bytes(dados[pos:pos + 3], "big"), int.from_bytes(dados[pos + 3:pos + 5], "big")
+            pos += 5
+            if n:
+                trecho = dados[pos:pos + n]
+                pos += n
+            else:
+                repete, valor = int.from_bytes(dados[pos:pos + 2], "big"), dados[pos + 2:pos + 3]
+                trecho = valor * repete
+                pos += 3
+            d.seek(onde)
+            d.write(trecho)
+            trocas += 1
+            if trocas % 4096 == 0:
+                if parar and parar():
+                    raise ErroPatch("interrompido (botão Parar)")
+                if ao_progresso:
+                    ao_progresso(pos / len(dados))
+        else:
+            raise ErroPatch("o .ips está cortado (falta o fim \"EOF\"; baixe de novo)")
+
+
+def _numero_bps(dados: bytes, pos: int) -> tuple[int, int]:
+    """O número de tamanho variável do BPS (7 bits por byte; o bit alto marca o último)."""
+    valor, deslocamento = 0, 1
+    while True:
+        if pos >= len(dados):
+            raise ErroPatch("o .bps está cortado (baixe de novo)")
+        x = dados[pos]
+        pos += 1
+        valor += (x & 0x7F) * deslocamento
+        if x & 0x80:
+            return valor, pos
+        deslocamento <<= 7
+        valor += deslocamento
+
+
+def info_bps(patch: str | Path) -> dict:
+    """{"origem": tamanho, "destino": tamanho, "crc_origem": "8 hex", "crc_destino": ..., "texto": metadados}."""
+    dados = Path(patch).read_bytes()
+    if dados[:4] != b"BPS1" or len(dados) < 16:
+        raise ErroPatch(f"{Path(patch).name}: não é um .bps")
+    origem, pos = _numero_bps(dados, 4)
+    destino, pos = _numero_bps(dados, pos)
+    n_meta, pos = _numero_bps(dados, pos)
+    crc_o, crc_d, crc_p = struct.unpack_from("<III", dados, len(dados) - 12)
+    if zlib.crc32(dados[:-4]) & 0xFFFFFFFF != crc_p:
+        raise ErroPatch("o .bps está estragado (a conferência dele mesmo não bateu; baixe de novo)")
+    return {"origem": origem, "destino": destino, "crc_origem": f"{crc_o:08X}", "crc_destino": f"{crc_d:08X}",
+            "texto": dados[pos:pos + n_meta].decode("utf-8", "replace"), "inicio": pos + n_meta}
+
+
+def aplicar_bps(patch: str | Path, origem: str | Path, destino: str | Path, ao_progresso=None, parar=None) -> None:
+    """Monta o destino a partir da ISO original + o .bps. O BPS traz a impressão (CRC32) da original E da nova: o
+    Maestro confere as duas (a de outra versão do jogo não passa)."""
+    info = info_bps(patch)
+    origem, destino = Path(origem), Path(destino)
+    if origem.stat().st_size != info["origem"]:
+        raise ErroPatch(f"o patch é para uma ISO de {info['origem']} bytes e a sua tem {origem.stat().st_size}: é "
+                        "outra versão do jogo")
+    crc = 0
+    with open(origem, "rb") as o:
+        while bloco := o.read(BLOCO):
+            crc = zlib.crc32(bloco, crc)
+    if f"{crc & 0xFFFFFFFF:08X}" != info["crc_origem"]:
+        raise ErroPatch("a sua ISO não é a versão do patch (a impressão CRC32 que o .bps pede não bateu). Procure "
+                        "o patch feito para a sua")
+    dados = Path(patch).read_bytes()
+    pos, fim = info["inicio"], len(dados) - 12
+    saida_pos = rel_origem = rel_destino = 0
+    with open(origem, "rb") as o, open(destino, "w+b") as d:
+        while pos < fim:
+            comando, pos = _numero_bps(dados, pos)
+            acao, n = comando & 3, (comando >> 2) + 1
+            if acao == 0:                                  # o mesmo pedaço da original, no mesmo lugar
+                o.seek(saida_pos)
+                d.write(o.read(n))
+            elif acao == 1:                                # bytes novos, do próprio patch
+                d.write(dados[pos:pos + n])
+                pos += n
+            else:
+                desloc, pos = _numero_bps(dados, pos)
+                desloc = -(desloc >> 1) if desloc & 1 else desloc >> 1
+                if acao == 2:                              # um pedaço de outro lugar da original
+                    rel_origem += desloc
+                    o.seek(rel_origem)
+                    d.write(o.read(n))
+                    rel_origem += n
+                else:                                      # um pedaço do que já foi escrito (pode se repetir)
+                    rel_destino += desloc
+                    falta = n
+                    while falta:
+                        d.seek(rel_destino)
+                        pedaco = d.read(min(falta, saida_pos + (n - falta) - rel_destino, BLOCO))
+                        d.seek(0, os.SEEK_END)
+                        d.write(pedaco)
+                        rel_destino += len(pedaco)
+                        falta -= len(pedaco)
+            saida_pos += n
+            d.seek(saida_pos)
+            if parar and parar():
+                raise ErroPatch("interrompido (botão Parar)")
+            if ao_progresso and saida_pos % (64 * 1024 * 1024) < n:
+                ao_progresso(saida_pos / max(1, info["destino"]))
+        d.flush()
+        d.seek(0)
+        crc = 0
+        while bloco := d.read(BLOCO):
+            crc = zlib.crc32(bloco, crc)
+    if f"{crc & 0xFFFFFFFF:08X}" != info["crc_destino"]:
+        raise ErroPatch("a ISO nova não saiu como o grupo publicou (a impressão não bateu): o patch está estragado")
 
 
 # ---- PPF (Playstation Patch File 1.0, 2.0 e 3.0): aplicado aqui mesmo
@@ -457,9 +591,11 @@ def aplicar(iso: str | Path, patch: str | Path, destino: str | Path, pasta_ferra
     parcial.unlink(missing_ok=True)
     progresso = ao_progresso or (lambda f: None)
     try:
-        if tipo == PPF:
+        if tipo in (PPF, IPS):
             _copiar(iso, parcial, lambda f: progresso(0.6 * f), parar)
-            aplicar_ppf(patch, parcial, lambda f: progresso(0.6 + 0.4 * f), parar)
+            (aplicar_ppf if tipo == PPF else aplicar_ips)(patch, parcial, lambda f: progresso(0.6 + 0.4 * f), parar)
+        elif tipo == BPS:
+            aplicar_bps(patch, iso, parcial, progresso, parar)
         else:
             xdelta = programa_xdelta(pasta_ferramentas, sistema, baixar)
             _rodar_xdelta([xdelta, "-d", "-f", "-s", iso, patch, parcial], parcial, info.tamanho, progresso, parar,
@@ -472,7 +608,8 @@ def aplicar(iso: str | Path, patch: str | Path, destino: str | Path, pasta_ferra
     nova.caminho = destino
     progresso(1.0)
     conferido = ("bateu com o leia-me" if esperado is not None and esperado.tem_digital() and digital is not None
-                 else "o próprio patch conferiu" if tipo == XDELTA or ler_ppf(patch).bloco else "sem como conferir")
+                 else "o próprio patch conferiu" if tipo in (XDELTA, BPS) or (tipo == PPF and ler_ppf(patch).bloco)
+                 else "sem como conferir")
     return Resultado(destino, nova, tipo, conferido)
 
 
@@ -529,3 +666,90 @@ def busca_na_comunidade(info: InfoISO, nome: str = "") -> str:
     termos = " ".join(t for t in (nome.strip(), f'"{info.id_jogo}"' if info.id_jogo else "") if t) or info.volume
     pergunta = f"{termos} tradução PT-BR patch (site:romhackers.org OR site:romhacking.net)"
     return "https://www.google.com/search?q=" + quote_plus(pergunta)
+
+
+# ----------------------------------------------------------------- o que o leia-me conta
+@dataclass
+class LeiaMe:
+    arquivo: Path | None = None
+    o_que_traz: list = field(default_factory=list)   # ["textos e menus em português", "vozes dubladas", ...]
+    creditos: str = ""                                # "Grupo Exemplo · versão 1.2"
+
+
+_TRAZ = (("textos", r"\btexto|\btradu[çc][ãa]o (?:completa|dos textos|do jogo)|\bdi[áa]logo|\blegenda"),
+         ("menus", r"\bmenu"),
+         ("vozes dubladas", r"\bdublag|\bdublad|\bvozes\b|\b[áa]udio em portugu"),
+         ("letras com ç e acentos", r"\bacentua|\bacentos?\b|\bç\b|cedilha|\bfonte"),
+         ("gráficos traduzidos", r"\bgr[áa]fico|\btextura|\bimage(?:m|ns)\b|\blogo"))
+_VERSAO = re.compile(r"\b(?:v(?:ers[ãa]o)?\.?\s?)(\d+(?:\.\d+){0,3}[a-z]?)\b", re.I)
+_GRUPO = re.compile(r"(?:grupo|equipe|team|tradu[çz]ido por|tradu[çc][ãa]o(?: feita)? por|translated by|"
+                    r"hack(?:ing)? por|criado por|by)\s*[:\-]?\s*([^\n\r|·]{2,60})", re.I)
+
+
+def leia_me(patch: str | Path) -> LeiaMe:
+    """O leia-me ao lado do patch: o que ele traz (textos, menus, vozes, acentos) e os créditos (grupo e versão)."""
+    patch = Path(patch)
+    textos = []
+    for arquivo in sorted(patch.parent.iterdir()) if patch.parent.is_dir() else []:
+        if arquivo.suffix.lower() in (".txt", ".nfo", ".diz", ".md") and arquivo.stat().st_size <= 512 * 1024:
+            try:
+                textos.append((arquivo, arquivo.read_bytes().decode("utf-8", "replace")))
+            except OSError:
+                continue
+    if tipo_do_patch(patch) == PPF and ler_ppf(patch).diz:
+        textos.append((None, ler_ppf(patch).diz))
+    principal = next((a for a, _ in textos if a is not None and re.search(r"leia|readme|ler|info", a.stem, re.I)),
+                     next((a for a, _ in textos if a is not None), None))
+    tudo = "\n".join(t for _, t in textos)
+    info = LeiaMe(principal, [nome for nome, padrao in _TRAZ if re.search(padrao, tudo, re.I)])
+    grupo = _GRUPO.search(tudo)
+    versao = _VERSAO.search(tudo) or _VERSAO.search(patch.stem)
+    partes = [grupo.group(1).strip(" .:-") if grupo else "", f"versão {versao.group(1)}" if versao else ""]
+    info.creditos = " · ".join(p for p in partes if p)
+    return info
+
+
+# ----------------------------------------------------------------- abrir no PCSX2
+def achar_pcsx2(escolhido: str = "", sistema: str = sys.platform) -> Path | None:
+    """O PCSX2 deste PC: o escolhido nas configurações ou os lugares de sempre (Arquivos de Programas, a pasta do
+    usuário, o PATH)."""
+    if escolhido and Path(escolhido).is_file():
+        return Path(escolhido)
+    nomes = ("pcsx2-qt.exe", "pcsx2.exe", "pcsx2x64.exe") if sistema == "win32" else ("pcsx2-qt", "pcsx2",
+                                                                                     "PCSX2.AppImage")
+    for nome in nomes:
+        if achado := shutil.which(nome):
+            return Path(achado)
+    if sistema == "win32":
+        bases = [os.environ.get(v, "") for v in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA")]
+        for base in filter(None, bases):
+            for pasta in ("PCSX2", "PCSX2 Nightly", "Programs/PCSX2", "Programs/pcsx2"):
+                for nome in nomes:
+                    if (Path(base) / pasta / nome).is_file():
+                        return Path(base) / pasta / nome
+    return None
+
+
+def abrir_no_pcsx2(iso: str | Path, pcsx2: str | Path, abrir=subprocess.Popen):
+    """Liga o jogo no PCSX2 (o emulador abre a ISO direto)."""
+    return abrir([str(pcsx2), str(iso)])
+
+
+# ----------------------------------------------------------------- os patches aplicados (para refazer ou apagar)
+def carregar_aplicados(arquivo: str | Path) -> list[dict]:
+    try:
+        dados = json.loads(Path(arquivo).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [d for d in dados if isinstance(d, dict) and d.get("destino")]
+
+
+def registrar_aplicado(arquivo: str | Path, iso: Path, patch: Path, destino: Path, conferido: str) -> list[dict]:
+    """Guarda o patch aplicado (o mais novo primeiro; a mesma ISO nova aparece uma vez só)."""
+    from datetime import datetime
+    lista = [d for d in carregar_aplicados(arquivo) if d["destino"] != str(destino)]
+    lista.insert(0, {"quando": datetime.now().strftime("%d/%m/%Y %H:%M"), "iso": str(iso), "patch": str(patch),
+                     "destino": str(destino), "conferido": conferido})
+    Path(arquivo).parent.mkdir(parents=True, exist_ok=True)
+    Path(arquivo).write_text(json.dumps(lista[:200], ensure_ascii=False, indent=1), encoding="utf-8")
+    return lista

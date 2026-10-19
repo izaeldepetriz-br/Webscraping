@@ -189,11 +189,17 @@ def _ler(arquivo: str | Path, taxa: int, ffmpeg: str, executar, filtro: str = ""
 
 # ----------------------------------------------------------------- gravar igual à original
 def gravar_como(original: str | Path, dublada: str | Path, destino: str | Path, ffmpeg: str,
-                executar=subprocess.run) -> dict:
+                executar=subprocess.run, exata: bool = True) -> dict:
     """Grava a fala dublada no formato da original do jogo (taxa, canais, duração e, no VAG/ADS, o tamanho em
-    bytes iguais). Devolve o que foi feito (formato, aceleração, corte, silêncio completado)."""
+    bytes iguais). Devolve o que foi feito (formato, aceleração, corte, silêncio completado). exata=False: no
+    formato da original, mas com a duração natural da fala dublada (para a ferramenta do jogo que aceita outro
+    tamanho; o Maestro só monta a ISO com a duração exata)."""
     formato = ler_formato(original)
-    som, info = encaixar_na_duracao(dublada, formato.amostras, formato.taxa, ffmpeg, executar)
+    if exata:
+        som, info = encaixar_na_duracao(dublada, formato.amostras, formato.taxa, ffmpeg, executar)
+    else:
+        som = np.clip(np.rint(_ler(dublada, formato.taxa, ffmpeg, executar)), -32768, 32767).astype(np.int16)
+        info = {"acelerada": 1.0, "cortada": 0.0, "completada": 0.0}
     destino = Path(destino)
     destino.parent.mkdir(parents=True, exist_ok=True)
     if formato.tipo == "wav":
@@ -215,19 +221,27 @@ def gravar_como(original: str | Path, dublada: str | Path, destino: str | Path, 
         destino.write_bytes(bytes(cab) + corpo)
     else:
         e = formato.extra
-        por_canal = e["tamanho_dados"] // formato.canais
+        passo = e["intercalado"]
+        cabecalho, rabo = e["cabecalho"], e["rabo"]
+        if exata:
+            por_canal = e["tamanho_dados"] // formato.canais
+        else:                                           # do tamanho da fala, em pedaços inteiros do intercalado
+            bruto = len(som) * 2 if e["codec"] != 0x10 else -(-len(som) // AMOSTRAS_POR_BLOCO) * BYTES_POR_BLOCO
+            por_canal = -(-bruto // passo) * passo
+            cabecalho = bytearray(cabecalho)
+            struct.pack_into("<I", cabecalho, 36, por_canal * formato.canais)
+            cabecalho, rabo = bytes(cabecalho), b""
         if e["codec"] == 0x10:
             canal = codificar_adpcm(som)[:por_canal].ljust(por_canal, b"\x00")
         else:
             canal = som.astype("<i2").tobytes()[:por_canal].ljust(por_canal, b"\x00")
-        passo = e["intercalado"]
         dados = bytearray()
         for pos in range(0, por_canal, passo):         # L, R, L, R... em pedaços do tamanho do original
             for _ in range(formato.canais):
                 dados += canal[pos:pos + passo]
-        destino.write_bytes(e["cabecalho"] + bytes(dados) + e["rabo"])      # (o enchimento do fim, igual)
+        destino.write_bytes(cabecalho + bytes(dados) + rabo)      # (o enchimento do fim, igual)
     novo = destino.stat().st_size
-    if formato.tipo in ("vag", "ads") and novo != formato.tamanho:
+    if exata and formato.tipo in ("vag", "ads") and novo != formato.tamanho:
         raise ErroAudioJogo(f"{destino.name} ficou com {novo} bytes e a original tem {formato.tamanho}")
     return {"formato": formato.descrever(), **info, "bytes": novo}
 

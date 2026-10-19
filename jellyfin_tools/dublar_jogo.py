@@ -187,9 +187,10 @@ def ligar_traducoes(falas: list[FalaJogo]) -> None:
 
 # ----------------------------------------------------------------- as vozes
 def elenco(falas: list[FalaJogo], voz_principal: str, fixas: dict | None = None,
-           vozes_genero: dict | None = None) -> dict[str, str]:
+           vozes_genero: dict | None = None, catalogo="xtts") -> dict[str, str]:
     """{personagem: voz}. Os personagens do roteiro pelo mesmo esquema dos filmes (quem mais fala com a voz
-    principal, os outros sem repetir voz perto). As falas sem personagem ("Outros"): pelo gênero do tom da original
+    principal, os outros sem repetir voz perto), com as vozes do motor (catalogo: "xtts", um Catalogo, ou None no
+    motor de poucas vozes: cada um pelo gênero). As falas sem personagem ("Outros"): pelo gênero do tom da original
     (vozes_genero {"m": voz, "f": voz}), a não ser que a tabela escolha uma voz para todas."""
     fixas = dict(fixas or {})
     por_nome: dict[str, list[int]] = {}
@@ -200,11 +201,15 @@ def elenco(falas: list[FalaJogo], voz_principal: str, fixas: dict | None = None,
     for nome, indices in sorted(por_nome.items(), key=lambda x: -len(x[1])):
         generos = Counter(falas[i].genero for i in indices if falas[i].genero in ("m", "f"))
         personagens.append(Personagem(nome, generos.most_common(1)[0][0] if generos else "?", falas=indices))
-    mapa = distribuir_vozes(personagens, voz_principal, fixas={k: v for k, v in fixas.items() if k in por_nome},
-                            catalogo=catalogo_xtts(), tempos={i: i * SEGUNDOS_POR_LINHA for i in range(len(falas))}) \
-        if personagens else {}
-    mapa.update({k: v for k, v in fixas.items() if k in por_nome})
     vozes_genero = vozes_genero or {"m": voz_principal, "f": voz_principal}
+    if catalogo is None:
+        mapa = {p.rotulo: vozes_genero.get(p.genero, voz_principal) for p in personagens}
+    else:
+        mapa = distribuir_vozes(personagens, voz_principal,
+                                fixas={k: v for k, v in fixas.items() if k in por_nome},
+                                catalogo=catalogo_xtts() if catalogo == "xtts" else catalogo,
+                                tempos={i: i * SEGUNDOS_POR_LINHA for i in range(len(falas))}) if personagens else {}
+    mapa.update({k: v for k, v in fixas.items() if k in por_nome})
     outros = fixas.get(OUTROS, "")
     for fala in falas:
         if fala.personagem:
@@ -216,8 +221,48 @@ def elenco(falas: list[FalaJogo], voz_principal: str, fixas: dict | None = None,
     return mapa
 
 
-def tabela_do_elenco(falas: list[FalaJogo]) -> list[tuple[str, int, str, str]]:
-    """[(personagem, falas, voz, emoção)] para a tela: quem mais fala primeiro; "Outros" no fim."""
+EMOCAO_DO_TOM = {genero_local.TOM_GRITO: "grito", genero_local.TOM_SUSSURRO: "sussurro"}
+
+
+def como_a_emocao(voz: str, tom: str, importadas: list = (), pasta_importadas=None,
+                  chatterbox: bool = False) -> str:
+    """Como sai a fala gritada/sussurrada desta voz: 'gravação "Gritando"' (a gravação de emoção da voz importada),
+    "Chatterbox" ou "XTTS-v2 (neutra)" — a mesma escolha do motor de vozes."""
+    from .emocoes import nome_da_emocao
+    from .voz_local import PREFIXO_IMPORTADA, separar_variante
+    from .vozes_importadas import arquivo_da_emocao
+    emocao = EMOCAO_DO_TOM.get(tom)
+    if not emocao:
+        return ""
+    base = separar_variante(voz)[0]
+    if base.startswith(PREFIXO_IMPORTADA) and pasta_importadas is not None:
+        importada = next((v for v in importadas if v.id == base[len(PREFIXO_IMPORTADA):]), None)
+        gravacao = arquivo_da_emocao(importada, pasta_importadas, emocao) if importada else None
+        if gravacao is not None:
+            return f'gravação "{nome_da_emocao(gravacao.stem)}"'
+    return "Chatterbox" if chatterbox else "XTTS-v2 (neutra)"
+
+
+def duracao_do_grupo(lista: list[FalaJogo]) -> str:
+    """'✓ todas cabem', '⚠ 3 aceleradas 6%', '⚠ 2 cortadas' ou 'x de y dubladas' (para a coluna Duração)."""
+    feitas = [f for f in lista if f.feito]
+    if not feitas:
+        return "—"
+    aceleradas = [f.feito.get("acelerada", 1.0) for f in feitas if f.feito.get("acelerada", 1.0) > 1.0]
+    cortadas = sum(1 for f in feitas if f.feito.get("cortada", 0.0) > 0)
+    partes = []
+    if cortadas:
+        partes.append(f"{cortadas} cortada(s) no fim")
+    if aceleradas:
+        partes.append(f"{len(aceleradas)} acelerada(s) {round((max(aceleradas) - 1) * 100)}%")
+    texto = ("⚠ " + " · ".join(partes)) if partes else "✓ todas cabem"
+    return texto + (f" ({len(feitas)} de {len(lista)} dubladas)" if len(feitas) < len(lista) else "")
+
+
+def tabela_do_elenco(falas: list[FalaJogo], importadas: list = (), pasta_importadas=None,
+                     chatterbox: bool = False) -> list[tuple[str, int, str, str, str]]:
+    """[(personagem, falas, voz, emoção, duração)] para a tela: quem mais fala primeiro; "Outros" no fim. A emoção
+    diz quantas e COMO saem ("122 gritando → gravação "Gritando"", "9 sussurrando → Chatterbox")."""
     grupos: dict[str, list[FalaJogo]] = {}
     for fala in falas:
         if fala.formato is not None:
@@ -226,11 +271,26 @@ def tabela_do_elenco(falas: list[FalaJogo]) -> list[tuple[str, int, str, str]]:
     for nome, lista in sorted(grupos.items(), key=lambda x: (x[0] == OUTROS, -len(x[1]))):
         vozes = Counter(f.voz for f in lista)
         voz = vozes.most_common(1)[0][0] if len(vozes) == 1 else AUTOMATICA
-        tons = Counter(f.tom for f in lista if f.tom)
-        emocao = ", ".join(f"{n} {'gritando' if t == genero_local.TOM_GRITO else 'sussurrando'}"
-                           for t, n in tons.most_common()) or "—"
-        linhas.append((nome, len(lista), voz, emocao))
+        partes = []
+        for tom, n in Counter(f.tom for f in lista if f.tom).most_common():
+            exemplo = next(f.voz for f in lista if f.tom == tom)
+            como = como_a_emocao(exemplo, tom, importadas, pasta_importadas, chatterbox)
+            partes.append(f"{n} {'gritando' if tom == genero_local.TOM_GRITO else 'sussurrando'} → {como}")
+        linhas.append((nome, len(lista), voz, ", ".join(partes) or "—", duracao_do_grupo(lista)))
     return linhas
+
+
+SEGUNDOS_POR_FALA = {"placa": 3.0, "processador": 27.0}     # o XTTS-v2 numa fala de jogo (com o Whisper conferindo)
+
+
+def estimar_tempo(falas: int) -> str:
+    """'≈ 1 h com a placa NVIDIA (≈ 9 h no processador)'."""
+    def legivel(segundos: float) -> str:
+        if segundos < 3600:
+            return f"{max(1, round(segundos / 60))} min"
+        return f"{segundos / 3600:.0f} h" if segundos >= 36000 else f"{segundos / 3600:.1f} h".replace(".0 h", " h")
+    return (f"≈ {legivel(falas * SEGUNDOS_POR_FALA['placa'])} com a placa NVIDIA (≈ "
+            f"{legivel(falas * SEGUNDOS_POR_FALA['processador'])} no processador)").replace(".", ",")
 
 
 # ----------------------------------------------------------------- dublar
@@ -252,16 +312,36 @@ def _gravar_json(arquivo: Path, dados) -> None:
     temporario.replace(arquivo)
 
 
-def destino_da_fala(fala: FalaJogo, pasta_saida: str | Path, exato: bool = True) -> Path:
+def destino_da_fala(fala: FalaJogo, pasta_saida: str | Path, formato: bool = True) -> Path:
     destino = Path(pasta_saida) / PASTA_SAIDA_AUDIO / fala.relativo
-    return destino if exato else destino.with_suffix(".wav")
+    return destino if formato else destino.with_suffix(".wav")
 
 
-def dublar(falas: list[FalaJogo], motor, pasta_saida: str | Path, ffmpeg: str, exato: bool = True,
-           com_emocao: bool = True, refazer: bool = False, so: list | None = None, parar=None,
-           ao_progresso=None) -> ResumoDublagem:
-    """Gera as falas traduzidas com o motor (XTTS-v2) e grava cada uma em audio_ptbr\\ no formato e na duração da
-    original (exato) ou num WAV comum do tamanho natural (para ouvir e editar). so: só estas falas (o teste)."""
+def _gravar(fala: FalaJogo, wav: Path, destino: Path, ffmpeg: str, formato: bool, duracao: bool) -> dict:
+    """A fala gerada no jeito escolhido: no formato da original (com a duração exata, ou a natural) ou num WAV
+    comum (com a duração da original, ou a natural)."""
+    if formato:
+        return audio_jogo.gravar_como(fala.arquivo, wav, destino, ffmpeg, exata=duracao)
+    if not duracao:
+        shutil.copyfile(wav, destino)
+        return {"formato": "WAV (duração natural)", "acelerada": 1.0, "cortada": 0.0, "completada": 0.0}
+    with wave.open(str(wav)) as w:
+        taxa = w.getframerate()
+    som, info = audio_jogo.encaixar_na_duracao(wav, round(fala.formato.segundos * taxa), taxa, ffmpeg)
+    with wave.open(str(destino), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(taxa)
+        w.writeframes(som.tobytes())
+    return {"formato": "WAV (duração da original)", **info}
+
+
+def dublar(falas: list[FalaJogo], motor, pasta_saida: str | Path, ffmpeg: str, formato: bool = True,
+           duracao: bool = True, com_emocao: bool = True, refazer: bool = False, so: list | None = None,
+           parar=None, ao_progresso=None) -> ResumoDublagem:
+    """Gera as falas traduzidas com o motor (XTTS-v2) e grava cada uma em audio_ptbr\\: no formato da original
+    (formato) e na duração dela (duracao), como o jogo precisa; desligados, um WAV comum do tamanho natural (para
+    ouvir e editar). so: só estas falas (o teste ou "Editar uma fala")."""
     pasta_saida = Path(pasta_saida)
     trabalho = pasta_saida / PASTA_TRABALHO
     arquivo_feitas = trabalho / ARQUIVO_FEITAS
@@ -278,8 +358,8 @@ def dublar(falas: list[FalaJogo], motor, pasta_saida: str | Path, ffmpeg: str, e
         if not texto:
             resumo.sem_traducao += 1
             continue
-        destino = destino_da_fala(fala, pasta_saida, exato)
-        assinatura = f"{texto}|{fala.voz}|{fala.tom if com_emocao else ''}|{'exato' if exato else 'natural'}"
+        destino = destino_da_fala(fala, pasta_saida, formato)
+        assinatura = f"{texto}|{fala.voz}|{fala.tom if com_emocao else ''}|{int(formato)}{int(duracao)}"
         if not refazer and destino.is_file() and feitas.get(fala.relativo, {}).get("assinatura") == assinatura:
             fala.feito = feitas[fala.relativo]
             resumo.puladas += 1
@@ -305,11 +385,7 @@ def dublar(falas: list[FalaJogo], motor, pasta_saida: str | Path, ffmpeg: str, e
                 continue
             destino.parent.mkdir(parents=True, exist_ok=True)
             try:
-                if exato:
-                    feito = audio_jogo.gravar_como(fala.arquivo, wav, destino, ffmpeg)
-                else:
-                    shutil.copyfile(wav, destino)
-                    feito = {"formato": "WAV natural"}
+                feito = _gravar(fala, wav, destino, ffmpeg, formato, duracao)
             except (audio_jogo.ErroAudioJogo, OSError) as erro:
                 resumo.erros.append((fala.relativo, str(erro)))
                 continue
@@ -324,11 +400,11 @@ def dublar(falas: list[FalaJogo], motor, pasta_saida: str | Path, ffmpeg: str, e
 
 
 def amostra(falas: list[FalaJogo], pasta_saida: str | Path, destino: str | Path, quantas: int = 5,
-            exato: bool = True) -> Path | None:
+            formato: bool = True) -> Path | None:
     """Um WAV para ouvir: de cada uma das primeiras falas dubladas, a original e logo depois a dublada."""
     pares = []
     for fala in falas:
-        dublada = destino_da_fala(fala, pasta_saida, exato)
+        dublada = destino_da_fala(fala, pasta_saida, formato)
         if fala.formato is not None and dublada.is_file():
             pares.append((fala.arquivo, dublada))
         if len(pares) >= quantas:

@@ -114,7 +114,9 @@ def test_dubla_no_formato_retoma_e_entrega(tmp_path):
     por_nome = {f.relativo: f for f in falas}
     assert por_nome["DJ/STRYKER_00.wav"].voz == "Damien Black"                    # "Outros": pelo tom (homem)
     tabela = dj.tabela_do_elenco(falas)
-    assert tabela[0][:2] == ("Kael", 2) and tabela[-1][0] == dj.OUTROS and tabela[-1][3] == "1 gritando"
+    assert tabela[0][:2] == ("Kael", 2) and tabela[-1][0] == dj.OUTROS and tabela[0][4] == "—"
+    assert tabela[-1][3] == "1 gritando → XTTS-v2 (neutra)"
+    assert dj.tabela_do_elenco(falas, chatterbox=True)[-1][3] == "1 gritando → Chatterbox"
     motor = MotorFalso()
     saida = tmp_path / "saida"
     andamento = []
@@ -162,9 +164,18 @@ def test_wav_natural_e_voz_fixa_para_os_outros(tmp_path):
         f.traducao = "Uma fala bem comprida que não cabe no tempo da original de jeito nenhum mesmo"
     dj.elenco(falas, "Damien Black", fixas={"Kael": "Ana Florence · grave"})
     assert {f.voz for f in falas} == {"Ana Florence · grave"}
-    r = dj.dublar(falas, MotorFalso(), tmp_path / "saida", FFMPEG, exato=False)
+    r = dj.dublar(falas, MotorFalso(), tmp_path / "saida", FFMPEG, formato=False, duracao=False)
     assert r.dubladas == 2
     natural = tmp_path / "saida" / "audio_ptbr" / "SOUND" / "KAEL_001.wav"
     assert natural.is_file() and aj.ler_formato(natural).segundos > 3              # do tamanho natural
     r = dj.dublar(falas, MotorFalso(), tmp_path / "saida2", FFMPEG)
     assert r.cortadas == 2 and r.aceleradas == 2                                 # exato: acelera e corta
+    assert dj.tabela_do_elenco(falas)[0][4] == "⚠ 2 cortada(s) no fim · 2 acelerada(s) 35%"
+    r = dj.dublar(falas, MotorFalso(), tmp_path / "saida3", FFMPEG, duracao=False)   # o formato, sem cortar
+    nova = tmp_path / "saida3" / "audio_ptbr" / "SOUND" / "KAEL_001.vag"
+    assert r.cortadas == 0 and aj.ler_formato(nova).segundos > 3 and aj.ler_formato(nova).taxa == 22050
+    r = dj.dublar(falas, MotorFalso(), tmp_path / "saida4", FFMPEG, formato=False)   # WAV com o tempo da original
+    wav_ = tmp_path / "saida4" / "audio_ptbr" / "SOUND" / "KAEL_001.wav"
+    assert abs(aj.ler_formato(wav_).segundos - falas[0].formato.segundos) < 0.01
+    assert dj.estimar_tempo(1204) == "≈ 1 h com a placa NVIDIA (≈ 9 h no processador)"
+    assert dj.estimar_tempo(10) == "≈ 1 min com a placa NVIDIA (≈ 4 min no processador)"
