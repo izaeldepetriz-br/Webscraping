@@ -266,6 +266,16 @@ primeira falha (antes esperava o tempo limite em cada filme).
   - criança e jovem ganham as variantes jovens; idoso, as graves;
   - a série guarda o elenco (a escolha da tabela vale para os próximos episódios), separado por motor: trocar entre o
     Gemini e o XTTS-v2 não perde a escolha do outro.
+- **Discussão: duas ou mais pessoas falando ao mesmo tempo** (para todos os motores de voz):
+  - quando a legenda de uma pessoa começa antes de a outra terminar, e com **outra voz**, as duas falas **soam
+    juntas** (misturadas, sem estourar); antes, a 1ª era **cortada** para a 2ª entrar. A mesma voz continua
+    esperando a vez;
+  - o **bloco com travessões** ("- Sai daqui!" / "- Não saio!") vira **duas vozes**: a 2ª pessoa com a voz de quem
+    fala logo antes ou depois na cena ou, sem pista, a próxima voz do mesmo gênero. Antes, uma voz só lia as duas.
+- **Trocar as vozes à mão também no XTTS-v2**: em **"Ajustar falas"** (depois do teste), a lista das vozes do
+  XTTS-v2 e das importadas, com a variante (antes o menu de voz ficava apagado); na **aba Avulsos**, a tabela
+  **"Vozes dos personagens"** antes de dublar (como na aba Jellyfin), e a descrição mostra o XTTS-v2 (dizia
+  "Piper").
 - **O grito continua mais alto na trilha**: a trilha deixava todas as falas no mesmo volume, e o grito ficava na
   altura da conversa. Agora o volume segue a emoção (grito +6 dB, raiva +3 dB, sussurro −9 dB...), para todos os
   motores de voz.
