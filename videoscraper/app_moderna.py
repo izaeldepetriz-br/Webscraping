@@ -64,7 +64,7 @@ from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, inicia
 from jellyfin_tools.relatorio import gerar_relatorio, resumo, salvar_csv
 from jellyfin_tools.resumo_diario import ResumoDiario, mensagem as mensagem_resumo
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca, indice_da_biblioteca, testar_conexao
-from jellyfin_tools import cotacao, gastos, microfone, personagens, vigia, voz_clonada, voz_cloud, voz_gemini
+from jellyfin_tools import cotacao, gastos, microfone, personagens, vigia, voz_clonada, voz_cloud, voz_gemini, voz_local
 from jellyfin_tools.vigia import filtro_prontos
 
 from . import config
@@ -2888,8 +2888,11 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaMode
                                   "info")
             return
         o = self.obter_opcoes_jellyfin()
-        vozes = list(self.vozes_gemini_do_menu()) if automacao.usa_gemini(o) else []
-        escolha = self.pedir_ajuste_de_fala(Path(teste["video"]).stem, linhas, vozes)
+        vozes, variantes = (list(self.vozes_gemini_do_menu()) if automacao.usa_gemini(o) else []), ()
+        if automacao.usa_local(o):                      # XTTS-v2: as vozes dele (e as importadas) com a variante
+            vozes, variantes = [f"XTTS: {v}" for v in self.vozes_locais_do_menu()], tuple(voz_local.VARIANTES)
+        escolha = self.pedir_ajuste_de_fala(Path(teste["video"]).stem, linhas, vozes,
+                                            **({"variantes": variantes} if variantes else {}))
         if escolha is None:
             return
         k, texto, voz, tom = escolha
@@ -3153,7 +3156,11 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaMode
         if o.avulsos_dublar:
             motor = ("Gemini (pago por uso)" if automacao.usa_gemini(o) else
                      f"Google Cloud, voz {o.voz_cloud}" if automacao.usa_cloud(o) else
+                     f"XTTS-v2, voz \"{automacao.voz_principal(o)}\" (grátis, no PC)" if automacao.usa_local(o) else
                      f"Piper, voz \"{o.voz_dublagem}\" (grátis)")
+            if automacao.personagem_por_voz(o):
+                motor += (" e uma voz para cada personagem (o elenco: sem repetir voz na cena"
+                          + ("" if o.vozes_sem_tabela else "; antes, a tabela para você conferir e trocar") + ")")
             prontos = f"{len(plano.dublar)} já pronto(s) para dublar" if plano.dublar else "nenhum pronto ainda"
             natural = " Natural: as vozes originais saem (mais lento)." if o.separar_vozes else ""
             if not o.dublagem_no_original:
@@ -3175,14 +3182,19 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaMode
                                 "algo não bater, o original fica como estava." + teto, ("Começar",))
         if escolha is None:
             return
+        if automacao.personagem_por_voz(o) and not o.vozes_sem_tabela and plano.dublar:
+            self._ouvir_personagens(plano.dublar, o, continuar=lambda itens, vozes, pulados: self._processar_avulsos(
+                o, pasta, arquivos, vozes, pulados))           # a tabela "Vozes dos personagens" antes
+            return
         self._processar_avulsos(o, pasta, arquivos)
 
-    def _processar_avulsos(self, o, pasta: str, arquivos) -> None:
+    def _processar_avulsos(self, o, pasta: str, arquivos, vozes: dict | None = None,
+                           pulados: set | None = None) -> None:
         toda_pasta, todos = self._alvos_avulsos(o)          # no fim, a lista inteira (não só os marcados)
 
         def tarefa():
             r = automacao.processar_avulsos(
-                o, self._log, pasta, arquivos, parar=self.evento_parar.is_set,
+                o, self._log, pasta, arquivos, parar=self.evento_parar.is_set, vozes_por_video=vozes, pular=pulados,
                 avisar=lambda texto: self.fila.put(("jf_analise", (0.0, texto))),
                 andamento=lambda fracao, texto: self.fila.put(("jf_analise", (fracao, texto))))
             self.resumo_diario.registrar("dublados", r.contagens.get("dublados", 0))
@@ -3292,7 +3304,7 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaMode
                               "fala? \"🧪 Testes feitos\" > \"Ajustar falas\" refaz só ela. O original não foi alterado."
                               + (f"\n\n{extra}" if extra else ""), "sucesso")
 
-    def _ouvir_personagens(self, itens: list, o, premium: set | None = None) -> None:
+    def _ouvir_personagens(self, itens: list, o, premium: set | None = None, continuar=None) -> None:
         """Voz por personagem, 1ª parte (numa tarefa): o Gemini ouve cada filme e diz quem fala cada fala (no XTTS-v2
         sem a chave do Gemini, o roteiro diz). Depois, na janela, a tabela "Pessoa -> Voz" de cada filme
         (_escolher_vozes) e a dublagem."""
@@ -3320,13 +3332,15 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaMode
                     self._log.warning("Voz por personagem em %s: %s (vai com uma voz só)", item.video.name, erro)
                     achados.append((item, [], []))
             outros = [i for i in itens if i not in ouvir]           # os que vão com o Piper: sem ouvir
-            self.fila.put(("vozes_pendentes", (achados, o, premium, outros)))
+            self.fila.put(("vozes_pendentes", (achados, o, premium, outros, continuar)))
 
         self._rodar(f"Ouvindo quem fala em {len(itens)} filme(s)...", tarefa)
 
-    def _escolher_vozes(self, achados: list, o, premium: set | None = None, outros: list = ()) -> None:
-        """Voz por personagem, 2ª parte (na janela): a tabela de cada filme; depois dubla os que não foram pulados."""
-        itens, vozes = list(outros), {}
+    def _escolher_vozes(self, achados: list, o, premium: set | None = None, outros: list = (),
+                        continuar=None) -> None:
+        """Voz por personagem, 2ª parte (na janela): a tabela de cada filme; depois dubla os que não foram pulados.
+        continuar(itens, vozes, pulados): no lugar de dublar aqui (a aba Avulsos segue o processamento dela)."""
+        itens, vozes, pulados = list(outros), {}, set()
         for item, falas, lista in achados:
             if not lista:                                      # não deu para ouvir: uma voz só
                 itens.append(item)
@@ -3346,6 +3360,7 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaMode
                                            [p.rotulo for p in principais], sugestao)
             if escolha is None:
                 self._log.info("Dublagem: %s pulado", item.video.name)
+                pulados.add(str(item.video))
                 continue
             itens.append(item)
             if escolha:
@@ -3354,7 +3369,11 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaMode
                 if item.serie:                                 # os próximos episódios usam as mesmas vozes
                     personagens.salvar_elenco(automacao.arquivo_elenco(item.serie), lista, mapa, chave)
                 self._log.info("%s: %s", item.video.name, ", ".join(f"{r} -> {v}" for r, v in escolha.items()))
-        if itens:
+            else:
+                vozes[str(item.video)] = {}                    # "Uma voz só para todos"
+        if continuar is not None:
+            continuar(itens, vozes, pulados)
+        elif itens:
             self._dublar(itens, o, vozes, premium)
 
     def _dublar(self, itens: list, o, vozes: dict | None = None, premium: set | None = None) -> None:

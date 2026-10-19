@@ -1620,11 +1620,13 @@ def situacao_avulsos(plano: PlanoAvulsos, dublar: bool = True, legendar: bool = 
 
 
 def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", arquivos=(), parar=None,
-                      avisar=None, sondar=None, motor=None, separar=None, andamento=None) -> Resultado:
+                      avisar=None, sondar=None, motor=None, separar=None, andamento=None,
+                      vozes_por_video: dict | None = None, pular: set | None = None) -> Resultado:
     """Caixa de entrada: (1) traduz a legenda que já existe; (2) cria pelo áudio a dos que não têm nenhuma; (3) se
     marcado, dubla os que ficaram com legenda em português; (4) se marcado "Legendar", a legenda em português entra
     como faixa do vídeo. A dublagem e a legenda ficam no próprio arquivo (ou, se escolhido em Configurações >
-    Dublagem, a dublagem fica à parte: 'Nome - Dublado IA.mkv')."""
+    Dublagem, a dublagem fica à parte: 'Nome - Dublado IA.mkv'). vozes_por_video: {vídeo: {fala: voz}} escolhidas na
+    tabela "Vozes dos personagens" ({} = uma voz só; sem o vídeo, escolhe sozinho); pular: vídeos para não dublar."""
     from jellyfin_tools.dublagem import RelogioDaDublagem, embutir_legenda
     avisar = avisar or (lambda texto: None)
     # andamento(fração 0..1, texto): a barra e a porcentagem na tela (antes só aparecia no fim)
@@ -1697,6 +1699,8 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
         for k, item in enumerate(dublar_agora):
             if parado():
                 break
+            if pular and str(item.video) in pular:          # "Pular este filme" na tabela de vozes
+                continue
             total, relogio = len(dublar_agora), RelogioDaDublagem(bool(separar))
 
             def progresso(fracao, k=k, item=item, total=total, relogio=relogio):
@@ -1704,7 +1708,7 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
                           f"Dublando {k + 1} de {total}: {item.video.stem} – {relogio.texto(fracao)}")
             progresso(0.0)
             r = dublar_item(o, item, motor, log, parar, separar=separar or None, legenda_no_video=legendar,
-                            ao_progresso=progresso, tipo="avulso")
+                            ao_progresso=progresso, tipo="avulso", vozes=(vozes_por_video or {}).get(str(item.video)))
             log.info("[%s] avulso %s%s", r.status, r.video.name, f" ({r.detalhe})" if r.detalhe else "")
             if r.status == "erro":
                 erros.append(f"{item.video.name}: {r.detalhe}")

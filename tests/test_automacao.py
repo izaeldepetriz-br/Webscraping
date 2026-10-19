@@ -453,6 +453,38 @@ def test_avulsos_mostra_o_andamento_da_dublagem(casa, tmp_path, monkeypatch):
 
 
 
+
+def test_avulsos_com_as_vozes_da_tabela_e_pulados(casa, tmp_path, monkeypatch):
+    """Aba Avulsos com a tabela "Vozes dos personagens": o vídeo vai com as vozes escolhidas ({} = uma voz só, sem
+    escolher sozinho) e o "Pular este filme" não é dublado."""
+    from jellyfin_tools import dublagem
+    from test_dublagem import FFMPEG, SRT, VozFalsa, video_de_teste
+    if not FFMPEG:
+        pytest.skip("sem ffmpeg")
+    caixa = tmp_path / "Avulsos"
+    caixa.mkdir()
+    for nome in ("Aula", "Palestra"):
+        video_de_teste(caixa / f"{nome}.mkv")
+        (caixa / f"{nome}.pt-BR.srt").write_text(SRT, encoding="utf-8")
+    monkeypatch.setattr(automacao, "videos_para_dublar",
+                        lambda *p, **k: dublagem.videos_para_dublar(*p, **{**k, "sondar": lambda v: (6.0, ["eng"])}))
+    monkeypatch.setattr(automacao, "videos_sem_legenda", lambda *p, **k: [])
+    casa(pasta_avulsos=str(caixa), encurtar_falas=False, dublagem_previa=False)
+    o, _ = automacao.opcoes_salvas()
+    recebidas = {}
+    dublar = automacao.dublar_item
+
+    def espiao(o, item, motor, log, parar=None, **k):
+        recebidas[item.video.stem] = k.get("vozes")
+        return dublar(o, item, motor, log, parar, **k)
+    monkeypatch.setattr(automacao, "dublar_item", espiao)
+    monkeypatch.setattr(automacao, "vozes_automaticas", lambda *a: pytest.fail("escolheu sozinho"))
+    r = automacao.processar_avulsos(o, logging.getLogger("t"), str(caixa), motor=VozFalsa(),
+                                    vozes_por_video={str(caixa / "Aula.mkv"): {}},
+                                    pular={str(caixa / "Palestra.mkv")})
+    assert recebidas == {"Aula": {}} and r.contagens["dublados"] == 1
+
+
 def test_teste_de_alguns_minutos_traduz_e_ouve_so_o_trecho(casa, tmp_path, monkeypatch):
     """Teste dos avulsos: com legenda em outro idioma, só as falas do trecho vão para o tradutor; sem legenda, o
     Whisper ouve só o trecho. Nada é gravado ao lado do vídeo."""

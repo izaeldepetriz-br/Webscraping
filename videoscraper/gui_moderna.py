@@ -2730,10 +2730,12 @@ class PainelAutomatico(ctk.CTkToplevel):
 class DialogoAjustarFalas(ctk.CTkToplevel):
     """"Ajustar falas" de um teste: escolhe UMA fala e, se quiser, troca o texto que a voz lê, a voz ou o tom; o
     Maestro refaz só ela (paga só essa fala). linhas: [(número, horário, texto, voz, tom)]. resultado:
-    (número, texto, voz, tom) — vazio = automático — ou None (Cancelar)."""
+    (número, texto, voz, tom) — vazio = automático — ou None (Cancelar). variantes (XTTS-v2): o menu da variante
+    da voz (grave, aguda, jovem)."""
     AUTOMATICA = "(automática)"
+    ORIGINAL = "original"
 
-    def __init__(self, master, nome: str, linhas: list, vozes: list):
+    def __init__(self, master, nome: str, linhas: list, vozes: list, variantes: tuple = ()):
         super().__init__(master, fg_color=Tema.CARTAO)
         self.linhas, self.resultado = list(linhas), None
         self.title("Ajustar falas")
@@ -2770,11 +2772,19 @@ class DialogoAjustarFalas(ctk.CTkToplevel):
         self.campo_texto.grid(row=0, column=1, sticky="ew", pady=3)
         ctk.CTkLabel(campos, text="Voz", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE).grid(
             row=1, column=0, sticky="w", padx=(0, 10), pady=3)
-        self.menu_voz = ctk.CTkOptionMenu(campos, values=[self.AUTOMATICA] + list(vozes), variable=self.var_voz,
+        linha_voz = ctk.CTkFrame(campos, fg_color="transparent")
+        linha_voz.grid(row=1, column=1, sticky="w", pady=3)
+        self.menu_voz = ctk.CTkOptionMenu(linha_voz, values=[self.AUTOMATICA] + list(vozes), variable=self.var_voz,
                                           width=280)
-        self.menu_voz.grid(row=1, column=1, sticky="w", pady=3)
+        self.menu_voz.pack(side="left")
         if not vozes:                                    # Piper/Google Cloud: a voz é a das Configurações
             self.menu_voz.configure(state="disabled")
+        self.var_variante = tk.StringVar(value=self.ORIGINAL)
+        self.menu_variante = None
+        if variantes:                                    # XTTS-v2: a variante da voz (outra pessoa, mesma voz)
+            self.menu_variante = ctk.CTkOptionMenu(linha_voz, values=[self.ORIGINAL, *variantes],
+                                                   variable=self.var_variante, width=110)
+            self.menu_variante.pack(side="left", padx=(8, 0))
         ctk.CTkLabel(campos, text="Tom (ex.: com raiva, gritando)", font=master.f_rotulo,
                      text_color=Tema.TEXTO_SUAVE).grid(row=2, column=0, sticky="w", padx=(0, 10), pady=3)
         ctk.CTkEntry(campos, textvariable=self.var_tom, placeholder_text="vazio = o do original").grid(
@@ -2800,8 +2810,10 @@ class DialogoAjustarFalas(ctk.CTkToplevel):
         _, _, texto, voz, tom = self.linhas[i]
         self.var_texto.set(texto)
         self.var_tom.set(tom)
-        menu = next((v for v in self.vozes if valor_da_voz(v) == voz), self.AUTOMATICA) if voz else self.AUTOMATICA
+        base, variante = voz_local.separar_variante(voz or "")
+        menu = next((v for v in self.vozes if valor_da_voz(v) == base), self.AUTOMATICA) if base else self.AUTOMATICA
         self.var_voz.set(menu)
+        self.var_variante.set(variante or self.ORIGINAL)
 
     def confirmar(self) -> None:
         i = self._escolhida()
@@ -2810,6 +2822,8 @@ class DialogoAjustarFalas(ctk.CTkToplevel):
         k, _, texto_antes, _, _ = self.linhas[i]
         texto = self.var_texto.get().strip()
         voz = "" if self.var_voz.get() == self.AUTOMATICA else valor_da_voz(self.var_voz.get())
+        if voz and self.menu_variante is not None and self.var_variante.get() != self.ORIGINAL:
+            voz = voz_local.com_variante(voz, self.var_variante.get())
         self.resultado = (k, texto if texto and texto != texto_antes else "", voz, self.var_tom.get().strip())
         self.destroy()
 
@@ -6052,9 +6066,9 @@ class JanelaModerna(ctk.CTk):
         self.wait_window(dialogo)
         return dialogo.resultado
 
-    def pedir_ajuste_de_fala(self, nome: str, linhas: list, vozes: list) -> tuple | None:
+    def pedir_ajuste_de_fala(self, nome: str, linhas: list, vozes: list, variantes: tuple = ()) -> tuple | None:
         """Janela "Ajustar falas" (ver DialogoAjustarFalas): (número, texto, voz, tom) ou None."""
-        dialogo = DialogoAjustarFalas(self, nome, linhas, vozes)
+        dialogo = DialogoAjustarFalas(self, nome, linhas, vozes, **({"variantes": variantes} if variantes else {}))
         self.wait_window(dialogo)
         return dialogo.resultado
 
