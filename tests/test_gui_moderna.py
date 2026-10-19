@@ -4092,6 +4092,14 @@ def test_janela_vozes_dos_personagens(app):
     janela = DialogoVozes(app, "Filme", ["x"], ["Pessoa 1"], {}, app.VOZES_GEMINI)
     janela.bt_uma_voz.invoke()
     assert janela.resultado == {}                                       # uma voz só para todos
+    xtts = tuple(f"XTTS: {v}" for v in app.vozes_locais_do_menu())          # XTTS-v2: o 2º menu, a variante
+    janela = DialogoVozes(app, "Filme", ["Tina", "Bob"], ["Tina", "Bob"],
+                          {"Tina": "Ana Florence · jovem", "Bob": "Damien Black"}, xtts, ("grave", "aguda", "jovem"))
+    assert janela.vars["Tina"].get() == "XTTS: Ana Florence (feminina, adulta)"
+    assert janela.vars_variante["Tina"].get() == "jovem" and janela.vars_variante["Bob"].get() == "original"
+    janela.vars_variante["Bob"].set("grave")
+    janela.bt_dublar.invoke()
+    assert janela.resultado == {"Tina": "Ana Florence · jovem", "Bob": "Damien Black · grave"}
 
 
 def test_dublagem_mista_por_filme_e_figurantes(app, tmp_path, monkeypatch):
@@ -5163,6 +5171,13 @@ def test_ajustar_falas_escolhe_a_fala_e_o_que_trocar(app, monkeypatch):
     assert d2.menu_voz.cget("state") == "disabled"
     d2.bt_refazer.invoke()
     assert d2.resultado == (3, "", "", "")                                # nada mudou: só uma tomada nova
+    xtts = [f"XTTS: {v}" for v in app.vozes_locais_do_menu()]               # XTTS-v2: a voz e a variante
+    d3 = DialogoAjustarFalas(app, "Filme", [(5, "00:00:31", "Oi.", "Ana Florence · jovem", "")], xtts,
+                             ("grave", "aguda", "jovem"))
+    assert d3.var_voz.get().startswith("XTTS: Ana Florence") and d3.var_variante.get() == "jovem"
+    d3.var_variante.set("grave")
+    d3.bt_refazer.invoke()
+    assert d3.resultado == (5, "", "Ana Florence · grave", "")
     pedidos = []
     teste = {"video": "/v/Filme.mkv", "amostra": "/t/Filme.mkv", "trecho": [20, 80], "legenda": "/v/Filme.srt"}
     monkeypatch.setattr(automacao, "falas_do_teste", lambda t: linhas)

@@ -288,7 +288,7 @@ def test_elenco_da_serie_mantem_rotulos_e_vozes_entre_episodios(tmp_path):
     assert {p.rotulo: p.genero for p in lista} == {"Ana": "f", "Pessoa 1": "m"}       # o gênero vem do elenco
     mapa = personagens.distribuir_vozes(lista, "Charon", fixas=guardado["vozes"])
     assert mapa == {"Ana": "Aoede", "Pessoa 1": "Orus"}                                # as mesmas do episódio 1
-    assert personagens.carregar_elenco(tmp_path / "nao_existe.json") == {"pessoas": [], "vozes": {}}
+    assert personagens.carregar_elenco(tmp_path / "nao_existe.json") == {"pessoas": [], "vozes": {}, "vozes_xtts": {}}
 
 
 def test_gemini_que_nao_responde_nao_prende_o_parar(tmp_path):
@@ -432,7 +432,7 @@ def test_metades_vao_em_paralelo_e_a_barra_anda_por_fala(tmp_path):
     outros pedidos; a barra anda a cada fala pronta (antes ficava em 0% até o bloco inteiro terminar)."""
     import threading
     import time as relogio
-    ao_mesmo_tempo, agora = [], [0]
+    ao_mesmo_tempo, agora, pedidos = [], [0], [0]
     trava = threading.Lock()
 
     class Lento(GeminiFalso):
@@ -440,7 +440,11 @@ def test_metades_vao_em_paralelo_e_a_barra_anda_por_fala(tmp_path):
             with trava:
                 agora[0] += 1
                 ao_mesmo_tempo.append(agora[0])
-            relogio.sleep(0.05)
+                ordem = pedidos[0]
+                pedidos[0] += 1
+            # as 4 falas sozinhas (pedidos 4 a 7) terminam espaçadas: a barra vê cada uma (antes, juntas, às vezes
+            # ficavam prontas antes de a barra olhar e ela pulava de 0 para 1)
+            relogio.sleep(0.05 + 0.15 * max(0, ordem - 3))
             try:
                 return super().create(**k)
             finally:

@@ -970,3 +970,86 @@ def test_camada_de_emocao_entra_na_mistura_do_ffmpeg(tmp_path):
                      destino=tmp_path / "teste2.mkv", separar=_separar_falso(chamadas), avisar=avisos.append,
                      tons=tons, camada_emocao=False)
     assert r.status == "dublado" and not any("camada de emoção" in a for a in avisos)
+
+
+def _tom_wav(caminho, freq, segundos, amplitude=6000):
+    with wave.open(str(caminho), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(TAXA)
+        w.writeframes(b"".join(struct.pack("<h", int(amplitude * math.sin(2 * math.pi * freq * n / TAXA)))
+                               for n in range(int(segundos * TAXA))))
+    return caminho
+
+
+def _energia(trilha, inicio, fim, freq):
+    """Quanto da frequência `freq` há no trecho (para saber QUEM está falando ali)."""
+    import numpy as np
+    with wave.open(str(trilha)) as w:
+        x = np.frombuffer(w.readframes(w.getnframes()), "<i2").astype(float)[int(inicio * TAXA):int(fim * TAXA)]
+    espectro, f = np.abs(np.fft.rfft(x)), np.fft.rfftfreq(len(x), 1 / TAXA)
+    return float(espectro[np.abs(f - freq) < 15].sum() / (espectro.sum() + 1e-9))
+
+
+def test_discussao_duas_pessoas_falando_ao_mesmo_tempo(tmp_path):
+    """A legenda da 2ª pessoa começa antes de a 1ª terminar, com OUTRA voz: as duas soam juntas (antes a 1ª era
+    cortada para a 2ª entrar). Com a mesma voz (uma pessoa só), espera a vez como antes."""
+    ana, bob = _tom_wav(tmp_path / "ana.wav", 300, 2.0), _tom_wav(tmp_path / "bob.wav", 520, 2.0)
+    horas = [(0.0, 2.0), (1.0, 3.0)]
+    assert dublagem.falas_juntas(horas, ["Ana", "Bob"]) == {1}
+    assert dublagem.falas_juntas(horas, ["Ana", "Ana"]) == set()                # a mesma voz: espera a vez
+    assert dublagem.falas_juntas([(0.0, 2.0), (1.9, 3.0)], ["Ana", "Bob"]) == set()   # quase nada de sobra
+    juntas = tmp_path / "juntas.wav"
+    contas = dublagem.montar_trilha([(0.0, 2.0, ana), (1.0, 3.0, bob)], 4.0, juntas, juntas={1})
+    assert contas["juntas"] == 1 and contas["cortadas"] == 0
+    assert _energia(juntas, 1.2, 1.8, 300) > 0.2 and _energia(juntas, 1.2, 1.8, 520) > 0.2   # as duas juntas
+    assert _energia(juntas, 2.2, 2.8, 520) > 0.5 and _energia(juntas, 0.2, 0.8, 520) < 0.05
+    with wave.open(str(juntas)) as w:
+        assert w.getnframes() == 4 * TAXA and max(abs(a) for a in struct.unpack(
+            f"<{w.getnframes()}h", w.readframes(w.getnframes()))) <= 32767
+    vez = tmp_path / "vez.wav"                       # sem juntas (antes): a 1ª pessoa era CORTADA para a 2ª entrar
+    contas = dublagem.montar_trilha([(0.0, 2.0, ana), (1.0, 3.0, bob)], 4.0, vez)
+    assert contas["cortadas"] == 1 and _energia(vez, 1.5, 1.9, 300) < 0.05 and _energia(vez, 1.5, 1.9, 520) > 0.5
+
+
+def test_bloco_com_travessoes_vira_duas_vozes(tmp_path):
+    assert dublagem.partes_do_dialogo("- Sai daqui!\n- Não saio!") == ["Sai daqui!", "Não saio!"]
+    assert dublagem.partes_do_dialogo("Olá!\n- Tudo bem?") == ["Olá!", "Tudo bem?"]
+    assert dublagem.partes_do_dialogo("- Uma fala comprida\nque continua na outra linha.") == []    # uma pessoa
+    assert dublagem.partes_do_dialogo("Sem travessão\nnenhum.") == [] and dublagem.partes_do_dialogo("") == []
+    from jellyfin_tools import voz_local as vl
+    xtts = vl.MotorLocal(tmp_path / "motor", "Damien Black")
+    homens = vl.vozes_por_genero("masculina")
+    assert dublagem.outra_voz("", xtts) == homens[(homens.index("Damien Black") + 1) % len(homens)]
+    assert dublagem.outra_voz("Ana Florence · jovem", xtts) in vl.vozes_por_genero("feminina")
+    assert dublagem.outra_voz("Damien Black", xtts, ["", "Damien Black", "Ana Florence"]) == "Ana Florence"
+    assert dublagem.outra_voz("faber", VozFalsa()) == "faber"                  # o Piper: uma voz só
+    a, b = tmp_path / "a.wav", tmp_path / "b.wav"
+    gravar_tom(a, 0.5)
+    gravar_tom(b, 0.25, taxa=8000)                                              # outra taxa: reamostra
+    assert dublagem.juntar_partes(tmp_path / "junto.wav", [a, b])
+    with wave.open(str(tmp_path / "junto.wav")) as w:
+        assert w.getframerate() == TAXA and abs(w.getnframes() / TAXA - (0.5 + dublagem.PAUSA_DIALOGO + 0.25)) < 0.01
+    assert not dublagem.juntar_partes(tmp_path / "x.wav", [a, tmp_path / "falta.wav"])
+
+
+@pytest.mark.skipif(not FFMPEG, reason="sem ffmpeg")
+def test_dublagem_do_bloco_com_travessoes(tmp_path):
+    """"- Sai daqui!\\n- Não saio!": cada pessoa com uma voz (a 2ª é a de quem fala ao lado na cena)."""
+    pasta = tmp_path / "Filme (2003)"
+    pasta.mkdir()
+    video = video_de_teste(pasta / "Filme (2003).mkv")
+    (pasta / "Filme (2003).pt-BR.srt").write_text(
+        "1\n00:00:00,500 --> 00:00:01,500\nO que foi?\n\n2\n00:00:02,000 --> 00:00:04,000\n- Sai daqui!\n- Não saio!\n",
+        encoding="utf-8")
+    pedidos, avisos = [], []
+
+    class Gravadora(VozFalsa):
+        def sintetizar(self, lista, parar=None, ao_progresso=None):
+            pedidos.extend((p[0], p[2] if len(p) > 2 else "") for p in lista)
+            super().sintetizar([(p[0], p[1]) for p in lista], parar, ao_progresso)
+    r = dublar_video(video, pasta / "Filme (2003).pt-BR.srt", Gravadora(), FFMPEG, sondar=lambda v: (6.0, ["eng"]),
+                     vozes={0: "Ana", 1: "Bob"}, avisar=avisos.append)
+    assert r.status == "dublado", r.detalhe
+    assert sorted(pedidos) == sorted([("O que foi?", "Ana"), ("Sai daqui!", "Bob"), ("Não saio!", "Ana")])
+    assert any("diálogo: 1 bloco(s)" in a for a in avisos)

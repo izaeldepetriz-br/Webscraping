@@ -52,17 +52,18 @@ class Receita:
     sussurro: float = 0.0        # 0-1: quanto da voz vira ar
 
 
+# Mais contidas depois de ouvidas: o volume tremendo 50 vezes por segundo (a "aspereza") é o efeito de voz de robô,
+# e o balanço do tom forte e regular (o tremor e as "quebras") soava artificial. Ficaram o tremor leve, o ar, os
+# soluços nas pausas, a presença e um pouco de saturação.
 RECEITAS: dict[str, Receita] = {
-    "choro": Receita(semitons=1.5, tremor=90, tremor_hz=6.0, quebras=0.5, pulso=0.4, ar=0.35, falhas=0.5,
-                     soluco=1.0, brilho=-1.5),
-    "triste": Receita(semitons=-0.8, tremor=25, tremor_hz=5.0, pulso=0.15, ar=0.15, falhas=0.15, soluco=0.4,
-                      brilho=-3.0),
-    "medo": Receita(semitons=1.0, tremor=50, tremor_hz=8.0, quebras=0.2, pulso=0.25, ar=0.3, falhas=0.3,
-                    soluco=0.6),
-    "brava": Receita(semitons=1.0, acento=180, presenca=6.0, aspereza=0.4, saturacao=0.5, enfase=0.5, volume=3.0),
-    "grito": Receita(semitons=2.0, acento=250, ar=0.15, presenca=8.0, brilho=1.5, aspereza=0.55, saturacao=0.8,
-                     enfase=0.6, volume=5.0),
-    "alegre": Receita(semitons=1.2, acento=120, presenca=2.0, brilho=2.0, enfase=0.25),
+    "choro": Receita(semitons=1.0, tremor=45, tremor_hz=5.5, pulso=0.12, ar=0.25, falhas=0.3, soluco=0.6,
+                     brilho=-1.5),
+    "triste": Receita(semitons=-0.6, tremor=15, tremor_hz=5.0, ar=0.12, soluco=0.3, brilho=-2.5),
+    "medo": Receita(semitons=0.8, tremor=30, tremor_hz=7.0, pulso=0.08, ar=0.2, falhas=0.15, soluco=0.4),
+    "brava": Receita(semitons=0.8, acento=120, presenca=4.0, saturacao=0.25, enfase=0.4, volume=2.0),
+    "grito": Receita(semitons=1.5, acento=160, ar=0.1, presenca=6.0, brilho=1.0, saturacao=0.4, enfase=0.5,
+                     volume=3.0),
+    "alegre": Receita(semitons=1.0, acento=90, presenca=2.0, brilho=1.5, enfase=0.2),
     "sussurro": Receita(sussurro=0.9, brilho=1.0, volume=-8.0),
 }
 
@@ -361,6 +362,67 @@ def _limitar(som: np.ndarray) -> np.ndarray:
     excesso = (np.abs(som[acima]) - joelho) / folga
     saida[acima] = np.sign(som[acima]) * (joelho + folga * np.tanh(excesso))
     return saida
+
+
+def mudar_formantes(som: np.ndarray, taxa: int, fator: float, voltas: int = 8) -> np.ndarray:
+    """A "garganta" menor (fator > 1: voz mais jovem) ou maior (< 1: mais encorpada): o envelope do espectro (os
+    formantes, que dizem o tamanho de quem fala) estica ou encolhe no eixo das frequências; o tom (os harmônicos)
+    fica onde está. O envelope de cada pedacinho de ~43 ms é o "envelope verdadeiro" (o cepstro alisado que, volta a
+    volta, sobe até encostar nos picos dos harmônicos)."""
+    if abs(fator - 1) < 0.005 or len(som) < 64:
+        return som
+    n = 1024 if taxa >= 16000 else 512
+    passo, corte = n // 4, max(8, int(taxa / 700))            # (o tom de até ~350 Hz fica fora do envelope)
+    janela = np.hanning(n + 1)[:-1]
+    x = np.pad(som, (n, n))
+    quadros = np.lib.stride_tricks.sliding_window_view(x, n)[::passo] * janela
+    espectro = np.fft.rfft(quadros, axis=1)
+    medido = np.log(np.abs(espectro) + 1e-9)
+    alvo = medido
+    for _ in range(voltas):
+        cepstro = np.fft.irfft(alvo, n, axis=1)
+        cepstro[:, corte:n - corte + 1] = 0
+        envelope = np.fft.rfft(cepstro, axis=1).real
+        alvo = np.maximum(medido, envelope)
+    faixas = envelope.shape[1]
+    onde = np.clip(np.arange(faixas) / fator, 0, faixas - 1)
+    i = np.minimum(onde.astype(int), faixas - 2)
+    f = onde - i
+    novo_envelope = envelope[:, i] * (1 - f) + envelope[:, i + 1] * f
+    saida_quadros = np.fft.irfft(espectro * np.exp(novo_envelope - envelope), n, axis=1) * janela
+    saida, pesos = np.zeros(len(x)), np.zeros(len(x))
+    for k, quadro in enumerate(saida_quadros):
+        saida[k * passo:k * passo + n] += quadro
+        pesos[k * passo:k * passo + n] += janela ** 2
+    saida = saida / np.maximum(pesos, 1e-3)
+    return saida[n:n + len(som)]
+
+
+def variar_som(som: np.ndarray, taxa: int, semitons: float, formantes: float, ffmpeg: str | None = None,
+               executar=subprocess.run) -> np.ndarray:
+    """A VARIANTE de uma voz: outro tom (semitons) e outra "garganta" (formantes: 1,10 = 10% menor). O ffmpeg sobe o
+    tom e a garganta juntos; a garganta é acertada depois. Sem o ffmpeg, muda só a garganta. Mesma duração e volume."""
+    if not len(som) or not np.abs(som).max():
+        return som
+    tom = mudar_tom(som, taxa, semitons, ffmpeg, executar)
+    ja_subiu = 2 ** (semitons / 12) if tom is not som else 1.0
+    saida = mudar_formantes(tom, taxa, formantes / ja_subiu)
+    saida = saida * (_rms(som) / (_rms(saida) + 1e-12))
+    return _limitar(saida)
+
+
+def variar(wav: str | Path, semitons: float, formantes: float, ffmpeg: str | None = None,
+           executar=subprocess.run) -> bool:
+    """A variante na fala gravada em `wav` (no lugar). False se não deu para ler (fica como está)."""
+    wav = Path(wav)
+    try:
+        som, taxa = ler_wav(wav)
+    except (OSError, EOFError, ValueError, wave.Error):
+        return False
+    temporario = wav.with_name(wav.stem + ".variante.wav")
+    gravar_wav(temporario, variar_som(som, taxa, semitons, formantes, ffmpeg, executar), taxa)
+    temporario.replace(wav)
+    return True
 
 
 # ----------------------------------------------------------------- tudo junto

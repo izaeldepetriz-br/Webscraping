@@ -35,6 +35,61 @@ VOZES_POR_IDADE = {("f", "crianca"): ("Leda", "Zephyr"), ("m", "crianca"): ("Puc
                    ("f", "idoso"): ("Callirrhoe", "Despina"), ("m", "idoso"): ("Algieba", "Charon")}
 
 
+JANELA_CENA = 45.0            # segundos: dois personagens que falam a menos disso um do outro estão na mesma cena
+
+
+@dataclass(frozen=True)
+class Catalogo:
+    """As vozes de um motor para distribuir entre os personagens: por gênero, as preferidas de cada idade e onde o
+    elenco da série guarda as vozes deste motor (chave)."""
+    masculinas: tuple
+    femininas: tuple
+    por_idade: dict
+    padrao: str
+    chave: str = "vozes"
+    variante_da_idade: dict = field(default_factory=dict)    # XTTS-v2: {"jovem": "jovem", "idoso": "grave", ...}
+
+    def valida(self, voz: str) -> bool:
+        return voz in self.masculinas or voz in self.femininas or any(voz in v for v in self.por_idade.values())
+
+    def base(self, voz: str) -> str:
+        """A voz de base ('Ana Florence · jovem' -> 'Ana Florence'): duas variantes da mesma voz são a MESMA pessoa
+        para a regra de não repetir na cena."""
+        if not self.variante_da_idade:
+            return voz
+        from .voz_local import separar_variante
+        return separar_variante(voz)[0]
+
+    def na_idade(self, voz: str, idade: str) -> str:
+        """A voz na idade do personagem: 'Damien Black' para um jovem -> 'Damien Black · jovem' (a voz principal
+        continua com o protagonista adolescente)."""
+        variante = self.variante_da_idade.get(idade)
+        if not variante or self.base(voz) != voz:
+            return voz
+        from .voz_local import com_variante
+        return com_variante(voz, variante)
+
+
+CATALOGO_GEMINI = Catalogo(VOZES_MASCULINAS, VOZES_FEMININAS, VOZES_POR_IDADE, VOZ_PADRAO)
+
+
+def catalogo_xtts() -> Catalogo:
+    """As 57 vozes prontas do XTTS-v2 e as variantes: adultos com as prontas, depois as agudas e as graves; criança e
+    jovem com as variantes jovens; idoso com as graves."""
+    from .voz_local import VOZ_PADRAO as PADRAO_LOCAL
+    from .voz_local import com_variante, vozes_por_genero
+    base = {"m": vozes_por_genero("masculina"), "f": vozes_por_genero("feminina")}
+
+    def adultas(g):
+        return tuple(base[g] + [com_variante(v, "aguda") for v in base[g]] + [com_variante(v, "grave") for v in base[g]])
+    jovens = {g: tuple(com_variante(v, "jovem") for v in base[g]) for g in base}
+    graves = {g: tuple(com_variante(v, "grave") for v in base[g]) for g in base}
+    por_idade = {(g, idade): vozes for g in base for idade, vozes in
+                 (("crianca", jovens[g]), ("jovem", jovens[g]), ("idoso", graves[g]))}
+    return Catalogo(adultas("m"), adultas("f"), por_idade, PADRAO_LOCAL, "vozes_xtts",
+                    {"crianca": "jovem", "jovem": "jovem", "idoso": "grave"})
+
+
 def idade_de(texto) -> str:
     """"criança"/"crianca"/"child" -> "crianca"; "idosa"/"idoso" -> "idoso"; o que não reconhecer -> ""."""
     texto = str(texto or "").strip().lower()
@@ -201,42 +256,118 @@ def trecho_coberto(ids: list[int], sabidas: dict | None, parte: float = 0.85) ->
     return bool(sabidas) and bool(ids) and sum(k in sabidas for k in ids) >= parte * len(ids)
 
 
+def na_mesma_cena(personagens: list[Personagem], tempos: dict[int, float], janela: float = JANELA_CENA
+                  ) -> dict[str, set[str]]:
+    """{rótulo: rótulos de quem fala a menos de `janela` segundos dele} (a mesma cena: não podem ter a mesma voz)."""
+    import bisect
+    horas = {p.rotulo: sorted(tempos[k] for k in p.falas if k in tempos) for p in personagens}
+    juntos: dict[str, set[str]] = {p.rotulo: set() for p in personagens}
+    rotulos = [p.rotulo for p in personagens]
+    for i, a in enumerate(rotulos):
+        for b in rotulos[i + 1:]:
+            menor, maior = sorted((horas[a], horas[b]), key=len)
+            for t in menor:
+                j = bisect.bisect_left(maior, t - janela)
+                if j < len(maior) and maior[j] <= t + janela:
+                    juntos[a].add(b)
+                    juntos[b].add(a)
+                    break
+    return juntos
+
+
 def distribuir_vozes(personagens: list[Personagem], voz_principal: str = VOZ_PADRAO,
                      figurante: str | None = None, limite: int = FIGURANTE,
-                     fixas: dict[str, str] | None = None) -> dict[str, str]:
+                     fixas: dict[str, str] | None = None, catalogo: Catalogo | None = None,
+                     tempos: dict[int, float] | None = None) -> dict[str, str]:
     """{rótulo: voz}. Quem mais fala fica com a voz principal (se o gênero combinar); os outros, vozes do mesmo
-    gênero ainda não usadas (repetem só quando acabam). Quem fala pouco fica com a voz principal. Uma voz clonada
-    ("clone:Nome") como principal vai para quem mais fala, qualquer que seja o gênero (dá para trocar na tabela).
+    gênero ainda não usadas (repetem só quando acabam). Uma voz clonada ("clone:Nome") ou importada ("imp:id") como
+    principal vai para quem mais fala, qualquer que seja o gênero (dá para trocar na tabela).
+    catalogo: as vozes do motor (o Gemini, ou o XTTS-v2 com as variantes: catalogo_xtts()).
+    tempos ({número da fala: segundos}): o ELENCO SEM REPETIÇÃO NA CENA. Quem fala pouco não fica mais com a voz
+    principal: ganha uma voz que nenhum personagem principal usa e que ninguém da mesma cena tem; e, quando as vozes
+    acabam, a repetida é de alguém que nunca está na mesma cena. Sem tempos, como antes (quem fala pouco: a principal).
     figurante ("piper:faber"): dublagem MISTA, quem tem menos de `limite` falas vai para essa voz (Piper, grátis).
     figurante "cloud:Neural2": vai para o Google Cloud (cota grátis), com uma voz do tipo e do gênero de cada um."""
-    clonada = voz_principal.startswith("clone:")       # a SUA voz clonada como principal: vai para quem mais fala
-    principal = voz_principal if voz_principal in VOZES or clonada else VOZ_PADRAO
+    catalogo = catalogo or CATALOGO_GEMINI
+    base = catalogo.base
+    pessoal = voz_principal.startswith(("clone:", "imp:"))    # a SUA voz como principal: vai para quem mais fala
+    principal = voz_principal if catalogo.valida(voz_principal) or pessoal else catalogo.padrao
     fixas = fixas or {}
-    usadas: Counter = Counter(fixas.values())
+    usadas: Counter = Counter(base(v) for v in fixas.values())      # pela voz de BASE (as variantes contam junto)
+    dono: dict[str, list[str]] = {}                    # voz de base -> quem já está com ela
+    for rotulo, voz in fixas.items():
+        dono.setdefault(base(voz), []).append(rotulo)
+    juntos = na_mesma_cena(personagens, tempos) if tempos else {}
+    principais_vozes: set[str] = set()
+
+    def conflito(voz: str, rotulo: str) -> int:
+        return sum(1 for outro in dono.get(base(voz), ()) if outro in juntos.get(rotulo, ()))
+
+    def dar(rotulo: str, voz: str, principal_: bool) -> None:
+        mapa[rotulo] = voz
+        usadas[base(voz)] += 1
+        dono.setdefault(base(voz), []).append(rotulo)
+        if principal_:
+            principais_vozes.add(base(voz))
+
     mapa, figurantes = {}, Counter()
     for p in personagens:                              # já vêm de quem fala mais para quem fala menos
         if p.rotulo in fixas:                          # série: a voz que esse personagem já tinha
             mapa[p.rotulo] = fixas[p.rotulo]
+            if len(p.falas) >= MINIMO_FALAS:
+                principais_vozes.add(base(fixas[p.rotulo]))
             continue
         if figurante and len(p.falas) < limite:
             mapa[p.rotulo] = voz_de_figurante(figurante, p.genero, figurantes[p.genero])
             figurantes[p.genero] += 1
             continue
-        grupo = {"m": VOZES_MASCULINAS, "f": VOZES_FEMININAS}.get(p.genero, VOZES_MASCULINAS + VOZES_FEMININAS)
-        da_idade = VOZES_POR_IDADE.get((p.genero, p.idade), ())
+        grupo = {"m": catalogo.masculinas, "f": catalogo.femininas}.get(p.genero,
+                                                                        catalogo.masculinas + catalogo.femininas)
+        da_idade = catalogo.por_idade.get((p.genero, p.idade), ())
         grupo = tuple(da_idade) + tuple(v for v in grupo if v not in da_idade)   # criança: as vozes mais jovens antes
-        adulta = p.idade not in ("crianca", "idoso")   # a voz principal (adulta) não vai para criança nem idoso
-        if len(p.falas) < MINIMO_FALAS:                # fala pouco: a principal, se for do mesmo gênero; senão uma
-            mapa[p.rotulo] = (principal if (principal in grupo and adulta) or clonada else   # do gênero dele
-                              next((v for v in grupo if usadas[v] and (adulta or v in da_idade)), grupo[0]))
+        na_idade = principal if pessoal else catalogo.na_idade(principal, p.idade)
+        adulta = p.idade not in ("crianca", "idoso") or na_idade != principal   # (ou a principal na idade dele)
+        if len(p.falas) < MINIMO_FALAS and not tempos:    # fala pouco (sem o elenco): a principal, se for do gênero
+            mapa[p.rotulo] = (principal if (principal in grupo and adulta) or pessoal else
+                              next((v for v in grupo if usadas[base(v)] and (adulta or v in da_idade)), grupo[0]))
             continue
-        if not usadas and ((principal in grupo and adulta) or clonada):
-            voz = principal
+        if not usadas[base(principal)] and (((principal in grupo and adulta) and (tempos or not usadas)) or
+                                            (pessoal and not usadas)):
+            voz = na_idade                             # (com o elenco: quem mais fala do gênero da voz principal)
+        elif len(p.falas) < MINIMO_FALAS:              # fala pouco: sem repetir na cena e sem a voz de um principal
+            voz = min(grupo, key=lambda v: (conflito(v, p.rotulo) > 0,
+                                            base(v) in principais_vozes or base(v) == base(principal),
+                                            usadas[base(v)], grupo.index(v)))
+            dar(p.rotulo, voz, False)
+            continue
         else:
-            voz = min(grupo, key=lambda v: (usadas[v], grupo.index(v)))
-        mapa[p.rotulo] = voz
-        usadas[voz] += 1
+            voz = min(grupo, key=lambda v: (usadas[base(v)] > 0, conflito(v, p.rotulo), usadas[base(v)],
+                                            grupo.index(v)))
+        dar(p.rotulo, voz, True)
     return mapa
+
+
+def repetidas_na_cena(mapa: dict[str, str], personagens: list[Personagem], tempos: dict[int, float],
+                      janela: float = JANELA_CENA) -> list[tuple[str, str, str]]:
+    """[(voz, rótulo, rótulo)]: duas pessoas da mesma cena com a mesma voz (ou variantes da mesma voz de base)."""
+    from .voz_local import separar_variante
+    juntos = na_mesma_cena(personagens, tempos, janela)
+    saida = []
+    for a, vizinhos in juntos.items():
+        for b in vizinhos:
+            if a < b and mapa.get(a) and separar_variante(mapa[a])[0] == separar_variante(mapa.get(b, ""))[0]:
+                saida.append((separar_variante(mapa[a])[0], a, b))
+    return sorted(saida)
+
+
+def do_roteiro(achado) -> list[Personagem]:
+    """Os personagens pelo ROTEIRO (roteiro.quem_fala), sem o Gemini: o modo grátis (XTTS-v2) também ganha uma voz
+    por personagem quando o vídeo tem roteiro."""
+    falas_de: dict[str, list[int]] = {}
+    for k, nome in sorted(achado.falas.items()):
+        falas_de.setdefault(nome, []).append(int(k))
+    lista = [Personagem(nome, achado.generos.get(nome, "?"), "do roteiro", suas) for nome, suas in falas_de.items()]
+    return sorted(lista, key=lambda p: -len(p.falas))
 
 
 def voz_de_figurante(figurante: str, genero: str, n: int = 0) -> str:
@@ -254,25 +385,32 @@ def voz_de_figurante(figurante: str, genero: str, n: int = 0) -> str:
 
 
 def carregar_elenco(arquivo: str | Path) -> dict:
-    """{"pessoas": [{rotulo, genero, descricao}], "vozes": {rotulo: voz}} de uma série (vazio se ainda não tem)."""
+    """{"pessoas": [{rotulo, genero, descricao}], "vozes": {rotulo: voz}, "vozes_xtts": {...}} de uma série ou obra
+    (vazio se ainda não tem). "vozes" são as do Gemini (e do Piper/Cloud dos figurantes); "vozes_xtts", as do XTTS-v2:
+    trocar de motor não perde a escolha do outro."""
+    vazio = {"pessoas": [], "vozes": {}, "vozes_xtts": {}}
     try:
         dados = json.loads(Path(arquivo).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {"pessoas": [], "vozes": {}}
-    return {"pessoas": [p for p in dados.get("pessoas", []) if isinstance(p, dict) and p.get("rotulo")],
-            "vozes": {str(k): str(v) for k, v in dict(dados.get("vozes", {})).items()}}
+        return vazio
+    elenco = {**vazio, "pessoas": [p for p in dados.get("pessoas", []) if isinstance(p, dict) and p.get("rotulo")]}
+    for chave in ("vozes", "vozes_xtts"):
+        elenco[chave] = {str(k): str(v) for k, v in dict(dados.get(chave, {})).items()}
+    return elenco
 
 
-def salvar_elenco(arquivo: str | Path, personagens: list[Personagem], mapa: dict[str, str]) -> None:
-    """Junta ao elenco da série quem apareceu neste episódio e a voz de cada um (a escolhida vale para os próximos)."""
+def salvar_elenco(arquivo: str | Path, personagens: list[Personagem], mapa: dict[str, str],
+                  chave: str = "vozes") -> None:
+    """Junta ao elenco da série quem apareceu neste episódio e a voz de cada um (a escolhida vale para os próximos).
+    chave: "vozes" (Gemini) ou "vozes_xtts" (XTTS-v2)."""
     elenco = carregar_elenco(arquivo)
     pessoas = {p["rotulo"]: p for p in elenco["pessoas"]}
     for p in personagens:
         pessoas[p.rotulo] = {"rotulo": p.rotulo, "genero": p.genero, "descricao": p.descricao, "idade": p.idade}
-    vozes = {**elenco["vozes"], **{r: v for r, v in mapa.items() if v}}
+    elenco[chave] = {**elenco.get(chave, {}), **{r: v for r, v in mapa.items() if v}}
     arquivo = Path(arquivo)
     arquivo.parent.mkdir(parents=True, exist_ok=True)
-    arquivo.write_text(json.dumps({"pessoas": list(pessoas.values()), "vozes": vozes}, ensure_ascii=False, indent=2),
+    arquivo.write_text(json.dumps({**elenco, "pessoas": list(pessoas.values())}, ensure_ascii=False, indent=2),
                        encoding="utf-8")
 
 

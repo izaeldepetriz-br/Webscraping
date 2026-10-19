@@ -435,3 +435,35 @@ def test_interpretacao_da_emocao_depois_da_voz(tmp_path, monkeypatch, forca):
         assert enviado["frases"] == [["Por favor, não vai", vl.PAUSA_PONTO], ["Fica comigo", 0.0]]
         assert chorada == neutra and not any("interpretação" in a for a in avisos)
     motor.fechar()
+
+
+def test_variantes_das_vozes_prontas():
+    assert vl.separar_variante("Ana Florence · jovem") == ("Ana Florence", "jovem")
+    assert vl.separar_variante("Ana Florence") == ("Ana Florence", "")
+    assert vl.separar_variante("Ana · x") == ("Ana · x", "")                       # variante desconhecida: o nome
+    assert vl.com_variante("Ana Florence · grave", "jovem") == "Ana Florence · jovem"
+    assert vl.com_variante("Ana Florence · grave", "") == "Ana Florence"
+    assert vl.perfil_da_voz("Ana Florence · jovem") == "feminina, jovem"
+    assert vl.perfil_da_voz("Damien Black · grave") == "masculina, adulta, mais grave"
+    assert vl.texto_do_menu("Damien Black · aguda") == "Damien Black · aguda (masculina, adulta, mais aguda)"
+    assert vl.texto_do_menu("Damien Black") == "Damien Black (masculina, adulta)"
+    assert vl.valor_do_menu(vl.texto_do_menu("Ana Florence · jovem")) == "Ana Florence · jovem"
+    assert len(vl.vozes_por_genero("feminina", variantes=True)) == 4 * len(vl.vozes_por_genero("feminina"))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="o python falso usa um atalho (symlink)")
+def test_variante_vai_com_a_voz_de_base_e_muda_depois(tmp_path, monkeypatch):
+    """O XTTS-v2 fala com a voz de base ("Ana Florence"); a variante (jovem) muda a fala pronta, e a mesma fala sem
+    variante fica como saiu do motor."""
+    pasta = tmp_path / "motor_vozes"
+    pacote_falso(pasta, monkeypatch)
+    avisos = []
+    motor = vl.MotorLocal(pasta, "Damien Black", avisar=avisos.append, ffmpeg="")
+    motor.sintetizar([("Oi.", tmp_path / "a.wav", "Ana Florence · jovem"), ("Oi.", tmp_path / "b.wav", "Ana Florence")])
+    enviados = [json.loads((tmp_path / f"{n}.wav.json").read_text(encoding="utf-8")) for n in "ab"]
+    assert enviados[0]["voz"] == enviados[1]["voz"] == "Ana Florence"
+    assert (tmp_path / "a.wav").read_bytes() != (tmp_path / "b.wav").read_bytes()
+    with wave.open(str(tmp_path / "a.wav")) as w:
+        assert w.getnframes() == 12000                                      # a mesma duração
+    assert any("variantes das vozes: 1 fala(s) jovem" in a for a in avisos)
+    motor.fechar()

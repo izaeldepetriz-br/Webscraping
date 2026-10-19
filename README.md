@@ -242,18 +242,30 @@ primeira falha (antes esperava o tempo limite em cada filme).
 
 ### Novidades da v2.22.0
 
-- **Emoção com interpretação de verdade (choro trêmulo, raiva rasgada)**: o Chatterbox punha a emoção "de leve" (o
-  choro sem a voz tremendo, a raiva sem o excesso). Agora, depois da voz, o Maestro faz o que o ator faz com ela
-  (Configurações > Dublagem > **"Força da emoção"**: Desligada, Leve, Média ou **Forte**, a padrão):
-  - **choro**: a voz **treme** (o tom oscila umas 6 vezes por segundo, irregular, mais forte no fim das frases),
-    **quebra** para o agudo por um instante, sai com **ar** (soprada), **falha** (embarga) e **puxa o ar nas pausas**,
-    às vezes entrecortado (o soluço); a fala sai aos pedaços (cada vírgula vira uma pausa);
-  - **raiva** e **grito**: a voz **forçada e rasgada** (mais agudos de 2 a 4 kHz, a aspereza e a saturação do grito),
-    mais aguda, o tom **batendo nas sílabas fortes** e as frases terminando com "!"; o Chatterbox fica até 35% mais
-    intenso;
-  - **medo** (treme rápido, com ar), **tristeza** (tremor leve, mais grave e escura), **alegria** (mais aguda e
-    brilhante) e **sussurro** (a voz vira ar de verdade, sem a vibração).
-  Vale com ou sem o Chatterbox (só o XTTS-v2 também ganha a interpretação) e não muda a duração da fala.
+- **Interpretação da emoção depois da voz (opcional, experimental)**: Configurações > Dublagem > **"Força da
+  emoção"** (**Desligada**, a padrão; Leve, Média ou Forte). Mexe no som já gerado: no **choro**, um tremor leve no
+  tom, a voz soprada, falhas e a inspiração nas pausas (o soluço); na **raiva** e no **grito**, mais agudos de 2 a 4
+  kHz, um pouco de saturação e o tom batendo nas sílabas fortes; no **sussurro**, a voz vira ar. Ficou desligada por
+  padrão porque, ouvida na demonstração, a versão forte soou **robótica** (o volume tremendo 50 vezes por segundo,
+  que é o efeito de "voz de robô", saiu; o tremor ficou bem mais leve). A emoção mais natural continua vindo de
+  **gravações de verdade** (Importar voz > Emoção da gravação) ou do Gemini. O Chatterbox continua na intensidade de
+  antes (testado 35% mais intenso, ele inventava palavras no meio da fala chorada).
+- **228 vozes no XTTS-v2, sem clonar ninguém: as variantes**. Cada uma das 57 vozes prontas (genéricas) ganha 3
+  variantes: **grave** (tom ~2 semitons abaixo e a "garganta" maior), **aguda** (2 semitons acima) e **jovem** (2 a 3
+  semitons acima e a garganta 10% menor: os adolescentes e as crianças, que as prontas, todas de adultos, não tinham).
+  A garganta são os **formantes** (as ressonâncias que dizem o tamanho de quem fala): o Maestro muda o envelope do
+  som sem mudar o tom, e o tom pelo ffmpeg. Na tabela "Vozes dos personagens", um 2º menu escolhe a variante
+  ("Ana Florence · jovem"); também funciona com o Chatterbox (ele imita a voz de base e a variante vem depois).
+- **Elenco fixo por obra, sem repetir voz na mesma cena** ("Uma voz para cada personagem"):
+  - agora também com o **XTTS-v2** (grátis): quem fala vem do **roteiro** ao lado do vídeo (botão Roteiro) ou, com a
+    chave do Gemini, ele ouve o filme; antes, no XTTS-v2, todos os homens saíam com uma voz e todas as mulheres com
+    outra;
+  - **ninguém repete a voz de outro na mesma cena** (quem fala a menos de 45 s um do outro): quem fala pouco
+    (figurante) não fica mais com a voz principal, ganha uma voz que nenhum personagem principal usa; quando as
+    vozes acabam, a repetida é de alguém que nunca está na mesma cena (e o registro avisa se não deu);
+  - criança e jovem ganham as variantes jovens; idoso, as graves;
+  - a série guarda o elenco (a escolha da tabela vale para os próximos episódios), separado por motor: trocar entre o
+    Gemini e o XTTS-v2 não perde a escolha do outro.
 - **O grito continua mais alto na trilha**: a trilha deixava todas as falas no mesmo volume, e o grito ficava na
   altura da conversa. Agora o volume segue a emoção (grito +6 dB, raiva +3 dB, sussurro −9 dB...), para todos os
   motores de voz.

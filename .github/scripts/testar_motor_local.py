@@ -90,7 +90,8 @@ info = ve.instalar(pasta, gpu=False, ao_progresso=lambda f, texto: print(f"{f:4.
 print(f"::notice title=Chatterbox instalado::{info} em {time.time() - t0:.0f} s", flush=True)
 avisos = []
 motor = vl.MotorLocal(pasta, "Damien Black", [importada], saida, conferir=conferir,
-                      emocao=ve.MotorEmocao(pasta, avisar=avisos.append), avisar=avisos.append)
+                      emocao=ve.MotorEmocao(pasta, avisar=avisos.append), avisar=avisos.append,
+                      forca_emocao=1.0)                           # a interpretação (opcional) também no Windows
 falas = [("Corre! Ele está vindo! Sai da frente!", saida / "chatterbox_grito.wav", "", "Nesta fala: gritando."),
          ("Por favor, não me deixa sozinha.", saida / "chatterbox_choro.wav", "imp:teste", "Nesta fala: chorando."),
          ("Fala baixo. Eles podem ouvir a gente.", saida / "chatterbox_sussurro.wav", "imp:teste",
@@ -102,7 +103,7 @@ motor.fechar()
 print("\n".join(avisos), flush=True)
 assert not any("o Chatterbox falhou" in a for a in avisos), avisos
 assert any("3 pelo Chatterbox" in a for a in avisos), avisos
-interpretacao = next((a for a in avisos if a.startswith("interpretação da emoção:")), "")   # a "Forte" (padrão)
+interpretacao = next((a for a in avisos if a.startswith("interpretação da emoção:")), "")   # a "Forte"
 assert "tremor" in interpretacao and "rasgada" in interpretacao and "tom +" in interpretacao, avisos   # (o ffmpeg)
 print(f"::notice title=Interpretação::{interpretacao}", flush=True)
 ouvidos = [f"{f[1].stem} ({duracao(f[1]):.1f} s): {ouvir(f[1])}" for f in falas]

@@ -607,6 +607,65 @@ def ouvir_personagens(o: OpcoesJellyfin, video: Path, falas: list, cliente=None,
                                    elenco=elenco or None, sabidas=sabidas, ids=ids)
 
 
+def personagem_por_voz(o: OpcoesJellyfin) -> bool:
+    """"Uma voz para cada personagem" vale: com o Gemini (ele ouve quem fala) e com o XTTS-v2 (quem fala vem do
+    roteiro ao lado do vídeo ou, com a chave do Gemini, ele ouve; as vozes são as do XTTS-v2 e as variantes)."""
+    return bool(getattr(o, "voz_por_personagem", False)) and (usa_gemini(o) or usa_local(o))
+
+
+def catalogo_de_vozes(o: OpcoesJellyfin):
+    """As vozes que o elenco distribui: as do XTTS-v2 (com as variantes) ou as do Gemini."""
+    return personagens.catalogo_xtts() if usa_local(o) else personagens.CATALOGO_GEMINI
+
+
+def voz_principal(o: OpcoesJellyfin) -> str:
+    return (getattr(o, "voz_local", "") or voz_local.VOZ_PADRAO) if usa_local(o) else o.voz_gemini
+
+
+def texto_da_voz(o: OpcoesJellyfin, voz: str) -> str:
+    return voz_local.texto_do_menu(voz) if usa_local(o) else voz_gemini.texto_da_voz(voz)
+
+
+def tempos_das_falas(falas: list) -> dict[int, float]:
+    """{número da fala: segundos do início}: para o elenco não repetir voz na mesma cena."""
+    return {k: horarios(f.tempo)[0] for k, (f, _) in enumerate(falas)}
+
+
+def quem_fala(o: OpcoesJellyfin, video: Path, falas: list, cliente=None, ao_progresso=None, parar=None,
+              serie: str = "", arquivo: Path | None = None, ids: list[int] | None = None) -> list:
+    """Quem fala cada fala: o Gemini ouve (com a chave dele) ou, no XTTS-v2 sem a chave, o roteiro ao lado do vídeo
+    (grátis). ids: só essas falas (o teste)."""
+    if usa_local(o) and not chave_gemini(o):
+        achado = pelo_roteiro(o, video, falas)
+        if not achado:
+            raise ErroDublagem("sem o roteiro ao lado do vídeo (e sem a chave do Gemini para ouvir quem fala)")
+        lista = personagens.do_roteiro(achado)
+        if ids is not None:
+            dentro = set(ids)
+            lista = [personagens.Personagem(p.rotulo, p.genero, p.descricao, [k for k in p.falas if k in dentro])
+                     for p in lista]
+            lista = sorted((p for p in lista if p.falas), key=lambda p: -len(p.falas))
+        if ao_progresso:
+            ao_progresso(1.0)
+        return lista
+    extra = {chave: valor for chave, valor in (("arquivo", arquivo), ("ids", ids)) if valor is not None}
+    return ouvir_personagens(o, video, falas, cliente=cliente, ao_progresso=ao_progresso, parar=parar, serie=serie,
+                             **extra)
+
+
+def elenco_por_personagem(o: OpcoesJellyfin, lista: list, falas: list, fixas: dict | None = None,
+                          log: logging.Logger | None = None) -> dict:
+    """{rótulo: voz}: o elenco sem repetir voz na mesma cena (ver personagens.distribuir_vozes)."""
+    tempos = tempos_das_falas(falas)
+    mapa = personagens.distribuir_vozes(lista, voz_principal(o), figurante(o), o.limite_figurante, fixas=fixas,
+                                        catalogo=catalogo_de_vozes(o), tempos=tempos)
+    if log:
+        for voz, a, b in personagens.repetidas_na_cena(mapa, lista, tempos)[:5]:
+            log.info("Elenco: %s e %s estão na mesma cena com a mesma voz (%s): as vozes acabaram ou foram "
+                     "escolhidas assim", a, b, voz)
+    return mapa
+
+
 def pelo_roteiro(o: OpcoesJellyfin, video: Path, falas: list):
     """Quem fala cada fala pelo roteiro ao lado do vídeo ('Nome.roteiro.txt'), se houver e a opção estiver ligada.
     Avisa no log quanto o roteiro cobriu e quantos trechos o Gemini não vai precisar ouvir."""
@@ -639,14 +698,17 @@ def arquivo_elenco_do_teste(video: Path) -> Path:
     return pasta_do_filme(pasta_dublagem(), video) / "elenco-do-teste.json"
 
 
-def vozes_fixas(video: Path, serie: str = "") -> dict:
-    """{rótulo: voz} que já valem: as dos episódios anteriores (série) ou as do teste deste vídeo (filme)."""
-    return vozes_da_serie(serie) if serie else personagens.carregar_elenco(arquivo_elenco_do_teste(video))["vozes"]
+def vozes_fixas(video: Path, serie: str = "", chave: str = "vozes") -> dict:
+    """{rótulo: voz} que já valem: as dos episódios anteriores (série) ou as do teste deste vídeo (filme). chave:
+    "vozes" (Gemini) ou "vozes_xtts" (XTTS-v2)."""
+    if serie:
+        return vozes_da_serie(serie, chave)
+    return personagens.carregar_elenco(arquivo_elenco_do_teste(video))[chave]
 
 
-def vozes_da_serie(serie: str) -> dict:
+def vozes_da_serie(serie: str, chave: str = "vozes") -> dict:
     """{rótulo: voz} já escolhidas nos episódios anteriores (vazio: filme, ou 1º episódio)."""
-    return personagens.carregar_elenco(arquivo_elenco(serie))["vozes"] if serie else {}
+    return personagens.carregar_elenco(arquivo_elenco(serie))[chave] if serie else {}
 
 
 def itens_para_dublar(pastas: dict, idioma: str = "pt-BR", sondar=None, no_original: bool = False) -> list:
@@ -1114,14 +1176,15 @@ def dublar(log: logging.Logger, limite_videos: int = 5) -> Resultado:
 
 def vozes_automaticas(o: OpcoesJellyfin, item, log: logging.Logger) -> dict | None:
     """Robôs e vídeos avulsos (sem ninguém para conferir a tabela): uma voz por personagem escolhida sozinha."""
-    if not (usa_gemini(o) and o.voz_por_personagem):
+    if not personagem_por_voz(o):
         return None
     try:
-        lista = ouvir_personagens(o, item.video, falas_da_legenda(item.legenda), serie=item.serie)
-        mapa = personagens.distribuir_vozes(lista, o.voz_gemini, figurante(o), o.limite_figurante,
-                                            fixas=vozes_fixas(item.video, item.serie))
+        falas = falas_da_legenda(item.legenda)
+        lista = quem_fala(o, item.video, falas, serie=item.serie)
+        chave = catalogo_de_vozes(o).chave
+        mapa = elenco_por_personagem(o, lista, falas, vozes_fixas(item.video, item.serie, chave), log)
         if item.serie:                                # os próximos episódios usam as mesmas vozes
-            personagens.salvar_elenco(arquivo_elenco(item.serie), lista, mapa)
+            personagens.salvar_elenco(arquivo_elenco(item.serie), lista, mapa, chave)
         return personagens.vozes_por_fala(lista, mapa)
     except (ErroDublagem, OSError, ErroLegenda) as erro:
         log.warning("Voz por personagem em %s: %s (segue com uma voz só)", item.video.name, erro)
@@ -1133,7 +1196,7 @@ def vozes_do_teste(o: OpcoesJellyfin, video: Path, legenda: Path, trecho: tuple[
     """O TESTE com a voz por personagem ligada: o Gemini ouve só o trecho do teste e cada pessoa ganha uma voz do
     gênero dela, como na dublagem do vídeo inteiro (antes o teste saía sempre com uma voz só). Sem figurantes no Piper:
     em poucos minutos todo mundo fala pouco."""
-    if not (usa_gemini(o) and o.voz_por_personagem and chave_gemini(o)):
+    if not (personagem_por_voz(o) and (chave_gemini(o) or usa_local(o))):
         return None
     try:
         falas = falas_da_legenda(legenda)
@@ -1142,16 +1205,19 @@ def vozes_do_teste(o: OpcoesJellyfin, video: Path, legenda: Path, trecho: tuple[
             return None
         arquivo = pasta_do_filme(pasta_dublagem(), video) / "teste-personagens.json"
         arquivo.unlink(missing_ok=True)                  # o trecho (ou a legenda) do teste pode ter mudado
-        log.info("Teste: o Gemini está ouvindo quem fala as %d falas do trecho (voz por personagem)", len(ids))
-        lista = ouvir_personagens(o, video, falas, arquivo=arquivo, ids=ids)
-        mapa = personagens.distribuir_vozes(lista, o.voz_gemini)
+        log.info("Teste: %s quem fala as %d falas do trecho (voz por personagem)",
+                 "o Gemini está ouvindo" if chave_gemini(o) else "o roteiro diz", len(ids))
+        lista = quem_fala(o, video, falas, arquivo=arquivo, ids=ids)
+        catalogo = catalogo_de_vozes(o)
+        mapa = elenco_por_personagem(o, lista, falas) if usa_local(o) else personagens.distribuir_vozes(
+            lista, o.voz_gemini)
         for p in lista:
             log.info("Teste: %s (%s%s, %d falas) -> %s", p.rotulo, personagens.GENEROS.get(p.genero, "?"),
                      f", {personagens.IDADES[p.idade]}" if p.idade in personagens.IDADES else "", len(p.falas),
-                     voz_gemini.texto_da_voz(mapa.get(p.rotulo, o.voz_gemini)))
+                     texto_da_voz(o, mapa.get(p.rotulo, voz_principal(o))))
         elenco = arquivo_elenco_do_teste(video)          # o vídeo inteiro usa as mesmas pessoas e vozes
         elenco.unlink(missing_ok=True)
-        personagens.salvar_elenco(elenco, lista, mapa)
+        personagens.salvar_elenco(elenco, lista, mapa, catalogo.chave)
         return personagens.vozes_por_fala(lista, mapa)
     except (ErroDublagem, OSError, ErroLegenda) as erro:
         log.warning("Teste: voz por personagem: %s (segue com a voz pelo gênero)", erro)
@@ -1554,11 +1620,13 @@ def situacao_avulsos(plano: PlanoAvulsos, dublar: bool = True, legendar: bool = 
 
 
 def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", arquivos=(), parar=None,
-                      avisar=None, sondar=None, motor=None, separar=None, andamento=None) -> Resultado:
+                      avisar=None, sondar=None, motor=None, separar=None, andamento=None,
+                      vozes_por_video: dict | None = None, pular: set | None = None) -> Resultado:
     """Caixa de entrada: (1) traduz a legenda que já existe; (2) cria pelo áudio a dos que não têm nenhuma; (3) se
     marcado, dubla os que ficaram com legenda em português; (4) se marcado "Legendar", a legenda em português entra
     como faixa do vídeo. A dublagem e a legenda ficam no próprio arquivo (ou, se escolhido em Configurações >
-    Dublagem, a dublagem fica à parte: 'Nome - Dublado IA.mkv')."""
+    Dublagem, a dublagem fica à parte: 'Nome - Dublado IA.mkv'). vozes_por_video: {vídeo: {fala: voz}} escolhidas na
+    tabela "Vozes dos personagens" ({} = uma voz só; sem o vídeo, escolhe sozinho); pular: vídeos para não dublar."""
     from jellyfin_tools.dublagem import RelogioDaDublagem, embutir_legenda
     avisar = avisar or (lambda texto: None)
     # andamento(fração 0..1, texto): a barra e a porcentagem na tela (antes só aparecia no fim)
@@ -1631,6 +1699,8 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
         for k, item in enumerate(dublar_agora):
             if parado():
                 break
+            if pular and str(item.video) in pular:          # "Pular este filme" na tabela de vozes
+                continue
             total, relogio = len(dublar_agora), RelogioDaDublagem(bool(separar))
 
             def progresso(fracao, k=k, item=item, total=total, relogio=relogio):
@@ -1638,7 +1708,7 @@ def processar_avulsos(o: OpcoesJellyfin, log: logging.Logger, pasta: str = "", a
                           f"Dublando {k + 1} de {total}: {item.video.stem} – {relogio.texto(fracao)}")
             progresso(0.0)
             r = dublar_item(o, item, motor, log, parar, separar=separar or None, legenda_no_video=legendar,
-                            ao_progresso=progresso, tipo="avulso")
+                            ao_progresso=progresso, tipo="avulso", vozes=(vozes_por_video or {}).get(str(item.video)))
             log.info("[%s] avulso %s%s", r.status, r.video.name, f" ({r.detalhe})" if r.detalhe else "")
             if r.status == "erro":
                 erros.append(f"{item.video.name}: {r.detalhe}")

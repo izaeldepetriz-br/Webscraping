@@ -378,28 +378,73 @@ def nivelar(amostras: bytes, largura: int = 2, db: float = 0.0) -> tuple[bytes, 
     return array("h", (int(x * ganho) for x in dados)).tobytes(), rms
 
 
+def _turnos(clipes: list, juntas: set[int], duracao: float) -> tuple[list[float], list[float]]:
+    """(a vaga de cada fala, onde começa a próxima VEZ de falar): a fala que soa junto com a anterior (juntas) não
+    tira a vaga dela; a vaga vai até a próxima fala que espera a vez."""
+    vagas_, proximas = [], []
+    for k, (inicio, fim, _) in enumerate(clipes):
+        seguinte = next((j for j in range(k + 1, len(clipes)) if j not in juntas), None)
+        proxima = clipes[seguinte][0] if seguinte is not None else max(duracao, fim)
+        vagas_.append(max(proxima - inicio, fim - inicio, 0.2))
+        proximas.append(proxima)
+    return vagas_, proximas
+
+
+def _sem_estourar(amostras) -> bytes:
+    """A mistura (int32) de volta para 16 bits: os picos de duas vozes somadas dobram suave em vez de estourar."""
+    import numpy as np
+    x = amostras.astype(np.float64)
+    joelho, folga = 26000.0, 32767.0 - 26000.0
+    acima = np.abs(x) > joelho
+    x[acima] = np.sign(x[acima]) * (joelho + folga * np.tanh((np.abs(x[acima]) - joelho) / folga))
+    return x.astype("<i2").tobytes()
+
+
+def falas_juntas(horas: list[tuple[float, float]], vozes: list[str], minimo: float = 0.25) -> set[int]:
+    """As posições das falas que começam ANTES de a anterior terminar (pelo menos `minimo` segundos de sobra) e com
+    OUTRA voz: duas pessoas falando ao mesmo tempo numa discussão. Com a mesma voz (a mesma pessoa, ou uma voz só
+    para todos), espera a vez como antes."""
+    juntas = set()
+    for k in range(1, len(horas)):
+        (_, fim_antes), (inicio, _) = horas[k - 1], horas[k]
+        if inicio < fim_antes - minimo and vozes[k] != vozes[k - 1]:
+            juntas.add(k)
+    return juntas
+
+
 def montar_trilha(clipes: list[tuple[float, float, Path]], duracao: float, destino: Path, acelerar=None,
-                  reamostrar=None, nivelar_volume: bool = True, volumes_db: list[float] | None = None) -> dict:
+                  reamostrar=None, nivelar_volume: bool = True, volumes_db: list[float] | None = None,
+                  juntas: set[int] | None = None) -> dict:
     """clipes: [(início, fim da fala na legenda, .wav)] em ordem. Grava 'destino' (mono, 16 bits) do tamanho do
     vídeo, com cada fala no horário e todas no mesmo volume (nivelar; volumes_db: o de cada fala acima ou abaixo,
-    pela emoção). Devolve {"aceleradas": n, "cortadas": n,
+    pela emoção). juntas: as posições das falas que soam AO MESMO TEMPO que a anterior (discussão: falas_juntas),
+    misturadas; as outras esperam a anterior acabar. Devolve {"aceleradas": n, "cortadas": n,
     "problemas": [(posição do clipe, "acelerada" | "cortada" | "sem som", fator)]} (o relatório de qualidade).
     reamostrar(wav, taxa): converte a fala que vier noutra taxa (dublagem mista); sem ele, taxas diferentes são erro."""
-    contas = {"aceleradas": 0, "cortadas": 0, "problemas": []}
+    contas = {"aceleradas": 0, "cortadas": 0, "problemas": [], "juntas": 0}
     if not clipes:
         raise ErroDublagem("nenhuma fala para montar a trilha")
+    juntas = set(juntas or ())
+    if juntas:
+        try:
+            import numpy as np
+        except ImportError:                                   # sem o numpy: cada uma espera a vez, como antes
+            juntas = set()
     with wave.open(str(clipes[0][2]), "rb") as primeiro:
         taxa, largura = primeiro.getframerate(), primeiro.getsampwidth()
     if reamostrar is not None:                               # mista: a trilha fica na MELHOR taxa entre as falas
         for _, _, wav in clipes:
             with wave.open(str(wav), "rb") as w:
                 taxa = max(taxa, w.getframerate())
+    if largura != 2:
+        juntas = set()
     silencio_1s = b"\0" * taxa * largura
     with wave.open(str(destino), "wb") as saida:
         saida.setnchannels(1)
         saida.setsampwidth(largura)
         saida.setframerate(taxa)
-        cursor = 0                                            # em amostras
+        cursor = 0                                            # em amostras: onde a última fala terminou
+        escrito, mesa = 0, None                               # (com juntas) o que ainda pode receber outra voz
 
         def silencio(n: int) -> None:
             while n > 0:
@@ -407,8 +452,21 @@ def montar_trilha(clipes: list[tuple[float, float, Path]], duracao: float, desti
                 saida.writeframes(silencio_1s[:pedaco * largura])
                 n -= pedaco
 
-        for k, ((inicio, fim, wav), vaga) in enumerate(zip(clipes, vagas(clipes, duracao))):
-            proximo = clipes[k + 1][0] if k + 1 < len(clipes) else max(duracao, fim)
+        def escrever_ate(posicao: int) -> None:
+            """Com juntas: grava tudo antes de `posicao` (nenhuma fala depois mexe ali)."""
+            nonlocal escrito, mesa
+            if posicao <= escrito:
+                return
+            n = posicao - escrito
+            pronta, mesa = mesa[:n], mesa[n:]
+            if len(pronta):
+                saida.writeframes(_sem_estourar(pronta))
+            silencio(n - len(pronta))
+            escrito = posicao
+
+        if juntas:
+            mesa = np.zeros(0, np.int32)
+        for k, ((inicio, fim, wav), vaga, proximo) in enumerate(zip(clipes, *_turnos(clipes, juntas, duracao))):
             with wave.open(str(wav), "rb") as w:
                 n, taxa_fala = w.getnframes(), w.getframerate()
             if taxa_fala != taxa and reamostrar is not None:
@@ -431,16 +489,30 @@ def montar_trilha(clipes: list[tuple[float, float, Path]], duracao: float, desti
                 amostras, volume = nivelar(amostras, largura, db)
                 if volume < SEM_SOM:
                     contas["problemas"].append((k, "sem som", 0.0))
-            comeco = max(int(inicio * taxa), cursor)
+            junta = k in juntas
+            comeco = max(int(inicio * taxa), escrito) if junta else max(int(inicio * taxa), cursor)
             limite = int((proximo + FOLGA) * taxa) - comeco
             if len(amostras) // largura > limite > 0:
                 amostras = amostras[:limite * largura]
                 contas["cortadas"] += 1
                 contas["problemas"].append((k, "cortada", 0.0))
-            silencio(comeco - cursor)
-            saida.writeframes(amostras)
-            cursor = comeco + len(amostras) // largura
-        silencio(int(duracao * taxa) - cursor)
+            if not juntas:
+                silencio(comeco - cursor)
+                saida.writeframes(amostras)
+                cursor = comeco + len(amostras) // largura
+                continue
+            escrever_ate(comeco)
+            voz = np.frombuffer(amostras[:len(amostras) // 2 * 2], "<i2").astype(np.int32)
+            if len(mesa) < len(voz):
+                mesa = np.concatenate([mesa, np.zeros(len(voz) - len(mesa), np.int32)])
+            mesa[:len(voz)] += voz
+            if junta and comeco < cursor:
+                contas["juntas"] += 1
+            cursor = max(cursor, comeco + len(voz))
+        if juntas:
+            escrever_ate(max(cursor, int(duracao * taxa)))
+        else:
+            silencio(int(duracao * taxa) - cursor)
     return contas
 
 
@@ -1267,6 +1339,76 @@ def vozes_com_genero(vozes: dict, generos: dict, por_genero: dict | None, indice
     return novas
 
 
+PAUSA_DIALOGO = 0.15          # segundos entre as duas pessoas de um bloco com travessões
+
+
+def partes_do_dialogo(texto: str) -> list[str]:
+    """'- Sai daqui!\n- Não saio!' -> ['Sai daqui!', 'Não saio!']: duas pessoas no MESMO bloco da legenda (o
+    travessão marca quem começa a falar). Sem travessão no começo de uma linha (ou com uma parte só): []."""
+    partes, atual = [], []
+    for linha in str(texto or "").splitlines():
+        if re.match(r"\s*[-–—]\s*\S", linha) and atual:
+            partes.append(" ".join(atual))
+            atual = []
+        atual.append(linha)
+    if atual:
+        partes.append(" ".join(atual))
+    tem_travessao = sum(1 for linha in str(texto or "").splitlines() if re.match(r"\s*[-–—]\s*\S", linha))
+    partes = [texto_para_falar(parte) for parte in partes]
+    partes = [parte for parte in partes if parte]
+    return partes if tem_travessao and len(partes) >= 2 else []
+
+
+def outra_voz(voz: str, motor, vizinhas: list[str] = ()) -> str:
+    """A voz da OUTRA pessoa de um bloco com travessões: a de quem fala logo antes ou logo depois na cena (se for
+    outra) ou, sem pista, a próxima voz pronta do mesmo gênero no motor (XTTS-v2 ou Gemini). Sem opção (Piper, uma
+    voz só): a mesma."""
+    for vizinha in vizinhas:
+        if vizinha and vizinha != voz:
+            return vizinha
+    alvo = getattr(motor, "premium", motor)
+    from .voz_local import MotorLocal, perfil_da_voz, separar_variante, vozes_por_genero
+    if isinstance(alvo, MotorLocal):
+        base = separar_variante(voz or alvo.voz)[0]
+        genero = "feminina" if perfil_da_voz(base, alvo.importadas).startswith("feminina") else "masculina"
+        opcoes = vozes_por_genero(genero)
+        return opcoes[(opcoes.index(base) + 1) % len(opcoes)] if base in opcoes else opcoes[0]
+    from .voz_gemini import VOZES, MotorGemini
+    if isinstance(alvo, MotorGemini):
+        atual = voz if voz in VOZES else alvo.voz
+        genero = VOZES.get(atual, "masculina").split(",")[0]
+        opcoes = [v for v, perfil in VOZES.items() if perfil.startswith(genero)]
+        return opcoes[(opcoes.index(atual) + 1) % len(opcoes)] if atual in opcoes else opcoes[0]
+    return voz
+
+
+def juntar_partes(destino: Path, partes: list[Path], pausa: float = PAUSA_DIALOGO) -> bool:
+    """As falas das duas pessoas do bloco, uma depois da outra (com `pausa` entre elas), no .wav da fala."""
+    if not all(_pronto(parte) for parte in partes):
+        return False
+    with wave.open(str(partes[0]), "rb") as w:
+        taxa, largura = w.getframerate(), w.getsampwidth()
+    pedacos = []
+    for parte in partes:
+        with wave.open(str(parte), "rb") as w:
+            dados, taxa_parte = w.readframes(w.getnframes()), w.getframerate()
+        if taxa_parte != taxa and largura == 2:                   # (dublagem mista: outra taxa) reamostra simples
+            import numpy as np
+            x = np.frombuffer(dados[:len(dados) // 2 * 2], "<i2").astype(np.float64)
+            novo = np.interp(np.arange(int(len(x) * taxa / taxa_parte)) * taxa_parte / taxa, np.arange(len(x)), x)
+            dados = novo.astype("<i2").tobytes()
+        pedacos.append(dados)
+    silencio = b"\0" * (int(pausa * taxa) * largura)
+    temporario = destino.with_name(destino.stem + ".juntando.wav")
+    with wave.open(str(temporario), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(largura)
+        w.setframerate(taxa)
+        w.writeframes(silencio.join(pedacos))
+    temporario.replace(destino)
+    return True
+
+
 def _sintetizar(motor, pedidos, parar, ao_progresso=None, banco: Path | None = None) -> int:
     """Só as falas que ainda não estão prontas; a voz vai junto só quando há uma por personagem.
     A MESMA frase com a MESMA voz é pedida uma vez só e copiada para as outras ("Sim." 40 vezes no filme = 1
@@ -1441,7 +1583,17 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
         tom_de = juntar_notas(tom_de, ritmo_de)
         pedidos = [_pedido_da_fala(pasta, k, falas[k][1], vozes.get(k, ""), motor, tom_de.get(k, ""),
                                    antes=(ritmo_de.get(k, ""), "")) for k in indices]
-        _sem_versoes_velhas(w for _, w, _, _ in pedidos)
+        dialogos = {}                                   # posição -> (as partes): blocos com travessões
+        for pos, k in enumerate(indices):
+            partes = partes_do_dialogo(falas[k][0].texto)
+            if not partes or _pronto(pedidos[pos][1]):
+                continue
+            voz = vozes.get(k, "")
+            outra = outra_voz(voz, motor, [vozes.get(j, "") for j in (k - 1, k + 1)])
+            dialogos[pos] = [_pedido_da_fala(pasta, k, parte, voz if i % 2 == 0 else outra, motor, tom_de.get(k, ""),
+                                             f"-p{i}") for i, parte in enumerate(partes)]
+        partes_pedidas = [parte for partes in dialogos.values() for parte in partes]
+        _sem_versoes_velhas(w for _, w, _, _ in pedidos + partes_pedidas)
         retomadas = sum(1 for _, w, _, _ in pedidos if _pronto(w))
         if legenda_no_video and not trecho:              # cópia de trabalho: a que entra no vídeo é ESTA
             shutil.copyfile(legenda, pasta / "legenda.srt")
@@ -1449,19 +1601,30 @@ def _dublar_video(video: str | Path, legenda: str | Path, motor, ffmpeg: str | N
         fatias = ((0.4, 0.45, 0.5, 0.8) if separar else (0.5, 0.6, 0.7, 0.7))   # falas, adaptar, trilha, separar
         try:
             andamento(0.0)                               # "lendo as falas 0%" já aparece (antes do 1º bloco voltar)
-            reaproveitadas = _sintetizar(motor, pedidos, parar, lambda f: andamento(fatias[0] * f),
+            reaproveitadas = _sintetizar(motor, [p for pos, p in enumerate(pedidos) if pos not in dialogos]
+                                         + partes_pedidas, parar, lambda f: andamento(fatias[0] * f),
                                          Path(pasta_cache) / "frases" if pasta_cache else None)
+            for pos, partes in dialogos.items():           # as duas pessoas do bloco, uma depois da outra
+                juntar_partes(Path(pedidos[pos][1]), [Path(w) for _, w, _, _ in partes])
+            if dialogos and avisar:
+                avisar(f"diálogo: {len(dialogos)} bloco(s) com travessões falados por duas vozes (uma para cada "
+                       "pessoa)")
             clipes = [(a - inicio, b - inicio, w) for k, (_, w, _, _) in zip(indices, pedidos)
                       for a, b in [horarios(falas[k][0].tempo)]]
             adaptadas = 0
             if adaptar is not None:
                 clipes, adaptadas = _adaptar(clipes, [t for _, t in falas], duracao, motor, adaptar, parar, avisar,
-                                             vozes, pasta, indices, tom_de)
+                                             vozes, pasta, indices, tom_de,
+                                             pular={k for k in indices if partes_do_dialogo(falas[k][0].texto)})
             andamento(fatias[1])
             from .emocoes import emocao_da_nota
             volumes = [VOLUME_DA_EMOCAO.get(emocao_da_nota(tom_de.get(k, "")), 0.0) for k in indices]
+            juntas = falas_juntas([(a, b) for a, b, _ in clipes], [vozes.get(k, "") for k in indices])
             contas = montar_trilha(clipes, duracao, pasta / "trilha.wav", acelerar_com_ffmpeg(ffmpeg),
-                                   reamostrar_com_ffmpeg(ffmpeg), volumes_db=volumes)
+                                   reamostrar_com_ffmpeg(ffmpeg), volumes_db=volumes, juntas=juntas)
+            if contas.get("juntas") and avisar:
+                avisar(f"discussão: {contas['juntas']} fala(s) ao mesmo tempo que a anterior (pessoas diferentes "
+                       "falando juntas)")
             andamento(fatias[2])
             fundo = None
             if separar:
@@ -1599,7 +1762,8 @@ def _ambiente_da_voz(fundo: Path, trilha: Path) -> dict | None:
         return None
 
 
-def _adaptar(clipes, textos, duracao, motor, adaptar, parar, avisar, vozes, pasta, indices=None, tons=None):
+def _adaptar(clipes, textos, duracao, motor, adaptar, parar, avisar, vozes, pasta, indices=None, tons=None,
+             pular=()):
     """Reescreve (IA) as falas que só caberiam muito aceleradas e as lê de novo. Fica a versão que soar MAIS CURTA.
     As reescritas ficam guardadas (adaptadas.json) pelo número da fala NO FILME: ao continuar um filme (ou depois
     de uma amostra), não se paga de novo por elas. indices: o número de cada clipe no filme (amostra)."""
@@ -1615,7 +1779,7 @@ def _adaptar(clipes, textos, duracao, motor, adaptar, parar, avisar, vozes, past
     for pos, ((_, _, wav), vaga) in enumerate(zip(clipes, vagas(clipes, duracao))):
         k = ids[pos]
         dur = duracao_wav(wav)
-        if dur / vaga > NATURAL and k not in guardadas:
+        if dur / vaga > NATURAL and k not in guardadas and k not in pular:      # (pular: os diálogos de 2 vozes)
             longas.append((k, textos[k], limite_de_letras(textos[k], dur, vaga), textos[k - 1] if k else ""))
     if longas:
         try:

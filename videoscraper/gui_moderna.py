@@ -1435,10 +1435,13 @@ class DialogoMarcar(ctk.CTkToplevel):
 
 
 class DialogoVozes(ctk.CTkToplevel):
-    """"Vozes dos personagens": quem o Gemini ouviu falar no filme e a voz sugerida para cada um, para trocar.
+    """"Vozes dos personagens": quem fala no filme (ouvido pelo Gemini ou lido no roteiro) e a voz sugerida para cada
+    um, para trocar. variantes (XTTS-v2): um 2º menu por personagem com a variante da voz (grave, aguda, jovem).
     `resultado`: {rótulo: voz} (dublar assim), {} (uma voz só para todos) ou None (pular este filme)."""
+    ORIGINAL = "original"
 
-    def __init__(self, master, filme: str, linhas: list[str], rotulos: list[str], sugestao: dict, vozes: tuple):
+    def __init__(self, master, filme: str, linhas: list[str], rotulos: list[str], sugestao: dict, vozes: tuple,
+                 variantes: tuple = ()):
         super().__init__(master, fg_color=Tema.CARTAO)
         self.resultado = None
         self.title("Vozes dos personagens")
@@ -1448,18 +1451,27 @@ class DialogoVozes(ctk.CTkToplevel):
         corpo.pack(fill="both", expand=True, padx=26, pady=(20, 6))
         ctk.CTkLabel(corpo, text="Vozes dos personagens", font=ctk.CTkFont(Tema.FAMILIA, 17, "bold"),
                      text_color=Tema.TEXTO, anchor="w").pack(fill="x")
-        ctk.CTkLabel(corpo, text=f"{filme}: quem o Gemini ouviu falar e a voz de cada um. Troque o que quiser (ouça as "
-                     "vozes em aistudio.google.com/generate-speech). Quem fala pouco, ou fala sem dono, usa a voz "
-                     "principal.", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left",
+        dica = ("as variantes (grave, aguda, jovem) fazem outra pessoa com a mesma voz" if variantes else
+                "ouça as vozes em aistudio.google.com/generate-speech")
+        ctk.CTkLabel(corpo, text=f"{filme}: quem fala e a voz de cada um (ninguém repete a voz de outro na mesma "
+                     f"cena). Troque o que quiser ({dica}). A escolha vale para a série inteira.",
+                     font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left",
                      wraplength=640).pack(fill="x", pady=(2, 10))
         self.vars: dict[str, tk.StringVar] = {}
+        self.vars_variante: dict[str, tk.StringVar] = {}
         por_nome = {valor_da_voz(v): v for v in vozes}
         for rotulo, linha in zip(rotulos, linhas):
             fila = ctk.CTkFrame(corpo, fg_color="transparent")
             fila.pack(fill="x", pady=3)
             ctk.CTkLabel(fila, text=linha, font=master.f_rotulo, text_color=Tema.TEXTO, anchor="w", justify="left",
                          wraplength=400, width=400).pack(side="left")
-            self.vars[rotulo] = tk.StringVar(value=por_nome.get(sugestao.get(rotulo, ""), vozes[0]))
+            base, variante = voz_local.separar_variante(sugestao.get(rotulo, ""))
+            if variantes:
+                self.vars_variante[rotulo] = tk.StringVar(value=variante or self.ORIGINAL)
+                menu = master._menu_opcoes(fila, self.vars_variante[rotulo], (self.ORIGINAL, *variantes))
+                menu.configure(width=110)
+                menu.pack(side="right", padx=(6, 0))
+            self.vars[rotulo] = tk.StringVar(value=por_nome.get(base, vozes[0]))
             master._menu_opcoes(fila, self.vars[rotulo], vozes).pack(side="right")
         botoes = ctk.CTkFrame(self, fg_color="transparent")
         botoes.pack(fill="x", padx=26, pady=(10, 20))
@@ -1483,7 +1495,11 @@ class DialogoVozes(ctk.CTkToplevel):
         self.destroy()
 
     def _ok(self) -> None:
-        self.resultado = {rotulo: valor_da_voz(var.get()) for rotulo, var in self.vars.items()}
+        self.resultado = {}
+        for rotulo, var in self.vars.items():
+            voz = valor_da_voz(var.get())
+            variante = self.vars_variante[rotulo].get() if rotulo in self.vars_variante else ""
+            self.resultado[rotulo] = voz_local.com_variante(voz, variante) if variante != self.ORIGINAL else voz
         self.destroy()
 
 
@@ -2714,10 +2730,12 @@ class PainelAutomatico(ctk.CTkToplevel):
 class DialogoAjustarFalas(ctk.CTkToplevel):
     """"Ajustar falas" de um teste: escolhe UMA fala e, se quiser, troca o texto que a voz lê, a voz ou o tom; o
     Maestro refaz só ela (paga só essa fala). linhas: [(número, horário, texto, voz, tom)]. resultado:
-    (número, texto, voz, tom) — vazio = automático — ou None (Cancelar)."""
+    (número, texto, voz, tom) — vazio = automático — ou None (Cancelar). variantes (XTTS-v2): o menu da variante
+    da voz (grave, aguda, jovem)."""
     AUTOMATICA = "(automática)"
+    ORIGINAL = "original"
 
-    def __init__(self, master, nome: str, linhas: list, vozes: list):
+    def __init__(self, master, nome: str, linhas: list, vozes: list, variantes: tuple = ()):
         super().__init__(master, fg_color=Tema.CARTAO)
         self.linhas, self.resultado = list(linhas), None
         self.title("Ajustar falas")
@@ -2754,11 +2772,19 @@ class DialogoAjustarFalas(ctk.CTkToplevel):
         self.campo_texto.grid(row=0, column=1, sticky="ew", pady=3)
         ctk.CTkLabel(campos, text="Voz", font=master.f_rotulo, text_color=Tema.TEXTO_SUAVE).grid(
             row=1, column=0, sticky="w", padx=(0, 10), pady=3)
-        self.menu_voz = ctk.CTkOptionMenu(campos, values=[self.AUTOMATICA] + list(vozes), variable=self.var_voz,
+        linha_voz = ctk.CTkFrame(campos, fg_color="transparent")
+        linha_voz.grid(row=1, column=1, sticky="w", pady=3)
+        self.menu_voz = ctk.CTkOptionMenu(linha_voz, values=[self.AUTOMATICA] + list(vozes), variable=self.var_voz,
                                           width=280)
-        self.menu_voz.grid(row=1, column=1, sticky="w", pady=3)
+        self.menu_voz.pack(side="left")
         if not vozes:                                    # Piper/Google Cloud: a voz é a das Configurações
             self.menu_voz.configure(state="disabled")
+        self.var_variante = tk.StringVar(value=self.ORIGINAL)
+        self.menu_variante = None
+        if variantes:                                    # XTTS-v2: a variante da voz (outra pessoa, mesma voz)
+            self.menu_variante = ctk.CTkOptionMenu(linha_voz, values=[self.ORIGINAL, *variantes],
+                                                   variable=self.var_variante, width=110)
+            self.menu_variante.pack(side="left", padx=(8, 0))
         ctk.CTkLabel(campos, text="Tom (ex.: com raiva, gritando)", font=master.f_rotulo,
                      text_color=Tema.TEXTO_SUAVE).grid(row=2, column=0, sticky="w", padx=(0, 10), pady=3)
         ctk.CTkEntry(campos, textvariable=self.var_tom, placeholder_text="vazio = o do original").grid(
@@ -2784,8 +2810,10 @@ class DialogoAjustarFalas(ctk.CTkToplevel):
         _, _, texto, voz, tom = self.linhas[i]
         self.var_texto.set(texto)
         self.var_tom.set(tom)
-        menu = next((v for v in self.vozes if valor_da_voz(v) == voz), self.AUTOMATICA) if voz else self.AUTOMATICA
+        base, variante = voz_local.separar_variante(voz or "")
+        menu = next((v for v in self.vozes if valor_da_voz(v) == base), self.AUTOMATICA) if base else self.AUTOMATICA
         self.var_voz.set(menu)
+        self.var_variante.set(variante or self.ORIGINAL)
 
     def confirmar(self) -> None:
         i = self._escolhida()
@@ -2794,6 +2822,8 @@ class DialogoAjustarFalas(ctk.CTkToplevel):
         k, _, texto_antes, _, _ = self.linhas[i]
         texto = self.var_texto.get().strip()
         voz = "" if self.var_voz.get() == self.AUTOMATICA else valor_da_voz(self.var_voz.get())
+        if voz and self.menu_variante is not None and self.var_variante.get() != self.ORIGINAL:
+            voz = voz_local.com_variante(voz, self.var_variante.get())
         self.resultado = (k, texto if texto and texto != texto_antes else "", voz, self.var_tom.get().strip())
         self.destroy()
 
@@ -4216,8 +4246,9 @@ class JanelaModerna(ctk.CTk):
         self.menu_voz_piper.configure(width=320)
         self.menu_voz_piper.pack(anchor="w", **p)
         self.var_jf_voz_por_personagem = tk.BooleanVar(value=False)
-        self._checkbox(lateral, "Uma voz para cada personagem (o Gemini ouve o filme e separa quem fala; antes de "
-                                "dublar, a tabela \"Vozes dos personagens\" deixa trocar)",
+        self._checkbox(lateral, "Uma voz para cada personagem, sem repetir voz na mesma cena (o Gemini ouve quem fala; "
+                                "no XTTS-v2, o roteiro diz, ou o Gemini com a chave; a tabela \"Vozes dos "
+                                "personagens\" deixa trocar e a série guarda o elenco)",
                        self.var_jf_voz_por_personagem)
         self.var_jf_vozes_sem_tabela = tk.BooleanVar(value=False)
         self._checkbox(lateral, "Escolher as vozes dos personagens sozinho (sem abrir a tabela)",
@@ -6035,20 +6066,23 @@ class JanelaModerna(ctk.CTk):
         self.wait_window(dialogo)
         return dialogo.resultado
 
-    def pedir_ajuste_de_fala(self, nome: str, linhas: list, vozes: list) -> tuple | None:
+    def pedir_ajuste_de_fala(self, nome: str, linhas: list, vozes: list, variantes: tuple = ()) -> tuple | None:
         """Janela "Ajustar falas" (ver DialogoAjustarFalas): (número, texto, voz, tom) ou None."""
-        dialogo = DialogoAjustarFalas(self, nome, linhas, vozes)
+        dialogo = DialogoAjustarFalas(self, nome, linhas, vozes, **({"variantes": variantes} if variantes else {}))
         self.wait_window(dialogo)
         return dialogo.resultado
 
     def pedir_vozes(self, filme: str, linhas: list[str], rotulos: list[str], sugestao: dict) -> dict | None:
         """Janela "Vozes dos personagens" (ver DialogoVozes)."""
         vozes = self.vozes_gemini_do_menu() + tuple(f"Piper {v} (grátis, no PC)" for v in self.vozes_piper_do_menu())
+        variantes = ()
         if self.var_jf_motor_voz.get().startswith("XTTS"):     # XTTS-v2: as vozes dele no lugar das do Gemini
             vozes = tuple(f"XTTS: {v}" for v in self.vozes_locais_do_menu()) + vozes[len(self.vozes_gemini_do_menu()):]
+            variantes = tuple(voz_local.VARIANTES)
         if self.var_jf_figurantes_cloud.get():               # figurantes no Google Cloud (cota grátis)
             vozes += tuple(f"Google Cloud {v} (cota grátis)" for v in voz_cloud.vozes_do_tipo(self.tipo_cloud_escolhido()))
-        dialogo = DialogoVozes(self, filme, linhas, rotulos, sugestao, vozes)
+        dialogo = DialogoVozes(self, filme, linhas, rotulos, sugestao, vozes,
+                               **({"variantes": variantes} if variantes else {}))
         self.wait_window(dialogo)
         return dialogo.resultado
 
