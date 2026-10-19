@@ -19,23 +19,31 @@ jobs:
           mkdir -p paginas && cd paginas
           UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
           baixar() { curl -sSL -A "$UA" -m 60 -o "$1" -w "$1 %{http_code} %{size_download} %{url_effective}\n" "$2" >> ../resumo.txt 2>>../erros.txt || echo "$1 FALHOU $2" >> ../resumo.txt; }
-          baixar rhn_busca.html "https://www.romhacking.net/?page=translations&title=Burnout&perpage=20&searchtype=1"
-          baixar rhn_form.html "https://www.romhacking.net/?page=translations"
-          baixar rhn_ps2_pt.html "https://www.romhacking.net/?page=translations&title=final+fantasy&perpage=20&searchtype=1"
-          baixar rhn_detalhe.html "https://www.romhacking.net/translations/1/"
-          baixar rhn_detalhe2.html "https://www.romhacking.net/translations/6000/"
-          baixar pobre_inicio.html "https://www.romhackers.org/"
-          baixar pobre_traducoes.html "https://www.romhackers.org/traducoes/"
-          baixar pobre_busca.html "https://www.romhackers.org/?s=burnout"
-          baixar pobre_busca2.html "https://www.romhackers.org/?s=god+of+war"
-          baixar forum_inicio.html "https://romhacking.net.br/"
-          baixar itch_busca.html "https://itch.io/search?q=tradu%C3%A7%C3%A3o+ps2+patch"
-          baixar itch_busca2.html "https://itch.io/search?q=burnout+3"
-          baixar redump_busca.html "http://redump.org/discs/quicksearch/SLUS-21050/"
-          baixar redump_ps2.zip "http://redump.org/datfile/ps2/"
+          baixar pobre_main.js "https://romhackers.org/assets/js/main.js"
+          baixar pobre_robots.txt "https://romhackers.org/robots.txt"
+          baixar pobre_console.html "https://romhackers.org/traducoes/console"
+          baixar pobre_ps2.html "https://romhackers.org/traducoes/console/playstation-2/"
+          baixar pobre_ps2b.html "https://romhackers.org/traducoes/console/playstation-2"
+          baixar pobre_psx.html "https://romhackers.org/traducoes/console/playstation/"
+          baixar itch_robots.txt "https://itch.io/robots.txt"
+          baixar itch_busca3.html "https://itch.io/search?q=ps2+traducao+pt-br"
+          baixar forum_robots.txt "https://www.romhacking.net.br/robots.txt"
+          baixar forum_busca.html "https://www.romhacking.net.br/index.php?action=search2;search=god+of+war;searchtype=1;subject_only=1"
+          baixar redump_robots.txt "http://redump.org/robots.txt"
+          baixar rhn_robots.txt "https://www.romhacking.net/robots.txt"
+          python3 - <<'PY' >> ../resumo.txt
+          import re, pathlib, subprocess
+          t = pathlib.Path("pobre_ps2.html").read_text(errors="replace") if pathlib.Path("pobre_ps2.html").exists() else ""
+          links = re.findall(r'href="(https://romhackers.org/traducoes/console/playstation-2/[^"]+/)"', t)
+          print("links ps2:", len(links), links[:5])
+          for i, url in enumerate(links[:2]):
+              subprocess.run(["curl", "-sSL", "-A", "Mozilla/5.0", "-m", "60", "-o", f"pobre_detalhe{i}.html", url])
+          m = re.findall(r'href="([^"]*(?:pagina|page|\?p=)[^"]*)"', t)
+          print("paginas:", m[:10])
+          PY
           ls -la
           cd .. && cat resumo.txt && cat erros.txt || true
-          python3 - <<'PY'
+          true || python3 - <<'PY'
           import zipfile, io, re, pathlib
           z = pathlib.Path("paginas/redump_ps2.zip")
           try:
