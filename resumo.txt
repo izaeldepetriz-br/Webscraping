@@ -1,0 +1,14 @@
+pobre_main.js 200 3347 https://romhackers.org/assets/js/main.js
+pobre_robots.txt 200 24 https://romhackers.org/robots.txt
+pobre_console.html 200 20198 https://romhackers.org/traducoes/console
+pobre_ps2.html 200 34540 https://romhackers.org/traducoes/console/playstation-2/
+pobre_ps2b.html 200 34540 https://romhackers.org/traducoes/console/playstation-2/
+pobre_psx.html 200 51299 https://romhackers.org/traducoes/console/playstation/
+itch_robots.txt 200 249 https://itch.io/robots.txt
+itch_busca3.html 200 104234 https://itch.io/search?q=ps2+traducao+pt-br
+forum_robots.txt 404 1090 https://www.romhacking.net.br/robots.txt
+forum_busca.html 200 43698 https://www.romhacking.net.br/index.php?action=search2;search=god+of+war;searchtype=1;subject_only=1
+redump_robots.txt 200 25 http://redump.org/robots.txt
+rhn_robots.txt 200 210 https://www.romhacking.net/robots.txt
+links ps2: 51 ['https://romhackers.org/traducoes/console/playstation-2/airborne-troops-hnnewgames/', 'https://romhackers.org/traducoes/console/playstation-2/cold-fear-versao-americana-hnnewgames/', 'https://romhackers.org/traducoes/console/playstation-2/cold-fear-versao-europeia-hnnewgames/', 'https://romhackers.org/traducoes/console/playstation-2/crash-twinsanity-sora-leon-e-andre-romhacker/', 'https://romhackers.org/traducoes/console/playstation-2/darkwatch-hnnewgames/']
+paginas: []

@@ -1,0 +1,10 @@
+# /robots.txt
+
+User-agent: *
+Disallow: /download/
+Disallow: /*?*page=
+Disallow: /*?*startpage=
+Disallow: /*?*action=signup
+Disallow: /forum/cron.php
+Disallow: /forum/index.php?action=profile
+Disallow: /cron.php
