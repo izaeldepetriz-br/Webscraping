@@ -1,0 +1,63 @@
+# Temporário: baixa páginas dos sites de patches (PO.B.R.E, Romhacking.net, fórum, itch.io) e do Redump para
+# o Maestro aprender o formato de cada uma; as páginas vão para o ramo "sondagem-sites-<execução>".
+name: Sondar sites
+
+on:
+  push:
+    branches: [sondar-sites]
+
+permissions:
+  contents: write
+
+jobs:
+  sondar:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Baixar as páginas
+        run: |
+          mkdir -p paginas && cd paginas
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+          baixar() { curl -sSL -A "$UA" -m 60 -o "$1" -w "$1 %{http_code} %{size_download} %{url_effective}\n" "$2" >> ../resumo.txt 2>>../erros.txt || echo "$1 FALHOU $2" >> ../resumo.txt; }
+          baixar rhn_busca.html "https://www.romhacking.net/?page=translations&title=Burnout&perpage=20&searchtype=1"
+          baixar rhn_form.html "https://www.romhacking.net/?page=translations"
+          baixar rhn_ps2_pt.html "https://www.romhacking.net/?page=translations&title=final+fantasy&perpage=20&searchtype=1"
+          baixar rhn_detalhe.html "https://www.romhacking.net/translations/1/"
+          baixar rhn_detalhe2.html "https://www.romhacking.net/translations/6000/"
+          baixar pobre_inicio.html "https://www.romhackers.org/"
+          baixar pobre_traducoes.html "https://www.romhackers.org/traducoes/"
+          baixar pobre_busca.html "https://www.romhackers.org/?s=burnout"
+          baixar pobre_busca2.html "https://www.romhackers.org/?s=god+of+war"
+          baixar forum_inicio.html "https://romhacking.net.br/"
+          baixar itch_busca.html "https://itch.io/search?q=tradu%C3%A7%C3%A3o+ps2+patch"
+          baixar itch_busca2.html "https://itch.io/search?q=burnout+3"
+          baixar redump_busca.html "http://redump.org/discs/quicksearch/SLUS-21050/"
+          baixar redump_ps2.zip "http://redump.org/datfile/ps2/"
+          ls -la
+          cd .. && cat resumo.txt && cat erros.txt || true
+          python3 - <<'PY'
+          import zipfile, io, re, pathlib
+          z = pathlib.Path("paginas/redump_ps2.zip")
+          try:
+              with zipfile.ZipFile(z) as f:
+                  nome = f.namelist()[0]
+                  dados = f.read(nome).decode("utf-8", "replace")
+              print("DAT", nome, len(dados))
+              pathlib.Path("paginas/redump_ps2_inicio.dat").write_text(dados[:20000])
+              achado = re.search(r'<game name="Burnout 3[^"]*".*?</game>', dados, re.S)
+              pathlib.Path("paginas/redump_burnout.txt").write_text(achado.group(0) if achado else "não achou")
+          except Exception as erro:
+              print("DAT falhou", erro)
+          z.unlink(missing_ok=True)
+          PY
+      - name: Guardar num ramo
+        if: always()
+        run: |
+          mkdir -p r && cp -r paginas resumo.txt erros.txt r/ 2>/dev/null || true
+          cd r
+          git init -q -b sondagem-sites-${{ github.run_id }}
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Sondagem dos sites (execução ${{ github.run_id }})"
+          git push -q "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD
