@@ -96,22 +96,37 @@ class CapturaDoSom:
 
 
 class VolumeDoJogo:
-    """Abaixa o som do processo do jogo enquanto a voz traduzida fala (Windows, pela biblioteca pycaw)."""
+    """Abaixa o som do processo do jogo enquanto a voz traduzida fala (Windows, pela biblioteca pycaw). O COM do
+    Windows é preparado na 1ª vez, na tarefa que fala (a mesma que abaixa e volta), e não na da tela."""
 
-    def __init__(self, processo: int):
-        self.processo, self._sessoes, self._antes = processo, [], {}
+    def __init__(self, processo: int, sessoes=None):
+        self.processo, self._antes = processo, {}
+        self._sessoes = sessoes
+        self._achar = None if sessoes is not None else self._sessoes_do_jogo
+
+    def _sessoes_do_jogo(self) -> list:
+        try:
+            import comtypes
+            comtypes.CoInitialize()                   # nesta tarefa
+        except Exception:
+            pass
         try:
             from pycaw.pycaw import AudioUtilities
-            self._sessoes = [s for s in AudioUtilities.GetAllSessions() if s.Process and s.Process.pid == processo]
+            return [s for s in AudioUtilities.GetAllSessions() if s.Process and s.Process.pid == self.processo]
         except Exception:
-            self._sessoes = []
+            return []
+
+    def _preparar(self) -> list:
+        if self._sessoes is None:
+            self._sessoes = self._achar()
+        return self._sessoes
 
     @property
     def funciona(self) -> bool:
-        return bool(self._sessoes)
+        return bool(self._preparar())
 
     def abaixar(self) -> None:
-        for s in self._sessoes:
+        for s in self._preparar():
             try:
                 volume = s.SimpleAudioVolume
                 self._antes[id(s)] = volume.GetMasterVolume()
@@ -120,7 +135,7 @@ class VolumeDoJogo:
                 pass
 
     def voltar(self) -> None:
-        for s in self._sessoes:
+        for s in self._sessoes or []:
             try:
                 s.SimpleAudioVolume.SetMasterVolume(self._antes.get(id(s), 1.0), None)
             except Exception:

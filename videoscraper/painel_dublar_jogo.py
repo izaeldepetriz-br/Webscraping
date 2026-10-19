@@ -11,6 +11,9 @@ jellyfin_tools (iso_jogo, roteiro_jogo, dublar_jogo) e a ligação com a janela 
                          de formato e duração e o tempo estimado
     4. Entregar          roteiro_ptbr + audio_ptbr (+ montar a ISO, quando as falas saíram dela pelo Maestro) e o
                          patch .xdelta para compartilhar
+
+Em cima, o "⏱ Tempo deste jogo" (cada etapa, o total e a que horas termina, pela velocidade deste PC) e o botão
+"🤖 Automático", que faz as etapas marcadas uma depois da outra.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ class PainelDublarJogo(ctk.CTkScrollableFrame):
     """A tela do modo. acoes: {'escolher_pasta', 'ler', 'escolher_roteiro', 'escolher_iso', 'analisar',
     'relatorio', 'extrair', 'traduzir', 'traduzir_teste', 'editar', 'custos', 'trocar_voz', 'dublar',
     'dublar_teste', 'ouvir', 'editar_fala', 'escolher_saida', 'entregar', 'abrir_saida', 'montar',
-    'criar_patch'}."""
+    'criar_patch', 'automatico'}."""
 
     def __init__(self, pai, app, acoes: dict):
         super().__init__(pai, fg_color="transparent")
@@ -48,6 +51,7 @@ class PainelDublarJogo(ctk.CTkScrollableFrame):
         self.iso_montada = None
         self._pequeno = ctk.CTkFont(Tema.FAMILIA, 11)
         self.grid_columnconfigure(0, weight=1)
+        self._montar_tempo()
         self._montar_roteiro()
         self._montar_traducao()
         self._montar_dublagem()
@@ -58,7 +62,7 @@ class PainelDublarJogo(ctk.CTkScrollableFrame):
     def _cartao(self, linha: int, titulo: str, dica: str) -> ctk.CTkFrame:
         m = self.app
         cartao = m._cartao(self)
-        cartao.grid(row=linha, column=0, sticky="ew", padx=(28, 16), pady=(12, 0))
+        cartao.grid(row=linha + 1, column=0, sticky="ew", padx=(28, 16), pady=(12, 0))   # (a linha 0: o tempo)
         cartao.grid_columnconfigure(1, weight=1)
         topo = ctk.CTkFrame(cartao, fg_color="transparent")
         topo.grid(row=0, column=0, columnspan=3, sticky="ew", padx=20, pady=(12, 6))
@@ -120,6 +124,22 @@ class PainelDublarJogo(ctk.CTkScrollableFrame):
         rolagem.grid(row=0, column=1, sticky="ns", padx=(4, 0))
         tabela.configure(yscrollcommand=rolagem.set)
         return tabela
+
+    def _montar_tempo(self) -> None:
+        m = self.app
+        faixa = m._cartao(self)
+        faixa.grid(row=0, column=0, sticky="ew", padx=(28, 16), pady=(12, 0))
+        faixa.grid_columnconfigure(1, weight=1)
+        m._rotulo(faixa, "⏱ Tempo deste jogo", suave=False, fonte=m.f_secao).grid(row=0, column=0, padx=(20, 12),
+                                                                                  pady=12, sticky="w")
+        self.lb_tempo_jogo = m._rotulo(faixa, "abra o roteiro ou tire as falas da ISO para ver quanto tempo leva",
+                                       fonte=self._pequeno)
+        self.lb_tempo_jogo.grid(row=0, column=1, sticky="w", pady=12)
+        self.bt_automatico = m._botao(faixa, "🤖  Automático", self.acoes["automatico"], "primario")
+        self.bt_automatico.grid(row=0, column=2, padx=(12, 20), pady=12)
+
+    def mostrar_tempo_jogo(self, texto: str, ok: bool = True) -> None:
+        self.lb_tempo_jogo.configure(text=texto, text_color=Tema.TEXTO_SUAVE if ok else Tema.AVISO)
 
     def _montar_roteiro(self) -> None:
         m = self.app
@@ -437,7 +457,7 @@ class PainelDublarJogo(ctk.CTkScrollableFrame):
         self.bt_extrair.configure(state="normal" if self.analise is not None and self.analise.falas else "disabled")
         self.bt_relatorio.configure(state="normal" if self.analise is not None else "disabled")
         tem = bool(self.falas) or self.roteiro is not None
-        for botao in (self.bt_traduzir, self.bt_traduzir_teste, self.bt_custos):
+        for botao in (self.bt_traduzir, self.bt_traduzir_teste, self.bt_custos, self.bt_automatico):
             botao.configure(state="normal" if tem else "disabled")
         dublaveis = any(f.formato is not None for f in self.falas)
         for botao in (self.bt_dublar, self.bt_dublar_teste, self.bt_ouvir, self.bt_editar_fala):

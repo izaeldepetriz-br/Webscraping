@@ -262,6 +262,9 @@ class EnquantoJoga:
         if qual == "tela":
             if self._tradutor_de_tela is not None:
                 self._tradutor_de_tela.parar()
+                fechar = getattr(self._tradutor_de_tela.leitor, "fechar", None)   # a tarefa do leitor do Windows
+                if fechar is not None:
+                    fechar()
                 self._tradutor_de_tela = None
             if self._atalho is not None:
                 self._atalho.parar()

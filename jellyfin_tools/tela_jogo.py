@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import queue
 import re
 import shutil
 import subprocess
@@ -131,10 +132,52 @@ def _msvcp_do_windows() -> None:
 
 class LeitorWindows:
     """O leitor de texto que vem no Windows 10/11 (Windows.Media.Ocr): rápido, de graça e nada sai do PC. Lê no
-    idioma do jogo, se o pacote de idioma estiver instalado (o inglês costuma estar); senão, no do Windows."""
+    idioma do jogo, se o pacote de idioma estiver instalado (o inglês costuma estar); senão, no do Windows.
+
+    Tudo do winrt roda numa tarefa só dele: o winrt deixa a tarefa no modo "multi" do COM do Windows, e a tela (Tk) e
+    o volume do jogo (pycaw) precisam do modo "único" nas tarefas deles ("Cannot change thread mode")."""
     nome = "Windows (OCR do próprio Windows)"
 
-    def __init__(self, idioma: str = "en-US"):
+    def __init__(self, idioma: str = "en-US", preparar=None, ler_aqui=None):
+        self._preparar = preparar or self._preparar_winrt
+        self._ler_aqui = ler_aqui or self._ler_winrt
+        self._pedidos: queue.Queue = queue.Queue()
+        pronto: queue.Queue = queue.Queue()
+        self._fio = threading.Thread(target=self._laco, args=(idioma, pronto), daemon=True, name="leitor-windows")
+        self._fio.start()
+        erro = pronto.get(timeout=120)
+        if erro is not None:                      # (ImportError, ErroTela...: o mesmo erro, para leitor_de_texto)
+            raise erro
+
+    def _laco(self, idioma: str, pronto: queue.Queue) -> None:
+        try:
+            self._preparar(idioma)
+        except BaseException as erro:             # noqa: B036 (volta para quem criou o leitor)
+            pronto.put(erro)
+            return
+        pronto.put(None)
+        while True:
+            imagem, resposta = self._pedidos.get()
+            if resposta is None:
+                return
+            try:
+                resposta.put((True, self._ler_aqui(imagem)))
+            except Exception as erro:
+                resposta.put((False, erro))
+
+    def ler(self, imagem) -> str:
+        resposta: queue.Queue = queue.Queue()
+        self._pedidos.put((imagem, resposta))
+        ok, valor = resposta.get(timeout=120)
+        if not ok:
+            raise valor
+        return valor
+
+    def fechar(self) -> None:
+        self._pedidos.put((None, None))
+
+    # --- dentro da tarefa do leitor
+    def _preparar_winrt(self, idioma: str) -> None:
         _msvcp_do_windows()
         from winrt.windows.globalization import Language
         from winrt.windows.media.ocr import OcrEngine
@@ -151,7 +194,7 @@ class LeitorWindows:
                            "adicione o Inglês)")
         self.idioma = self._motor.recognizer_language.language_tag
 
-    def ler(self, imagem) -> str:
+    def _ler_winrt(self, imagem) -> str:
         import asyncio
 
         from winrt.windows.graphics.imaging import BitmapAlphaMode, BitmapPixelFormat, SoftwareBitmap

@@ -208,6 +208,7 @@ def _verificar_tela() -> int:
         d.text((40, 140), "Crash FM! Takedown!", fill="white", font=fonte)
         leitor = tj.leitor_de_texto("en")
         texto = tj.limpar(leitor.ler(imagem))
+        getattr(leitor, "fechar", lambda: None)()
         janelas = tj.janelas_abertas()
         foto = tj.capturar((0, 0, 320, 200))
         bibliotecas = []

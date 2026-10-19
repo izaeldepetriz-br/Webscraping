@@ -97,3 +97,47 @@ def test_legenda_ao_vivo_mostra_fala_e_nao_ouve_a_si_mesma():
     assert mostrados == ["Ei, você!"] and falados == ["Ei, você!"]
     assert eventos == ["abaixou", True, "voltou"] and not legenda._falando.is_set()
     assert lv.LegendaAoVivo(None, lambda f: "", str, print).processar(fala(1.0)) is None   # o Whisper não ouviu nada
+
+
+def test_leitor_do_windows_numa_tarefa_so_dele_e_volume_na_tarefa_que_fala():
+    """O winrt muda o modo do COM da tarefa: o leitor do Windows prepara e lê numa tarefa só dele (a da tela e a do
+    volume ficam livres). O volume do jogo procura as sessões de som na 1ª vez, na tarefa que fala."""
+    import threading
+
+    import pytest
+    quem = []
+    leitor = tj.LeitorWindows("en-US", preparar=lambda idioma: quem.append(("preparar", threading.current_thread())),
+                              ler_aqui=lambda imagem: quem.append(("ler", threading.current_thread())) or "PRESS START")
+    assert leitor.ler(foto("PRESS START")) == "PRESS START"
+    assert quem[0][1] is quem[1][1] and quem[0][1] is not threading.current_thread()
+    leitor.fechar()
+
+    def sem_winrt(idioma):
+        raise ImportError("No module named 'winrt'")
+    with pytest.raises(ImportError):                       # o mesmo erro: leitor_de_texto cai no Tesseract
+        tj.LeitorWindows("en-US", preparar=sem_winrt)
+    falha = tj.LeitorWindows("en-US", preparar=lambda idioma: None, ler_aqui=lambda imagem: 1 / 0)
+    with pytest.raises(ZeroDivisionError):
+        falha.ler(foto("x"))
+    falha.fechar()
+
+    class Volume:
+        def __init__(self):
+            self.valor = 0.8
+
+        def GetMasterVolume(self):
+            return self.valor
+
+        def SetMasterVolume(self, valor, contexto):
+            self.valor = valor
+
+    class Sessao:
+        SimpleAudioVolume = Volume()
+    procuradas = []
+    volume = lv.VolumeDoJogo(4321)
+    volume._achar = lambda: procuradas.append(threading.current_thread()) or [Sessao()]
+    assert not procuradas                                  # nada do COM ao criar (na tarefa da tela)
+    fio = threading.Thread(target=lambda: (volume.abaixar(), volume.voltar()))
+    fio.start()
+    fio.join()
+    assert procuradas == [fio] and Sessao.SimpleAudioVolume.valor == 0.8 and volume.funciona
