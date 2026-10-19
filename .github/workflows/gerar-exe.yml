@@ -41,7 +41,16 @@ jobs:
           if (-not $v -and "${{ github.ref }}".StartsWith("refs/tags/v")) { $v = "${{ github.ref_name }}" }
           if ($v) { Set-Content -Path videoscraper\versao_build.txt -Value $v -NoNewline }
       - name: Gerar o programa
-        run: python -m PyInstaller videoscraper.spec --noconfirm
+        id: gerar
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m PyInstaller videoscraper.spec --noconfirm 2>&1 | tee pyinstaller.txt
+      - name: Mostrar o erro do PyInstaller
+        if: failure() && steps.gerar.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::error title=PyInstaller::$(grep -v -E '^[0-9]+ (INFO|DEBUG)' pyinstaller.txt | tail -n 30 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
       - name: Autoteste do .exe
         shell: pwsh
         run: |
