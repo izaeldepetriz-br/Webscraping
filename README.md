@@ -276,6 +276,16 @@ primeira falha (antes esperava o tempo limite em cada filme).
     grátis / Equilibrado / Melhor qualidade** (um clique escolhe o tradutor e o motor);
   - **Entregar**: o roteiro em português, as vozes em audio_ptbr e o relatório; **"💿 Montar a ISO em português"** (uma
     cópia com as falas dubladas no mesmo lugar) e **"📦 Criar o patch (.xdelta)"** para compartilhar.
+- **⏱ Tempo deste jogo e 🤖 Automático** (no modo Traduzir e dublar):
+  - no topo do modo, **quanto tempo falta** em cada etapa (ouvir, traduzir, dublar, montar a ISO), o **total** e **a
+    que horas termina** ("≈ 1 h 40 min · termina por volta das 23h15 se começar agora");
+  - a conta usa a **velocidade deste PC**: o Maestro mede cada etapa e guarda (velocidades_jogos.json); na 1ª vez,
+    uma média (XTTS-v2: ~3 s por fala na placa de vídeo, ~27 s no processador);
+  - **durante** o trabalho, a previsão se corrige pela velocidade real: "faltam ≈ 38 min · termina por volta das
+    22h41";
+  - **🤖 Automático**: uma janela com as etapas que faltam (marcar ou desmarcar), quem faz, o custo e o tempo de
+    cada uma; **"▶ Fazer tudo"** faz uma depois da outra e avisa no fim quanto levou. O "Parar" interrompe e o que
+    ficou pronto é guardado (o próximo Automático continua de onde parou).
 - **🖥 Enquanto joga (tradutor de tela)** — para qualquer jogo, **sem mexer na ISO**:
   - escolha a **janela do emulador** (a prévia mostra onde a tradução aparece) e, se quiser, **"✂ Marcar a área"**
     da caixa de diálogo;
@@ -285,6 +295,15 @@ primeira falha (antes esperava o tempo limite em cada filme).
   - a **legenda das vozes ao vivo**: o Whisper ouve o **som do PC** e a tradução aparece embaixo; **"Ler em voz
     alta"** fala a tradução (XTTS-v2 ou Gemini) **abaixando o som do jogo** enquanto fala;
   - os mesmos botões ficam como **atalho no modo de patch** ("Enquanto joga" ao lado do PCSX2).
+- **XTTS-v2 instalado sozinho**: ao escolher o cartão **XTTS-v2** (Configurações > Dublagem) sem o motor no PC, o
+  Maestro **baixa e instala tudo sozinho** (~3 GB) e já baixa o modelo de vozes (~1,8 GB): a 1ª dublagem não espera.
+  Ele pede só **uma vez** para aceitar a licença do modelo (CPML da Coqui: só uso pessoal, não comercial). Depois
+  disso, se o motor faltar ao dublar (num PC novo, depois de "Remover do PC" ou num robô agendado), ele instala
+  antes e continua.
+- **Painel 🤖 Automático (abas Jellyfin e Avulsos) com a voz local**: com o XTTS-v2 escolhido, o painel mostrava
+  "Piper". Agora mostra a voz do XTTS-v2 e onde ela roda (placa de vídeo ou processador), a conferência de cada fala
+  pelo Whisper, o Chatterbox (falas com emoção forte), a força da emoção, o gênero pelo tom e a emoção pelo volume
+  (tudo no PC, de graça). O que é só da escuta do Gemini (os sons sem fala) fica apagado, com o motivo.
 - **Testes automáticos novos no GitHub (Windows)**: o **leitor de texto do Windows dentro do .exe** lê uma imagem com
   letras de jogo (`--verificar-tela`); **toda segunda-feira** o Redump e a busca na comunidade são testados nos
   **sites de verdade** (se um site mudar a página, o teste avisa); e a **dublagem de um jogo de mentira** do começo
