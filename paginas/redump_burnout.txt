@@ -1,0 +1,5 @@
+<game name="Burnout 3 - Takedown (Europe, Australia) (En,Es,Nl,Sv)">
+		<category>Games</category>
+		<description>Burnout 3 - Takedown (Europe, Australia) (En,Es,Nl,Sv)</description>
+		<rom name="Burnout 3 - Takedown (Europe, Australia) (En,Es,Nl,Sv).iso" size="3631710208" crc="53706b0f" md5="3e6e42e5aca3fc42917dcdb40f7f2c21" sha1="154de8a9e7c052c91c3a032952de30e993d56220"/>
+	</game>

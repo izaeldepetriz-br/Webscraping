@@ -1,0 +1,275 @@
+<?xml version="1.0"?>
+<!DOCTYPE datafile PUBLIC "-//Logiqx//DTD ROM Management Datafile//EN" "http://www.logiqx.com/Dats/datafile.dtd">
+<datafile>
+	<header>
+		<name>Sony - PlayStation 2</name>
+		<description>Sony - PlayStation 2 - Discs (11774) (2026-06-15 03-41-38)</description>
+		<version>2026-06-15 03-41-38</version>
+		<date>2026-06-15 03-41-38</date>
+		<author>redump.org</author>
+		<homepage>redump.org</homepage>
+		<url>http://redump.org/</url>
+	</header>
+	<game name="Tekken Tag Tournament (Europe) (En,Fr,De,Es,It) (v2.00)">
+		<category>Games</category>
+		<description>Tekken Tag Tournament (Europe) (En,Fr,De,Es,It) (v2.00)</description>
+		<rom name="Tekken Tag Tournament (Europe) (En,Fr,De,Es,It) (v2.00).cue" size="121" crc="f1533446" md5="d14f25f694d58b4fc008b6d5156e40ac" sha1="cdcffe3872e453e60a0256b908524ee20f4f5c40"/>
+		<rom name="Tekken Tag Tournament (Europe) (En,Fr,De,Es,It) (v2.00).bin" size="699722352" crc="082312e4" md5="e445296980eb9c51e6e1ebccc6f664cd" sha1="917838e05296c73ae655b9f05cd0f1aeb0146ad2"/>
+	</game>
+	<game name="Final Fantasy X (Europe, Australia)">
+		<category>Games</category>
+		<description>Final Fantasy X (Europe, Australia)</description>
+		<rom name="Final Fantasy X (Europe, Australia).iso" size="4598169600" crc="6d78a9ff" md5="be60e1509c05231ae76144949e7bab53" sha1="fdb6ca34f8402569234b1679896280b85a535bce"/>
+	</game>
+	<game name="Tekken Tag Tournament (Europe) (En,Fr,De,Es,It) (v1.00)">
+		<category>Games</category>
+		<description>Tekken Tag Tournament (Europe) (En,Fr,De,Es,It) (v1.00)</description>
+		<rom name="Tekken Tag Tournament (Europe) (En,Fr,De,Es,It) (v1.00).cue" size="121" crc="ab1cc52d" md5="556af2a9a4432d7d8999662dce7b5b92" sha1="99a65cffc86a4b52badf34cc83d9598233611e72"/>
+		<rom name="Tekken Tag Tournament (Europe) (En,Fr,De,Es,It) (v1.00).bin" size="699722352" crc="39d20f27" md5="5dcf9d9fc6ed3284b6dec18b9e36b52f" sha1="a6d9c62626fcf40d9ec9bca6f10d1ab50fabc0a2"/>
+	</game>
+	<game name="Kill Switch (Europe) (En,Fr,De,Es,It)">
+		<category>Games</category>
+		<description>Kill Switch (Europe) (En,Fr,De,Es,It)</description>
+		<rom name="Kill Switch (Europe) (En,Fr,De,Es,It).iso" size="4385505280" crc="00df2224" md5="01bf1c4c4339431c64bd12c57c80bece" sha1="e6aa091ef415ba64afeb0babfa016f0a26c03488"/>
+	</game>
+	<game name="Killzone (Europe, Australia) (En,Fr,De,Es,It,Nl)">
+		<category>Games</category>
+		<description>Killzone (Europe, Australia) (En,Fr,De,Es,It,Nl)</description>
+		<rom name="Killzone (Europe, Australia) (En,Fr,De,Es,It,Nl).iso" size="4644110336" crc="ba39ff03" md5="9c56fd1597da53e682d5fc7d047a1317" sha1="239b4116870b0236a265f356acacb5feeef80715"/>
+	</game>
+	<game name="Kingdom Hearts (Europe, Australia)">
+		<category>Games</category>
+		<description>Kingdom Hearts (Europe, Australia)</description>
+		<rom name="Kingdom Hearts (Europe, Australia).iso" size="2759163904" crc="a5034ea8" md5="cebb20a60814e83d78e244d799edbc95" sha1="82933436ff96ffaf577f33e9372cdfa7fbd11634"/>
+	</game>
+	<game name="Metal Gear Solid 2 - Sons of Liberty (Europe) (En,Fr,De)">
+		<category>Games</category>
+		<description>Metal Gear Solid 2 - Sons of Liberty (Europe) (En,Fr,De)</description>
+		<rom name="Metal Gear Solid 2 - Sons of Liberty (Europe) (En,Fr,De).iso" size="4569563136" crc="652a3e76" md5="ee2d3fab94406f5f149e9743373acad3" sha1="f15058e936af0e326483473e4c803aeaa7a5bcfa"/>
+	</game>
+	<game name="Metal Gear Solid 3 - Snake Eater (Europe) (En,Fr)">
+		<category>Games</category>
+		<description>Metal Gear Solid 3 - Snake Eater (Europe) (En,Fr)</description>
+		<rom name="Metal Gear Solid 3 - Snake Eater (Europe) (En,Fr).iso" size="4602232832" crc="6ecb049a" md5="d56ce6840bc51eaa389cb8eb64d46a0c" sha1="8cc795c0ddc52e137f4bca5c30fcf98e11de6e3c"/>
+	</game>
+	<game name="Peter Jackson's King Kong - The Official Game of the Movie (Russia)">
+		<category>Games</category>
+		<description>Peter Jackson's King Kong - The Official Game of the Movie (Russia)</description>
+		<rom name="Peter Jackson's King Kong - The Official Game of the Movie (Russia).iso" size="1351122944" crc="d7a6034e" md5="b5d6353d600fa8ddbb5aed1e666c0b94" sha1="ba1edaeb0163db9c07dc04c7ea60d6a6b48a761f"/>
+	</game>
+	<game name="Prince of Persia - Warrior Within (Europe, Australia) (En,Fr,De,Es,It,Nl)">
+		<category>Games</category>
+		<description>Prince of Persia - Warrior Within (Europe, Australia) (En,Fr,De,Es,It,Nl)</description>
+		<rom name="Prince of Persia - Warrior Within (Europe, Australia) (En,Fr,De,Es,It,Nl).iso" size="4095705088" crc="605f620d" md5="8967912d4c02425162fd2faea8f308bb" sha1="c971c8980f0eb76ffad423db680fdf4872cfb851"/>
+	</game>
+	<game name="Rayman 3 - Hoodlum Havoc (Europe) (En,Fr,De,Es,It)">
+		<category>Games</category>
+		<description>Rayman 3 - Hoodlum Havoc (Europe) (En,Fr,De,Es,It)</description>
+		<rom name="Rayman 3 - Hoodlum Havoc (Europe) (En,Fr,De,Es,It).iso" size="2995519488" crc="fcf2a758" md5="6ef87ac70052a13f56173dea5653727b" sha1="6c2cb2b3f3f9125a8797b2a7f18c6b6b6486f870"/>
+	</game>
+	<game name="Rayman Revolution (Europe) (En,Fr,De,Es,It)">
+		<category>Games</category>
+		<description>Rayman Revolution (Europe) (En,Fr,De,Es,It)</description>
+		<rom name="Rayman Revolution (Europe) (En,Fr,De,Es,It).iso" size="4492591104" crc="023a2897" md5="4173b3103a4c6c86f6d9b9d83609e6f1" sha1="58f3cc922deb10e5e1fbd824ae8b52af6253c3b4"/>
+	</game>
+	<game name="Shin Megami Tensei - Lucifer's Call (Europe) (En,Fr,De)">
+		<category>Games</category>
+		<description>Shin Megami Tensei - Lucifer's Call (Europe) (En,Fr,De)</description>
+		<rom name="Shin Megami Tensei - Lucifer's Call (Europe) (En,Fr,De).iso" size="4007100416" crc="4bdf6d2c" md5="ddd32de30c2a9ff8c71484e471749fcd" sha1="6f9b0615d44e1d54ef8135c628c6bbaaee64144a"/>
+	</game>
+	<game name="Sonic Heroes (Europe, Australia) (En,Fr,De,Es,It)">
+		<category>Games</category>
+		<description>Sonic Heroes (Europe, Australia) (En,Fr,De,Es,It)</description>
+		<rom name="Sonic Heroes (Europe, Australia) (En,Fr,De,Es,It).iso" size="4698767360" crc="6b5db818" md5="34e5b8ed256d5337db41af4cfbdf9b8a" sha1="5332fdbffdb15f67db452fc33d7346b7c47e4a60"/>
+	</game>
+	<game name="Final Fantasy X (USA, Canada)">
+		<category>Games</category>
+		<description>Final Fantasy X (USA, Canada)</description>
+		<rom name="Final Fantasy X (USA, Canada).iso" size="4508221440" crc="9ad80720" md5="57998b60010b7583c423d5b2142ad1a3" sha1="42ab110b759e600365b99612e76cf51ef3e95901"/>
+	</game>
+	<game name="Killzone (Europe) (En,Ru,El)">
+		<category>Games</category>
+		<description>Killzone (Europe) (En,Ru,El)</description>
+		<rom name="Killzone (Europe) (En,Ru,El).iso" size="4636475392" crc="40e45256" md5="79415ab479d3fac9031c0acc94119da6" sha1="0dd10f26e9e9c43eeac379027c0200f54721b2b3"/>
+	</game>
+	<game name="Final Fantasy X-2 (USA, Canada)">
+		<category>Games</category>
+		<description>Final Fantasy X-2 (USA, Canada)</description>
+		<rom name="Final Fantasy X-2 (USA, Canada).iso" size="3982229504" crc="874b3062" md5="6f6e0fafecdbdd231c7178e39ac476b2" sha1="cdedba9ebb6b02ec2b473305bedf8eb036019413"/>
+	</game>
+	<game name="Gran Turismo 4 - Prologue (Europe) (En,Fr,De,Es,It)">
+		<category>Games</category>
+		<description>Gran Turismo 4 - Prologue (Europe) (En,Fr,De,Es,It)</description>
+		<rom name="Gran Turismo 4 - Prologue (Europe) (En,Fr,De,Es,It).iso" size="3493462016" crc="21114bc4" md5="1fc4a57baf9f4443376c71ed0b847a41" sha1="2271caef4f7a7c3f359e937bf2f5e184de1a094e"/>
+	</game>
+	<game name="Beatmania Da Da Da!! (Japan)">
+		<category>Games</category>
+		<description>Beatmania Da Da Da!! (Japan)</description>
+		<rom name="Beatmania Da Da Da!! (Japan).cue" size="94" crc="e1c05987" md5="c13f46fbb9f539150f373cd6fa3004ac" sha1="cbbc986b8eeae649c5456f8044bf9c3ab77127d3"/>
+		<rom name="Beatmania Da Da Da!! (Japan).bin" size="300232800" crc="46f8169e" md5="468e4641e581b93cc20a8d3ebcbef5a5" sha1="3b1074be34b3d33efceb8f7cc9d71bd666a9fa03"/>
+	</game>
+	<game name="Rock'n Megastage (Japan)">
+		<category>Games</category>
+		<description>Rock'n Megastage (Japan)</description>
+		<rom name="Rock'n Megastage (Japan).iso" size="2049736704" crc="08659107" md5="8c2bcae8da7a5e16147b32a797b5096e" sha1="30fb6a09390b5505cbd8a18f110dd93d11b565a4"/>
+	</game>
+	<game name="LowRider - Round the World (Japan)">
+		<category>Games</category>
+		<description>LowRider - Round the World (Japan)</description>
+		<rom name="LowRider - Round the World (Japan).cue" size="100" crc="220c6316" md5="54cd7d52c611cb3d605ac207abda89dc" sha1="2ee92126724d71400083fb919263bd071b3928e5"/>
+		<rom name="LowRider - Round the World (Japan).bin" size="683785200" crc="bde85f76" md5="7d4ea022dad8835d5ef264361e06756e" sha1="121ec08dbdffe1e44abcb0f4342b32df1c945f65"/>
+	</game>
+	<game name="Metal Gear Solid 3 - Snake Eater (USA)">
+		<category>Games</category>
+		<description>Metal Gear Solid 3 - Snake Eater (USA)</description>
+		<rom name="Metal Gear Solid 3 - Snake Eater (USA).iso" size="4558848000" crc="ab641e5c" md5="10310a8e67b7f6c43616e0886bdc973c" sha1="818e30d52feaf134ecb0ccc306efebc16022f5e8"/>
+	</game>
+	<game name="Tekken 4 (USA)">
+		<category>Games</category>
+		<description>Tekken 4 (USA)</description>
+		<rom name="Tekken 4 (USA).iso" size="2698346496" crc="7fa500e6" md5="d23a54b2375fb5e30d9399e188f353d6" sha1="afac756d0ec06e86f1b69f7db710cbe82e9835d7"/>
+	</game>
+	<game name="Resident Evil 4 (Europe) (En,Fr,De,Es,It)">
+		<category>Games</category>
+		<description>Resident Evil 4 (Europe) (En,Fr,De,Es,It)</description>
+		<rom name="Resident Evil 4 (Europe) (En,Fr,De,Es,It).iso" size="4564025344" crc="23089a94" md5="30255f8e8958a963212ca6455bb29ee0" sha1="bb7754da915b93f3b80c175282ca12ab7caf7a4a"/>
+	</game>
+	<game name="Disgaea - Hour of Darkness (USA)">
+		<category>Games</category>
+		<description>Disgaea - Hour of Darkness (USA)</description>
+		<rom name="Disgaea - Hour of Darkness (USA).iso" size="1236893696" crc="823a70de" md5="ea4323c1560059259cf6a718ea0d299a" sha1="886cdff2662ba74b5bcbb2f2df42a967d11dcb68"/>
+	</game>
+	<game name="Ratchet &amp; Clank 3 (Europe, Australia) (En,Fr,De,Es,It)">
+		<category>Games</category>
+		<description>Ratchet &amp; Clank 3 (Europe, Australia) (En,Fr,De,Es,It)</description>
+		<rom name="Ratchet &amp; Clank 3 (Europe, Australia) (En,Fr,De,Es,It).iso" size="4464115712" crc="e8ca9b89" md5="c2319842fd6706cd9d1914071faccfd4" sha1="5593eab45eac8814ce4b95fa1c23510fc0a21ebf"/>
+	</game>
+	<game name="Gran Turismo 3 - A-Spec (USA) (v1.00)">
+		<category>Games</category>
+		<description>Gran Turismo 3 - A-Spec (USA) (v1.00)</description>
+		<rom name="Gran Turismo 3 - A-Spec (USA) (v1.00).iso" size="3878649856" crc="ae611d2e" md5="c69de9c89f817560bda42e7c9c744013" sha1="e02aede3a21f1f5fda6eb596cc0fe571870567bc"/>
+	</game>
+	<game name="Cold Fear (Europe) (En,Fr,De,Es,It)">
+		<category>Games</category>
+		<description>Cold Fear (Europe) (En,Fr,De,Es,It)</description>
+		<rom name="Cold Fear (Europe) (En,Fr,De,Es,It).iso" size="3583737856" crc="13dab851" md5="bfa66f36668dcbab0b7e3dfd0dc465ab" sha1="7dd567d56b2efb843784fb5d58247d9b413fb266"/>
+	</game>
+	<game name="Forgotten Realms - Demon Stone (Europe) (En,Fr,De,Es,It)">
+		<category>Games</category>
+		<description>Forgotten Realms - Demon Stone (Europe) (En,Fr,De,Es,It)</description>
+		<rom name="Forgotten Realms - Demon Stone (Europe) (En,Fr,De,Es,It).iso" size="3566927872" crc="6b2f0455" md5="566dcefd2d60aa4249e96211cc8947bd" sha1="05d5843eacc78ebe9bab4ab2605ec176f03e1e7b"/>
+	</game>
+	<game name="Jak 3 (Europe, Australia) (En,Fr,De,Es,It,Pt,Ru)">
+		<category>Games</category>
+		<description>Jak 3 (Europe, Australia) (En,Fr,De,Es,It,Pt,Ru)</description>
+		<rom name="Jak 3 (Europe, Australia) (En,Fr,De,Es,It,Pt,Ru).iso" size="4495736832" crc="8bbf28fb" md5="e6b6a3ed35db028a9a0d90101f0a17fd" sha1="f8b1ed096628be006db4d098e6fe02b463e54e4e"/>
+	</game>
+	<game name="Kessen III (Europe)">
+		<category>Games</category>
+		<description>Kessen III (Europe)</description>
+		<rom name="Kessen III (Europe).iso" size="5494538240" crc="070f0c01" md5="0f217bd447530a7352958aee7aeeec5a" sha1="a61c72b8e956fca818cb52846125958d1e4788b9"/>
+	</game>
+	<game name="Max Payne (Europe)">
+		<category>Games</category>
+		<description>Max Payne (Europe)</description>
+		<rom name="Max Payne (Europe).iso" size="4320493568" crc="c49c786a" md5="af0e7f7bf967c8e8d974ebb4033d51b7" sha1="90bc19e8a3acdd6829540dc2daff24bf3a6dcd35"/>
+	</game>
+	<game name="Ratchet &amp; Clank 2 (Europe, Australia) (En,Fr,De,Es,It)">
+		<category>Games</category>
+		<description>Ratchet &amp; Clank 2 (Europe, Australia) (En,Fr,De,Es,It)</description>
+		<rom name="Ratchet &amp; Clank 2 (Europe, Australia) (En,Fr,De,Es,It).iso" size="3548545024" crc="36ec8963" md5="e184fc2a495a4654f748a8e8c587261c" sha1="5a64211823e62faf33c0e86f1ad4df962a028ed0"/>
+	</game>
+	<game name="Shadow Hearts II (Europe, Australia) (En,Fr,De) (Disc 1)">
+		<category>Games</category>
+		<description>Shadow Hearts II (Europe, Australia) (En,Fr,De) (Disc 1)</description>
+		<rom name="Shadow Hearts II (Europe, Australia) (En,Fr,De) (Disc 1).iso" size="3891527680" crc="092942f6" md5="7acd3cbfffc85772769d5590cf403e19" sha1="13fcbd58889032ab50104fd463ade912d2dd5a8c"/>
+	</game>
+	<game name="Shadow Hearts II (Europe, Australia) (En,Fr,De) (Disc 2)">
+		<category>Games</category>
+		<description>Shadow Hearts II (Europe, Australia) (En,Fr,De) (Disc 2)</description>
+		<rom name="Shadow Hearts II (Europe, Australia) (En,Fr,De) (Disc 2).iso" size="4353163264" crc="2e0eb2d5" md5="ce79ed6dfc3b401c1d1472fa9bbc79c3" sha1="afec7da261f5f860e9d558fec41efd028d5b9f1a"/>
+	</game>
+	<game name="Disney's Treasure Planet (Europe) (En,Fr,De,Nl)">
+		<category>Games</category>
+		<description>Disney's Treasure Planet (Europe) (En,Fr,De,Nl)</description>
+		<rom name="Disney's Treasure Planet (Europe) (En,Fr,De,Nl).iso" size="2554527744" crc="8fb47e9b" md5="77c3cb8b6cb3f187677246c289d00a96" sha1="5a2c93d81280b44cd4a538e566caa9f19ecdc081"/>
+	</game>
+	<game name="Gran Turismo 3 - A-Spec (Europe, Australia) (En,Fr,De,Es,It) (v2.00)">
+		<category>Games</category>
+		<description>Gran Turismo 3 - A-Spec (Europe, Australia) (En,Fr,De,Es,It) (v2.00)</description>
+		<rom name="Gran Turismo 3 - A-Spec (Europe, Australia) (En,Fr,De,Es,It) (v2.00).iso" size="3687022592" crc="fa111523" md5="26a95962a62f996d7458ebea6fd8a8b1" sha1="738dff896f37b00b911de1dcb18967cd4380e8f1"/>
+	</game>
+	<game name="Tekken 4 (Europe) (En,Fr,De,Es,It) (v1.00)">
+		<category>Games</category>
+		<description>Tekken 4 (Europe) (En,Fr,De,Es,It) (v1.00)</description>
+		<rom name="Tekken 4 (Europe) (En,Fr,De,Es,It) (v1.00).iso" size="4476272640" crc="66e0d84a" md5="65df1ad58683aa5154966441a74fd8c2" sha1="405e8bb5e5662e9ef683f1785851ea8f73b87e87"/>
+	</game>
+	<game name="Stella Deus - The Gate of Eternity (USA)">
+		<category>Games</category>
+		<description>Stella Deus - The Gate of Eternity (USA)</description>
+		<rom name="Stella Deus - The Gate of Eternity (USA).iso" size="3748397056" crc="a36905ee" md5="1b3b422707ba9798eabce6779e1e55a6" sha1="0c9cad15f8b57c306d4d35a3489700631808a208"/>
+	</game>
+	<game name="Shin Megami Tensei - Digital Devil Saga (USA)">
+		<category>Games</category>
+		<description>Shin Megami Tensei - Digital Devil Saga (USA)</description>
+		<rom name="Shin Megami Tensei - Digital Devil Saga (USA).iso" size="4539547648" crc="e1567b57" md5="ae4330140ef56f9eb1c689b9bb383401" sha1="f022cc27d2c333db64f1f1a46b312aafc5ce632e"/>
+	</game>
+	<game name="Naruto - Narutimate Hero 3 (Japan)">
+		<category>Games</category>
+		<description>Naruto - Narutimate Hero 3 (Japan)</description>
+		<rom name="Naruto - Narutimate Hero 3 (Japan).iso" size="1492877312" crc="e9075766" md5="03be4efbcb4fe922ec5ef200ba46a6c6" sha1="8ea6e4b3b35fb411fcd6366464a822657d23d5b9"/>
+	</game>
+	<game name="Final Fantasy X (Europe) (Demo)">
+		<category>Demos</category>
+		<description>Final Fantasy X (Europe) (Demo)</description>
+		<rom name="Final Fantasy X (Europe) (Demo).iso" size="762085376" crc="8f56f6d4" md5="79ecd6d05ffc4dde2d05677f47e319d3" sha1="7f3cced27cc4d9ae6278f777d208b39ac6613df7"/>
+	</game>
+	<game name="Xenosaga Episode II - Jenseits von Gut und Boese (Europe) (En,Fr,De) (Disc 1)">
+		<category>Games</category>
+		<description>Xenosaga Episode II - Jenseits von Gut und Boese (Europe) (En,Fr,De) (Disc 1)</description>
+		<rom name="Xenosaga Episode II - Jenseits von Gut und Boese (Europe) (En,Fr,De) (Disc 1).iso" size="4697587712" crc="ba13263f" md5="c447be23faf8cb36b52425377c7e2467" sha1="bcf524d9ad1bb6ae0c53e7fc1fbaf07219713c55"/>
+	</game>
+	<game name="Xenosaga Episode II - Jenseits von Gut und Boese (Europe) (En,Fr,De) (Disc 2)">
+		<category>Games</category>
+		<description>Xenosaga Episode II - Jenseits von Gut und Boese (Europe) (En,Fr,De) (Disc 2)</description>
+		<rom name="Xenosaga Episode II - Jenseits von Gut und Boese (Europe) (En,Fr,De) (Disc 2).iso" size="4694802432" crc="9ed848a2" md5="e0a22264c31ac87d0fcf8646f14e1ce7" sha1="b74a7f1bc3ba5b384cad7e84007469a33825a8bd"/>
+	</game>
+	<game name="God of War (Europe, Australia) (En,Fr,De,Es,It)">
+		<category>Games</category>
+		<description>God of War (Europe, Australia) (En,Fr,De,Es,It)</description>
+		<rom name="God of War (Europe, Australia) (En,Fr,De,Es,It).iso" size="8018624512" crc="a567869c" md5="6b8b8dd72f50b7264f7418b641591c11" sha1="594611974693f011e38d42cb78cbdd0762e9e2f8"/>
+	</game>
+	<game name="Final Fantasy X-2 (Europe, Australia)">
+		<category>Games</category>
+		<description>Final Fantasy X-2 (Europe, Australia)</description>
+		<rom name="Final Fantasy X-2 (Europe, Australia).iso" size="4076961792" crc="46fe9e96" md5="944d8f4aae93e817027b6e421426da1e" sha1="dd70a73fdee48875372a98e3037bfd91b4d4ff8a"/>
+	</game>
+	<game name="Breath of Fire - Dragon Quarter (Europe) (En,Fr,De,Es,It)">
+		<category>Games</category>
+		<description>Breath of Fire - Dragon Quarter (Europe) (En,Fr,De,Es,It)</description>
+		<rom name="Breath of Fire - Dragon Quarter (Europe) (En,Fr,De,Es,It).iso" size="2647851008" crc="ed41f743" md5="6f27ef9bf6e954260b270235f767a789" sha1="8fd1fe95f4eb11c49d48976e2ba52c9422929769"/>
+	</game>
+	<game name="Dark Chronicle (Europe) (En,Fr,De,Es,It)">
+		<category>Games</category>
+		<description>Dark Chronicle (Europe) (En,Fr,De,Es,It)</description>
+		<rom name="Dark Chronicle (Europe) (En,Fr,De,Es,It).iso" size="4692574208" crc="73f6fac7" md5="f6d5c3201e56cdc4f797150b5f78577e" sha1="c2c2efaecb228be3b151895fb10942797dcc4941"/>
+	</game>
+	<game name="Mortal Kombat - Deception (Europe, Australia) (En,Fr,De,Es,It)">
+		<category>Games</category>
+		<description>Mortal Kombat - Deception (Europe, Australia) (En,Fr,De,Es,It)</description>
+		<rom name="Mortal Kombat - Deception (Europe, Australia) (En,Fr,De,Es,It).iso" size="4696997888" crc="4c6525ed" md5="ddeae9398407431ed53081f8d7dba04b" sha1="aecc6605fcf8431b758fc4d7f4f2f6ea2e6693a3"/>
+	</game>
+	<game name="Soulcalibur II (Europe) (En,Fr,De,Es,It)">
+		<category>Games</category>
+		<description>Soulcalibur II (Europe) (En,Fr,De,Es,It)</description>
+		<rom name="Soulcalibur II (Europe) (En,Fr,De,Es,It).iso" size="4348575744" crc="1136a195" md5="0b474052584b451c755cc6d423fb5ef0" sha1="7e6dcaba4bd2ddc21bb918630dcdd259e1a721f4"/>
+	</game>
+	<game name="Mortal Kombat - Deadly Alliance (Europe, Australia) (En,Fr,De,Es,It)">
+		<category>Games</category>
+		<description>Mortal Kombat - Deadly Alliance (Europe, Australia) (En,Fr,De,Es,It)</description>
+		<rom name="Mortal Kombat - Deadly Alliance (Europe, Australia) (En,Fr,De,Es,It).iso" size="4689985536" crc="a2aaca7a" md5="062a5455d5f9c3a4059ecd926f19c60b" sha1="d24ae84e34cd8c93e1b16a31021b7f46d832046c"/>
+	</game>
+	<game name="Disgaea - Hour of Darkness (Europe)">
+		<category>Games</category>
+		<description>Disgaea - Hour of Darkness (Europe)</description>
+		<rom name="
