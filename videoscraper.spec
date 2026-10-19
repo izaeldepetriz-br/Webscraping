@@ -32,6 +32,9 @@ icone_exe = str(salvar_ico(os.path.join("build", "maestro.ico")))           # o 
 
 a = Analysis(["iniciar.py"], pathex=[], binaries=binaries, datas=datas, hiddenimports=hiddenimports,
              excludes=["pytest", "PyInstaller"], noarchive=False)
+# o msvcp140.dll antigo que vem dentro do winrt derruba o sentencepiece/CTranslate2: fica o do Windows (novo)
+a.binaries = [b for b in a.binaries if not (b[0].replace("\\", "/").lower().startswith("winrt/")
+                                            and "msvcp140" in b[0].lower())]
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="videoscraper",   # nome técnico (atualização)
           console=False,                       # abre só a janela, sem a tela preta

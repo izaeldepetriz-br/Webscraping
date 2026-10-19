@@ -12,6 +12,8 @@ if not exist .venv python -m venv .venv
 call .venv\Scripts\activate.bat
 python -m pip install --upgrade pip
 pip install -r requirements.txt pyinstaller || (pause & exit /b 1)
+REM o winrt traz um msvcp140.dll antigo que derruba o sentencepiece: apaga (fica o do Windows)
+python -c "import pathlib, winrt; [d.unlink() for p in winrt.__path__ for d in pathlib.Path(p).glob('msvcp140*.dll')]" 2>nul
 python -m PyInstaller videoscraper.spec --noconfirm || (pause & exit /b 1)
 REM Autoteste: confere se tudo veio junto no pacote
 start "" /wait dist\videoscraper\videoscraper.exe --verificar

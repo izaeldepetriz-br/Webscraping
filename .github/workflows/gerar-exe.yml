@@ -34,6 +34,9 @@ jobs:
           # ele também roda no processador (e o Whisper usa o mesmo pacote)
           pip uninstall -y onnxruntime
           pip install onnxruntime-directml
+          # o winrt (leitor de texto do "Enquanto joga") traz um msvcp140.dll antigo: carregado antes, ele derruba o
+          # sentencepiece e o CTranslate2 (feitos com o Visual C++ novo). Sem ele, todos usam o do Windows (novo)
+          python -c "import pathlib, winrt; [print('apagado:', d) or d.unlink() for p in winrt.__path__ for d in pathlib.Path(p).glob('msvcp140*.dll')]"
       - name: Gravar a versão no programa (aviso de versão nova)
         shell: pwsh
         run: |

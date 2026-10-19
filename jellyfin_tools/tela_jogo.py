@@ -119,12 +119,23 @@ def diferenca(a, b) -> float:
 
 
 # ----------------------------------------------------------------- ler o texto (OCR)
+def _msvcp_do_windows() -> None:
+    """O winrt traz um msvcp140.dll antigo; se ele carregar primeiro, a tradução grátis (sentencepiece/CTranslate2,
+    feitos com o Visual C++ novo) fecha o Maestro. Carregando antes o do Windows, o Windows reaproveita esse."""
+    if sys.platform == "win32":
+        try:
+            ctypes.WinDLL("msvcp140.dll")
+        except OSError:
+            pass
+
+
 class LeitorWindows:
     """O leitor de texto que vem no Windows 10/11 (Windows.Media.Ocr): rápido, de graça e nada sai do PC. Lê no
     idioma do jogo, se o pacote de idioma estiver instalado (o inglês costuma estar); senão, no do Windows."""
     nome = "Windows (OCR do próprio Windows)"
 
     def __init__(self, idioma: str = "en-US"):
+        _msvcp_do_windows()
         from winrt.windows.globalization import Language
         from winrt.windows.media.ocr import OcrEngine
         self._motor = None
