@@ -4601,7 +4601,7 @@ class JanelaModerna(ctk.CTk):
         if self.var_jf_voz_local.get() not in opcoes:     # a importada escolhida foi removida: volta à padrão
             self.var_jf_voz_local.set(voz_local.texto_do_menu(voz_local.VOZ_PADRAO))
 
-    def ao_instalar_motor_local(self) -> None:          # o app faz (baixa e instala numa tarefa)
+    def ao_instalar_motor_local(self, automatico: bool = False) -> None:   # o app faz (baixa e instala numa tarefa)
         pass
 
     def ao_remover_motor_local(self) -> None:
@@ -4851,6 +4851,8 @@ class JanelaModerna(ctk.CTk):
         self.var_jf_motor_voz.set({"piper": self.MOTORES_VOZ[0], "cloud": self.MOTORES_VOZ[2],
                                    "local": self.MOTORES_VOZ[3]}.get(modo, self.MOTORES_VOZ[1]))
         self.var_jf_figurantes_piper.set(modo == "misto")
+        if modo == "local" and not getattr(self, "_motor_local", None):     # XTTS-v2 sem o motor: instala sozinho
+            self.after(100, lambda: self.ao_instalar_motor_local(automatico=True))
 
     def _sincronizar_modo_voz(self) -> None:
         """O contrário: o motor e os figurantes (do config.json, ou mudados por código) marcam o cartão certo."""

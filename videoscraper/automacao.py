@@ -242,10 +242,53 @@ def pasta_motor_local() -> Path:
     return config.ARQUIVO.parent / "motor_vozes"
 
 
-def motor_local(o: OpcoesJellyfin, avisar=None):
+LICENCA_XTTS = ("Licença do modelo XTTS-v2 (CPML da Coqui): só uso pessoal, NÃO comercial. Instalando, você aceita "
+                "essa licença.")
+
+
+def arquivo_licenca_xtts() -> Path:
+    return config.ARQUIVO.parent / "licenca_xtts.json"
+
+
+def licenca_xtts_aceita() -> bool:
+    """A licença do XTTS-v2 já foi aceita uma vez (aí o Maestro instala sozinho, sem perguntar de novo)."""
+    return arquivo_licenca_xtts().is_file()
+
+
+def aceitar_licenca_xtts() -> None:
+    arquivo_licenca_xtts().parent.mkdir(parents=True, exist_ok=True)
+    arquivo_licenca_xtts().write_text(json.dumps({"aceita_em": time.strftime("%Y-%m-%d %H:%M"),
+                                                  "licenca": LICENCA_XTTS}, ensure_ascii=False), encoding="utf-8")
+
+
+def instalar_motor_local(avisar=None, parar=None, ao_progresso=None, baixar_modelo: bool = True) -> dict:
+    """Instala o XTTS-v2 sozinho (com a placa NVIDIA, se houver) e, com baixar_modelo, abre o motor uma vez para já
+    baixar o modelo (~1,8 GB): a 1ª dublagem não espera por ele."""
+    pasta = pasta_motor_local()
+    info = voz_local.instalar(pasta, gpu=voz_local.tem_placa_nvidia(), parar=parar, ao_progresso=ao_progresso)
+    if baixar_modelo:
+        if ao_progresso:
+            ao_progresso(0.97, "Baixando o modelo de vozes (~1,8 GB, uma vez)...")
+        motor = voz_local.MotorLocal(pasta, avisar=avisar)
+        try:
+            motor.iniciar(parar)
+        finally:
+            motor.fechar()
+    return info
+
+
+def motor_local(o: OpcoesJellyfin, avisar=None, parar=None):
+    """O XTTS-v2. Não instalado: com a licença já aceita, instala sozinho antes (uma vez, ~3 GB) e continua."""
     if not voz_local.instalado(pasta_motor_local()):
-        raise FaltaConfiguracao("O motor de vozes XTTS-v2 (grátis, no PC) ainda não está instalado: Configurações > "
-                                "Dublagem > \"Instalar o motor de vozes\" (uma vez, ~3 GB).")
+        if not licenca_xtts_aceita():
+            raise FaltaConfiguracao("O motor de vozes XTTS-v2 (grátis, no PC) ainda não está instalado: escolha o "
+                                    "cartão \"XTTS-v2\" em Configurações > Dublagem e o Maestro instala sozinho (uma "
+                                    "vez, ~3 GB; pede só para aceitar a licença).")
+        aviso = avisar or (lambda texto: obter_logger().info("Dublagem: %s", texto))
+        aviso("o XTTS-v2 ainda não está neste PC: instalando sozinho (uma vez, ~3 GB; pode levar de 10 a 30 min)...")
+        info = instalar_motor_local(aviso, parar, lambda f, texto: aviso(f"instalando o XTTS-v2: {texto}"),
+                                    baixar_modelo=False)
+        aviso("XTTS-v2 instalado (" + ("placa de vídeo" if info.get("gpu") else "processador") + "): continuando")
     conferir = None
     if getattr(o, "conferir_falas", True):            # o Whisper "base" (rápido) ouve cada fala gerada
         conferir = voz_local.ConferidorWhisper(Transcritor(modelo="base", usar_gpu=o.whisper_gpu,

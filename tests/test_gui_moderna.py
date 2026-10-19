@@ -4555,6 +4555,22 @@ def test_painel_automatico_mostra_quem_faz_e_liga_as_mesmas_opcoes(app):
     painel.recarregar()
     assert "var_jf_emocao_da_cena" not in painel.caixas and "Sem a chave do Gemini" in painel.lb_nota.cget("text")
     painel.fechar()
+    # a voz local (XTTS-v2): a voz, o gênero e a emoção no PC, de graça; a escuta do Gemini fica de fora
+    app.var_jf_motor_voz.set(app.MOTORES_VOZ[3])
+    app.var_jf_chave_gemini.set("AIza-teste")
+    app.bt_automatico_jf.invoke()
+    painel = app._painel_automatico
+    assert "voz do XTTS-v2" in painel.lb_voz.cget("text")
+    linhas = {linha["oque"]: linha for linha in painel.linhas if "oque" in linha}
+    voz = linhas["Voz das falas"]
+    assert voz["quem"].startswith("XTTS-v2") and voz["custo"] == "grátis" and "instala sozinho" in voz["situacao"]
+    assert linhas["Emoção da cena (a voz repete a interpretação)"]["quem"].startswith("no seu PC")
+    assert linhas["Voz pelo gênero e pela idade de quem fala"]["ativo"]
+    assert not linhas[sons]["ativo"] and "XTTS-v2" in linhas[sons]["situacao"]
+    assert {"var_jf_emocao_da_cena", "var_jf_conferir_falas", "var_jf_voz_por_personagem"} <= set(painel.caixas)
+    assert "var_jf_emocao_chatterbox" not in painel.caixas                 # o Chatterbox não está instalado
+    assert painel.lb_nota.cget("text").startswith("Com o XTTS-v2, a voz, o gênero e a emoção")
+    painel.fechar()
     app.var_jf_motor_voz.set(app.MOTORES_VOZ[0])
 
 
@@ -5529,9 +5545,11 @@ def test_importar_voz_pelas_configuracoes(app, tmp_path, monkeypatch):
 
 def test_motor_de_vozes_xtts_pela_tela(app, tmp_path, monkeypatch):
     """Configurações > Dublagem > XTTS-v2: instalar (de mentira) oferece trocar o motor; a voz escolhida vai para as
-    opções; "Ouvir" fala pelo servidor (de mentira); a dublagem usa o MotorLocal, com o gênero medido pelo tom; e
-    "Remover do PC" volta para o Piper."""
+    opções; "Ouvir" fala pelo servidor (de mentira); a dublagem usa o MotorLocal, com o gênero medido pelo tom;
+    "Remover do PC" volta para o Piper; e, com a licença aceita uma vez, o Maestro instala sozinho (ao escolher o
+    cartão e ao dublar sem o motor)."""
     import os
+    from dataclasses import replace as dataclasses_replace
 
     from jellyfin_tools import microfone, voz_local
     from tests.test_voz_local import pacote_falso
@@ -5610,6 +5628,34 @@ def test_motor_de_vozes_xtts_pela_tela(app, tmp_path, monkeypatch):
     app.bt_remover_motor_local.invoke()
     assert not automacao.pasta_motor_local().exists() and app.var_jf_motor_voz.get() == app.MOTORES_VOZ[0]
     assert "Ainda não instalado" in app.lb_motor_local.cget("text")
+    # automático: a licença já foi aceita (na 1ª instalação); escolher o cartão XTTS-v2 instala sozinho, sem
+    # perguntar, e já baixa o modelo (o servidor abre uma vez)
+    assert automacao.licenca_xtts_aceita()
+    perguntas = []
+    app.perguntar = lambda t, m: perguntas.append(m) or False                # "Usar agora?": não precisa
+    app.var_jf_modo_voz.set("local")
+    app._ao_escolher_modo_voz()
+    for _ in range(30):
+        app.update()
+        time.sleep(0.01)
+    esperar(app)
+    for _ in range(20):
+        app.update()
+        time.sleep(0.01)
+    assert pedidos == [True, True] and not perguntas and "Instalado" in app.lb_motor_local.cget("text")
+    assert "registro.txt" in {f.name for f in automacao.pasta_motor_local().iterdir()}  # o motor abriu (o modelo)
+    # ao dublar sem o motor no PC: instala antes e continua (robôs e tarefas, sem perguntar)
+    import shutil
+    shutil.rmtree(automacao.pasta_motor_local())
+    avisos = []
+    o = app.obter_opcoes_jellyfin()
+    motor = automacao.motor_local(dataclasses_replace(o, motor_voz=voz_local.NOME), avisar=avisos.append)
+    assert isinstance(motor, voz_local.MotorLocal) and pedidos == [True, True, True]
+    assert avisos[0].startswith("o XTTS-v2 ainda não está neste PC: instalando sozinho")
+    automacao.arquivo_licenca_xtts().unlink()                                # sem a licença aceita: pede o cartão
+    shutil.rmtree(automacao.pasta_motor_local())
+    with pytest.raises(automacao.FaltaConfiguracao, match="instala sozinho"):
+        automacao.motor_local(o)
 
 
 def test_aba_jogos_aplica_o_patch_numa_copia(app, tmp_path, monkeypatch):

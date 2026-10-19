@@ -115,7 +115,10 @@ class DublagemDeJogos:
         pasta = automacao.pasta_motor_local()
         instalado = voz_local.instalado(pasta)
         if not instalado:
-            return "⚠ XTTS-v2 ainda não instalado (Configurações > Dublagem)"
+            return ("XTTS-v2 ainda não instalado: o Maestro instala sozinho ao dublar (~3 GB, uma vez)"
+                    if automacao.licenca_xtts_aceita() else
+                    "⚠ XTTS-v2 ainda não instalado: escolha o cartão XTTS-v2 em Configurações > Dublagem (instala "
+                    "sozinho)")
         from jellyfin_tools import voz_emocao
         partes = ["✓ XTTS-v2" + (" e Chatterbox" if voz_emocao.instalado(pasta) else "") + " instalados"
                   if voz_emocao.instalado(pasta) else "✓ XTTS-v2 instalado",

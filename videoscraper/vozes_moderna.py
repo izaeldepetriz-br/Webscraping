@@ -144,20 +144,29 @@ class ImportarVozes:
         self._salvar_config()
 
     # ---- o motor de vozes XTTS-v2 (grátis, no PC)
-    def ao_instalar_motor_local(self) -> None:
-        pasta = automacao.pasta_motor_local()
+    def ao_instalar_motor_local(self, automatico: bool = False) -> None:
+        """automatico: escolheram o cartão XTTS-v2 sem o motor no PC. Com a licença já aceita uma vez, instala sem
+        perguntar; e, depois de instalar, já baixa o modelo (~1,8 GB): a 1ª dublagem não espera."""
+        if automatico and voz_local.instalado(automacao.pasta_motor_local()):
+            return
+        if self.trabalhando:                        # outra tarefa rodando: instala logo que ela terminar
+            self.definir_status("O XTTS-v2 será instalado sozinho quando a tarefa atual terminar...")
+            self.after(500, lambda: self._quando_livre(lambda: self.ao_instalar_motor_local(automatico)))
+            return
         gpu = voz_local.tem_placa_nvidia()
         tamanho = "~3 GB (com a placa de vídeo NVIDIA)" if gpu else "~1 GB (sem placa NVIDIA: vai pelo processador)"
-        if not self.perguntar("Instalar o motor de vozes", f"Instalar o XTTS-v2 neste PC? Baixa {tamanho} uma vez, "
-                              "e o modelo (~1,8 GB) na 1ª fala. Tudo fica na pasta das configurações (\"Remover do "
-                              "PC\" apaga).\n\nLicença do modelo (CPML da Coqui): só uso pessoal, NÃO comercial. "
-                              "Instalando, você aceita essa licença."):
-            return
+        if not (automatico and automacao.licenca_xtts_aceita()):
+            if not self.perguntar("Instalar o motor de vozes", f"Instalar o XTTS-v2 neste PC agora? O Maestro baixa e "
+                                  f"instala tudo sozinho: {tamanho} e o modelo (~1,8 GB), uma vez. Tudo fica na pasta "
+                                  "das configurações (\"Remover do PC\" apaga).\n\n" + automacao.LICENCA_XTTS):
+                return
+            automacao.aceitar_licenca_xtts()
 
         def tarefa():
             try:
-                info = voz_local.instalar(pasta, gpu=gpu, parar=self.evento_parar.is_set,
-                                          ao_progresso=lambda f, texto: self.fila.put(("jf_analise", (f, texto))))
+                info = automacao.instalar_motor_local(
+                    lambda texto: self.fila.put(("jf_analise", (0.98, texto))), self.evento_parar.is_set,
+                    lambda f, texto: self.fila.put(("jf_analise", (f, texto))))
             except (ErroDublagem, OSError) as erro:
                 self._log.warning("Instalar o motor de vozes: %s", erro)
                 self.fila.put(("msg", ("Instalar o motor de vozes", f"Não deu para instalar: {erro}.", "erro")))

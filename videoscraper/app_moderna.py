@@ -64,7 +64,8 @@ from jellyfin_tools.registro import configurar_log, encerrar_log_da_acao, inicia
 from jellyfin_tools.relatorio import gerar_relatorio, resumo, salvar_csv
 from jellyfin_tools.resumo_diario import ResumoDiario, mensagem as mensagem_resumo
 from jellyfin_tools.servidor_jellyfin import ErroJellyfin, atualizar_biblioteca, indice_da_biblioteca, testar_conexao
-from jellyfin_tools import cotacao, gastos, microfone, personagens, vigia, voz_clonada, voz_cloud, voz_gemini, voz_local
+from jellyfin_tools import (cotacao, gastos, microfone, personagens, vigia, voz_clonada, voz_cloud, voz_emocao,
+                            voz_gemini, voz_local)
 from jellyfin_tools.vigia import filtro_prontos
 
 from . import config
@@ -920,6 +921,8 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, DublagemDe
         elif tipo == "fim":
             self.trabalhando = False
             self._fim_da_tarefa = time.monotonic()
+            if getattr(self, "_motor_local", None) is None and voz_local.instalado(automacao.pasta_motor_local()):
+                self.atualizar_motor_local(voz_local.instalado(automacao.pasta_motor_local()))   # instalou sozinho
             encerrar_log_da_acao(self._log_acao)       # o arquivo desta ação está completo
             self._log_acao = None
             self.definir_status(self._texto_fim or f"Pronto. {len(self.links)} vídeo(s) na lista.",
@@ -2761,7 +2764,7 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, DublagemDe
 
         def situacao(var: str, ligado: str = "ligado", desligado: str = "desligado") -> str:
             return ligado if getattr(self, var).get() else desligado
-        voz = ("Gemini" if gemini else "Google Cloud" if cloud else "Piper")
+        voz = ("Gemini" if gemini else "Google Cloud" if cloud else "XTTS-v2" if local_xtts else "Piper")
         linhas: list[dict] = []
         if aba == "avulsos":
             traduz = automacao.pode_traduzir(o)
@@ -2798,11 +2801,22 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, DublagemDe
             custo_voz, quem_voz = "cota grátis do Google Cloud (depois, pago)", f"Google Cloud, voz {o.voz_cloud}"
             situacao_voz = ("escolhida em Configurações > Dublagem" if automacao.chave_cloud(o)
                             else "falta a chave do Google Cloud")
+        elif local_xtts:
+            motor_ok = voz_local.instalado(automacao.pasta_motor_local())
+            onde = ("placa de vídeo" if motor_ok.get("gpu") else "processador") if motor_ok else "no seu PC"
+            custo_voz = "grátis"
+            quem_voz = (f"XTTS-v2 ({onde}), voz "
+                        f"{voz_local.texto_do_menu(getattr(o, 'voz_local', '') or voz_local.VOZ_PADRAO)}")
+            situacao_voz = ("instalado; escolhida em Configurações > Dublagem" if motor_ok else
+                            "ainda não instalado: o Maestro instala sozinho (~3 GB) na 1ª dublagem"
+                            if automacao.licenca_xtts_aceita() else
+                            "ainda não instalado: escolha o cartão XTTS-v2 e o Maestro instala sozinho (~3 GB)")
         else:
             custo_voz, quem_voz = "grátis", f"Piper (no seu PC), voz {o.voz_dublagem}"
             situacao_voz = "escolhida em Configurações > Dublagem"
-        so_gemini = "só com a voz do Gemini (o Piper e o Google Cloud não interpretam)"
-        escuta_ok = chave_g and o.separar_vozes
+        so_gemini = "só com a voz do Gemini ou do XTTS-v2 (o Piper e o Google Cloud não interpretam)"
+        escuta_ok = chave_g and o.separar_vozes and not local_xtts
+        chatterbox_ok = local_xtts and bool(voz_emocao.instalado(automacao.pasta_motor_local()))
         linhas += [
             {"titulo": "Na dublagem e no teste"},
             {"var": "var_jf_encurtar_falas", "ativo": claude, "oque": "Encurtar falas longas demais (sem mudar o "
@@ -2810,6 +2824,15 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, DublagemDe
              "situacao": situacao("var_jf_encurtar_falas") if claude else "falta a chave da Anthropic"},
             {"var": None, "oque": "Voz das falas", "quem": quem_voz, "custo": custo_voz, "situacao": situacao_voz,
              "gemini": gemini},
+            *([{"var": "var_jf_conferir_falas", "oque": "Conferir cada fala gerada (refaz a que saiu errada)",
+                "quem": "Whisper (no seu PC)", "custo": "grátis", "situacao": situacao("var_jf_conferir_falas")},
+               {"var": "var_jf_emocao_chatterbox", "ativo": chatterbox_ok,
+                "oque": "Falas com emoção forte (choro, raiva, grito) por um 2º motor", "quem": "Chatterbox (no seu PC)",
+                "custo": "grátis", "situacao": (situacao("var_jf_emocao_chatterbox") if chatterbox_ok else
+                                                "instale o Chatterbox em Configurações > Dublagem")},
+               {"var": None, "oque": "Força da emoção (depois da voz: tremor no choro, garra na raiva)",
+                "quem": "no seu PC", "custo": "grátis",
+                "situacao": f"{self.var_jf_forca_emocao.get()} (Configurações > Dublagem)"}] if local_xtts else []),
             {"var": "var_jf_separar_vozes", "oque": "Tirar as vozes originais (o fundo do filme fica)",
              "quem": "no seu PC (" + ("placa de vídeo" if o.separar_gpu else "processador") + ")", "custo": "grátis",
              "situacao": situacao("var_jf_separar_vozes", "ligado", "desligado: a voz entra por cima do original")},
@@ -2818,16 +2841,20 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, DublagemDe
             {"var": "var_jf_manter_sons", "ativo": escuta_ok, "oque": "Ouvir os sons sem fala (bocejo, risada, "
              "choro, gemido) e trazer do original", "quem": "Gemini (escuta)", "gemini": True,
              "custo": cota("escuta", "escuta") if chave_g else "—",
-             "situacao": ("falta a chave do Gemini" if not chave_g else
+             "situacao": ("com o XTTS-v2, a escuta do Gemini não é usada" if local_xtts else
+                          "falta a chave do Gemini" if not chave_g else
                           "precisa de \"Tirar as vozes originais\"" if not o.separar_vozes else
                           situacao("var_jf_manter_sons", "ligado: os sons voltam do original"))},
-            {"var": None, "ativo": gemini and chave_g, "oque": "Voz pelo gênero e pela idade de quem fala",
-             "quem": "Gemini (escuta)", "gemini": True, "custo": cota("escuta", "escuta") if gemini else "—",
-             "situacao": "sempre, com a voz do Gemini" if gemini else so_gemini},
-            {"var": "var_jf_emocao_da_cena", "ativo": gemini and chave_g, "oque": "Emoção da cena (a voz repete a "
-             "interpretação)", "quem": "Gemini (escuta)", "gemini": True,
-             "custo": "na mesma escuta" if gemini else "—",
-             "situacao": situacao("var_jf_emocao_da_cena") if gemini else so_gemini},
+            {"var": None, "ativo": (gemini and chave_g) or local_xtts, "oque": "Voz pelo gênero e pela idade de quem fala",
+             "quem": "no seu PC (pelo tom da voz original)" if local_xtts else "Gemini (escuta)", "gemini": not local_xtts,
+             "custo": "grátis" if local_xtts else cota("escuta", "escuta") if gemini else "—",
+             "situacao": ("sempre, com o XTTS-v2: homem ou mulher pelo tom (a idade vem do elenco)" if local_xtts
+                          else "sempre, com a voz do Gemini" if gemini else so_gemini)},
+            {"var": "var_jf_emocao_da_cena", "ativo": (gemini and chave_g) or local_xtts, "oque": "Emoção da cena (a voz "
+             "repete a interpretação)", "quem": "no seu PC (grito e sussurro pelo volume)" if local_xtts else
+             "Gemini (escuta)", "gemini": not local_xtts,
+             "custo": "grátis" if local_xtts else "na mesma escuta" if gemini else "—",
+             "situacao": situacao("var_jf_emocao_da_cena") if gemini or local_xtts else so_gemini},
             {"var": "var_jf_voz_por_personagem", "ativo": (gemini and chave_g) or local_xtts,
              "oque": "Uma voz para cada personagem (elenco sem repetir voz na cena)",
              "quem": "Gemini" if gemini else "XTTS-v2 (quem fala: " + ("Gemini)" if chave_g else "roteiro)"),
@@ -2877,7 +2904,11 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, DublagemDe
         else:
             nota = ("Escolha o plano da sua chave do Gemini (grátis ou com cartão) em Configurações > Chaves de API "
                     "para ver aqui quanto ainda resta hoje.")
-        if chave_g and not gemini:
+        if local_xtts:
+            nota = ("Com o XTTS-v2, a voz, o gênero e a emoção são feitos no seu PC, de graça. " +
+                    ("O Gemini só ouve quem fala, se \"Uma voz para cada personagem\" estiver ligada e não houver "
+                     "roteiro. " + nota if chave_g else "Sem a chave do Gemini, quem fala vem do roteiro."))
+        elif chave_g and not gemini:
             nota = f"Com a voz do {voz}, o Gemini só ouve os sons sem fala (se ligado). " + nota
         return {"voz": voz, "linhas": linhas, "nota": nota}
 
