@@ -664,12 +664,12 @@ class MotorLocal(ServidorDeVoz):
 
     def __init__(self, pasta: str | Path, voz: str = VOZ_PADRAO, importadas: list = (), pasta_importadas=None,
                  abrir=subprocess.Popen, avisar=None, idioma: str = "pt", conferir=None, emocao=None,
-                 forca_emocao: float = 1.0, ffmpeg: str | None = None):
+                 forca_emocao: float = 0.0, ffmpeg: str | None = None):
         super().__init__(abrir, avisar)
         self.pasta, self.voz, self.idioma = Path(pasta), voz or VOZ_PADRAO, idioma
         self.conferir = conferir                 # ConferidorWhisper (ou None: sem conferir)
         self.emocao = emocao                     # voz_emocao.MotorEmocao (o Chatterbox) ou None
-        self.forca = forca_emocao                # a interpretação (atuacao.py): 0 = desligada, 1 = "Forte"
+        self.forca = forca_emocao                # a interpretação (atuacao.py): 0 = desligada (padrão), 1 = "Forte"
         self.ffmpeg = ffmpeg                     # (só para subir ou descer o tom; None = o do sistema)
         self.cortadas = self.refeitas = 0
         self.com_emocao: Counter = Counter()     # "gravação" / "chatterbox": quantas falas foram com emoção

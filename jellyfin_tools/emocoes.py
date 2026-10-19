@@ -38,7 +38,7 @@ CHATTERBOX: dict[str, tuple[float, float]] = {
 # choro no XTTS-v2, o "!" da raiva) e o que atuacao.py faz com a voz (choro trêmulo, raiva rasgada...). "Desligada" =
 # como na v2.20
 FORCAS: dict[str, float] = {"Desligada": 0.0, "Leve": 0.45, "Média": 0.75, "Forte": 1.0}
-FORCA_PADRAO = "Forte"
+FORCA_PADRAO = "Desligada"     # (opcional: na demonstração, a interpretação forte soou robótica)
 # as palavras da nota de direção (em ordem: a 1ª que bater vale; "gritando de medo" é grito)
 _PALAVRAS = [
     ("sussurro", r"sussurr\w*|cochich\w*|baixinho|murmur\w*|em voz baixa"),

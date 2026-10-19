@@ -52,17 +52,18 @@ class Receita:
     sussurro: float = 0.0        # 0-1: quanto da voz vira ar
 
 
+# Mais contidas depois de ouvidas: o volume tremendo 50 vezes por segundo (a "aspereza") é o efeito de voz de robô,
+# e o balanço do tom forte e regular (o tremor e as "quebras") soava artificial. Ficaram o tremor leve, o ar, os
+# soluços nas pausas, a presença e um pouco de saturação.
 RECEITAS: dict[str, Receita] = {
-    "choro": Receita(semitons=1.5, tremor=90, tremor_hz=6.0, quebras=0.5, pulso=0.4, ar=0.35, falhas=0.5,
-                     soluco=1.0, brilho=-1.5),
-    "triste": Receita(semitons=-0.8, tremor=25, tremor_hz=5.0, pulso=0.15, ar=0.15, falhas=0.15, soluco=0.4,
-                      brilho=-3.0),
-    "medo": Receita(semitons=1.0, tremor=50, tremor_hz=8.0, quebras=0.2, pulso=0.25, ar=0.3, falhas=0.3,
-                    soluco=0.6),
-    "brava": Receita(semitons=1.0, acento=180, presenca=6.0, aspereza=0.4, saturacao=0.5, enfase=0.5, volume=3.0),
-    "grito": Receita(semitons=2.0, acento=250, ar=0.15, presenca=8.0, brilho=1.5, aspereza=0.55, saturacao=0.8,
-                     enfase=0.6, volume=5.0),
-    "alegre": Receita(semitons=1.2, acento=120, presenca=2.0, brilho=2.0, enfase=0.25),
+    "choro": Receita(semitons=1.0, tremor=45, tremor_hz=5.5, pulso=0.12, ar=0.25, falhas=0.3, soluco=0.6,
+                     brilho=-1.5),
+    "triste": Receita(semitons=-0.6, tremor=15, tremor_hz=5.0, ar=0.12, soluco=0.3, brilho=-2.5),
+    "medo": Receita(semitons=0.8, tremor=30, tremor_hz=7.0, pulso=0.08, ar=0.2, falhas=0.15, soluco=0.4),
+    "brava": Receita(semitons=0.8, acento=120, presenca=4.0, saturacao=0.25, enfase=0.4, volume=2.0),
+    "grito": Receita(semitons=1.5, acento=160, ar=0.1, presenca=6.0, brilho=1.0, saturacao=0.4, enfase=0.5,
+                     volume=3.0),
+    "alegre": Receita(semitons=1.0, acento=90, presenca=2.0, brilho=1.5, enfase=0.2),
     "sussurro": Receita(sussurro=0.9, brilho=1.0, volume=-8.0),
 }
 

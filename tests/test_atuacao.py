@@ -55,18 +55,18 @@ def test_choro_treme_quebra_e_solua_nas_pausas():
     assert len(novo) == len(som) and np.abs(novo).max() <= at.LIMITE + 1e-9
     antes, depois = f0_por_quadro(som), f0_por_quadro(novo)
     assert np.std(1200 * np.log2(antes / 150)) < 5                         # a voz de mentira é reta
-    assert np.std(1200 * np.log2(depois / np.median(depois))) > 35         # chorando, o tom oscila
-    assert {"tremor", "quebras", "ar", "soluços"} <= set(feito) and "semitons" not in feito   # (sem o ffmpeg)
+    assert np.std(1200 * np.log2(depois / np.median(depois))) > 15         # chorando, o tom oscila
+    assert {"tremor", "ar", "soluços"} <= set(feito) and "semitons" not in feito   # (sem o ffmpeg)
     pausa = slice(int(1.25 * TAXA), int(1.65 * TAXA))                       # o meio da pausa de 0,6 s
     assert not som[pausa].any() and np.sqrt(np.mean(novo[pausa] ** 2)) > 0.005   # puxa o ar na pausa
-    assert "tremor 90 cents" in at.resumo(feito) and "soluço" in at.resumo(feito)
+    assert "tremor 45 cents" in at.resumo(feito) and "soluço" in at.resumo(feito)
 
 
 def test_raiva_e_grito_forcados_e_rasgados():
     som = voz_falsa()
     for emocao, mais_agudos in (("brava", 3), ("grito", 4)):
         novo, feito = at.interpretar_som(som, TAXA, emocao, 1.0, ffmpeg=None, semente=1)
-        assert len(novo) == len(som) and "rasgada" in feito and "acento" in feito
+        assert len(novo) == len(som) and "rasgada" in feito and "acento" in feito and "aspereza" not in feito
         assert agudos(novo) > agudos(som) + mais_agudos                    # a voz forçada (2-4 kHz)
         assert crista(novo) < crista(som) - 1                              # saturada: mais densa
         assert np.sqrt(np.mean(novo ** 2)) > np.sqrt(np.mean(som ** 2))     # e mais alta
@@ -86,9 +86,9 @@ def test_sussurro_sem_a_vibracao_da_voz():
 
 
 def test_forca_e_receitas():
-    assert em.forca_do_menu("Leve") == 0.45 and em.forca_do_menu("???") == 1.0
-    assert set(em.FORCAS) == {"Desligada", "Leve", "Média", "Forte"} and em.FORCA_PADRAO == "Forte"
-    assert at.receita("choro", 0.5).tremor == 45 and at.receita("choro", 0.5).tremor_hz == 6.0
+    assert em.forca_do_menu("Leve") == 0.45 and em.forca_do_menu("???") == 0.0
+    assert set(em.FORCAS) == {"Desligada", "Leve", "Média", "Forte"} and em.FORCA_PADRAO == "Desligada"
+    assert at.receita("choro", 0.5).tremor == 22.5 and at.receita("choro", 0.5).tremor_hz == 5.5
     assert at.receita("normal") is None and at.receita("choro", 0) is None and at.receita("???") is None
     assert set(at.RECEITAS) == set(em.EMOCOES)                             # toda emoção tem a sua interpretação
     assert em.intensidade_chatterbox("choro") == em.intensidade_chatterbox("choro", 1.0) == em.CHATTERBOX["choro"]
@@ -135,7 +135,7 @@ def test_tom_sobe_sem_mudar_a_duracao():
     assert abs(np.median(f0_por_quadro(novo, 170)) / 150 - 2 ** (2 / 12)) < 0.03
     assert at.mudar_tom(som, TAXA, 2.0, None) is som                       # sem o ffmpeg, fica como está
     novo, feito = at.interpretar_som(som, TAXA, "grito", 1.0, FFMPEG)
-    assert feito["semitons"] == 2.0 and len(novo) == len(som)
+    assert feito["semitons"] == 1.5 and len(novo) == len(som)
 
 
 def vogal(f0: float = 140.0, segundos: float = 1.0) -> np.ndarray:

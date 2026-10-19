@@ -242,18 +242,14 @@ primeira falha (antes esperava o tempo limite em cada filme).
 
 ### Novidades da v2.22.0
 
-- **Emoção com interpretação de verdade (choro trêmulo, raiva rasgada)**: o Chatterbox punha a emoção "de leve" (o
-  choro sem a voz tremendo, a raiva sem o excesso). Agora, depois da voz, o Maestro faz o que o ator faz com ela
-  (Configurações > Dublagem > **"Força da emoção"**: Desligada, Leve, Média ou **Forte**, a padrão):
-  - **choro**: a voz **treme** (o tom oscila umas 6 vezes por segundo, irregular, mais forte no fim das frases),
-    **quebra** para o agudo por um instante, sai com **ar** (soprada), **falha** (embarga) e **puxa o ar nas pausas**,
-    às vezes entrecortado (o soluço); no XTTS-v2, a fala sai aos pedaços (cada vírgula vira uma pausa);
-  - **raiva** e **grito**: a voz **forçada e rasgada** (mais agudos de 2 a 4 kHz, a aspereza e a saturação do grito),
-    mais aguda, o tom **batendo nas sílabas fortes** e as frases terminando com "!" (o Chatterbox continua na
-    intensidade de antes: testado 35% mais intenso, ele inventava palavras no meio da fala chorada);
-  - **medo** (treme rápido, com ar), **tristeza** (tremor leve, mais grave e escura), **alegria** (mais aguda e
-    brilhante) e **sussurro** (a voz vira ar de verdade, sem a vibração).
-  Vale com ou sem o Chatterbox (só o XTTS-v2 também ganha a interpretação) e não muda a duração da fala.
+- **Interpretação da emoção depois da voz (opcional, experimental)**: Configurações > Dublagem > **"Força da
+  emoção"** (**Desligada**, a padrão; Leve, Média ou Forte). Mexe no som já gerado: no **choro**, um tremor leve no
+  tom, a voz soprada, falhas e a inspiração nas pausas (o soluço); na **raiva** e no **grito**, mais agudos de 2 a 4
+  kHz, um pouco de saturação e o tom batendo nas sílabas fortes; no **sussurro**, a voz vira ar. Ficou desligada por
+  padrão porque, ouvida na demonstração, a versão forte soou **robótica** (o volume tremendo 50 vezes por segundo,
+  que é o efeito de "voz de robô", saiu; o tremor ficou bem mais leve). A emoção mais natural continua vindo de
+  **gravações de verdade** (Importar voz > Emoção da gravação) ou do Gemini. O Chatterbox continua na intensidade de
+  antes (testado 35% mais intenso, ele inventava palavras no meio da fala chorada).
 - **228 vozes no XTTS-v2, sem clonar ninguém: as variantes**. Cada uma das 57 vozes prontas (genéricas) ganha 3
   variantes: **grave** (tom ~2 semitons abaixo e a "garganta" maior), **aguda** (2 semitons acima) e **jovem** (2 a 3
   semitons acima e a garganta 10% menor: os adolescentes e as crianças, que as prontas, todas de adultos, não tinham).
