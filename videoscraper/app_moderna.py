@@ -76,6 +76,8 @@ from .gui_moderna import (DialogoCompletar, PainelEspelhos, JanelaModerna, Janel
                           OpcoesInterface, Tema)
 from .tv_moderna import TVAoVivo
 from .audio_moderna import TrocaDeAudio
+from .dublar_jogos_moderna import DublagemDeJogos
+from .enquanto_joga_moderna import EnquantoJoga
 from .jogos_moderna import PatchDeJogos
 from .vozes_moderna import ImportarVozes
 from .navegador import PERFIL_PADRAO, PlaywrightAusente
@@ -183,7 +185,8 @@ STATUS_LEGENDA = {"baixada": ("baixada", "ok"), "ja_existe": ("já existia", Non
                   "sem_video": ("sem vídeo", None)}
 
 
-class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaModerna):
+class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, DublagemDeJogos, EnquantoJoga,
+                 JanelaModerna):
     def __init__(self):
         super().__init__(pasta_padrao=PASTA_PADRAO)
         self._abandonadas: set[int] = set()          # tarefas que não obedeceram ao Parar a tempo
@@ -4969,6 +4972,7 @@ class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, JanelaMode
             return
         if self._bandeja is not None:
             self._bandeja.esconder()
+        self.desligar_enquanto_joga()                   # o tradutor de tela e a legenda ao vivo (aba 🎮 Jogos)
         if self._instalar_ao_sair:                      # a troca dos arquivos começa assim que fechar
             arquivo, reabrir = self._instalar_ao_sair
             try:

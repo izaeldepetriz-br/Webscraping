@@ -185,6 +185,48 @@ def _verificar_separacao() -> int:
     return 0 if ok else 1
 
 
+def _verificar_tela() -> int:
+    """Autoteste do modo "Enquanto joga" (usado ao gerar o .exe, no Windows): o leitor de texto do Windows lê uma
+    imagem com letras de jogo, a lista de janelas abertas e a foto de um pedaço da tela funcionam, e as bibliotecas
+    do som do PC (soundcard) e do volume do jogo (pycaw) estão dentro do .exe. O GitHub não tem placa de som: aí só
+    confere que a biblioteca carrega."""
+    import tempfile
+    import traceback
+    from pathlib import Path
+    relatorio = Path(tempfile.gettempdir()) / "maestro-teste-tela.txt"
+    try:
+        import importlib
+        from PIL import Image, ImageDraw, ImageFont
+        from jellyfin_tools import tela_jogo as tj
+        imagem = Image.new("RGB", (1000, 260), (12, 12, 40))
+        try:
+            fonte = ImageFont.truetype("arial.ttf", 54)
+        except OSError:
+            fonte = ImageFont.load_default(size=54)
+        d = ImageDraw.Draw(imagem)
+        d.text((40, 40), "PRESS START TO CONTINUE", fill="white", font=fonte)
+        d.text((40, 140), "Crash FM! Takedown!", fill="white", font=fonte)
+        leitor = tj.leitor_de_texto("en")
+        texto = tj.limpar(leitor.ler(imagem))
+        janelas = tj.janelas_abertas()
+        foto = tj.capturar((0, 0, 320, 200))
+        bibliotecas = []
+        for nome in ("soundcard", "pycaw.pycaw"):
+            try:
+                importlib.import_module(nome)
+                bibliotecas.append(f"{nome} ok")
+            except Exception as erro:
+                bibliotecas.append(f"{nome} FALTOU ({erro})")
+        ok = "START" in texto.upper() and "CONTINUE" in texto.upper() and foto.size == (320, 200) and \
+            all(b.endswith(" ok") for b in bibliotecas)
+        relatorio.write_text(f"leitor: {leitor.nome} | leu: {texto} | {len(janelas)} janelas abertas | foto "
+                             f"{foto.size[0]}x{foto.size[1]} | {' · '.join(bibliotecas)}", encoding="utf-8")
+    except Exception:
+        relatorio.write_text(traceback.format_exc()[-1500:], encoding="utf-8")
+        return 1
+    return 0 if ok else 1
+
+
 def _verificar_navegador() -> int:
     """Autoteste do modo navegador (usado ao gerar o .exe): baixa o Chromium, se faltar, e abre uma página."""
     import tempfile
@@ -208,6 +250,8 @@ if __name__ == "__main__":
         raise SystemExit(_verificar_traducao())
     if "--verificar-separacao" in sys.argv:
         raise SystemExit(_verificar_separacao())
+    if "--verificar-tela" in sys.argv:
+        raise SystemExit(_verificar_tela())
     if "--testar-atualizacao" in sys.argv:          # GitHub: a troca dos arquivos funciona no Windows de verdade?
         from pathlib import Path
         from videoscraper import atualizacao

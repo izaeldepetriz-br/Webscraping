@@ -84,6 +84,15 @@ jobs:
           $linha = ("$r" -replace "`r", "" -replace "`n", "%0A")
           if ($p.ExitCode -ne 0) { Write-Output "::error title=Autoteste da dublagem natural::$linha"; exit 1 }
           Write-Output "::notice title=Autoteste da dublagem natural::$linha"
+      - name: Autoteste do modo Enquanto joga no .exe (o leitor de texto do Windows lê uma imagem de jogo)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\videoscraper\Maestro.exe -ArgumentList "--verificar-tela" -Wait -PassThru
+          $r = Get-Content (Join-Path $env:TEMP 'maestro-teste-tela.txt') -Raw -ErrorAction SilentlyContinue
+          $r
+          $linha = ("$r" -replace "`r", "" -replace "`n", "%0A")
+          if ($p.ExitCode -ne 0) { Write-Output "::error title=Autoteste do Enquanto joga::$linha"; exit 1 }
+          Write-Output "::notice title=Autoteste do Enquanto joga::$linha"
       - name: Autoteste do navegador no .exe (baixa o Chromium e abre uma página)
         shell: pwsh
         run: |

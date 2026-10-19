@@ -5613,46 +5613,77 @@ def test_motor_de_vozes_xtts_pela_tela(app, tmp_path, monkeypatch):
 
 
 def test_aba_jogos_aplica_o_patch_numa_copia(app, tmp_path, monkeypatch):
-    """🎮 Jogos: a ISO do disco (o código do jogo), o patch e o leia-me (o que ele pede), a impressão digital
-    (encaixa ou não), aplicar numa cópia com o nome do OPL, a versão errada recusada, a busca na comunidade e o
-    patch da sua tradução."""
+    """🎮 Jogos, modo "Aplicar patch de fãs" (como no protótipo): a ISO do disco (console, código, região, a impressão
+    digital e o banco Redump), o patch e o leia-me (para qual versão, o que traz, os créditos), aplicar numa cópia com
+    o nome do OPL conferindo a cópia no fim, os patches aplicados e o PCSX2, a versão errada recusada, a janela
+    "Procurar na comunidade" e o patch da sua tradução."""
     import shutil
 
+    from jellyfin_tools import comunidade as cm
+    from jellyfin_tools import patch_jogo as pj
     from tests.test_patch_jogo import iso_de_teste, ppf
-    from videoscraper import jogos_moderna
+    from videoscraper import janela_comunidade, jogos_moderna
     app.mostrar_aba("🎮 Jogos")
     p = app.painel_jogos
-    assert p is not None and app.lb_titulo.cget("text") == "Traduzir jogos com patch de fãs"
+    assert p is not None and app.lb_titulo.cget("text") == "Traduzir e dublar jogos"
+    assert app.seletor_modo_jogos.get() == jogos_moderna.MODO_PATCH
+    assert app.lb_subtitulo.cget("text") == jogos_moderna.SUBTITULOS_MODO[jogos_moderna.MODO_PATCH]
     assert p.bt_aplicar_patch.cget("state") == "disabled"
     iso = iso_de_teste(tmp_path / "Meu Jogo.iso")
     escolhas = {"arquivo": str(iso)}
     monkeypatch.setattr(jogos_moderna.filedialog, "askopenfilename", lambda **k: escolhas["arquivo"])
     p.bt_escolher_iso.invoke()
-    assert "SLUS-20946 · EUA · PS2" in p.info_jogo["jogo"].cget("text")
+    assert p.info_jogo["console"].cget("text").startswith("PlayStation 2  (CD")
+    assert "código do disco SLUS-20946" in p.info_jogo["jogo"].cget("text")
+    assert p.info_jogo["regiao"].cget("text") == "NTSC-U (EUA)"
+    assert "SLUS_209.46.Nome.iso" in p.cx_nome_opl.cget("text")
     pasta = tmp_path / "patch"
     pasta.mkdir()
-    patch = pasta / "Meu Jogo PT-BR.ppf"
+    patch = pasta / "Meu Jogo PT-BR v1.2.ppf"
     patch.write_bytes(ppf(3, [(41000, b"OLA MUNDO")], iso))
-    from jellyfin_tools import patch_jogo as pj
     certa = pj.impressao_digital(iso)
-    (pasta / "leia-me.txt").write_text(f"Meu Jogo PT-BR (SLUS-20946)\nCRC32: {certa.crc32}\n", encoding="utf-8")
+    (pasta / "leia-me.txt").write_text(f"Meu Jogo PT-BR (SLUS-20946)\nTradução por: Grupo Exemplo\nTextos e menus "
+                                       f"traduzidos, com acentos.\nCRC32: {certa.crc32}\n", encoding="utf-8")
     escolhas["arquivo"] = str(patch)
     p.bt_escolher_patch.invoke()
     assert "PPF 3.0" in p.info_patch["patch"].cget("text") and certa.crc32 in p.info_patch["pede"].cget("text")
+    assert "SLUS-20946 (EUA)" in p.info_patch["pede"].cget("text")
+    assert p.info_patch["traz"].cget("text").startswith("textos · menus · letras com ç e acentos")
+    assert p.info_patch["creditos"].cget("text").startswith("Grupo Exemplo · versão 1.2")
     assert p.info_patch["bate"].cget("text").startswith("? confira")
+    abertos_arquivo = []
+    monkeypatch.setattr(app, "_abrir_arquivo_do_sistema", abertos_arquivo.append)
+    p.bt_leia_me.invoke()
+    assert abertos_arquivo == [pasta / "leia-me.txt"]
+    # conferir: a impressão digital e o banco Redump (a lista dos discos originais)
+    monkeypatch.setattr(jogos_moderna.redump, "indice", lambda sistema, pasta_: {
+        "md5": {certa.md5: "Meu Jogo (USA)"}, "crc": {}, "versao": "x"})
     p.bt_conferir_iso.invoke()
     esperar(app)
-    assert p.info_patch["bate"].cget("text").startswith("✓ encaixa") and certa.crc32 in \
+    assert p.info_patch["bate"].cget("text").startswith("✓ Sim") and certa.crc32 in \
         p.info_jogo["digital"].cget("text")
+    assert "cópia perfeita do disco (igual à do banco Redump: Meu Jogo (USA))" in p.info_jogo["digital"].cget("text")
     assert p.nome_final() == "SLUS_209.46.Meu Jogo PT-BR.iso" and "SLUS_209.46.Meu Jogo PT-BR.iso" in \
         p.lb_nome_final.cget("text")
     p.var_pasta_saida.set(str(tmp_path / "OPL" / "DVD"))
+    abertos_pcsx2 = []
+    monkeypatch.setattr(jogos_moderna.pj, "achar_pcsx2", lambda escolhido="": Path("/jogos/pcsx2-qt"))
+    monkeypatch.setattr(jogos_moderna.pj, "abrir_no_pcsx2", lambda iso_, exe: abertos_pcsx2.append((iso_, exe)))
+    p.var_abrir_pcsx2.set(True)
     p.bt_aplicar_patch.invoke()
     esperar(app)
     nova = tmp_path / "OPL" / "DVD" / "SLUS_209.46.Meu Jogo PT-BR.iso"
     assert app.caixas[-1][0] == "sucesso", app.caixas[-1]
     assert nova.read_bytes()[41000:41009] == b"OLA MUNDO" and b"OLA MUNDO" not in iso.read_bytes()
-    assert "✓ Pronta" in p.lb_resultado_patch.cget("text") and p.bt_abrir_pasta_jogo.cget("state") == "normal"
+    texto = p.lb_resultado_patch.cget("text")
+    assert texto.startswith("✓ Pronto: cópia traduzida criada") and "cópia conferida (CRC32" in texto
+    assert p.bt_abrir_pasta_jogo.cget("state") == "normal" and abertos_pcsx2 == [(nova, Path("/jogos/pcsx2-qt"))]
+    assert p.barra.get() == 1.0
+    # os patches aplicados: a cópia fica registrada (abrir no PCSX2, a pasta ou apagar a cópia)
+    assert [Path(d["destino"]) for d in pj.carregar_aplicados(app.arquivo_aplicados)] == [nova]
+    monkeypatch.setattr(app, "escolher_da_lista", lambda *a, **k: 0)
+    p.bt_aplicados.invoke()                           # (o app de teste escolhe o 1º botão: Abrir no PCSX2)
+    assert abertos_pcsx2[-1] == (nova, Path("/jogos/pcsx2-qt"))
     # outra versão do jogo (outra impressão digital): confere ANTES e não aplica
     outra = iso_de_teste(tmp_path / "Meu Jogo (Europa).iso", "SLUS_209.46", semente=9)
     escolhas["arquivo"] = str(outra)
@@ -5664,11 +5695,38 @@ def test_aba_jogos_aplica_o_patch_numa_copia(app, tmp_path, monkeypatch):
     assert app.caixas[-1][0] == "aviso" and "não é a versão do patch" in app.caixas[-1][2]
     assert p.info_patch["bate"].cget("text").startswith("✗ não encaixa")
     assert not (tmp_path / "OPL" / "DVD" / "Europa PT-BR.iso").exists()
-    # procurar na comunidade: a busca de patches com o código do jogo
+    # procurar na comunidade: a janela com a lista dos patches (e o "Já baixei: usar o arquivo")
+    escolhas["arquivo"] = str(iso)
+    p.bt_escolher_iso.invoke()
+    pedidos = []
+
+    def procurar(termos, info, pasta_, onde, quer, crc32=""):
+        pedidos.append((termos, info.id_jogo, onde))
+        r = cm.Resultado(escondidos=2, no_navegador={"itch.io": "https://itch.io/search?q=x"})
+        r.achados = [cm.Achado("PO.B.R.E", "Meu Jogo (Grupo Exemplo)", grupo="Grupo Exemplo", versao="1.2",
+                               traz=["textos", "dublagem"], feito_para="SLUS-20946 (EUA)", formato="PPF 3.0",
+                               pagina="https://romhackers.org/traducoes/console/playstation-2/meu-jogo/",
+                               encaixa="✓ encaixa: o mesmo código do disco")]
+        return r
+    monkeypatch.setattr(jogos_moderna.cm, "procurar", procurar)
     abertos = []
-    monkeypatch.setattr(jogos_moderna.webbrowser, "open", abertos.append)
+    monkeypatch.setattr(janela_comunidade.webbrowser, "open", abertos.append)
     p.bt_procurar_patch.invoke()
-    assert abertos and "SLUS-20946" in abertos[0]
+    janela = app.janela_comunidade
+    for _ in range(40):
+        app.update()
+        if janela.resultado is not None:
+            break
+        time.sleep(0.05)
+    assert pedidos and pedidos[0][0] == "Meu Jogo" and pedidos[0][1] == "SLUS-20946"
+    assert janela.tabela.item("a0", "values")[4] == "✓ encaixa: o mesmo código do disco"
+    assert janela.tabela.item("nitch.io", "values")[4] == "abrir a busca no navegador"
+    assert "2 escondido(s)" in janela.detalhe["seguranca"].cget("text")
+    janela.bt_abrir.invoke()
+    assert abertos == ["https://romhackers.org/traducoes/console/playstation-2/meu-jogo/"]
+    escolhas["arquivo"] = str(patch)
+    janela.bt_usar.invoke()                           # "Já baixei": escolhe o arquivo e volta para a aba
+    assert not janela.winfo_exists() and p.var_patch.get() == str(patch)
     # compartilhar a sua tradução: o .xdelta (com o xdelta3 de verdade, se instalado)
     if shutil.which("xdelta3"):
         p.var_criar_original.set(str(iso))
@@ -5682,3 +5740,174 @@ def test_aba_jogos_aplica_o_patch_numa_copia(app, tmp_path, monkeypatch):
         assert (tmp_path / "compartilhar" / "Meu Jogo PT-BR v1.0.xdelta").is_file()
         assert (tmp_path / "compartilhar" / "Meu Jogo PT-BR v1.0 - leia-me.txt").is_file()
         assert "✓ Patch criado" in p.lb_criado.cget("text")
+
+
+def test_aba_jogos_traduzir_e_dublar(app, tmp_path, monkeypatch):
+    """🎮 Jogos, modo "Traduzir e dublar (no PC)" (como no protótipo): a ISO analisada e as falas tiradas dela, o
+    roteiro lido, a tradução com a coluna Espaço (e a sugestão do Claude embaixo), corrigir uma tradução, as vozes
+    por personagem (trocar a voz), dublar (o motor é falso), ouvir 5 falas, as opções e custos, entregar e montar a
+    ISO em português."""
+    from jellyfin_tools import dublar_jogo as dj
+    from jellyfin_tools import roteiro_jogo as rj
+    from tests.test_dublar_jogo import MotorFalso
+    from tests.test_iso_jogo import disco
+    from tests.test_roteiro_jogo import ClienteJogo
+    from videoscraper import dublar_jogos_moderna as dm
+    from videoscraper import jogos_moderna
+    from videoscraper.painel_dublar_jogo import QUEM_TRADUZ
+    if not dm.localizar_ffmpeg():
+        pytest.skip("sem ffmpeg")
+    app.mostrar_aba("🎮 Jogos")
+    app.seletor_modo_jogos.set(jogos_moderna.MODO_DUBLAR)
+    app.mostrar_modo_jogos(jogos_moderna.MODO_DUBLAR)
+    p = app.painel_dublar_jogo
+    assert p.winfo_ismapped() and not app.painel_jogos.winfo_ismapped()
+    assert app.lb_subtitulo.cget("text").startswith("1) Abra o roteiro")
+    # a ISO: analisar e tirar as falas (o Maestro abre os VAG soltos e os de dentro dos pacotes)
+    iso, _ = disco(tmp_path)
+    p.var_iso.set(str(iso))
+    p.bt_analisar.invoke()
+    esperar(app)
+    assert "4 falas que o Maestro troca" in p.lb_analise.cget("text")
+    p.bt_extrair.invoke()
+    esperar(app)
+    for _ in range(30):                               # a leitura da pasta começa quando a extração termina
+        app.update()
+        time.sleep(0.05)
+    esperar(app)
+    pasta = tmp_path / "Burnout 3 - Takedown - extraído"
+    assert p.var_pasta.get() == str(pasta) and p.tem_mapa and len(p.falas) == 4
+    assert "4 falas gravadas (VAG, 22,05 kHz)" in p.info["vozes"].cget("text")
+    # um roteiro com o texto de duas falas (o resto, o Whisper ouviria) e um item com espaço máximo
+    vags = sorted(f.relativo for f in p.falas)
+    (pasta / "roteiro.csv").write_text("id;texto;audio;personagem;limite\n"
+                                       f"1;Open the gate!;{vags[0]};Kael;\n"
+                                       f"2;Thanks, {{NAME}}. The forest is safe now.;{vags[1]};Kael;\n"
+                                       "3;Save your game?;;;16\n", encoding="utf-8")
+    p.var_ouvir.set(False)
+    p.bt_ler.invoke()
+    esperar(app)
+    assert p.roteiro is not None and "roteiro.csv · 3 textos" in p.info["textos"].cget("text")
+    assert "as outras 1 são só texto" in p.info["vozes"].cget("text")
+    monkeypatch.setattr(dm.DublagemDeJogos, "_tradutor_do_jogo", lambda self, o: rj.TradutorJogo(
+        cliente=ClienteJogo()))
+    p.bt_traduzir.invoke()
+    esperar(app)
+    linhas = {p.tabela_traducao.item(i, "values")[0]: p.tabela_traducao.item(i, "values")
+              for i in p.tabela_traducao.get_children()}
+    assert linhas["1"][2] == "Abra o portão!"
+    assert linhas["3"][2] == "Você deseja salvar o seu jogo agora?" and linhas["3"][3] == "⚠ 36 de 16"
+    sugestao = p.tabela_traducao.item("2s", "values")
+    assert sugestao[2] == "↳ sugestão do Claude: \"Salvar o jogo?\" (vai esta)" and sugestao[3] == "✓ 14 de 16"
+    assert "3 de 3 traduzidas · 1 ajustadas para caber · 0 códigos perdidos" in p.lb_traducao.cget("text")
+    # corrigir uma tradução (vale para todas as vezes que o texto aparece) e fica guardada
+    p.tabela_traducao.focus("0")
+    monkeypatch.setattr(app, "pedir_texto_do_jogo", lambda titulo, mensagem, atual: "Abram o portão!")
+    p.acoes["editar"]()                               # o duplo clique na linha
+    assert p.tabela_traducao.item("0", "values")[2] == "Abram o portão!"
+    saida = tmp_path / "Burnout 3 - Takedown - PT-BR"
+    memoria = rj.carregar_memoria(saida / dj.PASTA_TRABALHO / "traducao.json")
+    assert memoria["\0finais"]["Open the gate!"] == "Abram o portão!"
+    # as vozes: Kael e "Outros"; trocar a voz do Kael
+    assert p.tabela_elenco.item("Kael", "values")[1] == "2"
+    p.tabela_elenco.focus("Kael")
+    monkeypatch.setattr(app, "escolher_da_lista", lambda *a, **k: 2)
+    p.acoes["trocar_voz"]()
+    voz_kael = app._fixas_jogo["Kael"]
+    assert {f.voz for f in p.falas if f.personagem == "Kael"} == {voz_kael}
+    # dublar (o motor é falso): as falas no formato e no tamanho da original
+    monkeypatch.setattr(dm.DublagemDeJogos, "_motor_do_jogo", lambda self, o: MotorFalso())
+    p.bt_dublar.invoke()
+    esperar(app)
+    for fala in p.falas:
+        if fala.traducao:
+            assert (saida / "audio_ptbr" / fala.relativo).stat().st_size == fala.arquivo.stat().st_size
+    assert "2 falas dubladas" in p.lb_dublagem.cget("text")
+    assert p.tabela_elenco.item("Kael", "values")[4].startswith(("✓", "⚠"))
+    tocados = []
+    monkeypatch.setattr(app, "_tocar", tocados.append)
+    p.bt_ouvir.invoke()
+    app.update()
+    assert tocados and tocados[0].name == "ouvir 5 falas.wav"
+    # opções e custos: o perfil "Tudo grátis" escolhe o tradutor do PC
+    p.bt_custos.invoke()
+    app.janela_custos_jogo.escolher("Tudo grátis")
+    assert p.var_quem_traduz.get() == QUEM_TRADUZ[2]
+    app.janela_custos_jogo.destroy()
+    # entregar e montar a ISO em português (as falas saíram dela pelo Maestro)
+    p.bt_entregar.invoke()
+    esperar(app)
+    assert (saida / "roteiro_ptbr.csv").is_file() and (saida / "relatorio_traducao.txt").is_file()
+    assert "✓ Pronto em" in p.lb_entrega.cget("text")
+    p.bt_montar.invoke()
+    esperar(app)
+    montada = saida / "SLUS_210.50.Burnout 3 - Takedown PT-BR.iso"
+    assert montada.is_file() and montada.read_bytes() != iso.read_bytes()
+    assert p.lb_entrega.cget("text").startswith("✓ ISO em português") and p.iso_montada == montada
+
+
+def test_aba_jogos_enquanto_joga(app, tmp_path, monkeypatch):
+    """🎮 Jogos, modo "Enquanto joga" (como no protótipo): a janela do jogo (o emulador primeiro) e a prévia com a
+    caixa roxa, marcar a área da caixa de diálogo, o tradutor de tela ligado (a tradução aparece na janelinha por
+    cima do jogo; a mesma frase sai da memória), o atalho do modo de patch e a legenda ao vivo sem placa de som."""
+    from PIL import Image
+
+    from jellyfin_tools import legenda_ao_vivo as lv
+    from jellyfin_tools import tela_jogo as tj
+    from videoscraper import enquanto_joga_moderna as em
+    from videoscraper import jogos_moderna
+    jogo = tj.Janela("PCSX2 · Burnout 3 (SLUS-21050)", 7, (0, 0, 640, 480), 4321)
+    monkeypatch.setattr(em.tj, "janelas_abertas", lambda: [tj.Janela("Bloco de notas", 2, (0, 0, 800, 600)), jogo])
+    monkeypatch.setattr(em.tj, "retangulo_atual", lambda janela: janela.retangulo)
+    foto = Image.new("RGB", (640, 480), "black")
+    foto.info["texto"] = "Crash FM! Takedown!"
+    monkeypatch.setattr(em.tj, "capturar", lambda area: foto)
+    monkeypatch.setattr(tj, "capturar", lambda area: foto)
+
+    class Leitor:
+        nome = "de teste"
+
+        def ler(self, imagem):
+            return imagem.info.get("texto", "")
+    monkeypatch.setattr(em.tj, "leitor_de_texto", lambda idioma="en": Leitor())
+    monkeypatch.setattr(em.EnquantoJoga, "_traduzir_ao_vivo", lambda self, qual: lambda texto: "PT: " + texto)
+    monkeypatch.setattr(em.tj.MemoriaDeFrases, "__init__", lambda self, arquivo=None: (
+        setattr(self, "arquivo", None), setattr(self, "frases", {}), setattr(self, "reaproveitadas", 0))[0])
+    app.mostrar_aba("🎮 Jogos")
+    app.mostrar_modo_jogos(jogos_moderna.MODO_ENQUANTO)
+    p = app.painel_enquanto_joga
+    assert app.lb_subtitulo.cget("text").startswith("Para qualquer jogo, por cima da janela do emulador")
+    assert p.var_janela.get() == "Bloco de notas" and [j.titulo for j in p.janelas][1].startswith("PCSX2")
+    p.var_janela.set(jogo.titulo)
+    p.acoes["previa"]()
+    assert p.lb_previa.cget("text") == "" and p._imagem is not None      # a foto com a caixa roxa
+    # marcar a área da caixa de diálogo
+    monkeypatch.setattr(em, "MarcarArea", lambda pai, retangulo: type("M", (), {"resultado": (40, 300, 600, 420)})())
+    monkeypatch.setattr(app, "wait_window", lambda janela=None: None)
+    p.bt_marcar.invoke()
+    assert app._area_marcada == (40, 300, 600, 420) and p.var_area.get() == "Caixa de diálogo (marcada)"
+    assert app._area_na_tela() == (40, 300, 600, 420)
+    # ligar o tradutor de tela: a tradução aparece por cima do jogo
+    p.sw_tela.toggle()
+    assert p.var_tela.get() and app._tradutor_de_tela is not None
+    for _ in range(80):
+        app.update()
+        if app.sobreposicao is not None and app.sobreposicao.lb_tela.cget("text"):
+            break
+        time.sleep(0.05)
+    assert app.sobreposicao.lb_tela.cget("text") == "PT: Crash FM! Takedown!"
+    assert app.sobreposicao.winfo_ismapped()
+    p.sw_tela.toggle()
+    assert app._tradutor_de_tela is None and not app.sobreposicao.winfo_ismapped()
+    # a legenda ao vivo, sem como ouvir o som do PC: avisa e não fica ligada
+    monkeypatch.setattr(em.lv, "CapturaDoSom", lambda: (_ for _ in ()).throw(lv.ErroLegenda("sem placa de som")))
+    monkeypatch.setattr("jellyfin_tools.transcricao.Transcritor.__init__", lambda self, **k: None)
+    p.sw_legenda.toggle()
+    assert not p.var_legenda.get() and app.caixas[-1][0] == "aviso" and "sem placa de som" in app.caixas[-1][2]
+    # o atalho do modo de patch liga o mesmo tradutor de tela
+    app.mostrar_modo_jogos(jogos_moderna.MODO_PATCH)
+    app.painel_jogos.sw_atalho_tela.toggle()
+    assert app._tradutor_de_tela is not None and p.var_tela.get()
+    assert "PCSX2" in app.painel_jogos.lb_janela_atalho.cget("text")
+    app.painel_jogos.sw_atalho_tela.toggle()
+    assert app._tradutor_de_tela is None

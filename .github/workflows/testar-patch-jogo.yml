@@ -1,13 +1,23 @@
-# Teste de verdade do patch de jogos (aba 🎮 Jogos) num Windows, como no PC de quem usa o Maestro: baixa o xdelta3
-# oficial, cria e aplica um .xdelta e um .ppf em ISOs de mentira. Roda quando o patch muda (ou pelo "Run workflow").
+# Teste de verdade da aba 🎮 Jogos num Windows, como no PC de quem usa o Maestro: baixa o xdelta3 oficial, cria e
+# aplica um .xdelta e um .ppf em ISOs de mentira; o Redump e a busca de patches na comunidade (sites de verdade); e a
+# dublagem de um jogo de mentira com o Piper, montando a ISO em português. Roda quando a aba muda, toda segunda-feira
+# (se um site mudar a página, o teste avisa) e pelo "Run workflow".
 name: Patch de jogos no Windows
 
 on:
   push:
     paths:
       - jellyfin_tools/patch_jogo.py
+      - jellyfin_tools/redump.py
+      - jellyfin_tools/comunidade.py
+      - jellyfin_tools/iso_jogo.py
+      - jellyfin_tools/audio_jogo.py
+      - jellyfin_tools/dublar_jogo.py
       - .github/scripts/testar_patch_jogo.py
+      - .github/scripts/testar_jogos_ao_vivo.py
       - .github/workflows/testar-patch-jogo.yml
+  schedule:
+    - cron: "17 9 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -28,6 +38,18 @@ jobs:
           set -o pipefail
           { python -m pip install --upgrade pip && pip install -r requirements.txt pytest \
             && python .github/scripts/testar_patch_jogo.py "$RUNNER_TEMP/patch"; } 2>&1 | tee registro.txt
+      - name: Redump e Procurar na comunidade (os sites de verdade)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          python .github/scripts/testar_jogos_ao_vivo.py sites "$RUNNER_TEMP/sites" 2>&1 | tee -a registro.txt
+      - name: Dublar um jogo de mentira no PC (Piper) e montar a ISO em português
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          python .github/scripts/testar_jogos_ao_vivo.py dublar "$RUNNER_TEMP/dublar" 2>&1 | tee -a registro.txt
       - name: Mostrar o erro
         if: failure()
         shell: bash

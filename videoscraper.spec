@@ -18,6 +18,12 @@ for pacote in ("imageio_ffmpeg", "playwright", "pystray",                   # ff
                "sentencepiece"):                                                   # tradução local (Argos)
     d, b, h = collect_all(pacote)
     datas, binaries, hiddenimports = datas + d, binaries + b, hiddenimports + h
+for pacote in ("winrt", "soundcard", "pycaw", "comtypes"):                   # "Enquanto joga" (só no Windows):
+    try:                                                                    # leitor de texto, som do PC, volume
+        d, b, h = collect_all(pacote)
+    except Exception:                                                       # (fora do Windows não vêm instalados)
+        continue
+    datas, binaries, hiddenimports = datas + d, binaries + b, hiddenimports + h
 
 import sys  # noqa: E402
 sys.path.insert(0, os.path.abspath("."))

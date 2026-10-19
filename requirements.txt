@@ -13,3 +13,14 @@ sentencepiece>=0.2   # tradução local grátis (modelos Argos no CTranslate2, o
 faster-whisper>=1.1  # criar a legenda ouvindo o áudio (Whisper, roda no PC)
 av>=11,<19           # o PyAV 19 tirou uma opção que o faster-whisper 1.2 ainda usa (metadata_errors)
 python-vlc>=3.0     # ver o vídeo dentro da aba 🎧 Áudio (usa o VLC instalado no PC; sem ele, abre no player)
+# modo "Enquanto joga" da aba 🎮 Jogos (só no Windows): o leitor de texto do próprio Windows (OCR), ouvir o som do
+# PC (legenda das vozes ao vivo) e abaixar o som do jogo enquanto o Maestro fala
+winrt-runtime>=2.0; sys_platform == "win32"
+winrt-Windows.Foundation>=2.0; sys_platform == "win32"
+winrt-Windows.Foundation.Collections>=2.0; sys_platform == "win32"
+winrt-Windows.Globalization>=2.0; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging>=2.0; sys_platform == "win32"
+winrt-Windows.Media.Ocr>=2.0; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=2.0; sys_platform == "win32"
+soundcard>=0.4; sys_platform == "win32"
+pycaw>=20240210; sys_platform == "win32"

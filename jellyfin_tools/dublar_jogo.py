@@ -167,6 +167,22 @@ def ouvir(falas: list[FalaJogo], transcritor, pasta_trabalho: str | Path, idioma
     return ouvidas
 
 
+def ouvidas_guardadas(falas: list[FalaJogo], pasta_trabalho: str | Path) -> int:
+    """O texto das falas que o Whisper já ouviu antes (ao abrir o jogo de novo: sem ouvir nada). Devolve quantas."""
+    try:
+        guardadas = json.loads((Path(pasta_trabalho) / ARQUIVO_OUVIDAS).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    n = 0
+    for fala in falas:
+        if fala.formato is not None and not fala.texto.strip():
+            texto = guardadas.get(f"{fala.relativo}|{fala.formato.tamanho}")
+            if texto is not None:
+                fala.texto, fala.ouvida = texto, True
+                n += 1
+    return n
+
+
 def traduzir_ouvidas(falas: list[FalaJogo], tradutor, glossario: tuple = (), tirar_acentos: bool = False,
                      memoria: dict | None = None, parar=None, ao_progresso=None) -> ResumoTraducao:
     """A tradução das falas que vieram do Whisper (as do roteiro já se traduzem com ele)."""

@@ -240,6 +240,56 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.23.0
+
+- **A aba 🎮 Jogos agora tem 3 modos** (a faixa no topo, como no protótipo): **📀 Aplicar patch de fãs**, **🗣 Traduzir
+  e dublar (no PC)** e **🖥 Enquanto joga (tradutor de tela)**. O Maestro lembra o último modo usado.
+- **📀 Aplicar patch de fãs, mais completo**:
+  - **"🔎 Procurar na comunidade" numa janela do Maestro**: a lista dos patches do jogo no **banco público do
+    PO.B.R.E** (romhackers.org) e na busca do **fórum romhacking.net.br**, com o que cada um traz (textos, dublagem),
+    o grupo, a versão, para qual versão do jogo foi feito e se **encaixa na SUA ISO** (pelo código, região, CRC32 e
+    tamanho). Filtros: onde procurar e "Textos e/ou dublagem / Só dublagem / Só textos". As traduções que distribuem a
+    **ISO inteira não aparecem** (só a contagem: "2 escondidas"). O Romhacking.net e o itch.io não deixam programas
+    procurarem: abrem no navegador. "🌐 Abrir a página do patch" (o download e os créditos ficam na página do grupo) e
+    "Já baixei: usar o arquivo..." para continuar;
+  - **o disco no banco Redump**: a impressão digital é comparada com a lista de cópias perfeitas dos discos de PS2/PS1
+    ("✓ Cópia perfeita: Burnout 3 - Takedown (USA)"), guardada no PC por 30 dias;
+  - **patches .ips e .bps** (além de .xdelta e .ppf), com a conferência do CRC32 que vem dentro do .bps;
+  - o **leia-me** mostra **o que o patch traz e os créditos**; o **nome do OPL usa o código real** do disco
+    ("SLUS_210.50..."); no fim, a **cópia é conferida**; **"🗂 Patches aplicados"** e **"▶ Abrir no
+    PCSX2"** (acha o PCSX2 instalado).
+- **🗣 Traduzir e dublar (no PC)** — para jogos sem tradução da comunidade (como o Burnout 3):
+  - **Roteiro**: o texto do jogo em .csv/.tsv/.txt/.json (as mesmas colunas, separador e codificação voltam na
+    entrega); ou direto da **ISO**: "🔍 Analisar a ISO" acha as falas (VAG/ADS/WAV soltos e VAG dentro dos pacotes),
+    "📤 Tirar as falas da ISO" extrai e o **relatório** diz os formatos que ainda faltam (como o RenderWare **RWS** do Burnout 3:
+    o relatório ajuda a decidir o próximo passo). Falas sem texto: o **Whisper ouve**;
+  - **Tradução**: Claude (pago), **Gemini Flash** (chave grátis) ou **Argos** (grátis no PC); os **códigos do jogo**
+    ({NAME}, \n...) e os **nomes do glossário** ficam protegidos; a coluna **Espaço** ("✓ 14 de 16" / "⚠ 21 de 16")
+    respeita o tamanho máximo de cada texto e, quando passa, a linha embaixo mostra a **sugestão mais curta do
+    Claude**; "sem acentos" para jogos sem essas letras; **duplo clique corrige** (vale para todas as vezes que o
+    texto aparece) e a **memória** guarda tudo (o que já foi traduzido não é pago de novo);
+  - **Dublagem**: XTTS-v2 (grátis, no PC), Gemini, Google Cloud ou Piper; o **elenco** por personagem (gênero e grito
+    ou sussurro medidos na original) com a **duração** de cada um; a emoção pela gravação ou Chatterbox; cada fala
+    sai **no formato do PS2 e com o tamanho da original**; "▶ Ouvir 5 falas" (original e dublada), "✏ Editar uma fala" e
+    "Só 5 falas (teste)";
+  - **💰 Opções e custos**: grátis ou pago em cada etapa, com o valor estimado **para este jogo**, e os perfis **Tudo
+    grátis / Equilibrado / Melhor qualidade** (um clique escolhe o tradutor e o motor);
+  - **Entregar**: o roteiro em português, as vozes em audio_ptbr e o relatório; **"💿 Montar a ISO em português"** (uma
+    cópia com as falas dubladas no mesmo lugar) e **"📦 Criar o patch (.xdelta)"** para compartilhar.
+- **🖥 Enquanto joga (tradutor de tela)** — para qualquer jogo, **sem mexer na ISO**:
+  - escolha a **janela do emulador** (a prévia mostra onde a tradução aparece) e, se quiser, **"✂ Marcar a área"**
+    da caixa de diálogo;
+  - o **tradutor de tela** fotografa a janela, espera o texto parar de ser escrito, **lê com o leitor de texto do
+    próprio Windows** (OCR, nada sai do PC; sem ele, o Tesseract) e mostra a tradução **numa caixa roxa por cima do
+    jogo** (dá para arrastar). Frases repetidas saem da **memória**. Sozinho ou pelo **atalho (F9)**;
+  - a **legenda das vozes ao vivo**: o Whisper ouve o **som do PC** e a tradução aparece embaixo; **"Ler em voz
+    alta"** fala a tradução (XTTS-v2 ou Gemini) **abaixando o som do jogo** enquanto fala;
+  - os mesmos botões ficam como **atalho no modo de patch** ("Enquanto joga" ao lado do PCSX2).
+- **Testes automáticos novos no GitHub (Windows)**: o **leitor de texto do Windows dentro do .exe** lê uma imagem com
+  letras de jogo (`--verificar-tela`); **toda segunda-feira** o Redump e a busca na comunidade são testados nos
+  **sites de verdade** (se um site mudar a página, o teste avisa); e a **dublagem de um jogo de mentira** do começo
+  ao fim (ISO → falas → Piper → VAG do mesmo tamanho → ISO em português).
+
 ### Novidades da v2.22.0
 
 - **Interpretação da emoção depois da voz (opcional, experimental)**: Configurações > Dublagem > **"Força da

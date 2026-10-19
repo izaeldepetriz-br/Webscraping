@@ -2968,7 +2968,7 @@ class JanelaModerna(ctk.CTk):
         "Avulsos": "1) Escolha a caixa de entrada ou adicione vídeos    2) Clique em Olhar    3) Confira e clique em "
                    "Processar",
         "🎧 Áudio": "1) Escolha a origem e a faixa    2) Escolha o destino    3) Confira o encaixe e clique em Inserir",
-        "🎮 Jogos": "1) Escolha a ISO do seu disco    2) Escolha o patch    3) Confira e clique em Aplicar",
+        "🎮 Jogos": "1) Escolha a ISO do seu disco    2) Procure ou escolha o patch    3) Aplique",
         "⚙ Configurações": "Tudo o que muda o jeito do programa trabalhar fica aqui. Vale na hora e fica salvo.",
     }
     TITULOS = {"Vídeos": "Extrair e baixar vídeos públicos",
@@ -2977,7 +2977,7 @@ class JanelaModerna(ctk.CTk):
                "Jellyfin Espelhos": "Espelhos (.strm) no Jellyfin",
                "Avulsos": "Legendar e dublar vídeos avulsos",
                "🎧 Áudio": "Trocar o áudio entre versões de um filme",
-               "🎮 Jogos": "Traduzir jogos com patch de fãs",
+               "🎮 Jogos": "Traduzir e dublar jogos",
                "⚙ Configurações": "Configurações"}
 
     def _montar_cabecalho(self) -> None:

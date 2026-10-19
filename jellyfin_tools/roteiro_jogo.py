@@ -554,3 +554,28 @@ def salvar_memoria(arquivo: str | Path, memoria: dict) -> None:
     temporario = arquivo.with_suffix(".tmp")
     temporario.write_text(json.dumps(dados, ensure_ascii=False, indent=1), encoding="utf-8")
     temporario.replace(arquivo)
+
+
+class _SoMemoria:
+    """O "tradutor" que nunca é chamado: da_memoria só passa os textos que já estão na memória."""
+
+    def traduzir_falas(self, textos, titulo="", parar=None, ao_progresso=None):
+        raise ErroTraducao("sem tradução guardada")
+
+
+def da_memoria(textos: list[str], memoria: dict, limites: list | None = None, glossario: tuple = (),
+               tirar_acentos: bool = False) -> list[tuple[str, list, str]]:
+    """[(tradução, avisos, 1ª tradução longa)] dos textos JÁ traduzidos antes (ao abrir o jogo de novo: sem chamar o
+    tradutor nem gastar); os que não estão na memória voltam com a tradução vazia."""
+    limites = list(limites or [None] * len(textos))
+    finais = memoria.get("\0finais", {})
+    conhecidos = [i for i, t in enumerate(textos) if t.strip() and (t in finais or t in memoria)]
+    saida = [("", [], "")] * len(textos)
+    if conhecidos:
+        longas: list[str] = []
+        traducoes, avisos, _ = traduzir_textos([textos[i] for i in conhecidos], _SoMemoria(),
+                                               [limites[i] for i in conhecidos], glossario, tirar_acentos, memoria,
+                                               longas=longas)
+        for k, i in enumerate(conhecidos):
+            saida[i] = (traducoes[k], avisos[k], longas[k])
+    return saida
