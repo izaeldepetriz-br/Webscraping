@@ -230,3 +230,48 @@ def gravar_como(original: str | Path, dublada: str | Path, destino: str | Path, 
     if formato.tipo in ("vag", "ads") and novo != formato.tamanho:
         raise ErroAudioJogo(f"{destino.name} ficou com {novo} bytes e a original tem {formato.tamanho}")
     return {"formato": formato.descrever(), **info, "bytes": novo}
+
+
+# ----------------------------------------------------------------- ouvir a original (sem o ffmpeg)
+def ler_som(arquivo: str | Path) -> tuple[np.ndarray, int]:
+    """(amostras em mono, de -1 a 1; taxa em Hz) de uma fala do jogo: WAV, VAG ou ADS (decodificados aqui mesmo,
+    como o PS2 toca). Para medir o tom e o volume e para o Whisper ouvir a original."""
+    formato = ler_formato(arquivo)
+    dados = Path(arquivo).read_bytes()
+    if formato.tipo == "wav":
+        with wave.open(str(arquivo)) as w:
+            som = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(np.float32)
+        som = som.reshape(-1, formato.canais).mean(axis=1) if formato.canais > 1 else som
+    elif formato.tipo == "vag":
+        corpo = dados[CABECALHO_VAG:]
+        if formato.extra["vazio"]:
+            corpo = corpo[BYTES_POR_BLOCO:]
+        som = decodificar_adpcm(corpo[:formato.amostras // AMOSTRAS_POR_BLOCO * BYTES_POR_BLOCO]).astype(np.float32)
+    else:
+        e = formato.extra
+        corpo = dados[40:40 + e["tamanho_dados"]]
+        passo, canais = e["intercalado"], formato.canais
+        partes = [bytearray() for _ in range(canais)]
+        for pos in range(0, len(corpo), passo * canais):          # L, R, L, R... em pedaços do intercalado
+            for c in range(canais):
+                partes[c] += corpo[pos + c * passo:pos + (c + 1) * passo]
+        if e["codec"] == 0x10:
+            canais_som = [decodificar_adpcm(bytes(p)).astype(np.float32) for p in partes]
+        else:
+            canais_som = [np.frombuffer(bytes(p)[:len(p) // 2 * 2], dtype="<i2").astype(np.float32) for p in partes]
+        menor = min(len(c) for c in canais_som)
+        som = np.mean([c[:menor] for c in canais_som], axis=0)
+    return som / 32768.0, formato.taxa
+
+
+def para_wav(arquivo: str | Path, destino: str | Path) -> Path:
+    """A fala original do jogo num WAV comum (16 bits, mono), para ouvir e para o Whisper."""
+    som, taxa = ler_som(arquivo)
+    destino = Path(destino)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(destino), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(taxa)
+        w.writeframes(np.clip(np.rint(som * 32767), -32768, 32767).astype("<i2").tobytes())
+    return destino
