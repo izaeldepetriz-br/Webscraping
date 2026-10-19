@@ -163,8 +163,11 @@ class LeitorWindows:
             escritor.write_bytes(pixels)                 # (as versões novas do winrt aceitam os bytes direto)
         except TypeError:
             escritor.write_bytes(list(pixels))
-        foto = SoftwareBitmap.create_copy_from_buffer(escritor.detach_buffer(), BitmapPixelFormat.BGRA8,
-                                                      imagem.width, imagem.height, BitmapAlphaMode.PREMULTIPLIED)
+        copiar = getattr(SoftwareBitmap, "create_copy_with_alpha_from_buffer", None)   # o winrt 3 separou os nomes
+        if copiar is None:                                                             # (o 2 tinha um só, com 5)
+            copiar = SoftwareBitmap.create_copy_from_buffer
+        foto = copiar(escritor.detach_buffer(), BitmapPixelFormat.BGRA8, imagem.width, imagem.height,
+                      BitmapAlphaMode.PREMULTIPLIED)
 
         async def ler():
             return await self._motor.recognize_async(foto)
