@@ -14,8 +14,10 @@ Desfazer apaga o que o Maestro copiou e devolve os arquivos originais. O registr
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import stat
 import time
 import zipfile
 from dataclasses import dataclass, field
@@ -28,6 +30,7 @@ PARTES_MOD = ("romfs", "exefs")
 EMULADOR, SD = "emulador", "sd"
 COPIA_SEGURANCA = ".maestro_original"
 LEIA_ME = re.compile(r"(leia|readme|leeme|instru|info)[^/]*\.(txt|md|nfo)$", re.I)
+LIXO = re.compile(r"(^|/)(__MACOSX/|\._|\.DS_Store$|Thumbs\.db$|desktop\.ini$)", re.I)   # o que o Mac e o Windows põem
 
 
 @dataclass
@@ -53,22 +56,44 @@ class Pacote:
 
 
 def _listar(origem: Path) -> dict[str, int]:
+    """{caminho com "/": tamanho}. Os .zip feitos por programas antigos do Windows trazem "\\" no lugar da "/"; o
+    lixo do Mac (__MACOSX, ._*) e do Windows (Thumbs.db, desktop.ini) não entra."""
     if origem.is_dir():
-        return {p.relative_to(origem).as_posix(): p.stat().st_size for p in sorted(origem.rglob("*")) if p.is_file()}
-    if origem.suffix.lower() == ".zip" and origem.is_file():
+        arquivos = {p.relative_to(origem).as_posix(): p.stat().st_size for p in sorted(origem.rglob("*"))
+                    if p.is_file()}
+    elif origem.suffix.lower() == ".zip" and origem.is_file():
         try:
             with zipfile.ZipFile(origem) as z:
-                return {i.filename: i.file_size for i in z.infolist() if not i.is_dir()}
+                arquivos = {i.filename.replace("\\", "/"): i.file_size for i in z.infolist()
+                            if not i.is_dir() and not i.filename.endswith("\\")}
         except zipfile.BadZipFile as erro:
             raise ErroPatch(f"{origem.name} não é um .zip válido ({erro})") from erro
-    raise ErroPatch(f"escolha a pasta ou o .zip da tradução (não achei {origem})")
+    else:
+        raise ErroPatch(f"escolha a pasta ou o .zip da tradução (não achei {origem})")
+    return {c: t for c, t in arquivos.items() if not LIXO.search(c)}
 
 
 def _ler(origem: Path, caminho: str) -> bytes:
     if origem.is_dir():
         return (origem / caminho).read_bytes()
     with zipfile.ZipFile(origem) as z:
-        return z.read(caminho)
+        try:
+            return z.read(caminho)
+        except KeyError:                                 # (o nome dentro do .zip está com "\\")
+            return z.read(caminho.replace("/", "\\"))
+
+
+def _liberar(arquivo: Path) -> None:
+    """Tira o "somente leitura" (no Windows, os arquivos do jogo às vezes vêm assim e não deixam trocar)."""
+    if arquivo.exists() and not os.access(arquivo, os.W_OK):
+        os.chmod(arquivo, arquivo.stat().st_mode | stat.S_IWRITE)
+
+
+def _apagar_pasta(pasta: Path) -> None:
+    for arquivo in pasta.rglob("*"):
+        if arquivo.is_file():
+            _liberar(arquivo)
+    shutil.rmtree(pasta, ignore_errors=True)
 
 
 def _leia_me(origem: Path, arquivos: dict) -> str:
@@ -176,6 +201,7 @@ def instalar(pacote: Pacote, destino: str | Path, console: str, ao_progresso=Non
             else:
                 feito.criados.append(relativo)
             alvo.parent.mkdir(parents=True, exist_ok=True)
+            _liberar(alvo)
             alvo.write_bytes(_ler(pacote.origem, caminho))
             progresso((k + 1) / total)
     except BaseException:
@@ -190,14 +216,16 @@ def desfazer(feito: Instalacao) -> None:
     """Apaga o que foi copiado e devolve os originais (da cópia de segurança). As pastas que ficaram vazias saem."""
     destino = Path(feito.destino)
     for relativo in feito.criados:
+        _liberar(destino / PurePosixPath(relativo))
         (destino / PurePosixPath(relativo)).unlink(missing_ok=True)
     if feito.copia:
         copia = Path(feito.copia)
         for relativo in feito.trocados:
             guardado = copia / PurePosixPath(relativo)
             if guardado.is_file():
-                shutil.copy2(guardado, destino / PurePosixPath(relativo))
-        shutil.rmtree(copia, ignore_errors=True)
+                _liberar(destino / PurePosixPath(relativo))
+                shutil.copy2(guardado, destino / PurePosixPath(relativo))     # (volta com o "somente leitura")
+        _apagar_pasta(copia)
     pastas = {(destino / PurePosixPath(r)).parent for r in feito.criados + feito.trocados}
     pastas.add(destino / COPIA_SEGURANCA)
     limite = Path(feito.criou_pasta).parent if feito.criou_pasta else destino.parent

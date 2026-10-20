@@ -259,7 +259,9 @@ primeira falha (antes esperava o tempo limite em cada filme).
   - **Switch**: o mod de tradução (pasta ou .zip, com o **TitleID** lido do mod) vai para a **pasta de mods do
     emulador** ou para o **cartão SD com Atmosphère** (cada lugar lembra a sua pasta). O jogo não muda;
   - **PC**: os arquivos da tradução vão **por cima da pasta do jogo**, e os que já existiam ficam guardados numa
-    cópia de segurança (`.maestro_original`);
+    cópia de segurança (`.maestro_original`). Aceita o .zip feito por programas antigos do Windows (com `\` nos
+    caminhos), deixa de fora o lixo do Mac (`__MACOSX`) e troca até os arquivos **"somente leitura"** do jogo (o
+    Desfazer devolve como eram). Testado num Windows de verdade toda semana;
   - **"🗂 Traduções instaladas" → Desfazer**: apaga só o que o Maestro copiou e **devolve os originais**.
 - **Compartilhar a sua tradução, no formato de cada console**: **.xdelta** (discos), **.bps** (ROMs), **mod .zip**
   com o TitleID (Switch) e **pacote .zip** só com os arquivos que mudaram (PC), sempre com um leia-me. No modo

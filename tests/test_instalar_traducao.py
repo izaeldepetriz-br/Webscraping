@@ -89,3 +89,31 @@ def test_criar_o_mod_do_switch(tmp_path):
     (solto / "Main.msbt").write_bytes(b"OLA")                  # sem a pasta romfs: o Maestro põe
     with zipfile.ZipFile(it.criar_mod(solto, TID, tmp_path / "b.zip")) as z:
         assert f"atmosphere/contents/{TID}/romfs/Main.msbt" in z.namelist()
+
+
+def test_zip_do_windows_lixo_do_mac_e_somente_leitura(tmp_path):
+    """O .zip feito por programa antigo do Windows (com "\\" nos caminhos) e com o lixo do Mac; o arquivo do jogo
+    "somente leitura" é trocado e volta como era (com o "somente leitura") no Desfazer."""
+    import stat
+    jogo = tmp_path / "Meu Jogo"
+    (jogo / "data").mkdir(parents=True)
+    fala = jogo / "data" / "fala 01.ogg"
+    fala.write_bytes(b"ORIGINAL")
+    fala.chmod(stat.S_IREAD)
+    caminho = tmp_path / "Tradução PT-BR.zip"
+    with zipfile.ZipFile(caminho, "w") as z:
+        for nome, dados in (("Meu Jogo PT-BR\\data\\fala 01.ogg", b"DUBLADA"), ("Meu Jogo PT-BR\\data\\textos.json",
+                                                                                b"{}"),
+                            ("__MACOSX/Meu Jogo PT-BR/._textos.json", b"x"), ("Meu Jogo PT-BR/Thumbs.db", b"x"),
+                            ("Meu Jogo PT-BR/LEIA-ME.txt", b"Traducao v1")):
+            info = zipfile.ZipInfo("x")
+            info.filename = nome                       # (o zipfile trocaria a "\\"; o programa antigo não troca)
+            z.writestr(info, dados)
+    pacote = it.ler_pacote_pc(caminho, jogo)
+    assert sorted(pacote.arquivos) == ["Meu Jogo PT-BR/data/fala 01.ogg", "Meu Jogo PT-BR/data/textos.json"]
+    assert pacote.raiz == "Meu Jogo PT-BR/" and pacote.leia_me == "Traducao v1"
+    feito = it.instalar(pacote, jogo, "PC")
+    assert fala.read_bytes() == b"DUBLADA" and (jogo / "data" / "textos.json").read_bytes() == b"{}"
+    it.desfazer(feito)
+    assert fala.read_bytes() == b"ORIGINAL" and not fala.stat().st_mode & stat.S_IWRITE
+    assert not (jogo / it.COPIA_SEGURANCA).exists() and not (jogo / "data" / "textos.json").exists()

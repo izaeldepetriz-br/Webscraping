@@ -1,7 +1,8 @@
 # Teste de verdade da aba 🎮 Jogos num Windows, como no PC de quem usa o Maestro: baixa o xdelta3 oficial, cria e
 # aplica um .xdelta e um .ppf em ISOs de mentira; o Redump e a busca de patches na comunidade (sites de verdade); e a
-# dublagem de um jogo de mentira com o Piper, montando a ISO em português. Roda quando a aba muda, toda segunda-feira
-# (se um site mudar a página, o teste avisa) e pelo "Run workflow".
+# dublagem de um jogo de mentira com o Piper, montando a ISO em português; e instalar a tradução no PC e no Switch com
+# os caminhos do Windows. Roda quando a aba muda, toda segunda-feira (se um site mudar a página, o teste avisa) e pelo
+# "Run workflow".
 name: Patch de jogos no Windows
 
 on:
@@ -13,6 +14,8 @@ on:
       - jellyfin_tools/iso_jogo.py
       - jellyfin_tools/audio_jogo.py
       - jellyfin_tools/dublar_jogo.py
+      - jellyfin_tools/consoles.py
+      - jellyfin_tools/instalar_traducao.py
       - .github/scripts/testar_patch_jogo.py
       - .github/scripts/testar_jogos_ao_vivo.py
       - .github/workflows/testar-patch-jogo.yml
@@ -52,6 +55,12 @@ jobs:
         run: |
           set -o pipefail
           python .github/scripts/testar_jogos_ao_vivo.py dublar "$RUNNER_TEMP/dublar" 2>&1 | tee -a registro.txt
+      - name: Instalar a tradução no PC e no Switch (caminhos do Windows) e desfazer
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          python .github/scripts/testar_jogos_ao_vivo.py instalar "$RUNNER_TEMP/instalar" 2>&1 | tee -a registro.txt
       - name: Mostrar o erro
         if: failure()
         shell: bash
