@@ -6085,6 +6085,7 @@ def test_aba_jogos_submenu_de_consoles(app, tmp_path, monkeypatch):
     copia = tmp_path / "Meu Jogo PT-BR.sfc"
     assert copia.read_bytes() == bytes(traduzida) and original.read_bytes() != bytes(traduzida)
     assert "Abra no emulador (ou no console)" in p.lb_resultado_patch.cget("text")
+    assert "(512 KB · MEU JOGO DE AVENTURA)" in p.lb_resultado_patch.cget("text")
     assert app.caixas[-1][0] == "sucesso" and "A ROM original não mudou" in app.caixas[-1][2]
     registro = pj.carregar_aplicados(app.arquivo_aplicados)
     assert registro[0]["console"] == "NINTENDO" and registro[0]["destino"] == str(copia)

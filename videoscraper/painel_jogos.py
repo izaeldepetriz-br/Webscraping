@@ -334,7 +334,8 @@ class PainelJogos(ctk.CTkScrollableFrame):
                                   "versão ou outro jogo)", text_color=Tema.PERIGO)
         elif e and e.tem_digital() and self.digital is not None:
             if e.confere(self.digital):
-                rotulo.configure(text=f"✓ Sim: mesmo código, mesma região e mesma impressão digital da sua {self.midia}",
+                rotulo.configure(text=f"✓ Sim: mesmo código, mesma região e mesma impressão digital da sua {self.midia}"
+                                 if self.ps2 or info.id_jogo else f"✓ Sim: a mesma impressão digital da sua {self.midia}",
                                  text_color=Tema.SUCESSO)
             else:
                 rotulo.configure(text="✗ não encaixa: a impressão digital é de outra versão (o Maestro não aplica)",
@@ -382,7 +383,8 @@ class PainelJogos(ctk.CTkScrollableFrame):
             f"Abra {self.no_emulador} (ou no console)."
         self.lb_resultado_patch.configure(
             text=f"✓ Pronto: cópia traduzida criada\n\"{r.destino.name}\" ({pj.tamanho_legivel(r.info.tamanho)} · "
-                 f"{r.info.id_jogo or '?'}) · {copia or r.conferido} · a {self.midia} original continua igual.\n"
+                 f"{r.info.id_jogo or (r.info.volume if not self.ps2 else '') or '?'}) · {copia or r.conferido} · "
+                 f"a {self.midia} original continua igual.\n"
                  f"{onde} Fica registrado em 🗂 Patches aplicados (para refazer ou apagar a cópia depois)."
                  f"{dica if self.ps2 else ''}", text_color=Tema.SUCESSO)
         self._atualizar()
