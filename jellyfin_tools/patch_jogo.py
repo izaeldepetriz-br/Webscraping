@@ -60,17 +60,18 @@ class InfoISO:
     id_jogo: str = ""          # "SLUS-20946" ("" se não achou o SYSTEM.CNF)
     arquivo_boot: str = ""     # "SLUS_209.46" (como no disco: o nome que o OPL usa)
     volume: str = ""           # o nome do volume ("MEU_JOGO")
-    sistema: str = ""          # "PS2" (BOOT2) ou "PS1" (BOOT)
+    sistema: str = ""          # "PS2" (BOOT2) ou "PS1" (BOOT); nos outros consoles, "PSP", "GC", "SNES"...
     versao: str = ""           # "1.00" (VER no SYSTEM.CNF)
+    regiao_lida: str = ""      # a região lida do próprio jogo (nos consoles sem o código SLUS/SCES...)
 
     @property
     def regiao(self) -> str:
-        return REGIOES.get(self.id_jogo[:4], "")
+        return self.regiao_lida or REGIOES.get(self.id_jogo[:4], "")
 
     def descrever(self) -> str:
         partes = [p for p in (self.id_jogo, self.regiao, self.sistema, f"versão {self.versao}" if self.versao else "",
                               self.volume, tamanho_legivel(self.tamanho)) if p]
-        return " · ".join(partes) if self.id_jogo else "não achei o código do jogo (é uma ISO de PS1/PS2?) · " + \
+        return " · ".join(partes) if self.id_jogo else "não achei o código do jogo (é do console escolhido?) · " + \
             tamanho_legivel(self.tamanho)
 
 
@@ -573,12 +574,14 @@ class Resultado:
 
 def aplicar(iso: str | Path, patch: str | Path, destino: str | Path, pasta_ferramentas: str | Path,
             digital: Digital | None = None, esperado: Esperado | None = None, ao_progresso=None, parar=None,
-            abrir=subprocess.Popen, baixar=_baixar, sistema: str = sys.platform) -> Resultado:
+            abrir=subprocess.Popen, baixar=_baixar, sistema: str = sys.platform, identificar=None) -> Resultado:
     """Aplica o patch numa CÓPIA da ISO (destino). Com o leia-me trazendo a impressão digital (esperado) e a da
     ISO já medida (digital), confere ANTES: não bate, não aplica. O destino só ganha o nome final no fim (sem ISO
-    pela metade com o nome certo)."""
+    pela metade com o nome certo). identificar: como ler o jogo (o PS1/PS2 por padrão; os outros consoles têm o
+    deles em consoles.py: a ROM do SNES, a ISO do PSP...)."""
+    identificar = identificar or ler_info
     iso, patch, destino = Path(iso), Path(patch), Path(destino)
-    info = ler_info(iso)
+    info = identificar(iso)
     tipo = tipo_do_patch(patch)
     if destino.resolve() == iso.resolve():
         raise ErroPatch("escolha outro nome para a ISO nova: a original fica como está")
@@ -600,7 +603,7 @@ def aplicar(iso: str | Path, patch: str | Path, destino: str | Path, pasta_ferra
             xdelta = programa_xdelta(pasta_ferramentas, sistema, baixar)
             _rodar_xdelta([xdelta, "-d", "-f", "-s", iso, patch, parcial], parcial, info.tamanho, progresso, parar,
                           abrir)
-        nova = ler_info(parcial)                         # a ISO nova ainda é um disco que o OPL lê
+        nova = identificar(parcial)                      # a ISO nova ainda é um disco (que o OPL lê)
     except BaseException:
         parcial.unlink(missing_ok=True)
         raise

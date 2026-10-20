@@ -17,7 +17,9 @@ from pathlib import Path
 from .dublagem import _baixar
 from .patch_jogo import ErroPatch
 
-URLS = {"PS2": "http://redump.org/datfile/ps2/", "PS1": "http://redump.org/datfile/psx/"}
+URLS = {"PS2": "http://redump.org/datfile/ps2/", "PS1": "http://redump.org/datfile/psx/",
+        "PSP": "http://redump.org/datfile/psp/", "GC": "http://redump.org/datfile/gc/",
+        "Wii": "http://redump.org/datfile/wii/"}
 VALIDADE_DIAS = 30
 
 
