@@ -206,7 +206,7 @@ class Esperado:
 _CRC = re.compile(r"CRC[-\s]?(?:32)?\s*(?:\(.{0,12}\))?\s*[:=]?\s*(?:0x)?([0-9a-f]{8})\b", re.I)
 _MD5 = re.compile(r"(?<![0-9a-f])([0-9a-f]{32})(?![0-9a-f])", re.I)
 _SHA1 = re.compile(r"(?<![0-9a-f])([0-9a-f]{40})(?![0-9a-f])", re.I)
-_ID = re.compile(r"\b(S[CL][A-Z]{2}[-_ ]?\d{3}\.?\d{2})\b", re.I)
+_ID = re.compile(r"\b(S[CL][A-Z]{2}[-_ ]?\d{3}\.?\d{2}|U[LC][A-Z]{2}[-_ ]?\d{5}|NP[A-Z]{2}[-_ ]?\d{5})\b", re.I)
 
 
 def esperado_no_texto(texto: str, esperado: Esperado | None = None) -> Esperado:
@@ -625,6 +625,66 @@ def _copiar(origem: Path, destino: Path, ao_progresso, parar) -> None:
             d.write(bloco)
             copiado += len(bloco)
             ao_progresso(copiado / total)
+
+
+def _numero_para_bps(n: int) -> bytes:
+    """O contrário de _numero_bps: 7 bits por byte, o bit alto no último."""
+    saida = bytearray()
+    while True:
+        x = n & 0x7F
+        n >>= 7
+        if n == 0:
+            saida.append(0x80 | x)
+            return bytes(saida)
+        saida.append(x)
+        n -= 1
+
+
+def criar_bps(original: str | Path, modificada: str | Path, saida: str | Path, descricao: str = "",
+              ao_progresso=None) -> Path:
+    """O .bps da SUA tradução de uma ROM (o patch que os grupos usam no SNES, GBA, NES...): os trechos iguais viram
+    "copie da original" e os diferentes vão no patch. Leva o CRC32 da original e da traduzida (quem aplica confere
+    sozinho) e um leia-me ao lado. Não contém a ROM."""
+    import numpy as np
+    original, modificada, saida = Path(original), Path(modificada), Path(saida)
+    if original.resolve() == modificada.resolve():
+        raise ErroPatch("escolha a ROM modificada (a com a sua tradução), não a mesma original")
+    fonte, alvo = original.read_bytes(), modificada.read_bytes()
+    progresso = ao_progresso or (lambda f: None)
+    acoes = bytearray()
+    comum = min(len(fonte), len(alvo))
+    iguais = np.frombuffer(fonte, np.uint8)[:comum] == np.frombuffer(alvo, np.uint8)[:comum]
+    # os trechos: onde muda de igual para diferente (os iguais curtos, de menos de 4 bytes, vão junto com os diferentes)
+    bordas = np.flatnonzero(np.diff(iguais.astype(np.int8))) + 1 if comum else np.array([], dtype=np.int64)
+    inicios = np.concatenate([[0], bordas]).astype(np.int64) if comum else np.array([], dtype=np.int64)
+    fins = np.concatenate([bordas, [comum]]).astype(np.int64) if comum else np.array([], dtype=np.int64)
+    pos, diferente_desde = 0, None
+    for k, (ini, fim) in enumerate(zip(inicios.tolist(), fins.tolist())):
+        if iguais[ini] and fim - ini >= 4:
+            if diferente_desde is not None:
+                acoes += _numero_para_bps(((ini - diferente_desde - 1) << 2) | 1) + alvo[diferente_desde:ini]
+                diferente_desde = None
+            acoes += _numero_para_bps((fim - ini - 1) << 2)          # SourceRead: igual à original
+        elif diferente_desde is None:
+            diferente_desde = ini
+        pos = fim
+        if k % 4096 == 0:
+            progresso(0.9 * pos / max(1, len(alvo)))
+    if diferente_desde is not None or len(alvo) > comum:              # o que sobrou e o que a ROM ganhou no fim
+        inicio = comum if diferente_desde is None else diferente_desde
+        acoes += _numero_para_bps(((len(alvo) - inicio - 1) << 2) | 1) + alvo[inicio:]
+    corpo = b"BPS1" + _numero_para_bps(len(fonte)) + _numero_para_bps(len(alvo)) + _numero_para_bps(0) + bytes(acoes)
+    corpo += struct.pack("<II", zlib.crc32(fonte), zlib.crc32(alvo))
+    saida.parent.mkdir(parents=True, exist_ok=True)
+    saida.write_bytes(corpo + struct.pack("<I", zlib.crc32(corpo)))
+    saida.with_name(saida.stem + " - leia-me.txt").write_text(
+        f"{descricao or saida.stem}\n\nAplique na ROM do SEU cartucho, que deve ter esta impressão digital:\n"
+        f"  CRC32: {zlib.crc32(fonte):08X}\n  Tamanho: {len(fonte)} bytes\n\n"
+        "Como aplicar: Maestro > 🎮 Jogos > Nintendo clássicos > Aplicar patch (ou Floating IPS / beat).\n"
+        "O .bps confere sozinho a ROM original e a traduzida. Este arquivo traz só as diferenças: não contém o "
+        "jogo.\n", encoding="utf-8")
+    progresso(1.0)
+    return saida
 
 
 def criar_patch(original: str | Path, modificada: str | Path, saida: str | Path, pasta_ferramentas: str | Path,

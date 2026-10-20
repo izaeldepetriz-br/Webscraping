@@ -31,7 +31,7 @@ from . import audio_jogo, genero_local
 from .personagens import Personagem, catalogo_xtts, distribuir_vozes
 from .roteiro_jogo import ResumoTraducao, Roteiro, gravar_roteiro, para_falar, traduzir_textos
 
-EXTENSOES_SOM = (".wav", ".vag", ".ads")
+EXTENSOES_SOM = (".wav", ".vag", ".ads", ".ogg", ".mp3", ".flac", ".opus", ".at3", ".at9", ".wma", ".m4a")
 PASTA_SAIDA_AUDIO = "audio_ptbr"
 PASTA_TRABALHO = ".maestro"                 # dentro da pasta de entrega: as vozes geradas e o que já foi feito
 ARQUIVO_FEITAS = "dubladas.json"
@@ -330,7 +330,8 @@ def _gravar_json(arquivo: Path, dados) -> None:
 
 def destino_da_fala(fala: FalaJogo, pasta_saida: str | Path, formato: bool = True) -> Path:
     destino = Path(pasta_saida) / PASTA_SAIDA_AUDIO / fala.relativo
-    return destino if formato else destino.with_suffix(".wav")
+    so_ler = fala.formato is not None and fala.formato.extra.get("so_ler")      # AT3/AT9: volta em WAV
+    return destino if formato and not so_ler else destino.with_suffix(".wav")
 
 
 def _gravar(fala: FalaJogo, wav: Path, destino: Path, ffmpeg: str, formato: bool, duracao: bool) -> dict:

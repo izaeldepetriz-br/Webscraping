@@ -179,3 +179,35 @@ def test_wav_natural_e_voz_fixa_para_os_outros(tmp_path):
     assert abs(aj.ler_formato(wav_).segundos - falas[0].formato.segundos) < 0.01
     assert dj.estimar_tempo(1204) == "≈ 1 h com a placa NVIDIA (≈ 9 h no processador)"
     assert dj.estimar_tempo(10) == "≈ 1 min com a placa NVIDIA (≈ 4 min no processador)"
+
+
+def test_vozes_comprimidas_de_pc_e_psp(tmp_path):
+    """Jogos de PC e de outros consoles: a voz em OGG (ou MP3, FLAC, Opus) volta no mesmo formato, com a taxa, os
+    canais e a duração da original; a que o Maestro só lê (AT3/AT9 do PSP, WMA) volta em WAV para a ferramenta do jogo
+    converter; um .at3 que é um WAV comum continua WAV."""
+    import subprocess
+    ffmpeg = FFMPEG
+    if not ffmpeg:
+        pytest.skip("sem ffmpeg")
+
+    def gerar(destino, segundos, canais=2, taxa=44100, extra=()):
+        subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", f"sine=frequency=330:duration={segundos}",
+                        "-ac", str(canais), "-ar", str(taxa), *extra, str(destino)], check=True)
+        return destino
+    original = gerar(tmp_path / "voz_001.ogg", 1.5, extra=("-c:a", "libvorbis"))
+    formato = aj.ler_formato(original)
+    assert (formato.tipo, formato.taxa, formato.canais, formato.extra["so_ler"]) == ("ogg", 44100, 2, False)
+    assert abs(formato.segundos - 1.5) < 0.05
+    dublada = gerar(tmp_path / "dublada.wav", 2.0, canais=1, taxa=24000)
+    feito = aj.gravar_como(original, dublada, tmp_path / "saida" / "voz_001.ogg", ffmpeg)
+    nova = aj.ler_formato(tmp_path / "saida" / "voz_001.ogg")
+    assert (nova.tipo, nova.taxa, nova.canais) == ("ogg", 44100, 2) and abs(nova.amostras - formato.amostras) < 2048
+    assert feito["acelerada"] > 1.0 and len(aj.ler_som(tmp_path / "saida" / "voz_001.ogg")[0]) > 0
+    so_ler = gerar(tmp_path / "voz_002.wma", 1.0, extra=("-c:a", "wmav2"))
+    formato = aj.ler_formato(so_ler)
+    assert formato.tipo == "wma" and formato.extra["so_ler"]
+    feito = aj.gravar_como(so_ler, dublada, tmp_path / "saida" / "voz_002.wma", ffmpeg)
+    assert feito["em_wav"] and (tmp_path / "saida" / "voz_002.wav").is_file()
+    assert dj.destino_da_fala(dj.FalaJogo(so_ler, "voz_002.wma", formato), tmp_path).suffix == ".wav"
+    comum = gerar(tmp_path / "voz_003.at3", 0.5, canais=1, extra=("-f", "wav", "-c:a", "pcm_s16le"))
+    assert aj.ler_formato(comum).tipo == "wav"

@@ -316,3 +316,28 @@ def test_pcsx2_e_patches_aplicados(tmp_path, monkeypatch):
     pj.registrar_aplicado(arquivo, Path("a.iso"), Path("p2.xdelta"), Path("A PT.iso"), "o próprio patch conferiu")
     lista = pj.carregar_aplicados(arquivo)
     assert [d["destino"] for d in lista] == ["A PT.iso", "B PT.iso"] and lista[0]["patch"] == "p2.xdelta"
+
+
+def test_criar_bps_da_traducao_de_uma_rom(tmp_path):
+    """Nintendo clássicos: o .bps da sua tradução (o formato dos grupos de ROM), aplicado de volta dá a ROM traduzida
+    byte a byte; a ROM que cresceu (texto a mais no fim) também; a original errada é recusada pelo CRC32."""
+    import random
+    gerador = random.Random(7)
+    original = tmp_path / "Meu Jogo (USA).sfc"
+    dados = bytearray(gerador.randbytes(256 * 1024))
+    original.write_bytes(bytes(dados))
+    dados[0x1000:0x1010] = b"OLA, AVENTUREIRO"                 # o texto traduzido
+    dados[0x2000] ^= 0xFF                                      # uma troca de 1 byte só
+    dados[0x2002] ^= 0xFF                                      # (perto: os 2 iguais no meio vão junto)
+    dados += b"TEXTO NOVO NO FIM DA ROM"                       # a ROM aumentou
+    traduzida = tmp_path / "Meu Jogo PT-BR.sfc"
+    traduzida.write_bytes(bytes(dados))
+    patch = pj.criar_bps(original, traduzida, tmp_path / "patch" / "Meu Jogo PT-BR.bps", "Meu Jogo PT-BR v1.0")
+    assert patch.stat().st_size < 200 and (tmp_path / "patch" / "Meu Jogo PT-BR - leia-me.txt").is_file()
+    assert pj.tipo_do_patch(patch) == pj.BPS
+    pj.aplicar_bps(patch, original, tmp_path / "volta.sfc")
+    assert (tmp_path / "volta.sfc").read_bytes() == bytes(dados)
+    outra = tmp_path / "outra.sfc"
+    outra.write_bytes(bytes(256 * 1024))
+    with pytest.raises(pj.ErroPatch):
+        pj.aplicar_bps(patch, outra, tmp_path / "errada.sfc")

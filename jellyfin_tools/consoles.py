@@ -1,13 +1,17 @@
 """Os consoles da aba 🎮 Jogos (o submenu "Jogos → PlayStation 2", "→ PlayStation 1", "→ PSP"...): o que cada um usa
 para o Maestro não misturar um com o outro (as configurações do PS2 continuam as mesmas).
 
-    PlayStation 2      ISO/BIN · o código do SYSTEM.CNF · PCSX2 · nome do OPL · patch, dublar, enquanto joga
-    PlayStation 1      BIN/ISO · o código do SYSTEM.CNF · DuckStation · patch, dublar (as falas VAG), enquanto joga
-    PSP                ISO do UMD · o código do PARAM.SFO · PPSSPP · patch, enquanto joga
+    PlayStation 2      ISO/BIN · o código do SYSTEM.CNF · PCSX2 · nome do OPL
+    PlayStation 1      BIN/ISO · o código do SYSTEM.CNF · DuckStation
+    PSP                ISO do UMD · o código do PARAM.SFO · PPSSPP
     Nintendo clássicos ROM do SNES, NES, GBA, GB/GBC, N64 ou DS · o título e o código do cabeçalho · o seu emulador
-    GameCube / Wii     ISO/GCM (e WBFS/RVZ: só o código) · o cabeçalho do disco · Dolphin · patch, enquanto joga
-    Nintendo Switch    o mod de tradução (pasta ou .zip, com o TitleID) · instalar no emulador ou no SD · enquanto joga
-    PC                 a pasta do jogo · instalar os arquivos da tradução (com cópia de segurança) · enquanto joga
+    GameCube / Wii     ISO/GCM (e WBFS/RVZ: só o código) · o cabeçalho do disco · Dolphin
+    Nintendo Switch    o mod de tradução (pasta ou .zip, com o TitleID) · instalar no emulador ou no SD
+    PC                 a pasta do jogo · instalar os arquivos da tradução (com cópia de segurança)
+
+Todos têm os 3 modos: aplicar o patch (ou instalar a tradução, no Switch e no PC) e procurar na comunidade;
+traduzir e dublar (para o jogo que ainda não tem tradução: o Maestro traduz o roteiro, dubla as vozes e cria o
+patch do console); e "Enquanto joga" (por cima do emulador ou do jogo).
 
 O Maestro não baixa jogos: sempre o arquivo tirado do SEU disco ou cartucho (ou o jogo que você comprou, no PC).
 """
@@ -42,6 +46,9 @@ class Console:
     opl: bool = False            # o nome no padrão do OPL (só o PS2)
     midia: str = "ISO"           # "ISO" / "ROM" (nos textos: "a ISO nova", "a ROM nova")
     redump: bool = False         # o disco tem lista no Redump
+    iso9660: bool = False        # o Maestro abre o disco sozinho (analisar, tirar as falas e montar de volta)
+    criar: str = "xdelta"        # o que a sua tradução vira: "xdelta" (disco), "bps" (ROM), "mod" (Switch), "pacote"
+    guia: str = ""               # como tirar os textos e as vozes deste console (o modo Traduzir e dublar)
 
     @property
     def padrao(self) -> bool:
@@ -53,24 +60,44 @@ _TODOS = ("Todos os arquivos", "*.*")
 CONSOLES: dict[str, Console] = {c.chave: c for c in (
     Console("PS2", "PlayStation 2", (PATCH, DUBLAR, ENQUANTO), "a ISO do seu disco", "ISO:",
             (("Imagem do disco", "*.iso *.bin *.img"), _TODOS), "PCSX2", ("pcsx2-qt.exe", "pcsx2.exe", "pcsx2x64.exe"),
-            ("PCSX2", "PCSX2 Nightly", "Programs/PCSX2", "Programs/pcsx2"), opl=True, redump=True),
+            ("PCSX2", "PCSX2 Nightly", "Programs/PCSX2", "Programs/pcsx2"), opl=True, redump=True, iso9660=True,
+            guia="O Maestro tira as falas da ISO sozinho (VAG e ADS) e monta a ISO em português de volta; os textos "
+                 "saem com a ferramenta da comunidade feita para o jogo."),
     Console("PS1", "PlayStation 1", (PATCH, DUBLAR, ENQUANTO), "a imagem do seu disco (.bin ou .iso)", "Imagem:",
             (("Imagem do disco", "*.bin *.iso *.img"), _TODOS), "DuckStation",
             ("duckstation-qt-x64-ReleaseLTCG.exe", "duckstation-qt.exe", "duckstation.exe"),
-            ("DuckStation", "Programs/DuckStation"), redump=True),
-    Console("PSP", "PSP", (PATCH, ENQUANTO), "a ISO do seu UMD", "ISO:", (("ISO do UMD", "*.iso"), _TODOS), "PPSSPP",
-            ("PPSSPPWindows64.exe", "PPSSPPWindows.exe", "PPSSPPQt.exe"), ("PPSSPP", "Programs/PPSSPP"), redump=True),
-    Console("NINTENDO", "Nintendo clássicos", (PATCH, ENQUANTO), "a ROM do seu cartucho", "ROM:",
+            ("DuckStation", "Programs/DuckStation"), redump=True, iso9660=True,
+            guia="O Maestro tira as falas VAG da imagem e monta de volta; as falas XA/STR (dentro dos vídeos) ainda "
+                 "não. Os textos saem com a ferramenta da comunidade feita para o jogo."),
+    Console("PSP", "PSP", (PATCH, DUBLAR, ENQUANTO), "a ISO do seu UMD", "ISO:", (("ISO do UMD", "*.iso"), _TODOS),
+            "PPSSPP", ("PPSSPPWindows64.exe", "PPSSPPWindows.exe", "PPSSPPQt.exe"), ("PPSSPP", "Programs/PPSSPP"),
+            redump=True, iso9660=True,
+            guia="O Maestro lê a ISO do UMD e tira as falas em WAV e VAG; as AT3/AT9 (a voz comprimida do PSP) são "
+                 "dubladas e voltam em WAV, para converter com a ferramenta do jogo (ex.: no UMDGen se remonta a ISO)."),
+    Console("NINTENDO", "Nintendo clássicos", (PATCH, DUBLAR, ENQUANTO), "a ROM do seu cartucho", "ROM:",
             (("ROM (SNES, NES, GBA, GB, N64, DS)", TIPOS_ROM), _TODOS), "o seu emulador",
             ("retroarch.exe", "mGBA.exe", "snes9x-x64.exe", "snes9x.exe", "Project64.exe", "melonDS.exe", "Mesen.exe"),
-            ("RetroArch", "RetroArch-Win64", "mGBA", "Snes9x", "Project64 3.0", "melonDS", "Mesen"), midia="ROM"),
-    Console("GCWII", "GameCube / Wii", (PATCH, ENQUANTO), "a ISO do seu disco", "ISO:",
+            ("RetroArch", "RetroArch-Win64", "mGBA", "Snes9x", "Project64 3.0", "melonDS", "Mesen"), midia="ROM",
+            criar="bps",
+            guia="Os textos saem com as ferramentas de romhacking (a tabela .tbl com o Cartographer e o Atlas, ou a "
+                 "ferramenta do jogo); as vozes (quando o jogo tem) em WAV. Com o texto em português na ROM, o "
+                 "Maestro cria o patch .bps."),
+    Console("GCWII", "GameCube / Wii", (PATCH, DUBLAR, ENQUANTO), "a ISO do seu disco", "ISO:",
             (("Imagem do disco", "*.iso *.gcm *.wbfs *.rvz"), _TODOS), "Dolphin", ("Dolphin.exe",),
-            ("Dolphin", "Dolphin-x64", "Programs/Dolphin"), redump=True),
-    Console("SWITCH", "Nintendo Switch", (INSTALAR, ENQUANTO), "o mod de tradução (pasta ou .zip)", "Mod:",
+            ("Dolphin", "Dolphin-x64", "Programs/Dolphin"), redump=True,
+            guia="O Dolphin tira os arquivos do disco (Propriedades > Sistema de arquivos > Extrair); os textos e as "
+                 "vozes (WAV, e outras com a ferramenta do jogo) vão para a pasta do roteiro. Com a ISO remontada, o "
+                 "Maestro cria o patch .xdelta."),
+    Console("SWITCH", "Nintendo Switch", (INSTALAR, DUBLAR, ENQUANTO), "o mod de tradução (pasta ou .zip)", "Mod:",
             (("Mod de tradução (.zip)", "*.zip"), _TODOS), "o seu emulador",
-            ("Ryujinx.exe", "eden.exe", "citron.exe", "suyu.exe"), ("Ryujinx", "Eden", "Citron", "suyu")),
-    Console("PC", "PC", (INSTALAR, ENQUANTO), "a pasta do jogo", "Pasta do jogo:", (_TODOS,)),
+            ("Ryujinx.exe", "eden.exe", "citron.exe", "suyu.exe"), ("Ryujinx", "Eden", "Citron", "suyu"), criar="mod",
+            guia="O emulador tira a RomFS do SEU jogo (Extrair dados > RomFS); os textos (.msbt) abrem no Kuriimu2; "
+                 "as vozes em WAV/OGG o Maestro dubla direto. Com os arquivos traduzidos, o Maestro cria o mod (.zip "
+                 "com o TitleID) para instalar."),
+    Console("PC", "PC", (INSTALAR, DUBLAR, ENQUANTO), "a pasta do jogo", "Pasta do jogo:", (_TODOS,), criar="pacote",
+            guia="Os textos e as vozes ficam na pasta do jogo (ou saem com a ferramenta do motor dele: Unity, Unreal, "
+                 "RPG Maker...); vozes em WAV, OGG, MP3, FLAC ou Opus o Maestro dubla direto, no mesmo formato. Com os "
+                 "arquivos traduzidos, o Maestro cria o pacote da tradução (.zip)."),
 )}
 ORDEM = tuple(CONSOLES)
 NOMES = {"PS2": "PlayStation 2", "PS1": "PlayStation", "PSP": "PSP", "GC": "GameCube", "Wii": "Wii", "SNES": "Super NES",

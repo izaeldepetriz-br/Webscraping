@@ -78,3 +78,35 @@ def test_nome_do_jogo_e_parecido():
     assert c.nome_do_jogo(info) == "Burnout 3"
     assert c.parecido("God of War II", "God of War 2 - Dublado") >= 80
     assert c.parecido("God of War II", "God of War") <= 40                   # o número muda o jogo
+
+
+def test_todos_os_consoles(tmp_path):
+    """A busca vale para todos os consoles do submenu: o banco do PO.B.R.E tem PSP, GameCube, Wii, NES, SNES, N64,
+    GBA, GB/GBC, DS e PC; o fórum filtra pelo prefixo do console ([PSP], [SNES], [Switch]...); o código do PSP
+    (ULUS-10041) encaixa como o do PS2; a lista antiga (só PS1/PS2) é baixada de novo."""
+    import json
+    itens = [{"arquivo": "playstation-portable/meu-jogo-psp.md", "plataforma": "portatil", "title": " Meu Jogo Portatil",
+              "game_title": "Meu Jogo Portatil", "patch_type": "xdelta3", "patch_progress": "Textos",
+              "texto": "Deve ser aplicado na ISO americana (ULUS-10041)."},
+             {"arquivo": "super-nes/meu-jogo-snes.md", "title": " Meu Jogo de Aventura", "game_title":
+              "Meu Jogo de Aventura", "patch_type": "IPS", "patch_progress": "Textos", "texto": "ROM americana"}]
+    (tmp_path / "pobre_traducoes.json").write_text(json.dumps({"PS2": [], "PS1": []}), encoding="utf-8")
+    baixou = []
+
+    def baixar(url, destino, progresso):
+        baixou.append(url)
+        destino.write_bytes(c.pagina_do_pobre_offline(itens))
+    psp = InfoISO(Path("Meu Jogo.iso"), 1, "ULUS-10041", "", "Meu Jogo Portatil", "PSP")
+    r = c.procurar("Meu Jogo Portatil", psp, tmp_path, onde=c.ONDES[:1], baixar=baixar)
+    assert baixou and r.achados[0].encaixa == "✓ encaixa: o mesmo código do disco"
+    assert r.achados[0].pagina.endswith("/portatil/playstation-portable/meu-jogo-psp/")
+    snes = InfoISO(Path("Meu Jogo (USA).sfc"), 1, "", "", "MEU JOGO DE AVENTURA", "SNES")
+    r = c.procurar("Meu Jogo de Aventura", snes, tmp_path, onde=c.ONDES[:1], baixar=baixar)
+    assert [a.formato for a in r.achados] == ["IPS"] and len(baixou) == 1          # a lista nova ficou guardada
+    forum = ('<div class="windowbg"><h5><a href="https://x/index.php?board=3.0">Lançamentos</a> / <a href="https://x/'
+             'index.php?topic=9.0">[Switch] Meu Jogo do Switch - Tradução PT-BR</a></h5><strong><a href="y" title="p">'
+             'Grupo</a></strong></div><div class="windowbg"><h5><a href="https://x/index.php?board=3.0">Lançamentos'
+             '</a> / <a href="https://x/index.php?topic=8.0">[PS2] Meu Jogo do Switch</a></h5><strong><a href="y" '
+             'title="p">Outro</a></strong></div>')
+    r = c.procurar("Meu Jogo do Switch", None, tmp_path, onde=c.ONDES[1:2], sistema="Switch", obter=lambda url: forum)
+    assert [a.titulo for a in r.achados] == ["[Switch] Meu Jogo do Switch - Tradução PT-BR"]

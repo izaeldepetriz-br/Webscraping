@@ -70,7 +70,7 @@ def test_ler_os_formatos(tmp_path):
     f = aj.ler_formato(ads(tmp_path / "cena.ads", tom(0.5, 48000)))
     assert (f.tipo, f.taxa, f.canais, f.extra["intercalado"]) == ("ads", 48000, 2, 0x400)
     (tmp_path / "x.adx").write_bytes(b"\x80\x00" + bytes(100))
-    with pytest.raises(aj.ErroAudioJogo, match="WAV, VAG e ADS"):
+    with pytest.raises(aj.ErroAudioJogo, match="WAV, VAG, ADS, OGG"):
         aj.ler_formato(tmp_path / "x.adx")
 
 

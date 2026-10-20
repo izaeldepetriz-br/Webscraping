@@ -37,7 +37,9 @@ URL_FORUM = ("https://www.romhacking.net.br/index.php?action=search2;search={ter
 URL_RHN = "https://www.romhacking.net/?page=translations&title={termos}&perpage=50&searchtype=1"
 URL_ITCH = "https://itch.io/search?q={termos}"
 VALIDADE_DIAS = 7
-SISTEMAS_POBRE = {"PS2": "playstation-2", "PS1": "playstation"}
+SISTEMAS_POBRE = {"PS2": "playstation-2", "PS1": "playstation", "PSP": "playstation-portable", "GC": "game-cube",
+                  "Wii": "wii", "NES": "nes", "SNES": "super-nes", "N64": "nintendo-64", "GBA": "game-boy-advance",
+                  "GB": "game-boy", "GBC": "game-boy-color", "DS": "nintendo-ds", "PC": "pc"}
 ONDES = ("PO.B.R.E (romhackers.org)", "Fórum romhacking.net.br", "Romhacking.net (no navegador)",
          "itch.io (no navegador)")
 QUER = ("Textos e/ou dublagem", "Só dublagem", "Só textos")
@@ -45,7 +47,7 @@ SO_O_JOGO = ("iso traduzida", "jogo completo", "iso completa")
 _REGIOES = (("EUA", r"americana|\(usa|ntsc[- ]?u|\bslus\b|\bscus\b|\bus\b"),
             ("Europa", r"europ[eé]ia|\(europe|\bpal\b|\bsles\b|\bsces\b"),
             ("Japão", r"japonesa|\(japan|ntsc[- ]?j|\bslpm\b|\bslps\b|\bscps\b"))
-_ID = re.compile(r"\b(S[CL][A-Z]{2}[-_ ]?\d{3}\.?\d{2})\b", re.I)
+_ID = re.compile(r"\b(S[CL][A-Z]{2}[-_ ]?\d{3}\.?\d{2}|U[LC][A-Z]{2}[-_ ]?\d{5}|NP[A-Z]{2}[-_ ]?\d{5})\b", re.I)
 _CRC = re.compile(r"CRC[-\s]?(?:32)?\s*[:=]?\s*(?:0x)?([0-9a-f]{8})\b", re.I)
 _TAMANHO = re.compile(r"(\d{1,3}(?:[.,]\d{3}){2,})\s*bytes", re.I)
 
@@ -178,7 +180,9 @@ def banco_pobre(pasta: str | Path, baixar=_baixar, agora=time.time) -> dict:
     arquivo = pasta / "pobre_traducoes.json"
     if arquivo.is_file() and agora() - arquivo.stat().st_mtime < VALIDADE_DIAS * 86400:
         try:
-            return json.loads(arquivo.read_text(encoding="utf-8"))
+            guardado = json.loads(arquivo.read_text(encoding="utf-8"))
+            if all(s in guardado for s in SISTEMAS_POBRE):       # (a lista antiga só tinha PS1 e PS2: baixa de novo)
+                return guardado
         except (OSError, ValueError):
             pass
     pasta.mkdir(parents=True, exist_ok=True)
@@ -256,7 +260,11 @@ def _obter_texto(url: str, timeout: float = 30) -> str:
 
 
 # ----------------------------------------------------------------- procurar
-PREFIXOS = {"PS2": ("[PS2]", "PlayStation 2", "Playstation 2"), "PS1": ("[PSX]", "[PS1]", "PlayStation", "PSX")}
+PREFIXOS = {"PS2": ("[PS2]", "PlayStation 2", "Playstation 2"), "PS1": ("[PSX]", "[PS1]", "PlayStation", "PSX"),
+            "PSP": ("[PSP]",), "GC": ("[GC]", "[NGC]", "[GCN]", "GameCube"), "Wii": ("[Wii]", "[WII]"),
+            "NES": ("[NES]",), "SNES": ("[SNES]", "[SFC]", "Super Nintendo"), "N64": ("[N64]", "Nintendo 64"),
+            "GBA": ("[GBA]",), "GB": ("[GB]",), "GBC": ("[GBC]",), "DS": ("[NDS]", "[DS]"), "PC": ("[PC]",),
+            "Switch": ("[Switch]", "[SWITCH]", "[NSW]", "Nintendo Switch")}
 
 
 def procurar(termos: str, info: InfoISO | None, pasta: str | Path, onde: tuple = ONDES[:2], quer: str = QUER[0],
@@ -265,7 +273,7 @@ def procurar(termos: str, info: InfoISO | None, pasta: str | Path, onde: tuple =
     sistema = sistema or (info.sistema if info and info.sistema else "PS2")
     r = Resultado()
     termos = termos.strip()
-    termos_web = quote_plus(re.sub(r"\bS[CL][A-Z]{2}[-_ ]?\d{3}\.?\d{2}\b", "", termos, flags=re.I).strip() or termos)
+    termos_web = quote_plus(_ID.sub("", termos).strip() or termos)
     if ONDES[0] in onde:
         try:
             banco = banco_pobre(pasta, baixar)
@@ -315,7 +323,8 @@ def pagina_do_pobre_offline(itens: list[dict]) -> bytes:
     saida = io.BytesIO()
     with zipfile.ZipFile(saida, "w") as z:
         for item in itens:
-            campos = "\n".join(f'{k}: "{v}"' for k, v in item.items() if k not in ("texto", "arquivo"))
-            z.writestr(f"romhackersbr-db-main/_traducoes/console/{item['arquivo']}", f"---\n{campos}\n---\n"
+            campos = "\n".join(f'{k}: "{v}"' for k, v in item.items() if k not in ("texto", "arquivo", "plataforma"))
+            z.writestr(f"romhackersbr-db-main/_traducoes/{item.get('plataforma', 'console')}/{item['arquivo']}",
+                       f"---\n{campos}\n---\n"
                        f"{item.get('texto', '')}")
     return saida.getvalue()

@@ -7,7 +7,10 @@ fala nova no lugar da antiga sem travar nem cortar.
                                               reinserção põe no mesmo lugar do disco)
 
 Formatos: WAV (PCM 16 bits), VAG ("VAGp", mono) e ADS ("SShd"/"SSbd", mono ou estéreo intercalado), os dois
-com o PS-ADPCM (a compressão do som do PS2: 28 amostras em 16 bytes). Os outros (ADX, AT3...) ainda não.
+com o PS-ADPCM (a compressão do som do PS2: 28 amostras em 16 bytes). Pelo ffmpeg (jogos de PC e de outros
+consoles): OGG, MP3, FLAC e Opus, lidos e gravados no mesmo formato; AT3/AT9 (PSP/PS Vita), WMA e M4A, lidos e
+devolvidos em WAV (não há programa livre que grave ATRAC: a ferramenta do jogo converte). ADX, Wwise (.wem) e
+os outros ainda não.
 
 A duração: a fala dublada mais comprida é acelerada SEM mudar o tom (até 35%, como na dublagem dos filmes; mais
 que isso fica difícil de entender: encurte a frase antes, o Maestro faz isso com o Claude); o que ainda sobrar é
@@ -32,6 +35,11 @@ FILTROS = np.array([[0, 0], [60, 0], [115, -52], [98, -55], [122, -60]], dtype=n
 FIM_SUAVE = 0.02                  # segundos de "fade" quando a fala precisa ser cortada no limite
 CABECALHO_VAG = 48
 FORMATOS = ("wav", "vag", "ads")
+# pelo ffmpeg: a extensão -> (o tipo, o codificador e as opções; None = só lê: a dublada sai em WAV)
+COMPRIMIDOS = {".ogg": ("ogg", ["-c:a", "libvorbis", "-q:a", "5"]), ".mp3": ("mp3", ["-c:a", "libmp3lame"]),
+               ".flac": ("flac", ["-c:a", "flac"]), ".opus": ("opus", ["-c:a", "libopus"]),
+               ".at3": ("at3", None), ".at9": ("at9", None), ".wma": ("wma", None), ".m4a": ("m4a", None)}
+RESERVA = {"libvorbis": ["-c:a", "vorbis", "-strict", "-2"], "libopus": ["-c:a", "opus", "-strict", "-2"]}
 
 
 class ErroAudioJogo(ErroDublagem):
@@ -119,9 +127,35 @@ def _vag_extras(dados: bytes) -> tuple[bool, bool]:
     return corpo[:BYTES_POR_BLOCO] == bytes(BYTES_POR_BLOCO), corpo[-BYTES_POR_BLOCO + 1] == 0x07
 
 
-def ler_formato(arquivo: str | Path) -> Formato:
+def _sondar(arquivo: Path, tipo: str, ffmpeg: str | None = None, executar=subprocess.run) -> Formato:
+    """A taxa, os canais e as amostras de um áudio comprimido (pelo ffmpeg: a duração exata, decodificando)."""
+    import re
+    if ffmpeg is None:
+        from .dublagem import localizar_ffmpeg
+        ffmpeg = localizar_ffmpeg()
+    if not ffmpeg:
+        raise ErroAudioJogo(f"{arquivo.name}: falta o ffmpeg para ler {tipo.upper()} (pip install imageio-ffmpeg)")
+    r = executar([ffmpeg, "-hide_banner", "-i", str(arquivo)], capture_output=True, timeout=60, **SEM_JANELA)
+    texto = (r.stderr or b"").decode("utf-8", "replace")
+    audio = re.search(r"Audio: ([^,\n]+), (\d+) Hz, ([^,\n]+)", texto)
+    if not audio:
+        raise ErroAudioJogo(f"{arquivo.name}: o ffmpeg não reconheceu o áudio ({tipo.upper()})")
+    taxa, como = int(audio.group(2)), audio.group(3).strip()
+    canais = 1 if como == "mono" else 2 if como == "stereo" else int((re.match(r"(\d+)", como) or [0, 2])[1])
+    taxa_bits = re.search(r"Audio: .*?(\d+) kb/s", texto)
+    amostras = len(_ler(arquivo, taxa, ffmpeg, executar))
+    return Formato(tipo, taxa, canais, amostras, arquivo.stat().st_size,
+                   {"so_ler": COMPRIMIDOS.get(arquivo.suffix.lower(), (tipo, None))[1] is None,
+                    "codec": audio.group(1).split()[0], "kbps": int(taxa_bits.group(1)) if taxa_bits else 0})
+
+
+def ler_formato(arquivo: str | Path, ffmpeg: str | None = None) -> Formato:
     arquivo = Path(arquivo)
     dados = arquivo.read_bytes()
+    extensao = arquivo.suffix.lower()
+    pcm = dados[:4] == b"RIFF" and dados[8:12] == b"WAVE" and dados[20:22] == b"\x01\x00"
+    if extensao in COMPRIMIDOS and not pcm:             # (um .at3 com som sem compressão é um WAV comum)
+        return _sondar(arquivo, COMPRIMIDOS[extensao][0], ffmpeg)
     if dados[:4] == b"RIFF" and dados[8:12] == b"WAVE":
         try:
             with wave.open(str(arquivo)) as w:
@@ -151,8 +185,8 @@ def ler_formato(arquivo: str | Path) -> Formato:
         return Formato("ads", taxa, canais, amostras, len(dados),
                        {"codec": codec, "intercalado": intercalado or BYTES_POR_BLOCO, "cabecalho": dados[:40],
                         "tamanho_dados": tamanho_dados, "rabo": dados[40 + tamanho_dados:]})
-    raise ErroAudioJogo(f"{arquivo.name}: formato que o Maestro ainda não grava (ele grava WAV, VAG e ADS). "
-                        "Converta a original para WAV com a ferramenta do jogo")
+    raise ErroAudioJogo(f"{arquivo.name}: formato que o Maestro ainda não grava (WAV, VAG, ADS, OGG, MP3, FLAC e "
+                        "Opus; AT3/AT9 volta em WAV). Converta a original para WAV com a ferramenta do jogo")
 
 
 # ----------------------------------------------------------------- a duração exata
@@ -202,7 +236,9 @@ def gravar_como(original: str | Path, dublada: str | Path, destino: str | Path, 
         info = {"acelerada": 1.0, "cortada": 0.0, "completada": 0.0}
     destino = Path(destino)
     destino.parent.mkdir(parents=True, exist_ok=True)
-    if formato.tipo == "wav":
+    if formato.extra.get("so_ler"):                 # AT3/AT9...: em WAV, para a ferramenta do jogo converter
+        destino = destino.with_suffix(".wav")
+    if formato.tipo == "wav" or formato.extra.get("so_ler"):
         with wave.open(str(destino), "wb") as w:
             w.setnchannels(formato.canais)
             w.setsampwidth(2)
@@ -219,6 +255,8 @@ def gravar_como(original: str | Path, dublada: str | Path, destino: str | Path, 
         struct.pack_into(">I", cab, 16, formato.taxa)
         cab[32:48] = e["nome"]
         destino.write_bytes(bytes(cab) + corpo)
+    elif formato.tipo in {tipo for tipo, opcoes in COMPRIMIDOS.values() if opcoes}:
+        _gravar_comprimido(som, formato, destino, ffmpeg, executar)
     else:
         e = formato.extra
         passo = e["intercalado"]
@@ -241,9 +279,39 @@ def gravar_como(original: str | Path, dublada: str | Path, destino: str | Path, 
                 dados += canal[pos:pos + passo]
         destino.write_bytes(cabecalho + bytes(dados) + rabo)      # (o enchimento do fim, igual)
     novo = destino.stat().st_size
+    if formato.extra.get("so_ler"):
+        info["em_wav"] = True                           # (o caminho mudou: .wav no lugar do .at3)
     if exata and formato.tipo in ("vag", "ads") and novo != formato.tamanho:
         raise ErroAudioJogo(f"{destino.name} ficou com {novo} bytes e a original tem {formato.tamanho}")
     return {"formato": formato.descrever(), **info, "bytes": novo}
+
+
+def _gravar_comprimido(som: np.ndarray, formato: Formato, destino: Path, ffmpeg: str, executar) -> None:
+    """A fala no mesmo formato comprimido da original (OGG, MP3, FLAC, Opus), com a taxa e os canais dela."""
+    temporario = destino.with_name(destino.name + ".maestro.wav")
+    with wave.open(str(temporario), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(formato.taxa)
+        w.writeframes(som.tobytes())
+    opcoes = list(COMPRIMIDOS[destino.suffix.lower()][1] if destino.suffix.lower() in COMPRIMIDOS else
+                  next(o for t, o in COMPRIMIDOS.values() if t == formato.tipo))
+    if formato.extra.get("kbps") and formato.tipo in ("mp3", "opus"):
+        opcoes += ["-b:a", f"{formato.extra['kbps']}k"]
+    try:
+        for tentativa in (opcoes, RESERVA.get(opcoes[1])):
+            if tentativa is None:
+                break
+            r = executar([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(temporario), "-ac",
+                          str(formato.canais), "-ar", str(formato.taxa), *tentativa, str(destino)],
+                         capture_output=True, timeout=300, **SEM_JANELA)
+            if r.returncode == 0:
+                return
+        detalhe = (r.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+        raise ErroAudioJogo(f"o ffmpeg não gravou {destino.name} em {formato.tipo.upper()}"
+                            f"{': ' + detalhe[-1] if detalhe else ''}")
+    finally:
+        temporario.unlink(missing_ok=True)
 
 
 # ----------------------------------------------------------------- ouvir a original (sem o ffmpeg)
@@ -251,6 +319,9 @@ def ler_som(arquivo: str | Path) -> tuple[np.ndarray, int]:
     """(amostras em mono, de -1 a 1; taxa em Hz) de uma fala do jogo: WAV, VAG ou ADS (decodificados aqui mesmo,
     como o PS2 toca). Para medir o tom e o volume e para o Whisper ouvir a original."""
     formato = ler_formato(arquivo)
+    if formato.tipo not in FORMATOS:                     # comprimido: pelo ffmpeg
+        from .dublagem import localizar_ffmpeg
+        return _ler(arquivo, formato.taxa, localizar_ffmpeg(), subprocess.run) / 32768.0, formato.taxa
     dados = Path(arquivo).read_bytes()
     if formato.tipo == "wav":
         with wave.open(str(arquivo)) as w:

@@ -90,7 +90,10 @@ def test_nome_da_copia_e_o_emulador(tmp_path, monkeypatch):
     assert [c.nome for c in cs.CONSOLES.values()] == ["PlayStation 2", "PlayStation 1", "PSP", "Nintendo clássicos",
                                                       "GameCube / Wii", "Nintendo Switch", "PC"]
     assert cs.console("PS2").opl and not cs.console("PS1").opl and cs.INSTALAR in cs.console("SWITCH").modos
-    assert cs.DUBLAR in cs.console("PS1").modos and cs.DUBLAR not in cs.console("PSP").modos
+    assert all(cs.DUBLAR in c.modos and cs.ENQUANTO in c.modos and (cs.PATCH in c.modos or cs.INSTALAR in c.modos)
+               for c in cs.CONSOLES.values())                                       # todos traduzem e dublam
+    assert {c.criar for c in cs.CONSOLES.values()} == {"xdelta", "bps", "mod", "pacote"}
+    assert [c.chave for c in cs.CONSOLES.values() if c.iso9660] == ["PS2", "PS1", "PSP"]
     # o emulador: no PATH (fora do Windows, o nome sem .exe) ou o escolhido antes
     pasta = tmp_path / "bin"
     pasta.mkdir()
