@@ -224,9 +224,10 @@ def _rom_nintendo(caminho: Path) -> InfoISO:
     with open(caminho, "rb") as f:
         dados = f.read(0x10200)
     info = InfoISO(caminho, tamanho)
-    ext = caminho.suffix.lower()
+    nome = Path(caminho.name.removesuffix(".parcial"))     # (a cópia ainda sendo feita: "Jogo.sfc.parcial")
+    ext = nome.suffix.lower()
     if dados[:4] == b"NES\x1a" or ext == ".nes":
-        info.sistema, info.volume = "NES", caminho.stem
+        info.sistema, info.volume = "NES", nome.stem
     elif ext == ".gba":
         codigo = _texto(dados[0xAC:0xB0])
         info.sistema, info.volume = "GBA", _texto(dados[0xA0:0xAC])

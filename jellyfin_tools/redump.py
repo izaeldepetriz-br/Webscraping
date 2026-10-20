@@ -44,7 +44,8 @@ def _ler_dat(dados: bytes) -> dict:
 def indice(sistema: str, pasta: str | Path, baixar=_baixar, agora=time.time) -> dict:
     """O índice do banco do sistema ("PS2" ou "PS1"), baixando a lista se ainda não tem (ou se está velha)."""
     if sistema not in URLS:
-        raise ErroPatch(f"o banco Redump do Maestro tem só PS2 e PS1 (não {sistema or 'este disco'})")
+        raise ErroPatch(f"o banco Redump do Maestro tem só os discos de PS2, PS1, PSP, GameCube e Wii (não "
+                        f"{sistema or 'este'})")
     pasta = Path(pasta)
     arquivo = pasta / f"redump_{sistema.lower()}.json"
     if arquivo.is_file() and agora() - arquivo.stat().st_mtime < VALIDADE_DIAS * 86400:

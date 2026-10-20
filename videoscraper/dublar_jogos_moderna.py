@@ -3,6 +3,9 @@
 
 O que fica guardado na pasta da entrega (".maestro"): as traduções (traducao.json: a mesma frase não é traduzida de
 novo, e o que você corrigiu vale para sempre), as vozes escolhidas na tabela e as falas já dubladas (retomar).
+
+Cada console do submenu "Jogos →" tem o seu painel (o que você abriu no PS2 continua lá quando volta), e o fim muda:
+o .xdelta nos discos, o .bps nas ROMs, o mod .zip no Switch e o pacote .zip no PC.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
+from jellyfin_tools import consoles as cs
 from jellyfin_tools import dublar_jogo as dj
 from jellyfin_tools import iso_jogo as ij
 from jellyfin_tools import patch_jogo as pj
@@ -30,6 +34,7 @@ TIPOS_ROTEIRO = [("Roteiro do jogo", "*.csv *.tsv *.txt *.json"), ("Todos os arq
 NOMES_DE_ROTEIRO = ("roteiro", "script", "texto", "textos", "strings", "dialog", "dialogo", "falas", "msg", "text")
 ARQUIVO_MEMORIA = "traducao.json"
 ARQUIVO_ELENCO = "elenco.json"
+CRIAR_NOME = {"xdelta": "Criar o patch", "bps": "Criar o patch", "mod": "Criar o mod", "pacote": "Criar o pacote"}
 
 
 class DublagemDeJogos:
@@ -37,13 +42,25 @@ class DublagemDeJogos:
 
     def _iniciar_dublar_jogo(self) -> None:
         self.painel_dublar_jogo = None
+        self._paineis_dublar: dict[str, PainelDublarJogo] = {}      # um por console
+        self._estado_dublar: dict[str, tuple] = {}                  # a memória e o elenco de cada console
         self._memoria_jogo: dict = {}
         self._fixas_jogo: dict = {}
         self._velocidades_jogo: tj.Velocidades | None = None
         self._placa_nvidia: bool | None = None
         self._auto_jogo: dict | None = None            # o 🤖 Automático em andamento (as etapas que faltam)
 
+    def _console_do_jogo(self) -> cs.Console:
+        return getattr(self, "console_jogos", None) or cs.console("PS2")
+
+    def _trocar_console_dublar(self, antigo: cs.Console, novo: cs.Console) -> None:
+        """A tradução guardada e o elenco ficam com o console de cada jogo (não passam para o outro)."""
+        self._estado_dublar[antigo.chave] = (self._memoria_jogo, self._fixas_jogo)
+        self._memoria_jogo, self._fixas_jogo = self._estado_dublar.get(novo.chave, ({}, {}))
+
     def painel_do_modo_dublar(self) -> PainelDublarJogo:
+        console = self._console_do_jogo()
+        self.painel_dublar_jogo = self._paineis_dublar.get(console.chave)
         if self.painel_dublar_jogo is None or not self.painel_dublar_jogo.winfo_exists():
             self.painel_dublar_jogo = PainelDublarJogo(self.aba_jogos, self, {
                 "escolher_pasta": self.d_escolher_pasta, "ler": self.d_ler, "escolher_roteiro": self.d_escolher_roteiro,
@@ -53,7 +70,8 @@ class DublagemDeJogos:
                 "trocar_voz": self.d_trocar_voz, "dublar": self.d_dublar, "dublar_teste": lambda: self.d_dublar(5),
                 "ouvir": self.d_ouvir, "editar_fala": self.d_editar_fala, "escolher_saida": self.d_escolher_saida,
                 "entregar": self.d_entregar, "abrir_saida": self.d_abrir_saida, "montar": self.d_montar,
-                "criar_patch": self.d_criar_patch, "automatico": self.d_automatico})
+                "criar_patch": self.d_criar_patch, "automatico": self.d_automatico}, console)
+            self._paineis_dublar[console.chave] = self.painel_dublar_jogo
             p = self.painel_dublar_jogo
             p.var_iso.trace_add("write", lambda *_: p.atualizar())
             for var in (p.var_quem_traduz, p.var_motor, p.var_ouvir):
@@ -262,7 +280,7 @@ class DublagemDeJogos:
         if p is None or not p.winfo_exists() or self._auto_jogo is not None:
             return
         if p.roteiro is None and not p.falas:
-            p.mostrar_tempo_jogo("abra o roteiro ou tire as falas da ISO para ver quanto tempo leva")
+            p.mostrar_tempo_jogo(p.sem_nada())
             return
         try:
             etapas = self._etapas_do_jogo()
@@ -387,7 +405,10 @@ class DublagemDeJogos:
 
     def d_escolher_iso(self) -> None:
         from .jogos_moderna import TIPOS_ISO
-        arquivo = filedialog.askopenfilename(parent=self, title="A ISO tirada do SEU disco", filetypes=TIPOS_ISO)
+        c = self.painel_dublar_jogo.console
+        arquivo = filedialog.askopenfilename(parent=self, title="A ISO tirada do SEU disco" if c.padrao else
+                                             c.jogo[0].upper() + c.jogo[1:],
+                                             filetypes=TIPOS_ISO if c.padrao else list(c.tipos))
         if arquivo:
             self.painel_dublar_jogo.var_iso.set(arquivo)
 
@@ -411,6 +432,7 @@ class DublagemDeJogos:
         escolhido = p.var_roteiro.get().strip()
         iso_tela = p.var_iso.get().strip()
         saida = self._saida_jogo()
+        console = p.console
 
         def tarefa():
             arquivo = Path(escolhido) if escolhido else self.achar_roteiro(pasta)
@@ -423,11 +445,14 @@ class DublagemDeJogos:
             falas = dj.achar_falas(pasta, roteiro)
             contagem = dj.medir(falas, self.evento_parar.is_set,
                                 lambda f: self.fila.put(("jf_analise", (f, f"Medindo as vozes: {f:.0%}"))))
-            iso = Path(iso_tela) if iso_tela else next(iter(sorted(pasta.parent.glob("*.iso"))), None)
+            ao_lado = next(iter(sorted(pasta.parent.glob("*.iso"))), None) if console.iso9660 else None
+            iso = Path(iso_tela) if iso_tela else ao_lado
             jogo = ""
             if iso is not None and iso.is_file():
                 try:
-                    jogo = pj.ler_info(iso).descrever() + ("  (lido da ISO ao lado)" if not iso_tela else "")
+                    jogo = (pj.ler_info(iso).descrever() if console.padrao else
+                            cs.descrever(cs.identificar(iso, console.chave))) + \
+                        ("  (lido da ISO ao lado)" if not iso_tela else "")
                 except pj.ErroPatch:
                     jogo = ""
             # o que já foi traduzido antes (a memória da pasta da entrega) volta sem gastar
@@ -786,12 +811,14 @@ class DublagemDeJogos:
         iso, pasta, saida = Path(p.var_iso.get().strip()), self._pasta_jogo(), self._saida_jogo()
         if not (iso.is_file() and pasta and saida):
             return
+        console = p.console
         try:
-            info = pj.ler_info(iso)
+            info = pj.ler_info(iso) if console.padrao else cs.identificar(iso, console.chave)
         except pj.ErroPatch as erro:
             self.mostrar_mensagem("Montar a ISO", str(erro), "aviso")
             return
-        destino = saida / pj.nome_para_o_opl(info, f"{iso.stem} PT-BR")
+        destino = saida / (pj.nome_para_o_opl(info, f"{iso.stem} PT-BR") if console.padrao else
+                           cs.nome_final(console.chave, info, f"{iso.stem} PT-BR"))
         crono, prefixo, chaves = self._cronometro_jogo("montar")
         velocidades = self._velocidades()
 
@@ -810,20 +837,36 @@ class DublagemDeJogos:
             self._log.info("ISO em português: %s (%d falas trocadas)", m.destino, m.trocadas)
             if "montar" in chaves:
                 velocidades.medir(chaves["montar"], iso.stat().st_size / 1e6, crono.passou)
-            pj.registrar_aplicado(self.arquivo_aplicados, iso, saida, m.destino, "montada pelo Maestro")
+            pj.registrar_aplicado(self.arquivo_aplicados, iso, saida, m.destino, "montada pelo Maestro",
+                                  console=console.chave)
             self.fila.put(("jogos", ("d_montado", m)))
 
         self._rodar(f"Montando {destino.name}...", tarefa)
 
     def d_criar_patch(self) -> None:
-        """O .xdelta da tradução: a ISO original + a montada (pelo Maestro ou pela ferramenta do jogo)."""
+        """O .xdelta da tradução: a ISO original + a montada (pelo Maestro ou pela ferramenta do jogo). Nas ROMs, o
+        .bps; no Switch, o mod (.zip com o TitleID); no PC, o pacote (.zip), os dois com a pasta das vozes."""
         from .jogos_moderna import TIPOS_ISO
         p = self.painel_dublar_jogo
+        c = p.console
+        if not p.com_original:
+            saida = self._saida_jogo()
+            audio = saida / dj.PASTA_SAIDA_AUDIO if saida is not None else None
+            if audio is None or not audio.is_dir() or not any(audio.iterdir()):
+                self.mostrar_mensagem(CRIAR_NOME[c.criar], "Gere primeiro o roteiro e as vozes em português (📝 no "
+                                      "4. Entregar): o " + ("mod" if c.criar == "mod" else "pacote") + " junta o que "
+                                      f"ficou em {dj.PASTA_SAIDA_AUDIO}.", "aviso")
+                return
+            nome = self._pasta_jogo().name if self._pasta_jogo() else saida.name
+            self.i_criar(audio, f"{nome} PT-BR (Maestro)")
+            return
         original = Path(p.var_iso.get().strip())
         modificada = p.iso_montada
         if modificada is None or not Path(modificada).is_file():
-            escolhida = filedialog.askopenfilename(parent=self, title="A ISO com a tradução (montada pela ferramenta "
-                                                   "do jogo)", filetypes=TIPOS_ISO)
+            midia = "ROM" if c.criar == "bps" else "ISO"
+            escolhida = filedialog.askopenfilename(parent=self, title=f"A {midia} com a tradução (" + (
+                "montada pela ferramenta do jogo)" if midia == "ISO" else "com o texto em português)"),
+                filetypes=TIPOS_ISO if c.padrao else list(c.tipos))
             if not escolhida:
                 return
             modificada = Path(escolhida)

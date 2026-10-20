@@ -807,12 +807,16 @@ def carregar_aplicados(arquivo: str | Path) -> list[dict]:
     return [d for d in dados if isinstance(d, dict) and d.get("destino")]
 
 
-def registrar_aplicado(arquivo: str | Path, iso: Path, patch: Path, destino: Path, conferido: str) -> list[dict]:
-    """Guarda o patch aplicado (o mais novo primeiro; a mesma ISO nova aparece uma vez só)."""
+def registrar_aplicado(arquivo: str | Path, iso: Path, patch: Path, destino: Path, conferido: str,
+                       console: str = "") -> list[dict]:
+    """Guarda o patch aplicado (o mais novo primeiro; a mesma ISO nova aparece uma vez só). console: a chave do
+    submenu (sem ela, é do PS2, como os registros de antes)."""
     from datetime import datetime
     lista = [d for d in carregar_aplicados(arquivo) if d["destino"] != str(destino)]
     lista.insert(0, {"quando": datetime.now().strftime("%d/%m/%Y %H:%M"), "iso": str(iso), "patch": str(patch),
                      "destino": str(destino), "conferido": conferido})
+    if console and console != "PS2":
+        lista[0]["console"] = console
     Path(arquivo).parent.mkdir(parents=True, exist_ok=True)
     Path(arquivo).write_text(json.dumps(lista[:200], ensure_ascii=False, indent=1), encoding="utf-8")
     return lista

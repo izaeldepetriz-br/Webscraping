@@ -6022,3 +6022,212 @@ def test_aba_jogos_enquanto_joga(app, tmp_path, monkeypatch):
     assert "PCSX2" in app.painel_jogos.lb_janela_atalho.cget("text")
     app.painel_jogos.sw_atalho_tela.toggle()
     assert app._tradutor_de_tela is None
+
+
+def _rom_snes(caminho, titulo=b"MEU JOGO DE AVENTURA "):
+    import struct
+    rom = bytearray(512 * 1024)
+    rom[0x7FC0:0x7FC0 + len(titulo)] = titulo
+    rom[0x7FC0 + 0x19] = 1                                          # EUA
+    struct.pack_into("<HH", rom, 0x7FC0 + 0x1C, 0x1234 ^ 0xFFFF, 0x1234)
+    caminho.write_bytes(bytes(rom))
+    return caminho
+
+
+def test_aba_jogos_submenu_de_consoles(app, tmp_path, monkeypatch):
+    """🎮 Jogos → console: cada um com os seus painéis e as suas configurações (o PS2 continua como era). Nos
+    Nintendo clássicos: a ROM lida do cabeçalho, sem o banco Redump, o patch .bps aplicado numa cópia (só nos
+    aplicados deste console) e o .bps da sua tradução; o modo Traduzir e dublar com o guia do console."""
+    import json
+
+    from jellyfin_tools import patch_jogo as pj
+    from videoscraper import config, jogos_moderna
+    app.mostrar_aba("🎮 Jogos")
+    assert app.seletor_console_jogos.cget("values") == ["PlayStation 2", "PlayStation 1", "PSP", "Nintendo clássicos",
+                                                         "GameCube / Wii", "Nintendo Switch", "PC"]
+    assert app.seletor_console_jogos.get() == "PlayStation 2" and app.console_jogos.chave == "PS2"
+    ps2 = app.painel_jogos
+    assert app.seletor_modo_jogos.cget("values") == list(jogos_moderna.MODOS)
+    app.mostrar_modo_jogos(jogos_moderna.MODO_DUBLAR)                # a preferência do PS2 (no topo, como antes)
+    assert app.preferencia_jogos("modo") == jogos_moderna.MODO_DUBLAR
+    # Nintendo clássicos: outro painel, outros textos, sem o OPL
+    app.mostrar_console_jogos("Nintendo clássicos")
+    p = app.painel_jogos
+    assert p is not ps2 and p.console.chave == "NINTENDO" and app.console_jogos.chave == "NINTENDO"
+    assert app.seletor_modo_jogos.get() == jogos_moderna.MODO_PATCH          # o 1º modo (este console nunca abriu)
+    app.update()
+    assert p.winfo_ismapped() and not ps2.winfo_ismapped()
+    assert app.lb_subtitulo.cget("text").startswith("Nintendo clássicos · 1) Escolha a ROM    2) Procure")
+    assert p.cx_nome_opl.winfo_manager() == "" and p.bt_criar_patch.cget("text").endswith("(.bps)")
+    original = _rom_snes(tmp_path / "Meu Jogo (USA).sfc")
+    escolhas = {"arquivo": str(original)}
+    monkeypatch.setattr(jogos_moderna.filedialog, "askopenfilename", lambda **k: escolhas["arquivo"])
+    p.bt_escolher_iso.invoke()
+    assert p.info_jogo["console"].cget("text").startswith("Super NES  (ROM · 512")
+    assert p.info_jogo["jogo"].cget("text").startswith("MEU JOGO DE AVENTURA  ·  título lido do cabeçalho da ROM")
+    assert p.info_jogo["regiao"].cget("text") == "NTSC-U (EUA)"
+    p.bt_conferir_iso.invoke()
+    esperar(app)
+    assert "sem o banco Redump para cartuchos" in p.info_jogo["digital"].cget("text")
+    # o patch .bps (feito de uma ROM traduzida de mentira) aplicado numa cópia com a extensão da ROM
+    traduzida = bytearray(original.read_bytes())
+    traduzida[0x1000:0x1009] = b"OLA MUNDO"
+    (tmp_path / "trad.sfc").write_bytes(bytes(traduzida))
+    patch = pj.criar_bps(original, tmp_path / "trad.sfc", tmp_path / "Meu Jogo PT-BR.bps", "Meu Jogo PT-BR v1.0")
+    escolhas["arquivo"] = str(patch)
+    p.bt_escolher_patch.invoke()
+    assert p.tipo_patch == pj.BPS and p.info_patch["patch"].cget("text").startswith("bps · ")
+    p.var_nome_saida.set("Meu Jogo PT-BR")
+    assert p.nome_final() == "Meu Jogo PT-BR.sfc"
+    p.var_abrir_pcsx2.set(False)
+    p.bt_aplicar_patch.invoke()
+    esperar(app)
+    copia = tmp_path / "Meu Jogo PT-BR.sfc"
+    assert copia.read_bytes() == bytes(traduzida) and original.read_bytes() != bytes(traduzida)
+    assert "Abra no emulador (ou no console)" in p.lb_resultado_patch.cget("text")
+    assert app.caixas[-1][0] == "sucesso" and "A ROM original não mudou" in app.caixas[-1][2]
+    registro = pj.carregar_aplicados(app.arquivo_aplicados)
+    assert registro[0]["console"] == "NINTENDO" and registro[0]["destino"] == str(copia)
+    vistos = []
+    monkeypatch.setattr(app, "escolher_da_lista", lambda titulo, texto, itens, **k: vistos.append(itens))
+    p.bt_aplicados.invoke()
+    assert len(vistos[-1]) == 1 and "Meu Jogo PT-BR.sfc" in vistos[-1][0]
+    # criar o .bps da sua tradução (a ROM original + a traduzida)
+    monkeypatch.setattr(jogos_moderna.filedialog, "asksaveasfilename", lambda **k: str(tmp_path / "Minha.bps"))
+    app.jogo_criar(original, copia, "Minha tradução v1")
+    esperar(app)
+    assert (tmp_path / "Minha.bps").is_file() and "cartucho aplica na própria ROM" in app.caixas[-1][2]
+    # Traduzir e dublar neste console: o guia, a ROM original (para o .bps) e sem "Montar a ISO"
+    app.mostrar_modo_jogos(jogos_moderna.MODO_DUBLAR)
+    d = app.painel_dublar_jogo
+    assert d.console.chave == "NINTENDO" and "Como tirar do Nintendo clássicos" in d.lb_guia.cget("text")
+    assert d.bt_escolher_iso.winfo_manager() == "grid" and d.bt_analisar.master.winfo_manager() == ""
+    assert d.bt_montar.winfo_manager() == "" and d.bt_criar_patch_jogo.cget("text").endswith("(.bps)")
+    assert app.lb_subtitulo.cget("text").startswith("Nintendo clássicos · 1) Abra o roteiro")
+    # as preferências de cada console ficam separadas; o PS2 volta como estava (no modo dele, nos painéis dele)
+    dados = json.loads((config.ARQUIVO.parent / "jogos.json").read_text(encoding="utf-8"))
+    assert dados["modo"] == jogos_moderna.MODO_DUBLAR and dados["consoles"]["NINTENDO"]["modo"] == \
+        jogos_moderna.MODO_DUBLAR and dados["console"] == "NINTENDO"
+    app.mostrar_console_jogos("PlayStation 2")
+    assert app.painel_jogos is ps2 and app.painel_dublar_jogo is not d and not hasattr(app.painel_dublar_jogo,
+                                                                                         "lb_guia")
+    assert app.lb_subtitulo.cget("text") == jogos_moderna.SUBTITULOS_MODO[jogos_moderna.MODO_DUBLAR]
+    vistos.clear()
+    app.mostrar_modo_jogos(jogos_moderna.MODO_PATCH)
+    ps2.bt_aplicados.invoke()                              # a ROM não aparece nos aplicados do PS2
+    assert not vistos and app.caixas[-1][2] == "Nenhum patch aplicado ainda."
+    # com uma tarefa rodando, não troca de console
+    app.trabalhando = True
+    app.mostrar_console_jogos("PSP")
+    app.trabalhando = False
+    assert app.console_jogos.chave == "PS2" and app.seletor_console_jogos.get() == "PlayStation 2"
+    assert "Espere a tarefa de agora terminar" in app.caixas[-1][2]
+
+
+def test_aba_jogos_instalar_no_switch_e_no_pc(app, tmp_path, monkeypatch):
+    """🎮 Jogos → Nintendo Switch e → PC: o modo "📦 Instalar a tradução" no lugar do patch (o mod na pasta de mods
+    do emulador; os arquivos por cima da pasta do jogo, com os originais guardados), "Traduções instaladas" para
+    desfazer, criar o mod e o pacote, e o "Criar o pacote" do modo Traduzir e dublar."""
+    import zipfile
+
+    from jellyfin_tools import dublar_jogo as dj
+    from jellyfin_tools import instalar_traducao as it
+    from tests.test_instalar_traducao import TID, mod_zip
+    from videoscraper import dublar_jogos_moderna as dm
+    from videoscraper import instalar_moderna as im
+    from videoscraper import jogos_moderna
+    from videoscraper.painel_instalar import ONDES_SWITCH
+    app.mostrar_aba("🎮 Jogos")
+    app.mostrar_console_jogos("Nintendo Switch")
+    assert app.seletor_modo_jogos.cget("values") == [jogos_moderna.MODO_INSTALAR, jogos_moderna.MODO_DUBLAR,
+                                                     jogos_moderna.MODO_ENQUANTO]
+    p = app.painel_instalar
+    app.update()
+    assert app.painel_jogos is None and p.winfo_ismapped() and p.console.chave == "SWITCH"
+    assert app.lb_subtitulo.cget("text").startswith("Nintendo Switch · 1) Escolha o mod ou a tradução")
+    assert p.bt_instalar.cget("state") == "disabled"
+    # 1. o mod (.zip com o TitleID) e 2. a pasta de mods do emulador
+    escolhas = {"arquivo": str(mod_zip(tmp_path)), "pasta": ""}
+    monkeypatch.setattr(im.filedialog, "askopenfilename", lambda **k: escolhas["arquivo"])
+    monkeypatch.setattr(im.filedialog, "askdirectory", lambda **k: escolhas["pasta"])
+    monkeypatch.setattr(im.filedialog, "asksaveasfilename", lambda **k: escolhas["salvar"])
+    p.acoes["escolher_zip"]()
+    assert p.var_title_id.get() == TID and "TitleID 0100ABCD12340000 (lido do mod)" in p.info["traz"].cget("text")
+    assert "versão 1.2.0" in p.info["leia"].cget("text")
+    mods = tmp_path / "Ryujinx" / "mods" / "contents"
+    mods.mkdir(parents=True)
+    escolhas["pasta"] = str(mods)
+    p.acoes["escolher_destino"]()
+    destino = mods / TID / "Meu Jogo PT-BR v1.1"
+    assert p.lb_vai_para.cget("text").startswith(f"Vai para: {destino}") and p.bt_instalar.cget("state") == "normal"
+    assert app.preferencia_console("destino_emulador") == str(mods)
+    p.bt_instalar.invoke()
+    esperar(app)
+    assert (destino / "romfs" / "Message" / "Main.msbt").read_bytes() == b"OLA"
+    assert p.lb_resultado.cget("text").startswith("✓ Instalada: Meu Jogo PT-BR v1.1")
+    # o cartão SD lembra a pasta dele; o emulador volta com a sua
+    p._escolheu_onde(ONDES_SWITCH[it.SD])
+    assert p.var_destino.get() == "" and app.preferencia_console("onde") == it.SD
+    p._escolheu_onde(ONDES_SWITCH[it.EMULADOR])
+    assert p.var_destino.get() == str(mods)
+    # Traduções instaladas -> Desfazer: só o que o Maestro copiou sai
+    monkeypatch.setattr(app, "escolher_da_lista", lambda *a, **k: 0)
+    p.bt_instaladas.invoke()
+    assert not (mods / TID).exists() and mods.is_dir() and it.carregar(app.arquivo_instaladas) == []
+    assert p.lb_resultado.cget("text").startswith("↩ Desfeita: Meu Jogo PT-BR v1.1")
+    # criar o mod da sua tradução (o TitleID do campo)
+    minha = tmp_path / "minha traducao" / "romfs" / "Message"
+    minha.mkdir(parents=True)
+    (minha / "Main.msbt").write_bytes(b"OLA")
+    p.var_criar_pasta.set(str(tmp_path / "minha traducao"))
+    escolhas["salvar"] = str(tmp_path / "Meu mod.zip")
+    p.bt_criar.invoke()
+    esperar(app)
+    with zipfile.ZipFile(tmp_path / "Meu mod.zip") as z:
+        assert f"atmosphere/contents/{TID}/romfs/Message/Main.msbt" in z.namelist()
+    assert p.lb_criado.cget("text").startswith("✓ Criado: Meu mod.zip")
+    # PC: a tradução por cima da pasta do jogo, com os originais guardados e Desfazer
+    app.mostrar_console_jogos("PC")
+    pc = app.painel_instalar
+    app.update()
+    assert pc is not p and pc.console.chave == "PC" and not pc.switch and pc.winfo_ismapped()
+    jogo = tmp_path / "Meu Jogo"
+    (jogo / "data").mkdir(parents=True)
+    (jogo / "data" / "textos.json").write_text('{"oi": "hello"}')
+    traducao = tmp_path / "Traducao PT-BR" / "Meu Jogo PT-BR" / "data"
+    traducao.mkdir(parents=True)
+    (traducao / "textos.json").write_text('{"oi": "olá"}')
+    escolhas["pasta"] = str(jogo)
+    pc.acoes["escolher_destino"]()
+    escolhas["pasta"] = str(tmp_path / "Traducao PT-BR")
+    pc.acoes["escolher_pasta"]()
+    assert pc.pacote is not None and pc.pacote.raiz == "Meu Jogo PT-BR/"
+    assert pc.info["traz"].cget("text").startswith("1 arquivo para a pasta do jogo (em data)")
+    pc.bt_instalar.invoke()
+    esperar(app)
+    assert (jogo / "data" / "textos.json").read_text() == '{"oi": "olá"}'
+    assert "1 trocado(s) (os originais ficaram guardados)" in pc.lb_resultado.cget("text")
+    pc.bt_instaladas.invoke()
+    assert (jogo / "data" / "textos.json").read_text() == '{"oi": "hello"}' and not (jogo / it.COPIA_SEGURANCA).exists()
+    # Traduzir e dublar no PC: sem a ISO; o fim é o pacote (.zip) com as vozes em português
+    app.mostrar_modo_jogos(jogos_moderna.MODO_DUBLAR)
+    d = app.painel_dublar_jogo
+    assert d.console.chave == "PC" and d.bt_escolher_iso.winfo_manager() == "" and d.bt_montar.winfo_manager() == ""
+    assert d.bt_criar_patch_jogo.cget("text") == "📦  Criar o pacote (.zip)" and "Instalar a tradução" in \
+        d.lb_depois.cget("text")
+    saida = tmp_path / "Meu Jogo - PT-BR"
+    (saida / dj.PASTA_SAIDA_AUDIO / "sons").mkdir(parents=True)
+    (saida / dj.PASTA_SAIDA_AUDIO / "sons" / "fala1.ogg").write_bytes(b"OggS")
+    d.var_saida.set(str(saida))
+    d.var_pasta.set(str(jogo))
+    escolhas["salvar"] = str(tmp_path / "Meu Jogo PT-BR.zip")
+    monkeypatch.setattr(dm.filedialog, "asksaveasfilename", lambda **k: escolhas["salvar"])
+    app.d_criar_patch()
+    esperar(app)
+    with zipfile.ZipFile(tmp_path / "Meu Jogo PT-BR.zip") as z:
+        assert "sons/fala1.ogg" in z.namelist()
+    # cada console com a sua dublagem: o Switch tem o painel dele (criar o mod)
+    app.mostrar_console_jogos("Nintendo Switch")
+    app.mostrar_modo_jogos(jogos_moderna.MODO_DUBLAR)
+    assert app.painel_dublar_jogo is not d and app.painel_dublar_jogo.bt_criar_patch_jogo.cget("text") == \
+        "📦  Criar o mod (.zip)"

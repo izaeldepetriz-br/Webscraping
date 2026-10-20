@@ -240,6 +240,35 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.24.0
+
+- **Submenu por console na aba 🎮 Jogos**: a faixa **"Jogos →"** no topo escolhe **PlayStation 2, PlayStation 1, PSP,
+  Nintendo clássicos, GameCube / Wii, Nintendo Switch ou PC**. Cada console tem **os seus painéis e as suas
+  configurações** (o modo, o emulador, as pastas): o que você abriu num não passa para o outro, e **o PS2 continua
+  igual** (os mesmos textos e as mesmas configurações de antes). O Maestro lembra o último console e o último modo de
+  cada um.
+- **Todos os consoles traduzem, dublam e procuram o patch**: em todos há **🗣 Traduzir e dublar (no PC)** (para o jogo
+  que ainda não tem tradução), **🖥 Enquanto joga** e **🔎 Procurar na comunidade** (com o sistema certo: PSP,
+  GameCube, Wii, SNES, GBA, Nintendo 64, DS, Switch, PC...).
+- **📀 Aplicar patch de fãs nos outros consoles**: o código e o título são lidos **de dentro do jogo** (o PARAM.SFO do
+  PSP, o cabeçalho do disco de GameCube/Wii, o cabeçalho das ROMs de SNES, NES, GBA, GB/GBC, N64 e DS); o **banco
+  Redump** confere os discos (PS1, PSP, GameCube, Wii); a cópia traduzida fica com a extensão do original (ex.:
+  "Meu Jogo PT-BR.sfc") e abre no emulador do console (**DuckStation, PPSSPP, Dolphin** ou o seu emulador, escolhido
+  uma vez). Os "🗂 Patches aplicados" mostram só os do console aberto.
+- **📦 Instalar a tradução (Nintendo Switch e PC)**, no lugar do patch na ISO:
+  - **Switch**: o mod de tradução (pasta ou .zip, com o **TitleID** lido do mod) vai para a **pasta de mods do
+    emulador** ou para o **cartão SD com Atmosphère** (cada lugar lembra a sua pasta). O jogo não muda;
+  - **PC**: os arquivos da tradução vão **por cima da pasta do jogo**, e os que já existiam ficam guardados numa
+    cópia de segurança (`.maestro_original`);
+  - **"🗂 Traduções instaladas" → Desfazer**: apaga só o que o Maestro copiou e **devolve os originais**.
+- **Compartilhar a sua tradução, no formato de cada console**: **.xdelta** (discos), **.bps** (ROMs), **mod .zip**
+  com o TitleID (Switch) e **pacote .zip** só com os arquivos que mudaram (PC), sempre com um leia-me. No modo
+  Traduzir e dublar, o botão do fim cria o formato do console aberto.
+- **Vozes de PC e PSP**: o Maestro dubla falas em **OGG, MP3, FLAC e Opus** e devolve no mesmo formato; as **AT3/AT9**
+  (PSP) e **WMA/M4A** são lidas e voltam em WAV, para converter com a ferramenta do jogo.
+- Cada console mostra **como tirar os textos e as vozes** dele (o guia no modo Traduzir e dublar), e o campo da ISO
+  para o Maestro **tirar as falas sozinho** aparece só onde ele abre o disco (PS2, PS1 e PSP).
+
 ### Novidades da v2.23.0
 
 - **A aba 🎮 Jogos agora tem 3 modos** (a faixa no topo, como no protótipo): **📀 Aplicar patch de fãs**, **🗣 Traduzir

@@ -16,6 +16,7 @@ from pathlib import Path
 
 import customtkinter as ctk
 
+from jellyfin_tools import consoles as cs
 from jellyfin_tools import patch_jogo as pj
 
 from .gui_moderna import Tema
@@ -30,10 +31,16 @@ class PainelJogos(ctk.CTkScrollableFrame):
     'ler_patch', 'procurar', 'abrir_leia_me', 'escolher_pasta', 'aplicar', 'abrir_pasta', 'abrir_pcsx2',
     'aplicados', 'escolher_original', 'escolher_modificada', 'criar', 'tela', 'legenda'} (sem argumentos)."""
 
-    def __init__(self, pai, app, acoes: dict):
+    def __init__(self, pai, app, acoes: dict, console: cs.Console | None = None):
         super().__init__(pai, fg_color="transparent")
         self.app = app
         self.acoes = acoes
+        self.console = console or cs.console("PS2")     # o submenu "Jogos → ..." (o PS2 fica como sempre foi)
+        self.ps2 = self.console.chave == "PS2"
+        c = self.console
+        self.midia = c.midia                            # "ISO" / "ROM"
+        generico = c.emulador.startswith("o ")           # "o seu emulador" (Nintendo clássicos)
+        self.no_emulador = "no emulador" if generico else f"no {c.emulador}"     # "no PCSX2", "no Dolphin"
         self.info: pj.InfoISO | None = None
         self.digital: pj.Digital | None = None           # a impressão digital da ISO escolhida (se conferida)
         self.redump = ""                                 # o nome do disco no banco Redump ("" = não achou / não viu)
@@ -46,7 +53,10 @@ class PainelJogos(ctk.CTkScrollableFrame):
         m = app
         aviso = m._rotulo(self, "Aplicar o patch de fãs (tradução, dublagem) na ISO do SEU disco: a ISO nova roda "
                                 "em qualquer lugar (no PS2 pelo OPL, no PCSX2, no celular). O Maestro não baixa "
-                                "jogos; a busca na comunidade procura só patches.", fonte=self._pequeno)
+                                "jogos; a busca na comunidade procura só patches." if self.ps2 else
+                          f"{c.nome}: aplicar o patch de fãs (tradução, dublagem) n{c.jogo}: a {self.midia} nova "
+                          f"roda {'no seu emulador' if generico else self.no_emulador} ou no console. O Maestro "
+                          "não baixa jogos; a busca na comunidade procura só patches.", fonte=self._pequeno)
         aviso.grid(row=0, column=0, sticky="w", padx=(28, 16), pady=(12, 0))
         self._montar_jogo()
         self._montar_patch()
@@ -102,10 +112,13 @@ class PainelJogos(ctk.CTkScrollableFrame):
 
     def _montar_jogo(self) -> None:
         m = self.app
+        c = self.console
         cartao = self._cartao(1, "1. Jogo", "a ISO feita do SEU disco: o Maestro lê o código do disco e confere a "
-                                            "impressão digital")
-        self.var_iso, self.bt_escolher_iso = self._linha_campo(cartao, 1, "ISO:", "o caminho da ISO do seu disco",
-                                                               "escolher_iso")
+                                            "impressão digital" if self.ps2 else
+                              f"{c.jogo}: o Maestro lê o código de dentro e confere a impressão digital")
+        self.var_iso, self.bt_escolher_iso = self._linha_campo(
+            cartao, 1, "ISO:" if self.ps2 else c.rotulo, "o caminho da ISO do seu disco" if self.ps2 else
+            f"o caminho de {c.jogo}", "escolher_iso")
         self.info_jogo = self._quadro_info(cartao, 2, [("console", "Console"), ("jogo", "Jogo"),
                                                        ("regiao", "Região"), ("digital", "Impressão digital")])
         linha = ctk.CTkFrame(cartao, fg_color="transparent")
@@ -113,7 +126,9 @@ class PainelJogos(ctk.CTkScrollableFrame):
         self.bt_conferir_iso = m._botao(linha, "🔍  Conferir a impressão digital", self.acoes["conferir"])
         self.bt_conferir_iso.pack(side="left")
         m._rotulo(linha, "   CRC32/MD5/SHA-1 e o banco Redump (os discos originais): muda se um único byte mudar. "
-                         "Na ISO de DVD leva ~1 minuto.", fonte=self._pequeno).pack(side="left")
+                         "Na ISO de DVD leva ~1 minuto." if c.redump else
+                  "   CRC32/MD5/SHA-1: muda se um único byte mudar (cartucho: sem o banco Redump; confere pelo "
+                  "leia-me do patch).", fonte=self._pequeno).pack(side="left")
 
     def _montar_patch(self) -> None:
         m = self.app
@@ -139,17 +154,18 @@ class PainelJogos(ctk.CTkScrollableFrame):
 
     def _montar_aplicar(self) -> None:
         m = self.app
-        cartao = self._cartao(3, "3. Aplicar", "a ISO original nunca é alterada: o Maestro cria uma cópia já "
-                                               "traduzida")
-        self.var_pasta_saida, _ = self._linha_campo(cartao, 1, "Salvar em:", "a pasta da ISO nova (vazio: a mesma "
-                                                    "da original)", "escolher_pasta")
-        self.var_nome_saida, _ = self._linha_campo(cartao, 2, "Nome:", "o nome da ISO nova (ex.: Meu Jogo PT-BR)",
-                                                   None)
+        cartao = self._cartao(3, "3. Aplicar", f"a {self.midia} original nunca é alterada: o Maestro cria uma cópia "
+                                               "já traduzida")
+        self.var_pasta_saida, _ = self._linha_campo(cartao, 1, "Salvar em:", f"a pasta da {self.midia} nova (vazio: "
+                                                    "a mesma da original)", "escolher_pasta")
+        self.var_nome_saida, _ = self._linha_campo(cartao, 2, "Nome:", f"o nome da {self.midia} nova (ex.: Meu Jogo "
+                                                   "PT-BR)", None)
         self.var_nome_saida.trace_add("write", lambda *_: self._mostrar_nome())
-        self.var_nome_opl = tk.BooleanVar(self, value=True)
+        self.var_nome_opl = tk.BooleanVar(self, value=self.console.opl)
         self.cx_nome_opl = self._caixa(cartao, "No padrão do OPL (CÓDIGO.Nome.iso): o OPL antigo só lista assim",
                                        self.var_nome_opl)
-        self.cx_nome_opl.grid(row=3, column=0, columnspan=3, sticky="w", padx=20, pady=(4, 0))
+        if self.console.opl:                                 # (o OPL é só do PS2)
+            self.cx_nome_opl.grid(row=3, column=0, columnspan=3, sticky="w", padx=20, pady=(4, 0))
         self.var_nome_opl.trace_add("write", lambda *_: self._mostrar_nome())
         self.lb_nome_final = m._rotulo(cartao, "", fonte=self._pequeno)
         self.lb_nome_final.grid(row=4, column=0, columnspan=3, sticky="w", padx=20, pady=(2, 0))
@@ -160,13 +176,13 @@ class PainelJogos(ctk.CTkScrollableFrame):
                                              self.var_conferir_copia)
         self.cx_conferir_copia.pack(side="left")
         self.var_abrir_pcsx2 = tk.BooleanVar(self, value=False)
-        self.cx_abrir_pcsx2 = self._caixa(opcoes, "Abrir no PCSX2 quando terminar", self.var_abrir_pcsx2)
+        self.cx_abrir_pcsx2 = self._caixa(opcoes, f"Abrir {self.no_emulador} quando terminar", self.var_abrir_pcsx2)
         self.cx_abrir_pcsx2.pack(side="left", padx=(18, 0))
         linha = ctk.CTkFrame(cartao, fg_color="transparent")
         linha.grid(row=6, column=0, columnspan=3, sticky="ew", padx=20, pady=(8, 6))
         self.bt_aplicar_patch = m._botao(linha, "🧩  Aplicar o patch", self.acoes["aplicar"], "primario")
         self.bt_aplicar_patch.pack(side="left")
-        self.bt_abrir_pcsx2 = m._botao(linha, "▶  Abrir no PCSX2", self.acoes["abrir_pcsx2"])
+        self.bt_abrir_pcsx2 = m._botao(linha, f"▶  Abrir {self.no_emulador}", self.acoes["abrir_pcsx2"])
         self.bt_abrir_pcsx2.pack(side="left", padx=(8, 0))
         self.bt_aplicados = m._botao(linha, "🗂  Patches aplicados", self.acoes["aplicados"], "fantasma")
         self.bt_aplicados.pack(side="left", padx=(8, 0))
@@ -185,18 +201,19 @@ class PainelJogos(ctk.CTkScrollableFrame):
     def _montar_criar(self) -> None:
         m = self.app
         cartao = self._cartao(4, "Compartilhar a sua tradução", "crie o patch: só as diferenças, sem o jogo")
-        self.var_criar_original, _ = self._linha_campo(cartao, 1, "ISO original:", "a do seu disco, sem mudar nada",
-                                                       "escolher_original")
-        self.var_criar_modificada, _ = self._linha_campo(cartao, 2, "ISO modificada:", "a com a sua tradução ou "
-                                                         "dublagem já dentro", "escolher_modificada")
+        self.var_criar_original, _ = self._linha_campo(cartao, 1, f"{self.midia} original:", "a do seu disco, sem "
+                                                       "mudar nada" if self.midia == "ISO" else "a do seu cartucho, "
+                                                       "sem mudar nada", "escolher_original")
+        self.var_criar_modificada, _ = self._linha_campo(cartao, 2, f"{self.midia} modificada:", "a com a sua "
+                                                         "tradução ou dublagem já dentro", "escolher_modificada")
         self.var_criar_descricao, _ = self._linha_campo(cartao, 3, "Descrição:", "ex.: Meu Jogo PT-BR v1.0 · Grupo "
                                                         "Exemplo", None)
         linha = ctk.CTkFrame(cartao, fg_color="transparent")
         linha.grid(row=4, column=0, columnspan=3, sticky="ew", padx=20, pady=(8, 6))
-        self.bt_criar_patch = m._botao(linha, "📦  Criar o patch (.xdelta)", self.acoes["criar"])
+        self.bt_criar_patch = m._botao(linha, f"📦  Criar o patch (.{self.console.criar})", self.acoes["criar"])
         self.bt_criar_patch.pack(side="left")
         m._rotulo(linha, "   vai junto um leia-me com a impressão digital da original. Compartilhe só o patch, "
-                         "nunca a ISO.", fonte=self._pequeno).pack(side="left")
+                         f"nunca a {self.midia}.", fonte=self._pequeno).pack(side="left")
         self.lb_criado = ctk.CTkLabel(cartao, text="", font=m.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w",
                                       justify="left", wraplength=1000)
         self.lb_criado.grid(row=5, column=0, columnspan=3, sticky="w", padx=20, pady=(2, 14))
@@ -227,7 +244,7 @@ class PainelJogos(ctk.CTkScrollableFrame):
             for chave in self.info_jogo:
                 self.info_jogo[chave].configure(text="—", text_color=Tema.TEXTO)
             self.info_jogo["jogo"].configure(text=erro or "—", text_color=Tema.AVISO if erro else Tema.TEXTO)
-        else:
+        elif self.console.chave in ("PS2", "PS1"):
             midia = "DVD" if info.tamanho > 900 * 1024 ** 2 else "CD"
             self.info_jogo["console"].configure(
                 text=f"{CONSOLES.get(info.sistema, info.sistema or '?')}  ({midia} · {pj.tamanho_legivel(info.tamanho)})",
@@ -236,6 +253,19 @@ class PainelJogos(ctk.CTkScrollableFrame):
                 text=(f"{info.caminho.stem}  ·  código do disco {info.id_jogo} (lido de dentro da ISO)"
                       + (f" · versão {info.versao}" if info.versao else "")) if info.id_jogo else info.descrever(),
                 text_color=Tema.TEXTO if info.id_jogo else Tema.AVISO)
+        else:                                            # os outros consoles: o código e o título lidos de dentro
+            midia = "ROM" if self.midia == "ROM" else "UMD" if info.sistema == "PSP" else "disco"
+            self.info_jogo["console"].configure(
+                text=f"{cs.NOMES.get(info.sistema, info.sistema or self.console.nome)}  ({midia} · "
+                     f"{pj.tamanho_legivel(info.tamanho)})", text_color=Tema.TEXTO)
+            titulo = info.volume or info.caminho.stem
+            onde = "do cabeçalho da ROM" if self.midia == "ROM" else "de dentro do disco"
+            self.info_jogo["jogo"].configure(
+                text=f"{titulo}  ·  " + (f"código {info.id_jogo} (lido {onde})" if info.id_jogo else
+                                         f"título lido {onde}") + (f" · versão {info.versao}" if info.versao and
+                                                                    info.versao != "0" else ""),
+                text_color=Tema.TEXTO)
+        if info is not None:
             self.info_jogo["regiao"].configure(text=REGIOES_TV.get(info.regiao, info.regiao or "—"),
                                                text_color=Tema.TEXTO)
         self.info_jogo["digital"].configure(text="ainda não conferida" if info else "—", text_color=Tema.TEXTO_SUAVE)
@@ -253,7 +283,9 @@ class PainelJogos(ctk.CTkScrollableFrame):
         self.digital = digital
         if redump is not None:
             self.redump = redump
-        if redump:
+        if not self.console.redump:
+            extra, cor = "  · sem o banco Redump para cartuchos (confira pelo leia-me do patch)", Tema.TEXTO
+        elif redump:
             extra, cor = f"  ✓ cópia perfeita do disco (igual à do banco Redump: {redump})", Tema.SUCESSO
         elif redump == "":
             extra, cor = "  · não está no banco Redump (ISO modificada, ou disco que o banco ainda não tem)", Tema.AVISO
@@ -298,21 +330,21 @@ class PainelJogos(ctk.CTkScrollableFrame):
             rotulo.configure(text="—", text_color=Tema.TEXTO_SUAVE)
             return
         if e and e.ids and info.id_jogo and info.id_jogo not in e.ids:
-            rotulo.configure(text=f"✗ o patch é de {', '.join(sorted(e.ids))} e a sua ISO é {info.id_jogo} (outra "
+            rotulo.configure(text=f"✗ o patch é de {', '.join(sorted(e.ids))} e a sua {self.midia} é {info.id_jogo} (outra "
                                   "versão ou outro jogo)", text_color=Tema.PERIGO)
         elif e and e.tem_digital() and self.digital is not None:
             if e.confere(self.digital):
-                rotulo.configure(text="✓ Sim: mesmo código, mesma região e mesma impressão digital da sua ISO",
+                rotulo.configure(text=f"✓ Sim: mesmo código, mesma região e mesma impressão digital da sua {self.midia}",
                                  text_color=Tema.SUCESSO)
             else:
                 rotulo.configure(text="✗ não encaixa: a impressão digital é de outra versão (o Maestro não aplica)",
                                  text_color=Tema.PERIGO)
         elif e and e.tem_digital():
-            rotulo.configure(text="? confira a impressão digital da ISO (o \"Aplicar\" confere antes de mexer)",
+            rotulo.configure(text=f"? confira a impressão digital da {self.midia} (o \"Aplicar\" confere antes de mexer)",
                              text_color=Tema.AVISO)
         else:
             confere = {pj.XDELTA: "o xdelta3 confere sozinho ao aplicar", pj.BPS: "o .bps confere sozinho ao aplicar",
-                       pj.PPF: "o .ppf confere um pedaço da ISO ao aplicar (se trouxer)"}.get(
+                       pj.PPF: f"o .ppf confere um pedaço da {self.midia} ao aplicar (se trouxer)"}.get(
                 self.tipo_patch, "o .ips não tem como conferir: confira a versão no leia-me")
             rotulo.configure(text=f"sem a impressão digital no leia-me: {confere}", text_color=Tema.TEXTO_SUAVE)
 
@@ -320,6 +352,8 @@ class PainelJogos(ctk.CTkScrollableFrame):
         nome = self.var_nome_saida.get().strip() or (f"{self.info.caminho.stem} PT-BR" if self.info else "")
         if not nome:
             return ""
+        if not self.ps2:
+            return cs.nome_final(self.console.chave, self.info, nome)
         if self.var_nome_opl.get() and self.info is not None:
             return pj.nome_para_o_opl(self.info, nome)
         return nome if nome.lower().endswith(".iso") else f"{nome}.iso"
@@ -332,7 +366,7 @@ class PainelJogos(ctk.CTkScrollableFrame):
 
     def _mostrar_nome(self) -> None:
         nome, pasta = self.nome_final(), self.pasta_saida()
-        self.lb_nome_final.configure(text=f"A ISO nova: {pasta / nome}" if nome and pasta else "")
+        self.lb_nome_final.configure(text=f"A {self.midia} nova: {pasta / nome}" if nome and pasta else "")
 
     def mostrar_andamento(self, fracao: float, texto: str = "") -> None:
         self.barra.set(max(0.0, min(1.0, fracao)))
@@ -344,11 +378,13 @@ class PainelJogos(ctk.CTkScrollableFrame):
         dica = "  Em pendrive FAT32 (4 GB por arquivo), divida com o USBUtil ou use exFAT (OPL novo)." \
             if r.info.tamanho > 4 * 1024 ** 3 - 1 else ""
         self.mostrar_andamento(1.0, "100%")
+        onde = "Copie para a pasta DVD (ou CD) do OPL, ou abra no PCSX2." if self.ps2 else \
+            f"Abra {self.no_emulador} (ou no console)."
         self.lb_resultado_patch.configure(
             text=f"✓ Pronto: cópia traduzida criada\n\"{r.destino.name}\" ({pj.tamanho_legivel(r.info.tamanho)} · "
-                 f"{r.info.id_jogo or '?'}) · {copia or r.conferido} · a ISO original continua igual.\nCopie para a "
-                 f"pasta DVD (ou CD) do OPL, ou abra no PCSX2. Fica registrado em 🗂 Patches aplicados (para refazer "
-                 f"ou apagar a cópia depois).{dica}", text_color=Tema.SUCESSO)
+                 f"{r.info.id_jogo or '?'}) · {copia or r.conferido} · a {self.midia} original continua igual.\n"
+                 f"{onde} Fica registrado em 🗂 Patches aplicados (para refazer ou apagar a cópia depois)."
+                 f"{dica if self.ps2 else ''}", text_color=Tema.SUCESSO)
         self._atualizar()
 
     def mostrar_criado(self, patch: Path) -> None:

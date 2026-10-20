@@ -12,6 +12,10 @@ jellyfin_tools (iso_jogo, roteiro_jogo, dublar_jogo) e a ligação com a janela 
     4. Entregar          roteiro_ptbr + audio_ptbr (+ montar a ISO, quando as falas saíram dela pelo Maestro) e o
                          patch .xdelta para compartilhar
 
+Em cada console do submenu "Jogos →" o modo é o mesmo, com o guia de como tirar os textos e as vozes dele, o
+campo da ISO só onde o Maestro abre o disco sozinho (PS2, PS1, PSP) e o que a tradução vira no fim: o patch .xdelta
+(discos), o .bps (ROMs), o mod .zip (Switch) ou o pacote .zip (PC).
+
 Em cima, o "⏱ Tempo deste jogo" (cada etapa, o total e a que horas termina, pela velocidade deste PC) e o botão
 "🤖 Automático", que faz as etapas marcadas uma depois da outra.
 """
@@ -23,6 +27,7 @@ from tkinter import ttk
 
 import customtkinter as ctk
 
+from jellyfin_tools import consoles as cs
 from jellyfin_tools import dublar_jogo as dj
 
 from .gui_moderna import Tema
@@ -32,6 +37,8 @@ MOTORES = ("XTTS-v2 (grátis, no PC)", "Gemini (pago, expressivo)", "Google Clou
            "Piper (grátis, robótico)")
 EMOCOES = ("Gravação da emoção ou Chatterbox", "Sem emoção")
 LINHAS_NA_TABELA = 600                    # a tabela mostra as primeiras (o resto vai igual para a entrega)
+CRIAR = {"xdelta": "📦  Criar o patch (.xdelta)", "bps": "📦  Criar o patch (.bps)", "mod": "📦  Criar o mod (.zip)",
+         "pacote": "📦  Criar o pacote (.zip)"}
 
 
 class PainelDublarJogo(ctk.CTkScrollableFrame):
@@ -40,10 +47,13 @@ class PainelDublarJogo(ctk.CTkScrollableFrame):
     'dublar_teste', 'ouvir', 'editar_fala', 'escolher_saida', 'entregar', 'abrir_saida', 'montar',
     'criar_patch', 'automatico'}."""
 
-    def __init__(self, pai, app, acoes: dict):
+    def __init__(self, pai, app, acoes: dict, console: cs.Console | None = None):
         super().__init__(pai, fg_color="transparent")
         self.app = app
         self.acoes = acoes
+        self.console = console or cs.console("PS2")     # o submenu "Jogos → ..." (o PS2 fica como sempre foi)
+        self.ps2 = self.console.chave == "PS2"
+        self.com_original = self.console.criar in ("xdelta", "bps")    # o patch precisa da ISO/ROM original
         self.analise = None                  # iso_jogo.Analise
         self.roteiro = None                  # roteiro_jogo.Roteiro
         self.falas: list = []                # dublar_jogo.FalaJogo
@@ -132,22 +142,28 @@ class PainelDublarJogo(ctk.CTkScrollableFrame):
         faixa.grid_columnconfigure(1, weight=1)
         m._rotulo(faixa, "⏱ Tempo deste jogo", suave=False, fonte=m.f_secao).grid(row=0, column=0, padx=(20, 12),
                                                                                   pady=12, sticky="w")
-        self.lb_tempo_jogo = m._rotulo(faixa, "abra o roteiro ou tire as falas da ISO para ver quanto tempo leva",
-                                       fonte=self._pequeno)
+        self.lb_tempo_jogo = m._rotulo(faixa, self.sem_nada(), fonte=self._pequeno)
         self.lb_tempo_jogo.grid(row=0, column=1, sticky="w", pady=12)
         self.bt_automatico = m._botao(faixa, "🤖  Automático", self.acoes["automatico"], "primario")
         self.bt_automatico.grid(row=0, column=2, padx=(12, 20), pady=12)
+
+    def sem_nada(self) -> str:
+        """O "⏱ Tempo deste jogo" antes de abrir o jogo (só PS2, PS1 e PSP têm "tirar as falas da ISO")."""
+        return "abra o roteiro ou tire as falas da ISO para ver quanto tempo leva" if self.console.iso9660 else \
+            "abra a pasta com o roteiro e as vozes para ver quanto tempo leva"
 
     def mostrar_tempo_jogo(self, texto: str, ok: bool = True) -> None:
         self.lb_tempo_jogo.configure(text=texto, text_color=Tema.TEXTO_SUAVE if ok else Tema.AVISO)
 
     def _montar_roteiro(self) -> None:
         m = self.app
+        c = self.console
         cartao = self._cartao(0, "1. Roteiro do jogo", "os textos e as vozes já tirados de dentro do jogo (pelo "
                               "Maestro, nos formatos que ele conhece, ou por uma ferramenta da comunidade)")
         self.var_pasta, self.bt_escolher_pasta = self._linha_campo(
-            cartao, 1, "Pasta:", "a pasta com o roteiro e as falas (ex.: D:\\Jogos\\PS2\\Meu Jogo - extraído)",
-            "escolher_pasta")
+            cartao, 1, "Pasta:", "a pasta com o roteiro e as falas (ex.: D:\\Jogos\\PS2\\Meu Jogo - extraído)"
+            if self.ps2 else "a pasta do jogo (ou a que tem os textos e as vozes tirados dele)" if c.chave == "PC" else
+            f"a pasta com o roteiro e as falas (ex.: D:\\Jogos\\{c.chave}\\Meu Jogo - extraído)", "escolher_pasta")
         self.info = self._quadro_info(cartao, 2, [("jogo", "Jogo"), ("textos", "Textos"),
                                                   ("limite", "Limite de tamanho"), ("vozes", "Vozes"),
                                                   ("volume", "Volume medido")])
@@ -160,10 +176,18 @@ class PainelDublarJogo(ctk.CTkScrollableFrame):
                                     fonte=self._pequeno)
         self.lb_roteiro.pack(side="left")
         self.var_roteiro = tk.StringVar(self)
-        # sem a pasta? o Maestro tira as falas da ISO (nos formatos que ele conhece)
+        # sem a pasta? o Maestro tira as falas da ISO (nos formatos que ele conhece); nos outros, a ISO/ROM original
+        # é só para criar o patch no fim
+        rotulo = {"PS1": "Imagem do disco:", "PSP": "ISO do UMD:", "NINTENDO": "ROM original:"}.get(c.chave,
+                                                                                                  "ISO do disco:")
         self.var_iso, self.bt_escolher_iso = self._linha_campo(
-            cartao, 4, "ISO do disco:", "achada ao lado da pasta; ou escolha para o Maestro tirar as falas",
-            "escolher_iso")
+            cartao, 4, rotulo if c.iso9660 or c.chave == "NINTENDO" else "ISO original:",
+            "achada ao lado da pasta; ou escolha para o Maestro tirar as falas" if c.iso9660 else
+            f"a do seu {'cartucho' if c.midia == 'ROM' else 'disco'}, sem mudar nada (para criar o patch .{c.criar} "
+            "no fim)", "escolher_iso")
+        if not self.com_original:                       # Switch e PC: o mod/pacote sai da pasta da entrega
+            for item in cartao.grid_slaves(row=4):
+                item.grid_remove()
         faixa = self._faixa(cartao, 5, pady=(2, 14))
         self.bt_analisar = m._botao(faixa, "🔍  Analisar a ISO", self.acoes["analisar"])
         self.bt_analisar.pack(side="left")
@@ -174,6 +198,12 @@ class PainelDublarJogo(ctk.CTkScrollableFrame):
         self.lb_analise = m._rotulo(faixa, "   o que tem dentro do disco e o que o Maestro já troca sozinho",
                                     fonte=self._pequeno)
         self.lb_analise.pack(side="left")
+        if not c.iso9660:                               # (só PS2, PS1 e PSP: o Maestro abre o disco sozinho)
+            faixa.grid_remove()
+        if not self.ps2:
+            self.lb_guia = ctk.CTkLabel(cartao, text=f"Como tirar do {c.nome}: {c.guia}", font=self._pequeno,
+                                        text_color=Tema.TEXTO_SUAVE, anchor="w", justify="left", wraplength=1000)
+            self.lb_guia.grid(row=6, column=0, columnspan=3, sticky="w", padx=20, pady=(0, 14))
 
     def _montar_traducao(self) -> None:
         m = self.app
@@ -266,8 +296,13 @@ class PainelDublarJogo(ctk.CTkScrollableFrame):
 
     def _montar_entrega(self) -> None:
         m = self.app
+        c = self.console
         cartao = self._cartao(3, "4. Entregar", "o Maestro não mexe na ISO original: entrega os arquivos para a "
-                              "ferramenta do jogo colocar de volta numa cópia")
+                              "ferramenta do jogo colocar de volta numa cópia" if c.criar == "xdelta" else
+                              "o Maestro não mexe na ROM original: entrega os arquivos para a ferramenta do jogo "
+                              "colocar de volta numa cópia" if c.criar == "bps" else
+                              "o Maestro não mexe no jogo: entrega os arquivos traduzidos e cria o " +
+                              ("mod" if c.criar == "mod" else "pacote") + " para instalar")
         self.var_saida, self.bt_escolher_saida = self._linha_campo(
             cartao, 1, "Salvar em:", "a pasta da tradução (vazio: ao lado da pasta do jogo, com \" - PT-BR\")",
             "escolher_saida")
@@ -277,11 +312,11 @@ class PainelDublarJogo(ctk.CTkScrollableFrame):
         self.bt_entregar.pack(side="left")
         self.bt_abrir_saida = m._botao(faixa, "Abrir a pasta", self.acoes["abrir_saida"])
         self.bt_abrir_saida.pack(side="left", padx=(8, 0))
-        self.bt_criar_patch_jogo = m._botao(faixa, "📦  Criar o patch (.xdelta)", self.acoes["criar_patch"],
-                                            "fantasma")
+        self.bt_criar_patch_jogo = m._botao(faixa, CRIAR[c.criar], self.acoes["criar_patch"], "fantasma")
         self.bt_criar_patch_jogo.pack(side="left", padx=(8, 0))
         self.bt_montar = m._botao(faixa, "💿  Montar a ISO em português", self.acoes["montar"], "fantasma")
-        self.bt_montar.pack(side="left", padx=(8, 0))
+        if c.iso9660:
+            self.bt_montar.pack(side="left", padx=(8, 0))
         quadro = ctk.CTkFrame(cartao, fg_color=Tema.CAMPO, corner_radius=Tema.RAIO_CONTROLE)
         quadro.grid(row=3, column=0, columnspan=3, sticky="ew", padx=20, pady=(6, 4))
         self.lb_vai_gerar = ctk.CTkLabel(quadro, text="", font=m.f_rotulo, text_color=Tema.TEXTO, anchor="w",
@@ -442,7 +477,30 @@ class PainelDublarJogo(ctk.CTkScrollableFrame):
         if any(f.ouvida for f in self.falas):
             partes.append("falas_ouvidas.csv (o que o Whisper ouviu)")
         self.lb_vai_gerar.configure(text="Vai gerar:  " + "  +  ".join(partes))
-        if self.tem_mapa:
+        c = self.console
+        emulador = "o seu emulador" if c.emulador.startswith("o ") else f"o {c.emulador}"
+        if c.chave == "SWITCH":
+            depois = ("Depois, \"Criar o mod (.zip)\" junta as vozes em português com o TitleID do jogo (os textos "
+                      ".msbt traduzidos entram na mesma pasta romfs); o mod se instala em \"📦 Instalar a tradução\", "
+                      "no emulador ou no cartão SD.")
+        elif c.chave == "PC":
+            depois = ("Depois, \"Criar o pacote (.zip)\" junta os arquivos em português para instalar por cima da "
+                      "pasta onde estavam as vozes, em \"📦 Instalar a tradução\" (os originais ficam guardados e "
+                      "Desfazer devolve).")
+        elif c.criar == "bps":
+            depois = ("Depois, a ferramenta do jogo (ou de romhacking) põe o texto e as vozes em português numa cópia "
+                      f"da ROM; aí o Maestro cria o patch (.bps) para guardar ou compartilhar, e a ROM vai para "
+                      f"{emulador}.")
+        elif not c.iso9660:
+            depois = ("Depois, o Dolphin (ou a ferramenta do jogo) remonta a ISO com os arquivos em português; aí o "
+                      "Maestro cria o patch (.xdelta) para guardar ou compartilhar.")
+        elif not self.ps2:
+            depois = ("As falas saíram da ISO pelo Maestro: \"Montar a ISO em português\" põe cada uma no mesmo "
+                      "lugar, numa cópia; aí \"Criar o patch (.xdelta)\" guarda a tradução para compartilhar, e a ISO "
+                      f"vai para {emulador}." if self.tem_mapa else
+                      "Depois, a ferramenta de reinserção do jogo põe tudo numa cópia da ISO; aí o Maestro cria o "
+                      f"patch (.xdelta) para guardar ou compartilhar, e a ISO vai para {emulador}.")
+        elif self.tem_mapa:
             depois = ("As falas saíram da ISO pelo Maestro: \"Montar a ISO em português\" põe cada uma no mesmo "
                       "lugar, numa cópia; aí \"Criar o patch (.xdelta)\" guarda a tradução para compartilhar, e a ISO "
                       "vai para o OPL/PCSX2.")
@@ -464,4 +522,4 @@ class PainelDublarJogo(ctk.CTkScrollableFrame):
             botao.configure(state="normal" if dublaveis else "disabled")
         self.bt_entregar.configure(state="normal" if tem else "disabled")
         self.bt_montar.configure(state="normal" if self.tem_mapa and iso else "disabled")
-        self.bt_criar_patch_jogo.configure(state="normal" if iso else "disabled")
+        self.bt_criar_patch_jogo.configure(state="normal" if (iso if self.com_original else tem) else "disabled")

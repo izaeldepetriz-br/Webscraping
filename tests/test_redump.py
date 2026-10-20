@@ -40,5 +40,5 @@ def test_baixa_uma_vez_e_acha_a_iso_perfeita(tmp_path):
     assert len(baixados) == 1                                                  # guardado: não baixa de novo
     velho = redump.indice("PS2", tmp_path, lambda u, d, p: d.write_bytes(b"lixo"), agora=lambda: 9e12)
     assert velho["versao"] == "2026-06-15"                                     # veio estragada: fica a anterior
-    with pytest.raises(ErroPatch, match="só PS2 e PS1"):
+    with pytest.raises(ErroPatch, match="só os discos de PS2"):
         redump.indice("GameCube", tmp_path, baixar)

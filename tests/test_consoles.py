@@ -58,6 +58,8 @@ def test_cada_console_le_o_proprio_jogo(tmp_path):
     (tmp_path / "jogo.sfc").write_bytes(bytes(snes))
     info = cs.identificar(tmp_path / "jogo.sfc", "NINTENDO")
     assert (info.sistema, info.volume, info.regiao) == ("SNES", "MEU JOGO DE AVENTURA", "EUA")
+    (tmp_path / "jogo.sfc.parcial").write_bytes(bytes(snes))          # a cópia pela metade (o patch confere)
+    assert cs.identificar(tmp_path / "jogo.sfc.parcial", "NINTENDO").sistema == "SNES"
     gba = bytearray(0x200)
     gba[0xA0:0xAC], gba[0xAC:0xB0] = b"MEUJOGO\0\0\0\0\0", b"BMJP"
     (tmp_path / "jogo.gba").write_bytes(bytes(gba))
