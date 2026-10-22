@@ -259,6 +259,10 @@ primeira falha (antes esperava o tempo limite em cada filme).
     **▶ Abrir no emulador** (PC: "Jogar" pela Steam), **Abrir a pasta** e **🌐 Procurar no navegador**. Dois cliques
     abrem o jogo no submenu do console, já escolhido.
 
+- **Correção (zoom do Windows em 125%)**: a lista da aba Jellyfin ficava com uma linha só (cortada), com um espaço
+  vazio embaixo. O Windows informa o zoom depois que a janela abre, e as peças escondidas da tela voltavam sozinhas
+  nessa hora. Agora o que está escondido continua escondido, em todas as telas do Maestro.
+
 ### Novidades da v2.24.0
 
 - **Submenu por console na aba 🎮 Jogos**: a faixa **"Jogos →"** no topo escolhe **PlayStation 2, PlayStation 1, PSP,
