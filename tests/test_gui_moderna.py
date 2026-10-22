@@ -4759,6 +4759,40 @@ def test_aba_jellyfin_com_o_zoom_do_windows(app, monkeypatch):
     assert app.partes_visiveis_jf() == (False, False)
 
 
+def test_lista_jellyfin_quando_o_zoom_chega_depois(app):
+    """No Windows, o CustomTkinter descobre o zoom (125%) DEPOIS de a janela abrir e refaz o grid() de cada peça.
+    O que estava escondido (grid_remove) não pode voltar: a faixa vazia embaixo da tabela voltava com ~280 px e a
+    lista ficava espremida em uma linha (a imagem do usuário, com 270 arquivos)."""
+    import customtkinter as ctk
+    app.geometry("1880x1040")
+    app.mostrar_aba("Jellyfin")
+    for i in range(270):
+        app.adicionar_linha_jf(f"l{i}", i + 1, "já organizado", "ok", f"Filme {i} (2007).mkv",
+                               f"Filme {i} (2007).mkv", progresso="—", categoria="organizado", fonte="TMDB ✓")
+    tabela = app.tabela_jf
+    cartao, topo = tabela.master.master, app._topos_tabela[str(tabela)]
+    try:
+        ctk.set_widget_scaling(1.25)                        # (o que o CustomTkinter faz no Windows ao abrir)
+        for _ in range(15):
+            app.update()
+            time.sleep(0.02)
+        assert cartao.grid_slaves(row=2) == []              # a faixa escondida continua escondida
+        livre = cartao.winfo_height() - topo.winfo_height()
+        assert tabela.winfo_height() >= livre - 60 > 300, (tabela.winfo_height(), livre)
+        contador, _ = app._extras_tabela[str(tabela)]
+        assert contador.cget("text") == "270"
+        # esconder e mostrar de novo (grid() sem nada): volta no mesmo lugar
+        detalhe = app._cartao_detalhe_jf
+        detalhe.grid_remove()
+        assert not detalhe.winfo_manager()
+        detalhe.grid()
+        assert int(detalhe.grid_info()["row"]) == 1 and detalhe.grid_info()["sticky"] == "ew"
+        app._ajustar_altura_jf()
+    finally:
+        ctk.set_widget_scaling(1.0)
+        app.update()
+
+
 def test_janela_das_previas(app, tmp_path):
     """Ouvir abre a prévia; Descartar pergunta e apaga; Aprovar fecha a janela com a escolha."""
     from videoscraper.gui_moderna import JanelaPrevias

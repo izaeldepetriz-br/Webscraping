@@ -44,6 +44,31 @@ for _classe in (ctk.CTk, ctk.CTkToplevel):
         _classe._windows_set_titlebar_icon = _icone_do_maestro
 
 
+# O CustomTkinter anota o último grid() de cada peça e o refaz quando o zoom muda (no Windows, ele descobre os
+# 125% DEPOIS de a janela abrir). O grid_forget apaga a anotação, mas o grid_remove ("esconder por enquanto") não:
+# a peça escondida voltava sozinha. Na aba Jellyfin, a faixa vazia embaixo da tabela voltava com ~280 px e a lista
+# ficava espremida em uma linha. Aqui, esconder apaga a anotação (e o grid() sem nada traz de volta como estava).
+_grid_do_ctk = ctk.CTkBaseClass.grid
+
+
+def _esconder(self, **_kwargs) -> None:
+    self._grid_escondido = getattr(self, "_last_geometry_manager_call", None)
+    self._last_geometry_manager_call = None
+    tk.Grid.grid_remove(self)
+
+
+def _mostrar(self, **kwargs):
+    escondido = getattr(self, "_grid_escondido", None)
+    if not kwargs and escondido is not None:              # (volta com o mesmo lugar e o espaço do zoom de agora)
+        kwargs = dict(escondido["kwargs"])
+    self._grid_escondido = None
+    return _grid_do_ctk(self, **kwargs)
+
+
+ctk.CTkBaseClass.grid_remove = _esconder
+ctk.CTkBaseClass.grid = _mostrar
+
+
 # =============================================================================== tema
 class Tema:
     """Paleta e tipografia num só lugar: mudar a cara do app = mudar só aqui."""
@@ -5196,6 +5221,8 @@ class JanelaModerna(ctk.CTk):
                 cartao.grid_remove()
         # a altura mínima da linha do console vai junto: sem isso, o espaço continuava reservado e a lista não crescia
         self._corpo_jf.grid_rowconfigure(2, minsize=round(self.ALTURA_CONSOLE_JF * self._pontos()) if console else 0)
+        # (e a da lista, com o zoom de agora: no Windows ele só é conhecido depois de a janela abrir)
+        self._corpo_jf.grid_rowconfigure(0, minsize=round(self.MINIMO_LISTA_JF * self._pontos()))
 
     def _pontos(self) -> float:
         """Pixels por ponto: 1,25 com o zoom do Windows em 125%. O CTk aumenta os botões e as letras, mas a grade
