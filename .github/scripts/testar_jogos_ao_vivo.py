@@ -10,8 +10,10 @@
             e acento no nome, arquivo "somente leitura" e o .zip de programa antigo com "\\"), Desfazer e o pacote;
             no Switch, o mod na pasta de mods do emulador (em AppData) e no cartão SD; e o emulador achado em
             Arquivos de Programas. Nenhum jogo de verdade.
+  meus     — "🔎 Meus jogos" com os caminhos do Windows: a pasta de jogos (com espaço e acento), o padrão do OPL e a
+            biblioteca da Steam (appmanifest); da 2ª vez, só os arquivos novos. Nenhum jogo de verdade.
 
-Uso: python testar_jogos_ao_vivo.py sites|dublar|instalar <pasta_de_trabalho>
+Uso: python testar_jogos_ao_vivo.py sites|dublar|instalar|meus <pasta_de_trabalho>
 """
 import os
 import stat
@@ -186,7 +188,30 @@ def instalar(pasta: Path) -> None:
                                              f"{achado.parent.parent.name}; em {time.time() - t0:.1f} s")
 
 
+def meus(pasta: Path) -> None:
+    from jellyfin_tools import meus_jogos as mj
+    from tests.test_meus_jogos import biblioteca, steam
+    assert sys.platform == "win32", "este teste é para o Windows"
+    t0 = time.time()
+    raiz = pasta / "Meus Jogos Ação"
+    jogos = biblioteca(raiz)
+    comum = steam(raiz)
+    achados, lidos, ignorados = mj.varrer([jogos, comum])
+    por_titulo = {j.titulo: j for j in achados}
+    assert len(achados) == 8 and lidos == 8, (len(achados), lidos, sorted(por_titulo))
+    assert por_titulo["Aventura no Castelo"].codigo == "SLUS-20946"            # (o nome do OPL: SLUS_209.46.Nome.iso)
+    pc = por_titulo["Meu Jogo Indie"]
+    assert pc.caminho == str(comum / "Meu Jogo Indie") and "\\" in pc.caminho, pc.caminho
+    arquivo = pasta / "AppData" / "Roaming" / "Maestro" / "meus_jogos.json"
+    mj.salvar(arquivo, achados + ignorados)
+    _, lidos, _ = mj.varrer([jogos, comum], mj.carregar(arquivo))
+    assert lidos == 0, lidos                                                   # da 2ª vez, nada é aberto
+    contagem = mj.por_pasta(achados, [jogos, comum])
+    avisar("Meus jogos no Windows", f"{len(achados)} jogos ({contagem[str(jogos)][1]}; Steam: "
+                                    f"{contagem[str(comum)][1]}); da 2ª vez nada aberto; em {time.time() - t0:.1f} s")
+
+
 if __name__ == "__main__":
     qual, pasta = sys.argv[1], Path(sys.argv[2])
     pasta.mkdir(parents=True, exist_ok=True)
-    {"sites": sites, "dublar": dublar, "instalar": instalar}[qual](pasta)
+    {"sites": sites, "dublar": dublar, "instalar": instalar, "meus": meus}[qual](pasta)

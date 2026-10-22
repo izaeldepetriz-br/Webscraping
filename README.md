@@ -240,6 +240,25 @@ ficam guardadas enquanto o programa estiver aberto. Medido com 166 filmes e 0,2 
 episódio. Se a chave for recusada ou não houver internet, o programa para de insistir após a
 primeira falha (antes esperava o tempo limite em cada filme).
 
+### Novidades da v2.25.0
+
+- **🔎 Meus jogos** (o primeiro item da faixa "Jogos →"): o Maestro **acha os jogos que você já tem no PC**, separa
+  por console e procura a tradução de cada um. Ele só lê os seus arquivos: **não baixa jogos**, não move nem apaga
+  nada, e a busca na comunidade procura só patches.
+  - **Onde procurar**: as pastas que você escolhe (com as subpastas): o HD, o pendrive/HD do OPL e a biblioteca da
+    Steam. Ele acha ISO/BIN/IMG (PS2, PS1, PSP, GameCube/Wii), GCM/WBFS/RVZ, as ROMs (SNES, NES, GBA, GB/GBC, N64,
+    DS), NSP/XCI (as cópias do SEU cartucho do Switch) e os jogos de PC instalados pela Steam;
+  - **da 2ª vez em diante, só os arquivos novos** são abertos (o Maestro guarda o tamanho e a data de cada um);
+    opção de **procurar de novo sozinho ao abrir o Maestro**;
+  - **Os seus jogos**: filtros por console (com a quantidade), a busca pelo nome ou código e "Só com tradução / Só
+    sem tradução / Já traduzidos". Para cada jogo: o código, a região, a **cópia do disco** (perfeita no Redump,
+    modificada ou cartucho) e a **tradução PT-BR** ("✓ 2 patches · textos e dublagem", "✗ não tem → traduzir e
+    dublar", ou "já traduzida por você", pelos patches aplicados e as traduções instaladas);
+  - **O jogo escolhido**: as traduções achadas (o grupo, a versão, o que traz, se encaixa na sua cópia) e os
+    atalhos **🗣 Traduzir e dublar**, **📀 Aplicar patch** (ou 📦 Instalar, no Switch e no PC), **🖥 Enquanto joga**,
+    **▶ Abrir no emulador** (PC: "Jogar" pela Steam), **Abrir a pasta** e **🌐 Procurar no navegador**. Dois cliques
+    abrem o jogo no submenu do console, já escolhido.
+
 ### Novidades da v2.24.0
 
 - **Submenu por console na aba 🎮 Jogos**: a faixa **"Jogos →"** no topo escolhe **PlayStation 2, PlayStation 1, PSP,

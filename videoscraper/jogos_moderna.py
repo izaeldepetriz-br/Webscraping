@@ -85,7 +85,7 @@ class PatchDeJogos:
         self._paineis_patch: dict[str, PainelJogos] = {}     # um por console (as configurações não se misturam)
         self._modo_jogos = MODO_PATCH
         self._digitais: dict[tuple, pj.Digital] = {}   # (caminho, tamanho, data) -> impressão digital já medida
-        for iniciar in ("_iniciar_dublar_jogo", "_iniciar_enquanto_joga", "_iniciar_instalar"):
+        for iniciar in ("_iniciar_dublar_jogo", "_iniciar_enquanto_joga", "_iniciar_instalar", "_iniciar_meus_jogos"):
             if hasattr(self, iniciar):
                 getattr(self, iniciar)()
 
@@ -154,7 +154,8 @@ class PatchDeJogos:
             barra = ctk.CTkFrame(self.aba_jogos, fg_color="transparent")
             barra.grid(row=0, column=0, sticky="ew", padx=(28, 16), pady=(8, 0))
             self._rotulo(barra, "Jogos →", suave=False).pack(side="left", padx=(0, 10))
-            self.seletor_console_jogos = self._segmentado_jogos(barra, [c.nome for c in cs.CONSOLES.values()],
+            meus = ["🔎 Meus jogos"] if hasattr(self, "mostrar_meus_jogos") else []
+            self.seletor_console_jogos = self._segmentado_jogos(barra, meus + [c.nome for c in cs.CONSOLES.values()],
                                                                 self.mostrar_console_jogos)
             self.seletor_console_jogos.pack(side="left")
             barra = ctk.CTkFrame(self.aba_jogos, fg_color="transparent")
@@ -163,7 +164,12 @@ class PatchDeJogos:
             self.seletor_modo_jogos = self._segmentado_jogos(barra, list(MODOS), self.mostrar_modo_jogos)
             self.seletor_modo_jogos.pack(side="left")
             self.console_jogos = cs.console(self.preferencia_jogos("console", "PS2"))
-        self._trocar_console(self.console_jogos)
+            if self.preferencia_jogos("console", "PS2") == "MEUS" and hasattr(self, "mostrar_meus_jogos"):
+                self.em_meus_jogos = True                # (da última vez, ficou em "🔎 Meus jogos")
+        if getattr(self, "em_meus_jogos", False):
+            self.mostrar_meus_jogos()
+        else:
+            self._trocar_console(self.console_jogos)
 
     def _painel_patch(self, console: cs.Console) -> PainelJogos:
         painel = self._paineis_patch.get(console.chave)
@@ -184,6 +190,9 @@ class PatchDeJogos:
 
     def mostrar_console_jogos(self, nome: str) -> None:
         """O submenu "Jogos → ...": cada console com os seus painéis e as suas configurações."""
+        if nome == "🔎 Meus jogos" and hasattr(self, "mostrar_meus_jogos"):
+            self.mostrar_meus_jogos()
+            return
         console = next((c for c in cs.CONSOLES.values() if c.nome == nome), self.console_jogos)
         if console is not self.console_jogos and (self.trabalhando or getattr(self, "_auto_jogo", None) is not None):
             self.seletor_console_jogos.set(self.console_jogos.nome)
@@ -193,6 +202,8 @@ class PatchDeJogos:
         self._trocar_console(console)
 
     def _trocar_console(self, console: cs.Console) -> None:
+        if hasattr(self, "sair_de_meus_jogos"):
+            self.sair_de_meus_jogos()
         antigo, self.console_jogos = self.console_jogos, console
         if antigo is not console and hasattr(self, "_trocar_console_dublar"):
             self._trocar_console_dublar(antigo, console)
@@ -208,7 +219,8 @@ class PatchDeJogos:
 
     def _todos_os_paineis_jogos(self) -> list:
         return [*self._paineis_patch.values(), *getattr(self, "_paineis_dublar", {}).values(),
-                *getattr(self, "_paineis_instalar", {}).values(), self.painel_enquanto_joga]
+                *getattr(self, "_paineis_instalar", {}).values(), self.painel_enquanto_joga,
+                getattr(self, "painel_meus_jogos", None)]
 
     def mostrar_modo_jogos(self, modo: str) -> None:
         """Troca o modo da aba (e o subtítulo do topo, como no protótipo)."""
@@ -241,6 +253,9 @@ class PatchDeJogos:
             return
         if tipo.startswith("e_") and hasattr(self, "_mensagem_enquanto"):
             self._mensagem_enquanto(tipo, *dados)
+            return
+        if tipo.startswith("mj_") and hasattr(self, "_mensagem_meus_jogos"):
+            self._mensagem_meus_jogos(tipo, *dados)
             return
         if tipo.startswith("i_") and hasattr(self, "_mensagem_instalar"):
             self._mensagem_instalar(tipo, *dados)
@@ -503,13 +518,14 @@ class PatchDeJogos:
     def abrir_no_emulador(self, console: cs.Console, jogo: Path | None = None) -> None:
         """O emulador do console (PCSX2 fica no de cima): o achado no PC ou o escolhido antes; sem ele, pergunta."""
         nome = "o seu emulador" if console.emulador.startswith("o ") else f"o {console.emulador}"
-        exe = cs.achar_emulador(console.chave, self.preferencia_console("emulador", "", console))
+        chave = "pcsx2" if console.padrao else "emulador"          # (o do PS2 continua onde sempre ficou)
+        exe = cs.achar_emulador(console.chave, self.preferencia_console(chave, "", console))
         if exe is None:
             escolhido = filedialog.askopenfilename(parent=self, title=f"Onde está {nome}?", filetypes=TIPOS_PROGRAMA)
             if not escolhido:
                 return
             exe = Path(escolhido)
-            self.guardar_preferencia_console("emulador", str(exe), console)
+            self.guardar_preferencia_console(chave, str(exe), console)
         try:
             pj.abrir_no_pcsx2(jogo, exe) if jogo is not None else subprocess.Popen([str(exe)])
             self._log.info("Aberto em %s: %s", exe.name, jogo or "(só o emulador)")

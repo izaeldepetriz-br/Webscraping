@@ -80,6 +80,7 @@ from .audio_moderna import TrocaDeAudio
 from .dublar_jogos_moderna import DublagemDeJogos
 from .enquanto_joga_moderna import EnquantoJoga
 from .instalar_moderna import InstalarTraducao
+from .meus_jogos_moderna import MeusJogos
 from .jogos_moderna import PatchDeJogos
 from .vozes_moderna import ImportarVozes
 from .navegador import PERFIL_PADRAO, PlaywrightAusente
@@ -188,7 +189,7 @@ STATUS_LEGENDA = {"baixada": ("baixada", "ok"), "ja_existe": ("já existia", Non
 
 
 class AppModerna(TVAoVivo, TrocaDeAudio, ImportarVozes, PatchDeJogos, DublagemDeJogos, EnquantoJoga,
-                 InstalarTraducao, JanelaModerna):
+                 InstalarTraducao, MeusJogos, JanelaModerna):
     def __init__(self):
         super().__init__(pasta_padrao=PASTA_PADRAO)
         self._abandonadas: set[int] = set()          # tarefas que não obedeceram ao Parar a tempo

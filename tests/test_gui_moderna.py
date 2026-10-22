@@ -6043,8 +6043,9 @@ def test_aba_jogos_submenu_de_consoles(app, tmp_path, monkeypatch):
     from jellyfin_tools import patch_jogo as pj
     from videoscraper import config, jogos_moderna
     app.mostrar_aba("🎮 Jogos")
-    assert app.seletor_console_jogos.cget("values") == ["PlayStation 2", "PlayStation 1", "PSP", "Nintendo clássicos",
-                                                         "GameCube / Wii", "Nintendo Switch", "PC"]
+    assert app.seletor_console_jogos.cget("values") == ["🔎 Meus jogos", "PlayStation 2", "PlayStation 1", "PSP",
+                                                         "Nintendo clássicos", "GameCube / Wii", "Nintendo Switch",
+                                                         "PC"]
     assert app.seletor_console_jogos.get() == "PlayStation 2" and app.console_jogos.chave == "PS2"
     ps2 = app.painel_jogos
     assert app.seletor_modo_jogos.cget("values") == list(jogos_moderna.MODOS)
@@ -6232,3 +6233,125 @@ def test_aba_jogos_instalar_no_switch_e_no_pc(app, tmp_path, monkeypatch):
     app.mostrar_modo_jogos(jogos_moderna.MODO_DUBLAR)
     assert app.painel_dublar_jogo is not d and app.painel_dublar_jogo.bt_criar_patch_jogo.cget("text") == \
         "📦  Criar o mod (.zip)"
+
+
+def test_aba_jogos_meus_jogos(app, tmp_path, monkeypatch):
+    """🎮 Jogos → 🔎 Meus jogos (como no protótipo): as pastas, "Procurar agora" (acha, separa por console, confere
+    no Redump e procura a tradução de cada um; da 2ª vez só os arquivos novos), os filtros, o jogo escolhido e os
+    atalhos que abrem o jogo no submenu do console, já escolhido."""
+    import json
+
+    from jellyfin_tools import comunidade as cm
+    from jellyfin_tools import meus_jogos as mj
+    from tests.test_meus_jogos import biblioteca, steam
+    from videoscraper import config, jogos_moderna
+    from videoscraper import meus_jogos_moderna as mm
+    jogos = biblioteca(tmp_path)
+    comum = steam(tmp_path)
+    monkeypatch.setattr(mm, "PAUSA_ENTRE_BUSCAS", 0)
+    buscas = []
+
+    def procurar(termos, info, pasta, onde, quer, crc32="", sistema=""):
+        buscas.append(termos)
+        r = cm.Resultado()
+        if "Aventura no Castelo" in termos:
+            r.achados = [cm.Achado("PO.B.R.E", "Aventura no Castelo (Grupo Exemplo)", grupo="Grupo Exemplo",
+                                   versao="1.2", traz=["textos", "dublagem"], formato="PPF 3.0",
+                                   encaixa="✓ encaixa: o mesmo código do disco")]
+        return r
+    monkeypatch.setattr(cm, "procurar", procurar)
+    monkeypatch.setattr("jellyfin_tools.redump.indice", lambda sistema, pasta, *a, **k: {"md5": {}, "crc": {}})
+    abertos = []
+    monkeypatch.setattr(mm.webbrowser, "open", abertos.append)
+    app.mostrar_aba("🎮 Jogos")
+    app.mostrar_console_jogos("🔎 Meus jogos")
+    p = app.painel_meus_jogos
+    app.update()
+    assert p.winfo_ismapped() and app.em_meus_jogos and not app.seletor_modo_jogos.winfo_ismapped()
+    assert app.seletor_console_jogos.get() == "🔎 Meus jogos" and app.lb_subtitulo.cget("text") == mm.SUBTITULO
+    assert p.bt_procurar.cget("state") == "disabled" and p.bt_dublar.cget("state") == "disabled"
+    # 1. as pastas
+    escolhas = iter([str(jogos), str(comum)])
+    monkeypatch.setattr(mm.filedialog, "askdirectory", lambda **k: next(escolhas))
+    p.bt_adicionar.invoke()
+    p.bt_adicionar.invoke()
+    assert p.pastas == [str(jogos), str(comum)] and p.bt_procurar.cget("state") == "normal"
+    assert p.tabela_pastas.item(str(jogos), "values")[1] == "ainda não procurada"
+    # Procurar agora: os jogos por console, o Redump e a tradução de cada um
+    p.bt_procurar.invoke()
+    esperar(app)
+    assert len(p.jogos) == 8 and p.lb_andamento.cget("text").startswith("✓ 8 jogos · 8 arquivo(s) lidos agora")
+    assert p.seletor_filtro.cget("values") == ["Todos (8)", "PS2 (2)", "PS1 (1)", "PSP (1)", "Nintendo (1)",
+                                                "GC / Wii (1)", "Switch (1)", "PC (1)"]
+    assert p.tabela_pastas.item(str(comum), "values")[1:] == ("PC (1)", "1")
+    linhas = {p.tabela.item(i, "values")[1]: p.tabela.item(i, "values") for i in p.tabela.get_children()}
+    assert linhas["Burnout 3 - Takedown"][:5] == ("PlayStation 2", "Burnout 3 - Takedown", "SLUS-21050", "EUA",
+                                                  "⚠ não está no Redump")
+    assert linhas["Burnout 3 - Takedown"][5] == "✗ não tem → 🗣 traduzir e dublar"
+    assert linhas["Aventura no Castelo"][5] == "✓ 1 patch · textos e dublagem"
+    assert linhas["Meu Jogo de Aventura"][4] == "— cartucho (sem Redump)"
+    assert linhas["Meu Jogo Indie"][4] == "— (jogo de PC)" and len(buscas) == 8
+    assert p.lb_resumo.cget("text").startswith("1 com tradução · 7 sem tradução")
+    guardado = json.loads((config.ARQUIVO.parent / "meus_jogos.json").read_text(encoding="utf-8"))
+    assert len(guardado["jogos"]) == 9                                # (8 jogos + o config.bin, que não é jogo)
+    # os filtros: por console, pelo nome e "Só com tradução"
+    p._escolheu_filtro("PS2 (2)")
+    assert len(p.tabela.get_children()) == 2
+    p._escolheu_filtro("Todos (8)")
+    p.var_busca.set("castelo")
+    assert [p.tabela.item(i, "values")[1] for i in p.tabela.get_children()] == ["Aventura no Castelo"]
+    p.var_busca.set("")
+    p.var_so.set("Só com tradução")
+    assert len(p.tabela.get_children()) == 1
+    p.var_so.set("Tradução: todas")
+    # o jogo escolhido
+    aventura = next(i for i in p.tabela.get_children() if p.tabela.item(i, "values")[1] == "Aventura no Castelo")
+    p.tabela.selection_set(aventura)
+    p.tabela.focus(aventura)
+    p.mostrar_escolhido(p.selecionado())
+    assert p.lb_escolhido.cget("text") == "Aventura no Castelo" and "SLUS-20946" in p.lb_escolhido_dica.cget("text")
+    assert "PO.B.R.E: Aventura no Castelo (Grupo Exemplo) · Grupo Exemplo · v1.2" in p.lb_traducoes.cget("text")
+    assert p.bt_emulador.cget("text") == "▶  Abrir no PCSX2" and p.bt_dublar.cget("state") == "normal"
+    p.bt_navegador.invoke()
+    assert abertos[0].startswith("https://www.romhacking.net/") and "itch.io" in abertos[1]
+    # dois cliques: com tradução, abre o PS2 no "Aplicar patch" com a ISO já lida (e a impressão já medida)
+    p._abrir(None)
+    app.update()
+    assert not app.em_meus_jogos and app.seletor_console_jogos.get() == "PlayStation 2"
+    assert app.seletor_modo_jogos.get() == jogos_moderna.MODO_PATCH and app.seletor_modo_jogos.winfo_ismapped()
+    assert app.painel_jogos.var_iso.get() == aventura and "SLUS-20946" in app.painel_jogos.info_jogo["jogo"].cget(
+        "text")
+    assert app.painel_jogos.digital is not None and not p.winfo_viewable()
+    # o PC (Steam): "Instalar a tradução" com a pasta do jogo; o PSP: Traduzir e dublar com a ISO
+    app.mostrar_console_jogos("🔎 Meus jogos")
+    pc = next(j for j in p.jogos if j.console == "PC")
+    p.acoes["abrir"](pc, "patch")
+    assert app.console_jogos.chave == "PC" and app.painel_instalar.var_destino.get() == pc.caminho
+    app.mostrar_console_jogos("🔎 Meus jogos")
+    psp = next(j for j in p.jogos if j.console == "PSP")
+    p.acoes["abrir"](psp, None)                                     # sem tradução: Traduzir e dublar
+    assert app.console_jogos.chave == "PSP" and app.seletor_modo_jogos.get() == jogos_moderna.MODO_DUBLAR
+    assert app.painel_dublar_jogo.var_iso.get() == psp.caminho
+    p.acoes["emulador"](pc)
+    assert abertos[-1] == "steam://rungameid/123450"
+    # da 2ª vez, só os arquivos novos (e a tradução guardada não é procurada de novo)
+    app.mostrar_console_jogos("🔎 Meus jogos")
+    buscas.clear()
+    p.bt_procurar.invoke()
+    esperar(app)
+    assert p.lb_andamento.cget("text").startswith("✓ 8 jogos · 0 arquivo(s) lidos agora") and buscas == []
+    # a pasta sai da lista (os arquivos ficam)
+    p.tabela_pastas.selection_set(str(comum))
+    p.tabela_pastas.focus(str(comum))
+    p.bt_tirar.invoke()
+    assert p.pastas == [str(jogos)] and len(p.jogos) == 7 and comum.is_dir()
+    assert app.preferencia_jogos("meus_jogos")["pastas"] == [str(jogos)]
+    assert mj.carregar(config.ARQUIVO.parent / "meus_jogos.json")
+    # "Procurar de novo sozinho ao abrir o Maestro" (fica guardado; procura quando a janela está livre)
+    p.var_sozinho.set(True)
+    assert app._mj_preferencias()["sozinho"] is True
+    app._mj_ao_abrir_o_maestro()
+    esperar(app)
+    assert p.lb_andamento.cget("text").startswith("✓ 7 jogos · 0 arquivo(s) lidos agora")
+    app.mostrar_console_jogos("PlayStation 2")
+    assert app.preferencia_jogos("console") == "PS2"
