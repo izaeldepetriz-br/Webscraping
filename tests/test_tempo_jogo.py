@@ -18,6 +18,8 @@ def test_estima_cada_etapa_e_aprende_a_velocidade_do_pc(tmp_path):
     # no processador, 9 vezes mais devagar; sem ISO, não monta
     lento = tj.estimar(v, falas=2000, placa=False)
     assert [e.chave for e in lento] == ["dublar", "entregar"] and tj.legivel(lento[0].segundos) == "15 h 02 min"
+    # só legendar: traduz e entrega o roteiro (sem dublar nem montar)
+    assert [e.chave for e in tj.estimar(v, textos=500)] == ["traduzir", "entregar"]
     # o PC mediu 2 s por fala (300 falas em 660 s, tirando 1 min de abrir): a próxima estimativa usa a medida
     v.medir("dublar:XTTS-v2:placa", 300, 660)
     assert v.de("dublar:XTTS-v2:placa") == 2.0

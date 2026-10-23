@@ -194,6 +194,16 @@ def traduzir_ouvidas(falas: list[FalaJogo], tradutor, glossario: tuple = (), tir
     return resumo
 
 
+def entradas_faladas(falas: list[FalaJogo]) -> list:
+    """As Entradas do roteiro que têm voz (as que a dublagem precisa traduzir), sem repetir, na ordem das falas."""
+    vistas, entradas = set(), []
+    for fala in falas:
+        if fala.entrada is not None and id(fala.entrada) not in vistas:
+            vistas.add(id(fala.entrada))
+            entradas.append(fala.entrada)
+    return entradas
+
+
 def ligar_traducoes(falas: list[FalaJogo]) -> None:
     """As falas do roteiro recebem a tradução (e os avisos) da Entrada delas."""
     for fala in falas:
@@ -450,15 +460,17 @@ def amostra(falas: list[FalaJogo], pasta_saida: str | Path, destino: str | Path,
 
 
 # ----------------------------------------------------------------- entregar
-def entregar(roteiro: Roteiro | None, falas: list[FalaJogo], pasta_saida: str | Path) -> list[Path]:
+def entregar(roteiro: Roteiro | None, falas: list[FalaJogo], pasta_saida: str | Path, legendar: bool = True,
+             dublar: bool = True) -> list[Path]:
     """roteiro_ptbr (as mesmas colunas do original), falas_ouvidas.csv (as que o Whisper ouviu, para revisar) e o
-    relatório. As vozes já estão em audio_ptbr\\ (com os mesmos nomes de arquivo)."""
+    relatório. As vozes já estão em audio_ptbr\\ (com os mesmos nomes de arquivo). Só legendar: sem as vozes (ficam
+    as originais); só dublar: sem o roteiro_ptbr (os textos do jogo ficam como estão)."""
     pasta_saida = Path(pasta_saida)
     pasta_saida.mkdir(parents=True, exist_ok=True)
     feitos = []
-    if roteiro is not None and roteiro.traduzidas():
+    if legendar and roteiro is not None and roteiro.traduzidas():
         feitos.append(gravar_roteiro(roteiro, pasta_saida / f"{roteiro.arquivo.stem}_ptbr{roteiro.arquivo.suffix}"))
-    ouvidas = [f for f in falas if f.ouvida]
+    ouvidas = [f for f in falas if f.ouvida] if dublar else []
     if ouvidas:
         import csv
         arquivo = pasta_saida / "falas_ouvidas.csv"
@@ -468,13 +480,16 @@ def entregar(roteiro: Roteiro | None, falas: list[FalaJogo], pasta_saida: str | 
             for f in ouvidas:
                 escritor.writerow([f.relativo, f.texto, f.traducao, f.voz, "; ".join(f.avisos)])
         feitos.append(arquivo)
-    linhas = ["Tradução e dublagem do jogo (Maestro)", ""]
+    o_que = "Tradução e dublagem" if legendar and dublar else "Tradução (legendas)" if legendar else "Dublagem"
+    linhas = [f"{o_que} do jogo (Maestro)", ""]
     if roteiro is not None:
         linhas += [f"Roteiro: {roteiro.arquivo.name} · {len(roteiro.com_texto)} textos · {roteiro.traduzidas()} "
                    f"traduzidos · {roteiro.ajustes()} para conferir"]
-    dubladas = [f for f in falas if f.feito]
+    dubladas = [f for f in falas if f.feito] if dublar else []
     linhas += [f"Vozes: {len(falas)} falas gravadas · {len(dubladas)} dubladas (em {PASTA_SAIDA_AUDIO}\\, com os "
-               "mesmos nomes de arquivo)", ""]
+               "mesmos nomes de arquivo)" if dublar else "Vozes: as originais (só a legenda em português)", ""]
+    if not legendar and roteiro is not None:
+        linhas += ["Textos: os do jogo, como estão (só a dublagem em português)", ""]
     conferir = [(e.chave, e.texto, e.traducao, "; ".join(e.avisos)) for e in (roteiro.entradas if roteiro else [])
                 if e.avisos]
     conferir += [(f.relativo, f.texto, f.traducao, "; ".join(f.avisos)) for f in ouvidas if f.avisos]
@@ -488,9 +503,10 @@ def entregar(roteiro: Roteiro | None, falas: list[FalaJogo], pasta_saida: str | 
                       "duble de novo):")
         linhas += [f"  {f.relativo}: sobraram {f.feito['cortada']:.2f} s".replace(".", ",") for f in cortadas]
         linhas.append("")
-    linhas += ["Próximo passo: a ferramenta do jogo põe roteiro_ptbr e audio_ptbr de volta numa CÓPIA da ISO (ou o "
-               "Maestro, se as falas saíram da ISO por ele: \"Montar a ISO em português\"). Depois, \"Criar o patch "
-               "(.xdelta)\" para compartilhar sem compartilhar o jogo."]
+    volta = "roteiro_ptbr e audio_ptbr" if legendar and dublar else "roteiro_ptbr" if legendar else "audio_ptbr"
+    linhas += [f"Próximo passo: a ferramenta do jogo põe {volta} de volta numa CÓPIA da ISO" + (
+        " (ou o Maestro, se as falas saíram da ISO por ele: \"Montar a ISO em português\")" if dublar else "") +
+        ". Depois, \"Criar o patch (.xdelta)\" para compartilhar sem compartilhar o jogo."]
     relatorio = pasta_saida / "relatorio_traducao.txt"
     relatorio.write_text("\n".join(linhas) + "\n", encoding="utf-8")
     feitos.append(relatorio)

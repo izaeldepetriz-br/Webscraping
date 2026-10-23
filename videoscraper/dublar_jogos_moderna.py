@@ -4,6 +4,10 @@
 O que fica guardado na pasta da entrega (".maestro"): as traduções (traducao.json: a mesma frase não é traduzida de
 novo, e o que você corrigiu vale para sempre), as vozes escolhidas na tabela e as falas já dubladas (retomar).
 
+Cada jogo tem as suas marcações 📝 Legendar e 🗣 Dublar (em jogos.json > "marcacoes", pelo caminho da ISO, da ROM ou
+da pasta): só legendar traduz os textos e entrega o roteiro em português (as vozes ficam as originais); só dublar
+traduz só as falas que têm voz, dubla e monta (os textos do jogo ficam como estão).
+
 Cada console do submenu "Jogos →" tem o seu painel (o que você abriu no PS2 continua lá quando volta), e o fim muda:
 o .xdelta nos discos, o .bps nas ROMs, o mod .zip no Switch e o pacote .zip no PC.
 """
@@ -35,6 +39,8 @@ NOMES_DE_ROTEIRO = ("roteiro", "script", "texto", "textos", "strings", "dialog",
 ARQUIVO_MEMORIA = "traducao.json"
 ARQUIVO_ELENCO = "elenco.json"
 CRIAR_NOME = {"xdelta": "Criar o patch", "bps": "Criar o patch", "mod": "Criar o mod", "pacote": "Criar o pacote"}
+MARCACOES = "marcacoes"                 # jogos.json > "marcacoes": {caminho do jogo: [legendar, dublar]}
+MARQUE = "Marque 📝 Legendar e/ou 🗣 Dublar (em cima, no ⏱ Tempo deste jogo): o Maestro faz só o que está marcado."
 
 
 class DublagemDeJogos:
@@ -70,14 +76,53 @@ class DublagemDeJogos:
                 "trocar_voz": self.d_trocar_voz, "dublar": self.d_dublar, "dublar_teste": lambda: self.d_dublar(5),
                 "ouvir": self.d_ouvir, "editar_fala": self.d_editar_fala, "escolher_saida": self.d_escolher_saida,
                 "entregar": self.d_entregar, "abrir_saida": self.d_abrir_saida, "montar": self.d_montar,
-                "criar_patch": self.d_criar_patch, "automatico": self.d_automatico}, console)
+                "criar_patch": self.d_criar_patch, "automatico": self.d_automatico,
+                "marcacoes": self._ao_mudar_marcacoes}, console)
             self._paineis_dublar[console.chave] = self.painel_dublar_jogo
             p = self.painel_dublar_jogo
             p.var_iso.trace_add("write", lambda *_: p.atualizar())
+            for var in (p.var_iso, p.var_pasta):        # outro jogo: as marcações dele
+                var.trace_add("write", lambda *_, p=p: self._carregar_marcacoes(p))
             for var in (p.var_quem_traduz, p.var_motor, p.var_ouvir):
                 var.trace_add("write", lambda *_: self._atualizar_tempo_jogo())
             p.mostrar_estimativas(motor=self._estado_do_motor())
         return self.painel_dublar_jogo
+
+    # ------------------------------------------------------------------ 📝 Legendar / 🗣 Dublar: as de cada jogo
+    def marcacoes_do_jogo(self, caminho: str | Path) -> tuple[bool, bool] | None:
+        """(legendar, dublar) guardados para este jogo (a ISO, a ROM ou a pasta), ou None (nunca marcado)."""
+        guardadas = self.preferencia_jogos(MARCACOES, {})
+        if not str(caminho).strip() or not isinstance(guardadas, dict):
+            return None
+        valor = guardadas.get(str(Path(caminho)))
+        return (bool(valor[0]), bool(valor[1])) if isinstance(valor, list) and len(valor) == 2 else None
+
+    def guardar_marcacoes(self, caminhos, legendar: bool, dublar: bool) -> None:
+        guardadas = self.preferencia_jogos(MARCACOES, {})
+        guardadas = guardadas if isinstance(guardadas, dict) else {}
+        for caminho in caminhos:
+            if str(caminho).strip():
+                guardadas[str(Path(caminho))] = [bool(legendar), bool(dublar)]
+        self.guardar_preferencia_jogos(MARCACOES, guardadas)
+
+    @staticmethod
+    def _jogo_da_tela(p: PainelDublarJogo) -> str:
+        """O jogo do painel nas marcações: a ISO (ou a ROM) e, sem ela (Switch, PC), a pasta."""
+        return p.var_iso.get().strip() or p.var_pasta.get().strip()
+
+    def _carregar_marcacoes(self, p: PainelDublarJogo) -> None:
+        """Outro jogo no painel: as marcações guardadas dele (um jogo nunca marcado fica com as que estão na tela)."""
+        guardadas = self.marcacoes_do_jogo(self._jogo_da_tela(p))
+        if guardadas is not None:
+            p.marcar(*guardadas)
+
+    def _ao_mudar_marcacoes(self, guardar: bool = True) -> None:
+        p = self.painel_dublar_jogo
+        if p is None or not p.winfo_exists():
+            return
+        if guardar and self._jogo_da_tela(p):
+            self.guardar_marcacoes([self._jogo_da_tela(p)], *p.marcacoes())
+        self._atualizar_tempo_jogo()
 
     # ------------------------------------------------------------------ ajudantes
     def _pasta_jogo(self) -> Path | None:
@@ -211,9 +256,10 @@ class DublagemDeJogos:
             self._refazer_elenco()
             self._atualizar_tempo_jogo()
         elif tipo == "d_entregue":
-            arquivos, saida = dados
-            p.mostrar_entrega("✓ Pronto em " + str(saida) + ": " + ", ".join(a.name for a in arquivos) +
-                              f" e {dj.PASTA_SAIDA_AUDIO}\\")
+            arquivos, saida, dublar = dados
+            nomes = [a.name for a in arquivos] + ([f"{dj.PASTA_SAIDA_AUDIO}\\"] if dublar else [])
+            p.mostrar_entrega("✓ Pronto em " + str(saida) + ": " + (", ".join(nomes[:-1]) + " e " + nomes[-1]
+                                                                    if len(nomes) > 1 else nomes[0]))
         elif tipo == "d_montado":
             m, = dados
             p.iso_montada = m.destino
@@ -245,21 +291,31 @@ class DublagemDeJogos:
         except (OSError, ValueError, TypeError):
             return set()
 
+    def _entradas_a_traduzir(self) -> list:
+        """Do roteiro, o que as marcações pedem: tudo (📝 Legendar) ou só as falas que têm voz (só 🗣 Dublar)."""
+        p = self.painel_dublar_jogo
+        legendar, dublar = p.marcacoes()
+        if p.roteiro is None or not (legendar or dublar):
+            return []
+        return p.roteiro.com_texto if legendar else [e for e in dj.entradas_faladas(p.falas) if e.texto.strip()]
+
     def _etapas_do_jogo(self) -> list:
         """O que ainda falta neste jogo, com o tempo de cada etapa (lê a tela: só na tarefa principal)."""
         p = self.painel_dublar_jogo
         o = self.obter_opcoes_jellyfin()
-        ouvir = p.var_ouvir.get()
+        legendar, dublar = p.marcacoes()
+        ouvir = p.var_ouvir.get() and dublar
         sem_texto = [f for f in p.falas if f.formato is not None and not f.texto.strip()] if ouvir else []
-        pendentes = [e for e in (p.roteiro.com_texto if p.roteiro is not None else []) if not e.traducao]
-        ouvidas = [f for f in p.falas if f.ouvida and not f.traducao]
+        pendentes = [e for e in self._entradas_a_traduzir() if not e.traducao]
+        ouvidas = [f for f in p.falas if f.ouvida and not f.traducao] if dublar else []
         textos = len(pendentes) + len(ouvidas) + len(sem_texto)
         feitas = self._ja_dubladas()
         falas = sum(1 for f in p.falas if f.formato is not None and f.relativo not in feitas
-                    and (f.traducao or f.texto.strip() or ouvir))
+                    and (f.traducao or f.texto.strip() or ouvir)) if dublar else 0
         iso = Path(p.var_iso.get().strip()) if p.var_iso.get().strip() else None
         montada = p.iso_montada is not None and Path(p.iso_montada).is_file() and not falas
-        iso_mb = iso.stat().st_size / 1e6 if p.tem_mapa and iso is not None and iso.is_file() and not montada else 0.0
+        iso_mb = iso.stat().st_size / 1e6 if dublar and p.tem_mapa and iso is not None and iso.is_file() and \
+            not montada else 0.0
         quem = ("Claude", "Gemini", "Argos")[QUEM_TRADUZ.index(p.var_quem_traduz.get())]
         motor = ("XTTS-v2", "Gemini", "Google Cloud", "Piper")[MOTORES.index(p.var_motor.get())]
         custos = {"traduzir": "grátis" if quem == "Argos" else "grátis (chave grátis)" if quem == "Gemini" else "pago",
@@ -287,7 +343,11 @@ class DublagemDeJogos:
         except (OSError, ValueError) as erro:
             self._log.info("Tempo do jogo: %s", erro)
             return
-        p.mostrar_tempo_jogo(tj.resumo(etapas) if etapas else "✓ nada falta: tudo traduzido e dublado")
+        legendar, dublar = p.marcacoes()
+        p.mostrar_tempo_jogo(tj.resumo(etapas) if etapas else
+                             "nada marcado: marque 📝 Legendar e/ou 🗣 Dublar" if not (legendar or dublar) else
+                             "✓ nada falta: " + ("tudo traduzido e dublado" if legendar and dublar else
+                                                 "tudo traduzido" if legendar else "tudo dublado"))
 
     def _cronometro_jogo(self, *chaves: str) -> tuple:
         """(Cronometro destas etapas, o começo do texto, {etapa: chave da velocidade}). No 🤖 Automático, o tempo
@@ -318,9 +378,12 @@ class DublagemDeJogos:
         if self.trabalhando or self._auto_jogo is not None:
             self.mostrar_mensagem("🤖 Automático", "Espere a tarefa de agora terminar.", "aviso")
             return
+        if not any(p.marcacoes()):
+            self.mostrar_mensagem("🤖 Automático", MARQUE, "aviso")
+            return
         etapas = self._etapas_do_jogo()
         if not etapas:
-            self.mostrar_mensagem("🤖 Automático", "Nada falta neste jogo: tudo já foi traduzido e dublado.", "info")
+            self.mostrar_mensagem("🤖 Automático", "Nada falta neste jogo: o que está marcado já foi feito.", "info")
             return
         jogo = p.info["jogo"].cget("text") if "jogo" in p.info else ""
         self.janela_automatico_jogo = JanelaAutomaticoJogo(
@@ -333,8 +396,10 @@ class DublagemDeJogos:
             self.mostrar_mensagem("🤖 Automático", "Espere a tarefa de agora terminar.", "aviso")
             return
         p.var_ouvir.set("ouvir" in marcadas)
+        dublar = p.marcacoes()[1]
         passos = [e for e in ("traduzir", "dublar", "entregar", "montar")
-                  if e in marcadas or (e == "traduzir" and "ouvir" in marcadas)]
+                  if (e in marcadas or (e == "traduzir" and "ouvir" in marcadas))
+                  and (dublar or e not in ("dublar", "montar"))]
         if not passos:
             return
         self._auto_jogo = {"passos": passos, "total": len(passos), "feito": 0, "atual": passos[0],
@@ -556,8 +621,13 @@ class DublagemDeJogos:
         except automacao.FaltaConfiguracao as erro:
             self.mostrar_mensagem("Traduzir", str(erro), "aviso")
             return
+        legendar, dublar = p.marcacoes()
+        if not (legendar or dublar):
+            self.mostrar_mensagem("Traduzir", MARQUE, "aviso")
+            return
         roteiro, falas = p.roteiro, p.falas
-        glossario, sem_acentos, ouvir = self._glossario(), p.var_sem_acentos.get(), p.var_ouvir.get()
+        glossario, sem_acentos, ouvir = self._glossario(), p.var_sem_acentos.get(), p.var_ouvir.get() and dublar
+        entradas = None if legendar else self._entradas_a_traduzir()   # só dublar: só as falas que têm voz
         saida = self._saida_jogo()
         crono, prefixo, chaves = self._cronometro_jogo(*(("ouvir", "traduzir") if ouvir else ("traduzir",)))
         velocidades = self._velocidades()
@@ -583,12 +653,13 @@ class DublagemDeJogos:
                                           time.monotonic() - inicio)
                 inicio_traducao = time.monotonic()
                 resumo = rj.ResumoTraducao()
-                if roteiro is not None:
+                if roteiro is not None and (entradas is None or entradas):
                     resumo = rj.traduzir_roteiro(roteiro, tradutor, glossario, sem_acentos, self._memoria_jogo, so,
                                                  self.evento_parar.is_set,
-                                                 lambda f: andamento(0.3 + 0.6 * f, f"Traduzindo: {f:.0%}"))
+                                                 lambda f: andamento(0.3 + 0.6 * f, f"Traduzindo: {f:.0%}"),
+                                                 entradas=entradas)
                 dj.ligar_traducoes(falas)
-                ouvidas = [f for f in falas if f.ouvida]
+                ouvidas = [f for f in falas if f.ouvida] if dublar else []
                 if ouvidas:
                     r2 = dj.traduzir_ouvidas(ouvidas[:so] if so else ouvidas, tradutor, glossario, sem_acentos,
                                              self._memoria_jogo, self.evento_parar.is_set,
@@ -611,7 +682,8 @@ class DublagemDeJogos:
                            resumo.reaproveitadas, resumo.encurtadas, resumo.passaram, resumo.sem_codigo)
             self.fila.put(("jogos", ("d_traduzido", resumo)))
 
-        self._rodar("Traduzindo o jogo" + (f" (as {so} primeiras)" if so else "") + "...", tarefa)
+        self._rodar(("Traduzindo o jogo" if legendar else "Traduzindo as falas do jogo") +
+                    (f" (as {so} primeiras)" if so else "") + "...", tarefa)
 
     def d_editar(self) -> None:
         """Dois cliques numa linha: corrigir a tradução (vale para todas as vezes que o texto aparece)."""
@@ -702,6 +774,10 @@ class DublagemDeJogos:
         saida = self._saida_jogo()
         if saida is None:
             return
+        if not p.marcacoes()[1]:
+            self.mostrar_mensagem("Dublar no PC", "Este jogo está só com 📝 Legendar: marque 🗣 Dublar (em cima, no "
+                                  "⏱ Tempo deste jogo) para dublar as falas.", "aviso")
+            return
         o = self._opcoes_do_jogo()
         falas = p.falas
         alvo = falas_so if falas_so is not None else ([f for f in falas if f.formato is not None and f.traducao][:so]
@@ -790,15 +866,20 @@ class DublagemDeJogos:
         saida = self._saida_jogo()
         if saida is None:
             return
+        legendar, dublar = p.marcacoes()
+        if not (legendar or dublar):
+            self.mostrar_mensagem("Entregar", MARQUE, "aviso")
+            return
         roteiro, falas = p.roteiro, p.falas
 
         def tarefa():
-            arquivos = dj.entregar(roteiro, falas, saida)
+            arquivos = dj.entregar(roteiro, falas, saida, legendar, dublar)
             self._guardar_memoria_jogo(saida)
             self._log.info("Tradução do jogo entregue em %s: %s", saida, ", ".join(a.name for a in arquivos))
-            self.fila.put(("jogos", ("d_entregue", arquivos, saida)))
+            self.fila.put(("jogos", ("d_entregue", arquivos, saida, dublar)))
 
-        self._rodar("Gerando o roteiro e as vozes em português...", tarefa)
+        self._rodar("Gerando " + ("o roteiro e as vozes" if legendar and dublar else "o roteiro" if legendar else
+                                  "as vozes") + " em português...", tarefa)
 
     def d_abrir_saida(self) -> None:
         saida = self._saida_jogo()
@@ -810,6 +891,11 @@ class DublagemDeJogos:
         p = self.painel_dublar_jogo
         iso, pasta, saida = Path(p.var_iso.get().strip()), self._pasta_jogo(), self._saida_jogo()
         if not (iso.is_file() and pasta and saida):
+            return
+        if not p.marcacoes()[1]:
+            self.mostrar_mensagem("Montar a ISO", "Montar troca as vozes da ISO: marque 🗣 Dublar (em cima) para "
+                                  "dublar este jogo. Só legendar: o roteiro em português volta ao jogo pela ferramenta "
+                                  "da comunidade (a mesma que tirou os textos).", "aviso")
             return
         console = p.console
         try:
@@ -851,6 +937,12 @@ class DublagemDeJogos:
         c = p.console
         if not p.com_original:
             saida = self._saida_jogo()
+            if not p.marcacoes()[1]:                    # só legendar: os arquivos do jogo com o texto devolvido
+                pasta = filedialog.askdirectory(parent=self, title="A pasta com os arquivos do jogo já com o texto em "
+                                                "português (da ferramenta da comunidade)")
+                if pasta:
+                    self.i_criar(Path(pasta), f"{Path(pasta).name} PT-BR (Maestro)")
+                return
             audio = saida / dj.PASTA_SAIDA_AUDIO if saida is not None else None
             if audio is None or not audio.is_dir() or not any(audio.iterdir()):
                 self.mostrar_mensagem(CRIAR_NOME[c.criar], "Gere primeiro o roteiro e as vozes em português (📝 no "

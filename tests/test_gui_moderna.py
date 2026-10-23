@@ -5991,6 +5991,71 @@ def test_aba_jogos_tempo_e_automatico(app, tmp_path, monkeypatch):
     assert p.lb_tempo_jogo.cget("text") == "✓ nada falta: tudo traduzido e dublado"
 
 
+
+def test_aba_jogos_legendar_e_dublar(app, tmp_path, monkeypatch):
+    """🎮 Jogos, "Traduzir e dublar": as marcações de cada jogo, ☑ 📝 Legendar e ☑ 🗣 Dublar, cada uma por si. Só
+    dublar traduz só as falas que têm voz (o menu fica como está); só legendar não dubla nem monta e entrega o roteiro
+    em português, sem vozes; sem nenhuma, nada começa. Cada jogo guarda as suas."""
+    from jellyfin_tools import roteiro_jogo as rj
+    from tests.test_dublar_jogo import jogo
+    from tests.test_roteiro_jogo import ClienteJogo
+    from videoscraper import dublar_jogos_moderna as dm
+    from videoscraper import jogos_moderna
+    app.mostrar_aba("🎮 Jogos")
+    app.mostrar_modo_jogos(jogos_moderna.MODO_DUBLAR)
+    p = app.painel_dublar_jogo
+    assert p.marcacoes() == (True, True) and p.lb_marcacoes.cget("text").startswith("os textos, os menus")
+    pasta, _ = jogo(tmp_path)
+    p.var_pasta.set(str(pasta))
+    p.var_ouvir.set(False)
+    p.bt_ler.invoke()
+    esperar(app)
+    assert len(p.roteiro.com_texto) == 5 and p.bt_entregar.cget("text") == "📝  Gerar roteiro e vozes em português"
+    monkeypatch.setattr(dm.DublagemDeJogos, "_tradutor_do_jogo", lambda self, o: rj.TradutorJogo(
+        cliente=ClienteJogo()))
+    # só 🗣 Dublar: traduz só as falas que têm voz; o "New game" do menu fica como está
+    p.cx_legendar.toggle()
+    assert p.marcacoes() == (False, True) and app.marcacoes_do_jogo(pasta) == (False, True)
+    assert p.bt_entregar.cget("text") == "📝  Gerar as vozes em português"
+    assert p.lb_marcacoes.cget("text").startswith("só as vozes")
+    assert "roteiro_ptbr" not in p.lb_vai_gerar.cget("text") and "audio_ptbr" in p.lb_vai_gerar.cget("text")
+    p.bt_traduzir.invoke()
+    esperar(app)
+    por_chave = {e.chave: e for e in p.roteiro.entradas}
+    assert por_chave["1"].traducao == "Abra o portão!" and por_chave["MAYA_01"].traducao
+    assert not por_chave["4"].traducao and "dublar" in p.lb_tempo_jogo.cget("text")
+    # nenhuma marcada: nada começa
+    p.cx_dublar.toggle()
+    assert p.marcacoes() == (False, False) and p.bt_traduzir.cget("state") == "disabled"
+    assert p.bt_entregar.cget("state") == "disabled" and p.lb_marcacoes.cget("text") == "marque pelo menos um"
+    assert p.lb_tempo_jogo.cget("text").startswith("nada marcado")
+    app.d_automatico()
+    assert app.caixas[-1][2] == dm.MARQUE
+    # só 📝 Legendar: traduz tudo, não dubla nem monta e entrega o roteiro sem vozes
+    p.cx_legendar.toggle()
+    assert p.marcacoes() == (True, False) and app.marcacoes_do_jogo(pasta) == (True, False)
+    assert p.bt_dublar.cget("state") == "disabled" and p.bt_montar.cget("state") == "disabled"
+    assert p.cx_ouvir.cget("state") == "disabled" and p.bt_entregar.cget("text") == "📝  Gerar o roteiro em português"
+    assert "traduzir" in p.lb_tempo_jogo.cget("text") and "dublar" not in p.lb_tempo_jogo.cget("text")
+    p.bt_traduzir.invoke()
+    esperar(app)
+    assert {e.chave: e for e in p.roteiro.entradas}["4"].traducao
+    p.bt_entregar.invoke()
+    esperar(app)
+    saida = tmp_path / "Meu Jogo - PT-BR"
+    assert (saida / "roteiro_ptbr.csv").is_file() and not (saida / "audio_ptbr").exists()
+    assert "roteiro_ptbr.csv" in p.lb_entrega.cget("text") and "audio_ptbr" not in p.lb_entrega.cget("text")
+    assert (saida / "relatorio_traducao.txt").read_text(encoding="utf-8").startswith("Tradução (legendas) do jogo")
+    assert p.lb_tempo_jogo.cget("text") == "✓ nada falta: tudo traduzido"
+    # cada jogo com as suas: outro jogo (guardado com as duas) e, de volta a este, só legendar
+    outro = tmp_path / "Outro Jogo"
+    outro.mkdir()
+    app.guardar_marcacoes([outro], True, True)
+    p.var_pasta.set(str(outro))
+    assert p.marcacoes() == (True, True)
+    p.var_pasta.set(str(pasta))
+    assert p.marcacoes() == (True, False)
+
 def test_aba_jogos_enquanto_joga(app, tmp_path, monkeypatch):
     """🎮 Jogos, modo "Enquanto joga" (como no protótipo): a janela do jogo (o emulador primeiro) e a prévia com a
     caixa roxa, marcar a área da caixa de diálogo, o tradutor de tela ligado (a tradução aparece na janelinha por
@@ -6363,9 +6428,22 @@ def test_aba_jogos_meus_jogos(app, tmp_path, monkeypatch):
     assert app.console_jogos.chave == "PC" and app.painel_instalar.var_destino.get() == pc.caminho
     app.mostrar_console_jogos("🔎 Meus jogos")
     psp = next(j for j in p.jogos if j.console == "PSP")
+    # as marcações do jogo: ☑ 📝 Legendar e ☑ 🗣 Dublar, cada uma por si (ficam guardadas para este jogo)
+    p.mostrar_escolhido(psp)
+    assert p.marcacoes() == (True, True) and p.bt_dublar.cget("text") == "🗣  Legendar e dublar"
+    p.cx_dublar.toggle()
+    assert p.bt_dublar.cget("text") == "📝  Legendar" and app.marcacoes_do_jogo(psp.caminho) == (True, False)
+    p.cx_legendar.toggle()
+    assert p.bt_dublar.cget("state") == "disabled" and p.lb_marcacoes.cget("text") == "marque pelo menos um"
+    p.cx_legendar.toggle()
+    p.mostrar_escolhido(pc)
+    assert p.marcacoes() == (True, True)                            # outro jogo: as dele
+    p.mostrar_escolhido(psp)
+    assert p.marcacoes() == (True, False) and p.lb_marcacoes.cget("text").startswith("só os textos")
     p.acoes["abrir"](psp, None)                                     # sem tradução: Traduzir e dublar
     assert app.console_jogos.chave == "PSP" and app.seletor_modo_jogos.get() == jogos_moderna.MODO_DUBLAR
     assert app.painel_dublar_jogo.var_iso.get() == psp.caminho
+    assert app.painel_dublar_jogo.marcacoes() == (True, False)       # só legendar, como no Meus jogos
     p.acoes["emulador"](pc)
     assert abertos[-1] == "steam://rungameid/123450"
     # da 2ª vez, só os arquivos novos (e a tradução guardada não é procurada de novo)

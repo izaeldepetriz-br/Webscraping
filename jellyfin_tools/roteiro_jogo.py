@@ -515,9 +515,11 @@ def traduzir_textos(textos: list[str], tradutor, limites: list | None = None, gl
 
 def traduzir_roteiro(roteiro: Roteiro, tradutor, glossario: tuple = (), tirar_acentos: bool = False,
                      memoria: dict | None = None, so: int | None = None, parar=None,
-                     ao_progresso=None) -> ResumoTraducao:
-    """Traduz o roteiro (ou só os `so` primeiros textos: o teste) e guarda em cada Entrada a tradução e os avisos."""
-    alvo = roteiro.com_texto[:so] if so else roteiro.com_texto
+                     ao_progresso=None, entradas: list | None = None) -> ResumoTraducao:
+    """Traduz o roteiro (ou só os `so` primeiros textos: o teste) e guarda em cada Entrada a tradução e os avisos.
+    entradas: só estas (ex.: só as falas, quando o jogo é só dublado e os textos ficam como estão)."""
+    textos = roteiro.com_texto if entradas is None else [e for e in entradas if e.texto.strip()]
+    alvo = textos[:so] if so else textos
     longas: list[str] = []
     traduzidas, avisos, resumo = traduzir_textos(
         [e.texto for e in alvo], tradutor, [e.limite for e in alvo], glossario, tirar_acentos, memoria,

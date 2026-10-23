@@ -157,6 +157,30 @@ def test_dubla_no_formato_retoma_e_entrega(tmp_path):
     assert "11 dubladas" in relatorio and "audio_ptbr" in relatorio
 
 
+
+def test_so_legendar_ou_so_dublar(tmp_path):
+    """As marcações de cada jogo: só dublar traduz só as falas que têm voz (o "New game" do menu fica como está) e
+    entrega só as vozes e as falas ouvidas; só legendar entrega o roteiro em português, sem vozes."""
+    pasta, roteiro = jogo(tmp_path)
+    falas = dj.achar_falas(pasta, roteiro)
+    faladas = dj.entradas_faladas(falas)
+    assert len(faladas) == 4 and {e.chave for e in faladas} == {"1", "2", "3", "MAYA_01"}
+    rj.traduzir_roteiro(roteiro, rj.TradutorJogo(cliente=ClienteJogo()), memoria={}, entradas=faladas)
+    por_chave = {e.chave: e for e in roteiro.entradas}
+    assert por_chave["1"].traducao == "Abra o portão!" and por_chave["MAYA_01"].traducao
+    assert not por_chave["4"].traducao                                          # só texto: fica como está
+    dj.ligar_traducoes(falas)
+    dj.ouvir(falas, WhisperFalso(), tmp_path / "trabalho")
+    so_dublar = dj.entregar(roteiro, falas, tmp_path / "so_dublar", legendar=False)
+    assert [f.name for f in so_dublar] == ["falas_ouvidas.csv", "relatorio_traducao.txt"]
+    relatorio = (tmp_path / "so_dublar" / "relatorio_traducao.txt").read_text(encoding="utf-8")
+    assert relatorio.startswith("Dublagem do jogo (Maestro)") and "Textos: os do jogo, como estão" in relatorio
+    so_legendar = dj.entregar(roteiro, falas, tmp_path / "so_legendar", dublar=False)
+    assert [f.name for f in so_legendar] == ["roteiro_ptbr.csv", "relatorio_traducao.txt"]
+    relatorio = (tmp_path / "so_legendar" / "relatorio_traducao.txt").read_text(encoding="utf-8")
+    assert relatorio.startswith("Tradução (legendas) do jogo") and "Vozes: as originais" in relatorio
+    assert "põe roteiro_ptbr de volta" in relatorio and "Montar a ISO" not in relatorio
+
 def test_wav_natural_e_voz_fixa_para_os_outros(tmp_path):
     pasta, roteiro = jogo(tmp_path)
     falas = [f for f in dj.achar_falas(pasta, roteiro) if f.relativo.startswith("SOUND/KAEL")]

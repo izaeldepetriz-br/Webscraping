@@ -16,7 +16,9 @@ Em cada console do submenu "Jogos →" o modo é o mesmo, com o guia de como tir
 campo da ISO só onde o Maestro abre o disco sozinho (PS2, PS1, PSP) e o que a tradução vira no fim: o patch .xdelta
 (discos), o .bps (ROMs), o mod .zip (Switch) ou o pacote .zip (PC).
 
-Em cima, o "⏱ Tempo deste jogo" (cada etapa, o total e a que horas termina, pela velocidade deste PC) e o botão
+Em cima, as marcações deste jogo: ☑ Legendar (os textos e as legendas em português) e ☑ Dublar (as vozes em
+português), cada uma por si (só uma, ou as duas); o Maestro traduz, dubla e entrega só o que está marcado. E o
+"⏱ Tempo deste jogo" (cada etapa, o total e a que horas termina, pela velocidade deste PC) e o botão
 "🤖 Automático", que faz as etapas marcadas uma depois da outra.
 """
 
@@ -146,6 +148,46 @@ class PainelDublarJogo(ctk.CTkScrollableFrame):
         self.lb_tempo_jogo.grid(row=0, column=1, sticky="w", pady=12)
         self.bt_automatico = m._botao(faixa, "🤖  Automático", self.acoes["automatico"], "primario")
         self.bt_automatico.grid(row=0, column=2, padx=(12, 20), pady=12)
+        # o que fazer neste jogo: cada marcação por si (o Maestro faz só o que está marcado)
+        linha = ctk.CTkFrame(faixa, fg_color="transparent")
+        linha.grid(row=1, column=0, columnspan=3, sticky="ew", padx=20, pady=(0, 12))
+        m._rotulo(linha, "Neste jogo:", suave=False).pack(side="left", padx=(0, 12))
+        self.var_legendar = tk.BooleanVar(self, value=True)
+        self.cx_legendar = self._caixa(linha, "📝 Legendar", self.var_legendar)
+        self.cx_legendar.pack(side="left")
+        self.var_dublar = tk.BooleanVar(self, value=True)
+        self.cx_dublar = self._caixa(linha, "🗣 Dublar", self.var_dublar)
+        self.cx_dublar.pack(side="left", padx=(18, 0))
+        self.lb_marcacoes = m._rotulo(linha, "", fonte=self._pequeno)
+        self.lb_marcacoes.pack(side="left", padx=(18, 0))
+        self._marcando = False
+        for var in (self.var_legendar, self.var_dublar):
+            var.trace_add("write", lambda *_: self._mudou_marcacao())
+
+    def marcacoes(self) -> tuple[bool, bool]:
+        """(legendar, dublar) deste jogo."""
+        return bool(self.var_legendar.get()), bool(self.var_dublar.get())
+
+    def marcar(self, legendar: bool, dublar: bool) -> None:
+        """As marcações guardadas do jogo (não contam como mudança: não são guardadas de novo)."""
+        if self.marcacoes() == (bool(legendar), bool(dublar)):
+            return
+        self._marcando = True
+        try:
+            self.var_legendar.set(bool(legendar))
+            self.var_dublar.set(bool(dublar))
+        finally:
+            self._marcando = False
+        self._mudou_marcacao(guardar=False)
+
+    def _mudou_marcacao(self, guardar: bool = True) -> None:
+        if self._marcando:
+            return
+        if hasattr(self, "bt_montar"):                  # (a tela já está montada)
+            self.atualizar()
+            self._mostrar_vai_gerar()
+        if "marcacoes" in self.acoes:
+            self.acoes["marcacoes"](guardar)
 
     def sem_nada(self) -> str:
         """O "⏱ Tempo deste jogo" antes de abrir o jogo (só PS2, PS1 e PSP têm "tirar as falas da ISO")."""
@@ -468,15 +510,17 @@ class PainelDublarJogo(ctk.CTkScrollableFrame):
         return item or None
 
     def _mostrar_vai_gerar(self) -> None:
+        legendar, dublar = self.marcacoes()
         partes = []
-        if self.roteiro is not None:
+        if legendar and self.roteiro is not None:
             partes.append(f"{self.roteiro.arquivo.stem}_ptbr{self.roteiro.arquivo.suffix} (mesmas colunas do "
                           "original)")
-        if self.falas or self.roteiro is None:
+        if dublar and (self.falas or self.roteiro is None):
             partes.append(f"{dj.PASTA_SAIDA_AUDIO}\\ (mesmos nomes de arquivo)")
-        if any(f.ouvida for f in self.falas):
+        if dublar and any(f.ouvida for f in self.falas):
             partes.append("falas_ouvidas.csv (o que o Whisper ouviu)")
-        self.lb_vai_gerar.configure(text="Vai gerar:  " + "  +  ".join(partes))
+        self.lb_vai_gerar.configure(text="Vai gerar:  " + "  +  ".join(partes) if partes else
+                                    "Vai gerar:  nada ainda (marque 📝 Legendar e/ou 🗣 Dublar, lá em cima)")
         c = self.console
         emulador = "o seu emulador" if c.emulador.startswith("o ") else f"o {c.emulador}"
         if c.chave == "SWITCH":
@@ -511,15 +555,25 @@ class PainelDublarJogo(ctk.CTkScrollableFrame):
 
     def atualizar(self) -> None:
         iso = bool(self.var_iso.get().strip())
+        legendar, dublar = self.marcacoes()
         self.bt_analisar.configure(state="normal" if iso else "disabled")
         self.bt_extrair.configure(state="normal" if self.analise is not None and self.analise.falas else "disabled")
         self.bt_relatorio.configure(state="normal" if self.analise is not None else "disabled")
         tem = bool(self.falas) or self.roteiro is not None
         for botao in (self.bt_traduzir, self.bt_traduzir_teste, self.bt_custos, self.bt_automatico):
-            botao.configure(state="normal" if tem else "disabled")
+            botao.configure(state="normal" if tem and (legendar or dublar) else "disabled")
         dublaveis = any(f.formato is not None for f in self.falas)
         for botao in (self.bt_dublar, self.bt_dublar_teste, self.bt_ouvir, self.bt_editar_fala):
-            botao.configure(state="normal" if dublaveis else "disabled")
-        self.bt_entregar.configure(state="normal" if tem else "disabled")
-        self.bt_montar.configure(state="normal" if self.tem_mapa and iso else "disabled")
+            botao.configure(state="normal" if dublaveis and dublar else "disabled")
+        self.cx_ouvir.configure(state="normal" if dublar else "disabled")      # (o Whisper é para dublar)
+        self.bt_entregar.configure(state="normal" if tem and (legendar or dublar) else "disabled",
+                                   text="📝  Gerar roteiro e vozes em português" if legendar and dublar else
+                                   "📝  Gerar o roteiro em português" if legendar else
+                                   "📝  Gerar as vozes em português" if dublar else "📝  Gerar em português")
+        self.bt_montar.configure(state="normal" if self.tem_mapa and iso and dublar else "disabled")
+        self.lb_marcacoes.configure(
+            text="os textos, os menus e as legendas em português, e as vozes dubladas" if legendar and dublar else
+            "só os textos e as legendas em português: as vozes ficam as originais" if legendar else
+            "só as vozes em português (as falas são traduzidas para a voz): os textos ficam como estão" if dublar
+            else "marque pelo menos um", text_color=Tema.TEXTO_SUAVE if legendar or dublar else Tema.AVISO)
         self.bt_criar_patch_jogo.configure(state="normal" if (iso if self.com_original else tem) else "disabled")

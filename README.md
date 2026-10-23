@@ -259,6 +259,16 @@ primeira falha (antes esperava o tempo limite em cada filme).
     **▶ Abrir no emulador** (PC: "Jogar" pela Steam), **Abrir a pasta** e **🌐 Procurar no navegador**. Dois cliques
     abrem o jogo no submenu do console, já escolhido.
 
+- **☑ 📝 Legendar e ☑ 🗣 Dublar, cada jogo com as suas marcações**: no cartão do jogo escolhido (🔎 Meus jogos) e no
+  alto do **🗣 Traduzir e dublar (no PC)**, marque **as duas ou só uma**. O Maestro faz só o que está marcado e guarda
+  a escolha de cada jogo (vale da próxima vez que você abrir o mesmo jogo):
+  - **só 📝 Legendar**: traduz os textos (menus, legendas, itens) e entrega o **roteiro em português**; não dubla nem
+    monta a ISO, e **as vozes ficam as originais**;
+  - **só 🗣 Dublar**: traduz **só as falas que têm voz** (o menu fica como está, e a tradução custa menos), dubla,
+    entrega a pasta das vozes e monta a ISO;
+  - **as duas**: tudo, como antes. O ⏱ Tempo deste jogo, o 🤖 Automático, o botão de entregar e o "Vai gerar" mudam
+    conforme as marcações; sem nenhuma marcada, nada começa.
+
 - **Correção (zoom do Windows em 125%)**: a lista da aba Jellyfin ficava com uma linha só (cortada), com um espaço
   vazio embaixo. O Windows informa o zoom depois que a janela abre, e as peças escondidas da tela voltavam sozinhas
   nessa hora. Agora o que está escondido continua escondido, em todas as telas do Maestro.

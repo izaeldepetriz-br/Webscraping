@@ -132,8 +132,10 @@ def estimar(velocidades: Velocidades, *, segundos_sem_texto: float = 0.0, textos
                 f"XTTS-v2 ({'placa de vídeo' if placa else 'processador'})"
         else:
             chave, quem = f"dublar:{motor}", motor
-        pedidos += [("dublar", chave, quem, falas), ("entregar", "entregar", "no seu PC", falas)]
-    if iso_mb > 0:                      # (iso_mb = 0 quando não há ISO para montar ou ela já está montada)
+        pedidos.append(("dublar", chave, quem, falas))
+    if falas > 0 or textos > 0:         # (só legendar: entrega o roteiro em português, sem vozes)
+        pedidos.append(("entregar", "entregar", "no seu PC", falas or textos))
+    if iso_mb > 0:                     # (iso_mb = 0 quando não há ISO para montar ou ela já está montada)
         pedidos.append(("montar", "montar", "no seu PC", iso_mb))
     etapas = []
     for etapa, chave, quem, unidades in pedidos:

@@ -57,7 +57,9 @@ class MeusJogos:
             p = self.painel_meus_jogos = PainelMeusJogos(self.aba_jogos, self, {
                 "adicionar_pasta": self.mj_adicionar_pasta, "tirar_pasta": self.mj_tirar_pasta,
                 "procurar": self.mj_procurar, "abrir": self.mj_abrir, "emulador": self.mj_emulador,
-                "abrir_pasta": self.mj_abrir_pasta, "navegador": self.mj_navegador})
+                "abrir_pasta": self.mj_abrir_pasta, "navegador": self.mj_navegador,
+                "ler_marcacoes": lambda jogo: self.marcacoes_do_jogo(jogo.caminho) or (True, True),
+                "marcacoes": lambda jogo, legendar, dublar: self.guardar_marcacoes([jogo.caminho], legendar, dublar)})
             prefs = self._mj_preferencias()
             p.var_traducao.set(bool(prefs.get("traducao", True)))
             p.var_redump.set(bool(prefs.get("redump", True)))
@@ -298,6 +300,7 @@ class MeusJogos:
                 d.var_iso.set(str(caminho))
             elif console.chave == "PC" and not d.var_pasta.get().strip():
                 d.var_pasta.set(str(caminho))
+            d.marcar(*(self.marcacoes_do_jogo(caminho) or (True, True)))     # as marcações deste jogo
         else:
             self.mostrar_modo_jogos(MODO_ENQUANTO)
         self._log.info("Meus jogos: %s aberto em %s (%s)", jogo.titulo, console.nome, modo)

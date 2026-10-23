@@ -5,7 +5,8 @@ meus_jogos_moderna.py.
     1. Onde procurar   as pastas (o HD, o pendrive do OPL, a biblioteca da Steam), as opções e "🔎 Procurar agora"
     2. Os seus jogos   por console (os filtros com a quantidade), a busca pelo nome e a tabela: a cópia do disco
                        (Redump) e a tradução PT-BR de cada um; dois cliques abrem o jogo no submenu do console
-    3. O jogo escolhido  o resumo, as traduções achadas e os atalhos (traduzir e dublar, aplicar o patch...)
+    3. O jogo escolhido  o resumo, as traduções achadas, as marcações deste jogo (☑ 📝 Legendar e ☑ 🗣 Dublar, cada
+                       uma por si) e os atalhos (legendar e/ou dublar, aplicar o patch...)
 """
 
 from __future__ import annotations
@@ -27,8 +28,9 @@ TRADUCOES = ("Tradução: todas", "Só com tradução", "Só sem tradução", "J
 
 
 class PainelMeusJogos(ctk.CTkScrollableFrame):
-    """acoes: {'adicionar_pasta', 'tirar_pasta', 'procurar'} (sem argumentos) e {'abrir' (jogo, modo ou None),
-    'emulador', 'abrir_pasta', 'navegador'} (recebem o jogo)."""
+    """acoes: {'adicionar_pasta', 'tirar_pasta', 'procurar'} (sem argumentos), {'abrir' (jogo, modo ou None),
+    'emulador', 'abrir_pasta', 'navegador'} (recebem o jogo) e, se houver, {'ler_marcacoes' (jogo) -> (legendar,
+    dublar), 'marcacoes' (jogo, legendar, dublar)}."""
 
     def __init__(self, pai, app, acoes: dict):
         super().__init__(pai, fg_color="transparent")
@@ -162,8 +164,21 @@ class PainelMeusJogos(ctk.CTkScrollableFrame):
         self.lb_traducoes = ctk.CTkLabel(cartao, text="", font=m.f_rotulo, text_color=Tema.TEXTO_SUAVE, anchor="w",
                                          justify="left", wraplength=1000)
         self.lb_traducoes.grid(row=1, column=0, sticky="w", padx=20)
+        # o que fazer neste jogo: cada marcação por si (as duas, ou só uma)
+        marcas = ctk.CTkFrame(cartao, fg_color="transparent")
+        marcas.grid(row=2, column=0, sticky="ew", padx=20, pady=(10, 0))
+        m._rotulo(marcas, "Neste jogo:", suave=False).pack(side="left", padx=(0, 12))
+        self.cx_legendar, self.var_legendar = self._caixa(marcas, "📝 Legendar", True)
+        self.cx_legendar.pack(side="left")
+        self.cx_dublar, self.var_dublar = self._caixa(marcas, "🗣 Dublar", True)
+        self.cx_dublar.pack(side="left", padx=(18, 0))
+        self.lb_marcacoes = m._rotulo(marcas, "", fonte=self._pequeno)
+        self.lb_marcacoes.pack(side="left", padx=(18, 0))
+        self._marcando = False
+        for var in (self.var_legendar, self.var_dublar):
+            var.trace_add("write", lambda *_: self._mudou_marcacao())
         faixa = ctk.CTkFrame(cartao, fg_color="transparent")
-        faixa.grid(row=2, column=0, sticky="ew", padx=20, pady=(10, 14))
+        faixa.grid(row=3, column=0, sticky="ew", padx=20, pady=(10, 14))
         self.bt_dublar = m._botao(faixa, "🗣  Traduzir e dublar", lambda: self._abrir("dublar"), "primario")
         self.bt_dublar.pack(side="left")
         self.bt_patch = m._botao(faixa, "📀  Aplicar patch", lambda: self._abrir("patch"))
@@ -258,8 +273,9 @@ class PainelMeusJogos(ctk.CTkScrollableFrame):
             self.lb_escolhido.configure(text="O jogo escolhido")
             self.lb_escolhido_dica.configure(text="   escolha um jogo na lista")
             self.lb_traducoes.configure(text="")
-            for botao in botoes:
+            for botao in botoes + (self.cx_legendar, self.cx_dublar):
                 botao.configure(state="disabled")
+            self._mostrar_marcacoes()
             return
         console = cs.console(jogo.console)
         partes = [console.nome if jogo.console not in ("NINTENDO", "GCWII") else jogo.rotulo, jogo.codigo, jogo.regiao,
@@ -276,6 +292,40 @@ class PainelMeusJogos(ctk.CTkScrollableFrame):
         emulador = "o seu emulador" if console.emulador.startswith("o ") else console.emulador
         self.bt_emulador.configure(text="▶  Jogar (Steam)" if jogo.sistema == "Steam" else
                                    f"▶  Abrir no {emulador}".replace("no o seu", "no seu"))
+        for caixa in (self.cx_legendar, self.cx_dublar):
+            caixa.configure(state="normal")
+        legendar, dublar = self.acoes["ler_marcacoes"](jogo) if "ler_marcacoes" in self.acoes else (True, True)
+        self._marcando = True                           # (as guardadas: não contam como mudança)
+        try:
+            self.var_legendar.set(bool(legendar))
+            self.var_dublar.set(bool(dublar))
+        finally:
+            self._marcando = False
+        self._mostrar_marcacoes()
+
+    def marcacoes(self) -> tuple[bool, bool]:
+        """(legendar, dublar) do jogo escolhido."""
+        return bool(self.var_legendar.get()), bool(self.var_dublar.get())
+
+    def _mudou_marcacao(self) -> None:
+        if self._marcando:
+            return
+        self._mostrar_marcacoes()
+        if self.escolhido is not None and "marcacoes" in self.acoes:
+            self.acoes["marcacoes"](self.escolhido, *self.marcacoes())
+
+    def _mostrar_marcacoes(self) -> None:
+        """O botão diz o que vai fazer: legendar e dublar, só legendar ou só dublar."""
+        legendar, dublar = self.marcacoes()
+        self.bt_dublar.configure(text="📝  Legendar" if legendar and not dublar else
+                                 "🗣  Dublar" if dublar and not legendar else "🗣  Legendar e dublar",
+                                 state="normal" if self.escolhido is not None and (legendar or dublar) else "disabled")
+        self.lb_marcacoes.configure(
+            text="" if self.escolhido is None else
+            "os textos e as vozes em português" if legendar and dublar else
+            "só os textos e as legendas (as vozes ficam as originais)" if legendar else
+            "só as vozes (os textos ficam como estão)" if dublar else "marque pelo menos um",
+            text_color=Tema.TEXTO_SUAVE if legendar or dublar else Tema.AVISO)
 
     @staticmethod
     def _texto_traducoes(jogo: mj.Jogo) -> str:
